@@ -1,28 +1,120 @@
-Source Review License
+File Intelligence (FI) Source Review License
+Version 1.0
 
 Copyright (c) 2026 John Joseph Wood
 All rights reserved.
 
-The source code, documentation, and other materials contained in this repository are made publicly available for inspection, security review, and evaluation purposes only.
+1. Purpose
 
-Except as expressly permitted in writing by the copyright holder, no license or permission is granted to:
+The source code, documentation, and other materials contained in this repository
+(the "Software") are made publicly available for inspection, security review,
+technical evaluation, architecture review, interoperability assessment, audit
+preparation, proof-of-concept testing, and procurement due diligence.
 
-- use this software in production;
-- use this software for commercial purposes;
-- copy or redistribute this software or substantial portions of it;
-- modify, adapt, or create derivative works based upon this software;
-- incorporate this software into another product, service, or software project;
-- sell, sublicense, lease, host, or otherwise commercially exploit this software; or
-- remove or alter copyright, licensing, attribution, or proprietary notices.
+The Software is proprietary source-available software. It is not open-source
+software.
 
-Possession of, access to, or visibility of the source code does not grant ownership of the software or any intellectual property rights in the software.
+2. Evaluation Permission
 
-Any production use, commercial use, redistribution, modification, derivative work, integration, or other use not expressly permitted above requires prior written authorization from John Wood or a separate commercial license agreement.
+Subject to the terms of this License, permission is granted to download, clone,
+and make local copies of the Software solely as reasonably necessary to inspect,
+build, execute, and test the Software in a non-production environment for:
 
-Nothing in these terms is intended to restrict rights that cannot lawfully be restricted, including applicable rights under copyright law.
+- technical evaluation;
+- security review;
+- architecture review;
+- interoperability assessment;
+- audit preparation;
+- proof-of-concept testing;
+- procurement due diligence; and
+- other substantially similar non-production evaluation activities.
 
-THE SOFTWARE AND ASSOCIATED MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, TO THE MAXIMUM EXTENT PERMITTED BY LAW.
+This permission applies to prospective customers and persons acting on their
+behalf for those evaluation purposes, including authorized technical,
+engineering, security, audit, and information-technology personnel.
 
-For licensing or other permissions, contact the copyright holder.
+Evaluation under this License does not grant any right to deploy or operate the
+Software in production.
 
-Copyright (c) 2026 John Joseph Wood. All rights reserved.
+3. Restrictions
+
+Except for the Evaluation Permission expressly granted above, or as separately
+authorized in writing by the copyright holder, no license or permission is
+granted to:
+
+- use the Software in production;
+- use the Software to provide an operational, hosted, managed, commercial, or
+  customer-facing service;
+- modify, adapt, or create derivative works based upon the Software;
+- copy, extract, reuse, adapt, port, translate, or incorporate source code from
+  the Software, in whole or in part, into another product, service, software
+  project, application, library, repository, or codebase;
+- use source files, functions, types, structures, tests, or other implementation
+  portions of the Software as source material for another software
+  implementation;
+- redistribute, publish, transfer, sublicense, sell, lease, host, or otherwise
+  provide the Software or substantial portions of it to another person or
+  organization, except as reasonably necessary among authorized personnel
+  performing an evaluation permitted by this License;
+- commercially exploit the Software;
+- remove, alter, obscure, or misrepresent copyright, licensing, attribution,
+  proprietary, or other legal notices contained in the Software; or
+- represent the Software or any portion of it as independently developed,
+  open-source, or licensed under terms other than those expressly granted by
+  this License.
+
+4. No Source-Code Reuse Right
+
+Permission to inspect, download, clone, build, execute, or test the Software does
+not grant permission to reuse its source code in another work.
+
+Evaluation copies may be made only for the purposes expressly permitted by this
+License.
+
+Any incorporation, extraction, adaptation, porting, translation, or reuse of FI
+source code or implementation portions in another software project requires
+prior written authorization from John Joseph Wood or a separate license
+agreement.
+
+5. Ownership
+
+Possession of, access to, or visibility of the Software does not transfer
+ownership of the Software or any intellectual property rights in it.
+
+All right, title, and interest in and to the Software remain with the copyright
+holder except for the limited Evaluation Permission expressly granted by this
+License.
+
+6. Other Uses
+
+Any production use, redistribution, modification, derivative work, source-code
+reuse, incorporation into another work, integration, hosting, commercial
+exploitation, or other use not expressly permitted by this License requires
+prior written authorization from John Joseph Wood or a separate commercial
+license agreement.
+
+7. Applicable Rights
+
+Nothing in this License is intended to restrict rights that cannot lawfully be
+restricted under applicable law.
+
+8. No Warranty
+
+THE SOFTWARE AND ASSOCIATED MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, ACCURACY,
+RELIABILITY, OR AVAILABILITY, TO THE MAXIMUM EXTENT PERMITTED BY LAW.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE,
+EVALUATION, OR OTHER DEALINGS IN THE SOFTWARE, TO THE MAXIMUM EXTENT PERMITTED BY
+LAW.
+
+9. Licensing
+
+For production deployment, commercial licensing, integration rights, source-code
+reuse rights, redistribution rights, or other permissions not granted by this
+License, contact the copyright holder.
+
+Copyright (c) 2026 John Joseph Wood.
+All rights reserved except as expressly granted by this License.

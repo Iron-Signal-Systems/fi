@@ -110,27 +110,7 @@ No compatibility promise should be inferred from current pre-release contracts, 
 ## Source review and licensing
 
 **FI is proprietary source-available software. It is not open-source software.**
-
-The source is published so prospective customers and their authorized technical reviewers can independently inspect how FI works before deciding whether to deploy or license it.
-
-Subject to the repository `LICENSE`, evaluators may clone, download, build, execute, and test FI in a non-production environment for purposes such as:
-
-- technical evaluation;
-- security review;
-- architecture review;
-- interoperability assessment;
-- audit preparation;
-- proof-of-concept testing; and
-- procurement due diligence.
-
-This evaluation permission is intended to include prospective customers and their authorized IT, security, engineering, audit, and technical personnel.
-
-The source-review permission does **not** by itself authorize production deployment, resale, redistribution outside the evaluating organization, modification, derivative works, incorporation into another product or service, or other use not expressly allowed by the `LICENSE`.
-
-The repository `LICENSE` file is the controlling license text.
-
-Copyright (c) 2026 John Joseph Wood. All rights reserved except as expressly licensed.
-
+Source review and non-production evaluation are permitted only under the terms of the repository [LICENSE](LICENSE).
 ## Security
 
 Security issues should not be disclosed through public issues when doing so would expose an active vulnerability or sensitive implementation detail.
