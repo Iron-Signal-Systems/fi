@@ -1,7 +1,9 @@
 # File Intelligence (FI)
 
 File Intelligence (FI) is a pre-release project developed by **John J. Wood** under the **Iron Signal Systems** project and brand name.
-
+<p align="center">
+  <img src="docs/images/fi.png" alt="FI — File Intelligence" width="100%">
+</p>
 # FI Roadmap
 [FI Roadmap details](fi-roadmap/roadmap.md)
 
