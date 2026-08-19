@@ -1,0 +1,5 @@
+# Ignore environment variables and secrets
+.env
+
+# Ignore system files
+.DS_Store
