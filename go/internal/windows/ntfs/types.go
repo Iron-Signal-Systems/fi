@@ -1,3 +1,7 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package ntfs
 
 import "github.com/Iron-Signal-Systems/fi/go/internal/records"

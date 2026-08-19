@@ -1,3 +1,7 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package ntfs
 
 import (
@@ -6,6 +10,7 @@ import (
 )
 
 var (
+	// TODO: change how the errors display.
 	ErrUnsupportedPlatform  = errors.New("NTFS collection requires Windows")
 	ErrNotLocalVolume       = errors.New("path is not on a local volume")
 	ErrNotNTFS              = errors.New("path is not on an NTFS volume")

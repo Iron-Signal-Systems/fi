@@ -1,3 +1,7 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package ntfs
 
 import (
@@ -45,14 +49,14 @@ func buildObjectIdentity(volumeSerial uint64, fileID [16]byte) (records.VolumeId
 		return records.VolumeIdentity{}, records.NTFSObjectIdentity{}, err
 	}
 	return records.VolumeIdentity{
-			MethodVersion: IdentityMethodVersion,
-			VolumeSerial:  strconv.FormatUint(volumeSerial, 10),
-		}, records.NTFSObjectIdentity{
-			MethodVersion:       IdentityMethodVersion,
-			FileReferenceNumber: strconv.FormatUint(recordNumber, 10),
-			SequenceNumber:      strconv.FormatUint(uint64(sequenceNumber), 10),
-			Confidence:          records.IdentityAuthoritative,
-		}, nil
+		MethodVersion: IdentityMethodVersion,
+		VolumeSerial:  strconv.FormatUint(volumeSerial, 10),
+	}, records.NTFSObjectIdentity{
+		MethodVersion:       IdentityMethodVersion,
+		FileReferenceNumber: strconv.FormatUint(recordNumber, 10),
+		SequenceNumber:      strconv.FormatUint(uint64(sequenceNumber), 10),
+		Confidence:          records.IdentityAuthoritative,
+	}, nil
 }
 
 func streamIdentityFromWindowsName(name []uint16) records.StreamIdentity {
