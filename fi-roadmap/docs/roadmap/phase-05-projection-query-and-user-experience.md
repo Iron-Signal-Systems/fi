@@ -117,8 +117,7 @@ Known uncertainty and coverage gaps remain visible.
 
 ## Protected Human Access
 
-User-facing/query components do not receive database
-write authority it is read-only.
+User-facing and query components do not receive authoritative database write authority. Their access to FI data is read-only.
 
 ## Gate 5 — Operational, Security, DR & Forensic Intelligence
 
