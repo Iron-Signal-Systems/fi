@@ -117,10 +117,8 @@ Known uncertainty and coverage gaps remain visible.
 
 ## Protected Human Access
 
-DNP provides the protected human access plane for FI.
-
-User-facing/query components do not receive unrestricted authoritative database
-write authority.
+User-facing/query components do not receive database
+write authority it is read-only.
 
 ## Gate 5 — Operational, Security, DR & Forensic Intelligence
 
