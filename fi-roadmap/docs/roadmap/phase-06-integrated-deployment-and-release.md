@@ -20,7 +20,6 @@ The release combines:
 - Separate Protected Classification Stream;
 - Classification & Enrichment;
 - projection/query services;
-- DNP-protected human access;
 - FI user experience/client;
 - journal and integrity functions;
 - operational tooling.
