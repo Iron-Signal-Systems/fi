@@ -132,4 +132,3 @@ Copyright (c) 2026 John Joseph Wood. All rights reserved except as expressly lic
 Security issues should not be disclosed through public issues when doing so would expose an active vulnerability or sensitive implementation detail.
 
 A dedicated security policy and reporting process will be maintained in `SECURITY.md`.
-
