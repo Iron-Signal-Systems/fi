@@ -38,7 +38,7 @@ Its purpose is to support defensible reconstruction of what FI knew about a gove
 
 ## Initial platform scope
 
-Initial development targets Windows Server and NTFS file services.
+Initial development targets Windows Server and NTFS file services. These may be designed and coded on a Non-Windows platform. This will be built and tested on a Windows Server similar to how they will be used in actual production. All Active Directory work will be done in a controlled Windows lab with a Windows evaluation version of the particular server environment. 
 
 Monitoring is explicitly scope-driven. FI operates only against configured governed roots such as approved drives or directories. Installing FI on a Windows server does not imply that the entire server is governed.
 
