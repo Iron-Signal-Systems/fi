@@ -38,6 +38,7 @@ Issues in third-party products or infrastructure that FI does not control should
 ## Contact
 
 Security reports should be sent privately to the project maintainer.
+
 **Email:** security@ironsignalsystems.com
 **Maintainer:** John Joseph Wood  
 **Project:** File Intelligence (FI) / Iron Signal Systems
