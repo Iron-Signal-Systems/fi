@@ -18,43 +18,63 @@ import (
 // does not spread through the rest of the collector.
 
 const (
+	fileAttributeDirectory = 0x00000010
+	fileAttributeReparse   = 0x00000400
+
+	// Reference:
+	// Microsoft Learn, GetFileInformationByHandleEx function (winbase.h).
+	// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex
+	//
+	// These are FILE_INFO_BY_HANDLE_CLASS values documented for the API. No
+	// Microsoft sample-program logic is incorporated here.
+	fileAttributeTagInfoClass = 9
+	fileBasicInfoClass        = 0
+	fileIdInfoClass           = 18
+	fileStandardInfoClass     = 1
+	fileStreamInfoClass       = 7
+
+	fileNameNormalized = 0x0000
+
 	// fileReadAttributes is the access FI requests for its own handle.
 	// It does not grant write access.
 	fileReadAttributes = 0x0080
 
-	fileNameNormalized = 0x0000
-	volumeNameGUID     = 0x0001
-
-	fileBasicInfoClass    = 0
-	fileStandardInfoClass = 1
-	fileStreamInfoClass   = 7
-	fileIdInfoClass       = 18
-
-	fileAttributeDirectory = 0x00000010
-	fileAttributeReparse   = 0x00000400
-
 	// Stream enumeration grows only to this fixed ceiling so a malformed or
 	// hostile source cannot make FI allocate without bound.
+	fileStreamInfoHeader    = 24
 	initialStreamInfoBuffer = 64 * 1024
 	maximumStreamInfoBuffer = 4 * 1024 * 1024
-	fileStreamInfoHeader    = 24
+
+	volumeNameGUID = 0x0001
 )
 
 const (
+	errorHandleEOF          syscall.Errno = 38
 	errorInsufficientBuffer syscall.Errno = 122
 	errorMoreData           syscall.Errno = 234
-	errorHandleEOF          syscall.Errno = 38
 )
 
 var (
 	kernel32                          = syscall.NewLazyDLL("kernel32.dll")
 	procGetFileInformationByHandleEx  = kernel32.NewProc("GetFileInformationByHandleEx")
-	procGetVolumeInformationByHandleW = kernel32.NewProc("GetVolumeInformationByHandleW")
 	procGetFinalPathNameByHandleW     = kernel32.NewProc("GetFinalPathNameByHandleW")
+	procGetVolumeInformationByHandleW = kernel32.NewProc("GetVolumeInformationByHandleW")
 )
 
-// The structures below match the fixed Windows ABI layouts passed directly to
-// Kernel32. Keep Windows layout details in this file.
+// fileAttributeTagInfo matches the documented Windows FILE_ATTRIBUTE_TAG_INFO
+// ABI layout.
+//
+// Reference:
+// Microsoft Learn, FILE_ATTRIBUTE_TAG_INFO structure (winbase.h).
+// https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_attribute_tag_info
+//
+// This Go structure mirrors the documented ABI. It is not adapted from a
+// Microsoft sample program.
+type fileAttributeTagInfo struct {
+	FileAttributes uint32
+	ReparseTag     uint32
+}
+
 type fileBasicInfo struct {
 	CreationTime   int64
 	LastAccessTime int64
@@ -62,6 +82,11 @@ type fileBasicInfo struct {
 	ChangeTime     int64
 	FileAttributes uint32
 	_              [4]byte
+}
+
+type fileIDInfo struct {
+	VolumeSerialNumber uint64
+	FileID             [16]byte
 }
 
 type fileStandardInfo struct {
@@ -73,15 +98,11 @@ type fileStandardInfo struct {
 	_              [2]byte
 }
 
-type fileIDInfo struct {
-	VolumeSerialNumber uint64
-	FileID             [16]byte
-}
-
 type nativeState struct {
-	Basic    fileBasicInfo
-	Standard fileStandardInfo
-	ID       fileIDInfo
+	AttributeTag fileAttributeTagInfo
+	Basic        fileBasicInfo
+	ID           fileIDInfo
+	Standard     fileStandardInfo
 }
 
 type nativeStream struct {
@@ -93,13 +114,54 @@ type nativeStream struct {
 // Compile-time ABI checks. A build fails if Go lays out one of the fixed
 // Windows structures at an unexpected size.
 var (
+	_ [8 - unsafe.Sizeof(fileAttributeTagInfo{})]byte
+	_ [unsafe.Sizeof(fileAttributeTagInfo{}) - 8]byte
 	_ [40 - unsafe.Sizeof(fileBasicInfo{})]byte
 	_ [unsafe.Sizeof(fileBasicInfo{}) - 40]byte
-	_ [24 - unsafe.Sizeof(fileStandardInfo{})]byte
-	_ [unsafe.Sizeof(fileStandardInfo{}) - 24]byte
 	_ [24 - unsafe.Sizeof(fileIDInfo{})]byte
 	_ [unsafe.Sizeof(fileIDInfo{}) - 24]byte
+	_ [24 - unsafe.Sizeof(fileStandardInfo{})]byte
+	_ [unsafe.Sizeof(fileStandardInfo{}) - 24]byte
 )
+
+func align8(value int) int {
+	return (value + 7) &^ 7
+}
+
+// finalVolumePath resolves an open handle to a normalized volume-GUID path.
+//
+// FI uses this handle-derived path for containment rather than trusting the
+// caller's original drive-letter string.
+func finalVolumePath(handle syscall.Handle) ([]uint16, error) {
+	buffer := make([]uint16, 512)
+
+	for attempts := 0; attempts < 3; attempts++ {
+		length, _, callErr := procGetFinalPathNameByHandleW.Call(
+			uintptr(handle),
+			uintptr(unsafe.Pointer(&buffer[0])),
+			uintptr(len(buffer)),
+			fileNameNormalized|volumeNameGUID,
+		)
+		if length == 0 {
+			return nil, callErr
+		}
+
+		if length < uintptr(len(buffer)) {
+			result := append([]uint16(nil), buffer[:length]...)
+			if !hasASCIIPrefix(result, `\\?\Volume{`) {
+				return nil, ErrNotLocalVolume
+			}
+			if _, err := volumeGUIDFromFinalPath(result); err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+
+		buffer = make([]uint16, int(length)+1)
+	}
+
+	return nil, fmt.Errorf("final path exceeded retry bound")
+}
 
 // openPath opens an existing Windows filesystem object for metadata inspection.
 //
@@ -131,103 +193,6 @@ func openPath(path []uint16) (syscall.Handle, error) {
 		return syscall.InvalidHandle, err
 	}
 	return handle, nil
-}
-
-func queryFileInformation(handle syscall.Handle, class uint32, output unsafe.Pointer, size uintptr) error {
-	r1, _, callErr := procGetFileInformationByHandleEx.Call(
-		uintptr(handle),
-		uintptr(class),
-		uintptr(output),
-		size,
-	)
-	if r1 == 0 {
-		return callErr
-	}
-	return nil
-}
-
-// queryNativeState gets metadata and FILE_ID_INFO from the same open handle.
-func queryNativeState(handle syscall.Handle) (nativeState, error) {
-	var state nativeState
-
-	if err := queryFileInformation(
-		handle,
-		fileBasicInfoClass,
-		unsafe.Pointer(&state.Basic),
-		unsafe.Sizeof(state.Basic),
-	); err != nil {
-		return nativeState{}, &Error{
-			Stage: StageMetadata,
-			Op:    "GetFileInformationByHandleEx(FileBasicInfo)",
-			Err:   err,
-		}
-	}
-
-	if err := queryFileInformation(
-		handle,
-		fileStandardInfoClass,
-		unsafe.Pointer(&state.Standard),
-		unsafe.Sizeof(state.Standard),
-	); err != nil {
-		return nativeState{}, &Error{
-			Stage: StageMetadata,
-			Op:    "GetFileInformationByHandleEx(FileStandardInfo)",
-			Err:   err,
-		}
-	}
-
-	if err := queryFileInformation(
-		handle,
-		fileIdInfoClass,
-		unsafe.Pointer(&state.ID),
-		unsafe.Sizeof(state.ID),
-	); err != nil {
-		return nativeState{}, &Error{
-			Stage: StageIdentity,
-			Op:    "GetFileInformationByHandleEx(FileIdInfo)",
-			Err:   err,
-		}
-	}
-
-	return state, nil
-}
-
-// queryStreams asks Windows for FILE_STREAM_INFO using a bounded growing buffer.
-func queryStreams(handle syscall.Handle) ([]nativeStream, error) {
-	for size := initialStreamInfoBuffer; size <= maximumStreamInfoBuffer; size *= 2 {
-		buffer := make([]byte, size)
-
-		r1, _, callErr := procGetFileInformationByHandleEx.Call(
-			uintptr(handle),
-			uintptr(fileStreamInfoClass),
-			uintptr(unsafe.Pointer(&buffer[0])),
-			uintptr(len(buffer)),
-		)
-		if r1 != 0 {
-			return parseStreamInfo(buffer)
-		}
-
-		if errno, ok := callErr.(syscall.Errno); ok {
-			switch errno {
-			case errorInsufficientBuffer, errorMoreData:
-				continue
-			case errorHandleEOF:
-				return []nativeStream{}, nil
-			}
-		}
-
-		return nil, &Error{
-			Stage: StageStreams,
-			Op:    "GetFileInformationByHandleEx(FileStreamInfo)",
-			Err:   callErr,
-		}
-	}
-
-	return nil, &Error{
-		Stage: StageStreams,
-		Op:    "GetFileInformationByHandleEx(FileStreamInfo)",
-		Err:   ErrStreamBufferLimit,
-	}
 }
 
 // parseStreamInfo parses the chained variable-length FILE_STREAM_INFO records
@@ -285,8 +250,115 @@ func parseStreamInfo(buffer []byte) ([]nativeStream, error) {
 	return streams, nil
 }
 
-func align8(value int) int {
-	return (value + 7) &^ 7
+func queryFileInformation(handle syscall.Handle, class uint32, output unsafe.Pointer, size uintptr) error {
+	r1, _, callErr := procGetFileInformationByHandleEx.Call(
+		uintptr(handle),
+		uintptr(class),
+		uintptr(output),
+		size,
+	)
+	if r1 == 0 {
+		return callErr
+	}
+	return nil
+}
+
+// queryNativeState gets metadata, reparse tag information, and FILE_ID_INFO
+// from the same open handle.
+func queryNativeState(handle syscall.Handle) (nativeState, error) {
+	var state nativeState
+
+	if err := queryFileInformation(
+		handle,
+		fileBasicInfoClass,
+		unsafe.Pointer(&state.Basic),
+		unsafe.Sizeof(state.Basic),
+	); err != nil {
+		return nativeState{}, &Error{
+			Stage: StageMetadata,
+			Op:    "GetFileInformationByHandleEx(FileBasicInfo)",
+			Err:   err,
+		}
+	}
+
+	if err := queryFileInformation(
+		handle,
+		fileStandardInfoClass,
+		unsafe.Pointer(&state.Standard),
+		unsafe.Sizeof(state.Standard),
+	); err != nil {
+		return nativeState{}, &Error{
+			Stage: StageMetadata,
+			Op:    "GetFileInformationByHandleEx(FileStandardInfo)",
+			Err:   err,
+		}
+	}
+
+	if err := queryFileInformation(
+		handle,
+		fileAttributeTagInfoClass,
+		unsafe.Pointer(&state.AttributeTag),
+		unsafe.Sizeof(state.AttributeTag),
+	); err != nil {
+		return nativeState{}, &Error{
+			Stage: StageMetadata,
+			Op:    "GetFileInformationByHandleEx(FileAttributeTagInfo)",
+			Err:   err,
+		}
+	}
+
+	if err := queryFileInformation(
+		handle,
+		fileIdInfoClass,
+		unsafe.Pointer(&state.ID),
+		unsafe.Sizeof(state.ID),
+	); err != nil {
+		return nativeState{}, &Error{
+			Stage: StageIdentity,
+			Op:    "GetFileInformationByHandleEx(FileIdInfo)",
+			Err:   err,
+		}
+	}
+
+	return state, nil
+}
+
+// queryStreams asks Windows for FILE_STREAM_INFO using a bounded growing buffer.
+func queryStreams(handle syscall.Handle) ([]nativeStream, error) {
+	for size := initialStreamInfoBuffer; size <= maximumStreamInfoBuffer; size *= 2 {
+		buffer := make([]byte, size)
+
+		r1, _, callErr := procGetFileInformationByHandleEx.Call(
+			uintptr(handle),
+			uintptr(fileStreamInfoClass),
+			uintptr(unsafe.Pointer(&buffer[0])),
+			uintptr(len(buffer)),
+		)
+		if r1 != 0 {
+			return parseStreamInfo(buffer)
+		}
+
+		if errno, ok := callErr.(syscall.Errno); ok {
+			switch errno {
+			case errorHandleEOF:
+				return []nativeStream{}, nil
+			case errorInsufficientBuffer, errorMoreData:
+				continue
+			}
+		}
+
+		return nil, &Error{
+			Stage: StageStreams,
+			Op:    "GetFileInformationByHandleEx(FileStreamInfo)",
+			Err:   callErr,
+		}
+	}
+
+	return nil, &Error{
+		Stage: StageStreams,
+		Op:    "GetFileInformationByHandleEx(FileStreamInfo)",
+		Err:   ErrStreamBufferLimit,
+	}
 }
 
 // queryVolume returns the filesystem name for the volume containing the open
@@ -309,41 +381,6 @@ func queryVolume(handle syscall.Handle) (string, error) {
 	}
 
 	return syscall.UTF16ToString(fileSystemBuffer[:]), nil
-}
-
-// finalVolumePath resolves an open handle to a normalized volume-GUID path.
-//
-// FI uses this handle-derived path for containment rather than trusting the
-// caller's original drive-letter string.
-func finalVolumePath(handle syscall.Handle) ([]uint16, error) {
-	buffer := make([]uint16, 512)
-
-	for attempts := 0; attempts < 3; attempts++ {
-		length, _, callErr := procGetFinalPathNameByHandleW.Call(
-			uintptr(handle),
-			uintptr(unsafe.Pointer(&buffer[0])),
-			uintptr(len(buffer)),
-			fileNameNormalized|volumeNameGUID,
-		)
-		if length == 0 {
-			return nil, callErr
-		}
-
-		if length < uintptr(len(buffer)) {
-			result := append([]uint16(nil), buffer[:length]...)
-			if !hasASCIIPrefix(result, `\\?\Volume{`) {
-				return nil, ErrNotLocalVolume
-			}
-			if _, err := volumeGUIDFromFinalPath(result); err != nil {
-				return nil, err
-			}
-			return result, nil
-		}
-
-		buffer = make([]uint16, int(length)+1)
-	}
-
-	return nil, fmt.Errorf("final path exceeded retry bound")
 }
 
 func volumeGUIDFromFinalPath(path []uint16) (string, error) {

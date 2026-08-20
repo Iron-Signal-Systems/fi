@@ -25,15 +25,31 @@ type MetadataObservation struct {
 	LinkCount      string `json:"link_count"`
 }
 
-// StreamObservation records one stream returned by Windows and the sizes
-// Windows reported for that stream.
+// ObservationWarning records a non-fatal problem found during collection.
 //
-// Hashing and classification are separate capabilities and are not represented
-// here unless those capabilities actually collect them.
-type StreamObservation struct {
-	Identity      StreamIdentity `json:"identity"`
-	LogicalSize   string         `json:"logical_size"`
-	AllocatedSize string         `json:"allocated_size"`
+// Windows emits a warning when FI can still return useful source facts but
+// could not prove every expected condition, for example when metadata changed
+// during collection or path consistency could not be rechecked.
+//
+// Fatal failures are returned as errors instead.
+type ObservationWarning struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// ReparseObservation records the exact reparse-point state Windows reported for
+// one object.
+//
+// State is NotPresent when Windows did not report FILE_ATTRIBUTE_REPARSE_POINT.
+// In that state Tag and TagName are omitted.
+//
+// State is Present when Windows reported FILE_ATTRIBUTE_REPARSE_POINT. Tag then
+// preserves the exact 32-bit Windows reparse tag as canonical hexadecimal.
+// TagName is the exact documented name when FI knows it, otherwise NotKnown.
+type ReparseObservation struct {
+	State   ReparseState `json:"state"`
+	Tag     string       `json:"tag,omitempty"`
+	TagName string       `json:"tag_name,omitempty"`
 }
 
 // StreamInventory records the result of enumerating all streams for one object.
@@ -47,16 +63,15 @@ type StreamInventory struct {
 	ReasonCode string              `json:"reason_code,omitempty"`
 }
 
-// ObservationWarning records a non-fatal problem found during collection.
+// StreamObservation records one stream returned by Windows and the sizes
+// Windows reported for that stream.
 //
-// Windows emits a warning when FI can still return useful source facts but
-// could not prove every expected condition, for example when metadata changed
-// during collection or path consistency could not be rechecked.
-//
-// Fatal failures are returned as errors instead.
-type ObservationWarning struct {
-	Code   string `json:"code"`
-	Detail string `json:"detail,omitempty"`
+// Hashing and classification are separate capabilities and are not represented
+// here unless those capabilities actually collect them.
+type StreamObservation struct {
+	Identity      StreamIdentity `json:"identity"`
+	LogicalSize   string         `json:"logical_size"`
+	AllocatedSize string         `json:"allocated_size"`
 }
 
 // END Used by Windows Systems and Backend Recorder.

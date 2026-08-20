@@ -35,104 +35,6 @@ func (e *ValidationError) Error() string {
 	return e.Code + ": " + e.Field
 }
 
-func invalid(code, field string) error {
-	return &ValidationError{Code: code, Field: field}
-}
-
-func require(value, field string) error {
-	if value == "" {
-		return invalid("Required", field)
-	}
-	return nil
-}
-
-func canonicalUnsigned(value string) (uint64, error) {
-	if value == "0" {
-		return 0, nil
-	}
-	if value == "" || value[0] < '1' || value[0] > '9' {
-		return 0, errors.New("not canonical unsigned decimal")
-	}
-	for i := 1; i < len(value); i++ {
-		if value[i] < '0' || value[i] > '9' {
-			return 0, errors.New("not canonical unsigned decimal")
-		}
-	}
-	return strconv.ParseUint(value, 10, 64)
-}
-
-func validateDecimal(value, field string) error {
-	if _, err := canonicalUnsigned(value); err != nil {
-		return invalid("InvalidDecimal", field)
-	}
-	return nil
-}
-
-func validateTimestamp(value, field string) error {
-	const layout = "2006-01-02T15:04:05.000000000Z"
-	if len(value) != len(layout) {
-		return invalid("InvalidTimestamp", field)
-	}
-	parsed, err := time.Parse(layout, value)
-	if err != nil || parsed.Format(layout) != value {
-		return invalid("InvalidTimestamp", field)
-	}
-	return nil
-}
-
-func decodeBase64URL(value, field string) ([]byte, error) {
-	if strings.ContainsAny(value, "=+/ \t\r\n") {
-		return nil, invalid("InvalidBase64URL", field)
-	}
-	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
-	if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != value {
-		return nil, invalid("InvalidBase64URL", field)
-	}
-	return decoded, nil
-}
-
-func validateUTF16LEBase64URL(value, field string) error {
-	decoded, err := decodeBase64URL(value, field)
-	if err != nil {
-		return err
-	}
-	if len(decoded)%2 != 0 {
-		return invalid("InvalidUTF16LE", field)
-	}
-	return nil
-}
-
-func validateObservationState(state ObservationState, field string) error {
-	switch state {
-	case ObservationStatePresent, ObservationStateError:
-		return nil
-	default:
-		return invalid("UnsupportedValue", field)
-	}
-}
-
-// ValidateVolumeIdentity validates a shared NTFS volume identity.
-func ValidateVolumeIdentity(identity VolumeIdentity) error {
-	if err := require(identity.MethodVersion, "volume_identity.method_version"); err != nil {
-		return err
-	}
-	if err := require(identity.VolumeGUID, "volume_identity.volume_guid"); err != nil {
-		return err
-	}
-	return validateDecimal(identity.VolumeSerial, "volume_identity.volume_serial")
-}
-
-// ValidateNTFSObjectIdentity validates a shared NTFS object identity.
-func ValidateNTFSObjectIdentity(identity NTFSObjectIdentity) error {
-	if err := require(identity.MethodVersion, "object_identity.method_version"); err != nil {
-		return err
-	}
-	if err := validateDecimal(identity.FileReferenceNumber, "object_identity.file_reference_number"); err != nil {
-		return err
-	}
-	return validateDecimal(identity.SequenceNumber, "object_identity.sequence_number")
-}
-
 // ValidateGovernedRootIdentity validates the established governed root.
 func ValidateGovernedRootIdentity(root GovernedRootIdentity) error {
 	if err := require(root.ScopeID, "governed_root.scope_id"); err != nil {
@@ -157,51 +59,6 @@ func ValidateGovernedRootIdentity(root GovernedRootIdentity) error {
 		return err
 	}
 	return ValidateNTFSObjectIdentity(root.ObjectIdentity)
-}
-
-// ValidatePathContainment validates the recorded containment method.
-func ValidatePathContainment(containment PathContainment) error {
-	return require(containment.MethodVersion, "containment.method_version")
-}
-
-// ValidateSubjectKind validates the NTFS object kind emitted by the collector.
-func ValidateSubjectKind(kind SubjectKind) error {
-	switch kind {
-	case SubjectFile, SubjectDirectory, SubjectReparseObject:
-		return nil
-	default:
-		return invalid("UnsupportedValue", "subject_kind")
-	}
-}
-
-// ValidatePathBinding validates the exact requested and resolved UTF-16LE path
-// representations.
-func ValidatePathBinding(binding PathBinding) error {
-	if err := require(
-		binding.RequestedPathUTF16LEBase64URL,
-		"path_binding.requested_path_utf16le_base64url",
-	); err != nil {
-		return err
-	}
-
-	if err := validateUTF16LEBase64URL(
-		binding.RequestedPathUTF16LEBase64URL,
-		"path_binding.requested_path_utf16le_base64url",
-	); err != nil {
-		return err
-	}
-
-	if err := require(
-		binding.ResolvedPathUTF16LEBase64URL,
-		"path_binding.resolved_path_utf16le_base64url",
-	); err != nil {
-		return err
-	}
-
-	return validateUTF16LEBase64URL(
-		binding.ResolvedPathUTF16LEBase64URL,
-		"path_binding.resolved_path_utf16le_base64url",
-	)
 }
 
 // ValidateMetadataObservation validates canonical metadata values in a fixed
@@ -237,6 +94,98 @@ func ValidateMetadataObservation(metadata MetadataObservation) error {
 		}
 	}
 	return nil
+}
+
+// ValidateNTFSObjectIdentity validates a shared NTFS object identity.
+func ValidateNTFSObjectIdentity(identity NTFSObjectIdentity) error {
+	if err := require(identity.MethodVersion, "object_identity.method_version"); err != nil {
+		return err
+	}
+	if err := validateDecimal(identity.FileReferenceNumber, "object_identity.file_reference_number"); err != nil {
+		return err
+	}
+	return validateDecimal(identity.SequenceNumber, "object_identity.sequence_number")
+}
+
+// ValidateObservationStatus validates the statuses the current NTFS collector
+// can actually emit.
+func ValidateObservationStatus(status ObservationStatus) error {
+	switch status {
+	case ObservationChangedDuringCollection, ObservationComplete, ObservationPartial,
+		ObservationReplacedDuringCollection:
+		return nil
+	default:
+		return invalid("UnsupportedValue", "observation_status")
+	}
+}
+
+// ValidateObservationWarnings validates stable warning identities and ordering.
+func ValidateObservationWarnings(warnings []ObservationWarning) error {
+	previous := ""
+	for i, warning := range warnings {
+		if err := require(warning.Code, fmt.Sprintf("warnings[%d].code", i)); err != nil {
+			return err
+		}
+		if previous != "" && warning.Code <= previous {
+			return invalid("UnsortedCollection", "warnings")
+		}
+		previous = warning.Code
+	}
+	return nil
+}
+
+// ValidatePathBinding validates the exact requested and resolved UTF-16LE path
+// representations.
+func ValidatePathBinding(binding PathBinding) error {
+	if err := require(
+		binding.RequestedPathUTF16LEBase64URL,
+		"path_binding.requested_path_utf16le_base64url",
+	); err != nil {
+		return err
+	}
+
+	if err := validateUTF16LEBase64URL(
+		binding.RequestedPathUTF16LEBase64URL,
+		"path_binding.requested_path_utf16le_base64url",
+	); err != nil {
+		return err
+	}
+
+	if err := require(
+		binding.ResolvedPathUTF16LEBase64URL,
+		"path_binding.resolved_path_utf16le_base64url",
+	); err != nil {
+		return err
+	}
+
+	return validateUTF16LEBase64URL(
+		binding.ResolvedPathUTF16LEBase64URL,
+		"path_binding.resolved_path_utf16le_base64url",
+	)
+}
+
+// ValidatePathContainment validates the recorded containment method.
+func ValidatePathContainment(containment PathContainment) error {
+	return require(containment.MethodVersion, "containment.method_version")
+}
+
+// ValidateReparseObservation validates the shared representation of Windows
+// reparse state.
+func ValidateReparseObservation(reparse ReparseObservation) error {
+	switch reparse.State {
+	case ReparseStateNotPresent:
+		if reparse.Tag != "" || reparse.TagName != "" {
+			return invalid("Conflict", "reparse")
+		}
+		return nil
+	case ReparseStatePresent:
+		if err := validateReparseTag(reparse.Tag, "reparse.tag"); err != nil {
+			return err
+		}
+		return require(reparse.TagName, "reparse.tag_name")
+	default:
+		return invalid("UnsupportedValue", "reparse.state")
+	}
 }
 
 // ValidateStreamIdentity validates the exact NTFS stream identity.
@@ -309,29 +258,117 @@ func ValidateStreamInventory(inventory StreamInventory) error {
 	return nil
 }
 
-// ValidateObservationStatus validates the statuses the current NTFS collector
-// can actually emit.
-func ValidateObservationStatus(status ObservationStatus) error {
-	switch status {
-	case ObservationComplete, ObservationPartial, ObservationChangedDuringCollection,
-		ObservationReplacedDuringCollection:
+// ValidateSubjectKind validates the base NTFS object kind emitted by the
+// collector. Reparse state is validated separately.
+func ValidateSubjectKind(kind SubjectKind) error {
+	switch kind {
+	case SubjectDirectory, SubjectFile:
 		return nil
 	default:
-		return invalid("UnsupportedValue", "observation_status")
+		return invalid("UnsupportedValue", "subject_kind")
 	}
 }
 
-// ValidateObservationWarnings validates stable warning identities and ordering.
-func ValidateObservationWarnings(warnings []ObservationWarning) error {
-	previous := ""
-	for i, warning := range warnings {
-		if err := require(warning.Code, fmt.Sprintf("warnings[%d].code", i)); err != nil {
-			return err
+// ValidateVolumeIdentity validates a shared NTFS volume identity.
+func ValidateVolumeIdentity(identity VolumeIdentity) error {
+	if err := require(identity.MethodVersion, "volume_identity.method_version"); err != nil {
+		return err
+	}
+	if err := require(identity.VolumeGUID, "volume_identity.volume_guid"); err != nil {
+		return err
+	}
+	return validateDecimal(identity.VolumeSerial, "volume_identity.volume_serial")
+}
+
+func canonicalUnsigned(value string) (uint64, error) {
+	if value == "0" {
+		return 0, nil
+	}
+	if value == "" || value[0] < '1' || value[0] > '9' {
+		return 0, errors.New("not canonical unsigned decimal")
+	}
+	for i := 1; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return 0, errors.New("not canonical unsigned decimal")
 		}
-		if previous != "" && warning.Code <= previous {
-			return invalid("UnsortedCollection", "warnings")
+	}
+	return strconv.ParseUint(value, 10, 64)
+}
+
+func decodeBase64URL(value, field string) ([]byte, error) {
+	if strings.ContainsAny(value, "=+/ \t\r\n") {
+		return nil, invalid("InvalidBase64URL", field)
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
+	if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != value {
+		return nil, invalid("InvalidBase64URL", field)
+	}
+	return decoded, nil
+}
+
+func invalid(code, field string) error {
+	return &ValidationError{Code: code, Field: field}
+}
+
+func require(value, field string) error {
+	if value == "" {
+		return invalid("Required", field)
+	}
+	return nil
+}
+
+func validateDecimal(value, field string) error {
+	if _, err := canonicalUnsigned(value); err != nil {
+		return invalid("InvalidDecimal", field)
+	}
+	return nil
+}
+
+func validateObservationState(state ObservationState, field string) error {
+	switch state {
+	case ObservationStateError, ObservationStatePresent:
+		return nil
+	default:
+		return invalid("UnsupportedValue", field)
+	}
+}
+
+func validateReparseTag(value, field string) error {
+	if len(value) != 10 || value[0:2] != "0x" {
+		return invalid("InvalidReparseTag", field)
+	}
+
+	for _, character := range value[2:] {
+		switch {
+		case character >= '0' && character <= '9':
+		case character >= 'A' && character <= 'F':
+		default:
+			return invalid("InvalidReparseTag", field)
 		}
-		previous = warning.Code
+	}
+
+	return nil
+}
+
+func validateTimestamp(value, field string) error {
+	const layout = "2006-01-02T15:04:05.000000000Z"
+	if len(value) != len(layout) {
+		return invalid("InvalidTimestamp", field)
+	}
+	parsed, err := time.Parse(layout, value)
+	if err != nil || parsed.Format(layout) != value {
+		return invalid("InvalidTimestamp", field)
+	}
+	return nil
+}
+
+func validateUTF16LEBase64URL(value, field string) error {
+	decoded, err := decodeBase64URL(value, field)
+	if err != nil {
+		return err
+	}
+	if len(decoded)%2 != 0 {
+		return invalid("InvalidUTF16LE", field)
 	}
 	return nil
 }

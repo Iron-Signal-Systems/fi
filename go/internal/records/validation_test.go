@@ -10,15 +10,52 @@ import (
 	"testing"
 )
 
-func utf16b64(s string) string {
-	b := make([]byte, 0, len(s)*2)
-	for _, r := range s {
-		if r > 0x7f {
-			panic("test helper only supports ASCII")
-		}
-		b = append(b, byte(r), 0)
+func TestValidateReparseObservationKnown(t *testing.T) {
+	reparse := ReparseObservation{
+		State:   ReparseStatePresent,
+		Tag:     "0xA0000003",
+		TagName: "IO_REPARSE_TAG_MOUNT_POINT",
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+
+	if err := ValidateReparseObservation(reparse); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateReparseObservationNotPresentRejectsTag(t *testing.T) {
+	reparse := ReparseObservation{
+		State:   ReparseStateNotPresent,
+		Tag:     "0xA0000003",
+		TagName: "IO_REPARSE_TAG_MOUNT_POINT",
+	}
+
+	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "Conflict") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateReparseObservationRejectsMalformedTag(t *testing.T) {
+	reparse := ReparseObservation{
+		State:   ReparseStatePresent,
+		Tag:     "0xa0000003",
+		TagName: "IO_REPARSE_TAG_MOUNT_POINT",
+	}
+
+	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "InvalidReparseTag") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateReparseObservationUnknown(t *testing.T) {
+	reparse := ReparseObservation{
+		State:   ReparseStatePresent,
+		Tag:     "0xDEADBEEF",
+		TagName: ReparseTagNameNotKnown,
+	}
+
+	if err := ValidateReparseObservation(reparse); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestValidateStreamInventory(t *testing.T) {
@@ -46,6 +83,21 @@ func TestValidateStreamInventory(t *testing.T) {
 	}
 }
 
+func TestValidateStreamInventoryRejectsErrorWithStreams(t *testing.T) {
+	inventory := StreamInventory{
+		State:      ObservationStateError,
+		ReasonCode: "StreamEnumerationFailed",
+		Streams: []StreamObservation{{
+			Identity:      StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
+			LogicalSize:   "1",
+			AllocatedSize: "8",
+		}},
+	}
+	if err := ValidateStreamInventory(inventory); err == nil || !strings.Contains(err.Error(), "Conflict") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestValidateStreamInventoryRejectsLeadingZero(t *testing.T) {
 	inventory := StreamInventory{
 		State: ObservationStatePresent,
@@ -60,17 +112,13 @@ func TestValidateStreamInventoryRejectsLeadingZero(t *testing.T) {
 	}
 }
 
-func TestValidateStreamInventoryRejectsErrorWithStreams(t *testing.T) {
-	inventory := StreamInventory{
-		State:      ObservationStateError,
-		ReasonCode: "StreamEnumerationFailed",
-		Streams: []StreamObservation{{
-			Identity:      StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
-			LogicalSize:   "1",
-			AllocatedSize: "8",
-		}},
+func utf16b64(s string) string {
+	b := make([]byte, 0, len(s)*2)
+	for _, r := range s {
+		if r > 0x7f {
+			panic("test helper only supports ASCII")
+		}
+		b = append(b, byte(r), 0)
 	}
-	if err := ValidateStreamInventory(inventory); err == nil || !strings.Contains(err.Error(), "Conflict") {
-		t.Fatalf("error = %v", err)
-	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }

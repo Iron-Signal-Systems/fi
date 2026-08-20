@@ -52,7 +52,7 @@ func CollectPath(ctx context.Context, scopeID string, governedRoot string, targe
 //  1. validate scope and caller paths;
 //  2. establish the governed root from an open handle;
 //  3. open the target and prove handle-derived containment;
-//  4. collect identity, metadata, and streams;
+//  4. collect identity, metadata, reparse state, and streams;
 //  5. check for change/replacement while collection was running;
 //  6. build and validate the shared FI observation.
 func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, targetPath []uint16) (Observation, error) {
@@ -197,7 +197,12 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, &Error{Stage: StageMetadata, Op: "Convert", Err: err}
 	}
 
-	if pre.Basic != post.Basic || pre.Standard != post.Standard {
+	reparse := reparseObservation(
+		post.AttributeTag.FileAttributes&fileAttributeReparse != 0,
+		post.AttributeTag.ReparseTag,
+	)
+
+	if pre.AttributeTag != post.AttributeTag || pre.Basic != post.Basic || pre.Standard != post.Standard {
 		if status == records.ObservationComplete {
 			status = records.ObservationChangedDuringCollection
 		} else {
@@ -266,6 +271,7 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 			ResolvedPathUTF16LEBase64URL:  utf16LEBase64URL(targetFinalPath),
 		},
 		Metadata:          metadata,
+		Reparse:           reparse,
 		StreamInventory:   streamInventory,
 		CollectionMethod:  records.CollectionDirectWindowsNTFS,
 		ObservationStatus: status,
@@ -276,22 +282,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, &Error{Stage: StageMetadata, Op: "ValidateObservation", Err: err}
 	}
 	return observation, nil
-}
-
-func validateContext(ctx context.Context) error {
-	if ctx == nil {
-		return nil
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return nil
-	}
-}
-
-func nulTerminate(path []uint16) []uint16 {
-	return append(append([]uint16(nil), path...), 0)
 }
 
 // metadataFromState converts the Windows basic/standard information returned
@@ -319,9 +309,7 @@ func metadataFromState(state nativeState) (records.MetadataObservation, records.
 	}
 
 	subjectKind := records.SubjectFile
-	if state.Basic.FileAttributes&fileAttributeReparse != 0 {
-		subjectKind = records.SubjectReparseObject
-	} else if state.Standard.Directory != 0 || state.Basic.FileAttributes&fileAttributeDirectory != 0 {
+	if state.Standard.Directory != 0 || state.Basic.FileAttributes&fileAttributeDirectory != 0 {
 		subjectKind = records.SubjectDirectory
 	}
 
@@ -335,6 +323,10 @@ func metadataFromState(state nativeState) (records.MetadataObservation, records.
 		RawAttributes:  strconv.FormatUint(uint64(state.Basic.FileAttributes), 10),
 		LinkCount:      strconv.FormatUint(uint64(state.Standard.NumberOfLinks), 10),
 	}, subjectKind, nil
+}
+
+func nulTerminate(path []uint16) []uint16 {
+	return append(append([]uint16(nil), path...), 0)
 }
 
 // streamObservations converts Windows FILE_STREAM_INFO entries and sorts them
@@ -357,4 +349,16 @@ func streamObservations(native []nativeStream) ([]records.StreamObservation, err
 			observations[j].Identity.RawNameUTF16LEBase64URL
 	})
 	return observations, nil
+}
+
+func validateContext(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }

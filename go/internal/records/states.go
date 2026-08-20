@@ -6,13 +6,14 @@ package records
 
 // Used by Windows Systems and Backend Recorder.
 
-// SubjectKind identifies the NTFS object kind observed by Windows.
-type SubjectKind string
+// CollectionMethod identifies the source-side mechanism that produced an
+// observation.
+//
+// Only mechanisms that actually exist belong here.
+type CollectionMethod string
 
 const (
-	SubjectFile          SubjectKind = "File"
-	SubjectDirectory     SubjectKind = "Directory"
-	SubjectReparseObject SubjectKind = "ReparseObject"
+	CollectionDirectWindowsNTFS CollectionMethod = "DirectWindowsNTFS"
 )
 
 // ObservationState describes a sub-observation that can fail without making the
@@ -22,8 +23,8 @@ const (
 type ObservationState string
 
 const (
-	ObservationStatePresent ObservationState = "Present"
 	ObservationStateError   ObservationState = "Error"
+	ObservationStatePresent ObservationState = "Present"
 )
 
 // ObservationStatus describes the overall result of the current direct NTFS
@@ -36,21 +37,23 @@ const (
 type ObservationStatus string
 
 const (
+	ObservationChangedDuringCollection  ObservationStatus = "ChangedDuringCollection"
 	ObservationComplete                 ObservationStatus = "Complete"
 	ObservationPartial                  ObservationStatus = "Partial"
-	ObservationChangedDuringCollection  ObservationStatus = "ChangedDuringCollection"
 	ObservationReplacedDuringCollection ObservationStatus = "ReplacedDuringCollection"
 )
 
-// CollectionMethod identifies the source-side mechanism that produced an
-// observation.
-//
-// Only mechanisms that actually exist belong here.
-type CollectionMethod string
+// ReparseState records whether Windows reported a reparse point for the object.
+type ReparseState string
 
 const (
-	CollectionDirectWindowsNTFS CollectionMethod = "DirectWindowsNTFS"
+	ReparseStateNotPresent ReparseState = "NotPresent"
+	ReparseStatePresent    ReparseState = "Present"
 )
+
+// ReparseTagNameNotKnown means FI preserved an exact reparse tag value but does
+// not have an exact documented name for that value.
+const ReparseTagNameNotKnown = "NotKnown"
 
 // StreamKind identifies how an NTFS stream relates to its parent object.
 type StreamKind string
@@ -59,6 +62,15 @@ const (
 	StreamDefaultData StreamKind = "DefaultData"
 	StreamNamedData   StreamKind = "NamedData"
 	StreamOther       StreamKind = "Other"
+)
+
+// SubjectKind identifies the base NTFS object kind observed by Windows.
+// Reparse state and tag identity are recorded separately.
+type SubjectKind string
+
+const (
+	SubjectDirectory SubjectKind = "Directory"
+	SubjectFile      SubjectKind = "File"
 )
 
 // END Used by Windows Systems and Backend Recorder.
