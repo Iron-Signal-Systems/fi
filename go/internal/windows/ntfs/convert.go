@@ -65,62 +65,18 @@ func buildObjectIdentity(volumeSerial uint64, fileID [16]byte) (records.VolumeId
 		return records.VolumeIdentity{}, records.NTFSObjectIdentity{}, err
 	}
 	return records.VolumeIdentity{
-		MethodVersion: IdentityMethodVersion,
-		VolumeSerial:  strconv.FormatUint(volumeSerial, 10),
-	}, records.NTFSObjectIdentity{
-		MethodVersion:       IdentityMethodVersion,
-		FileReferenceNumber: strconv.FormatUint(recordNumber, 10),
-		SequenceNumber:      strconv.FormatUint(uint64(sequenceNumber), 10),
-	}, nil
+			MethodVersion: IdentityMethodVersion,
+			VolumeSerial:  strconv.FormatUint(volumeSerial, 10),
+		}, records.NTFSObjectIdentity{
+			MethodVersion:       IdentityMethodVersion,
+			FileReferenceNumber: strconv.FormatUint(recordNumber, 10),
+			SequenceNumber:      strconv.FormatUint(uint64(sequenceNumber), 10),
+		}, nil
 }
 
-// streamIdentityFromWindowsName parses the :name:type form returned by
-// FILE_STREAM_INFO while always preserving the exact raw UTF-16 stream name.
+// streamIdentityFromWindowsName uses the shared canonical interpretation so the
+// Windows producer and backend validator cannot drift into different meanings
+// for the same raw FILE_STREAM_INFO name.
 func streamIdentityFromWindowsName(name []uint16) records.StreamIdentity {
-	identity := records.StreamIdentity{
-		RawNameUTF16LEBase64URL: utf16LEBase64URL(name),
-	}
-
-	first := -1
-	last := -1
-	for i, unit := range name {
-		if unit == ':' {
-			if first < 0 {
-				first = i
-			}
-			last = i
-		}
-	}
-
-	if first != 0 || last <= first {
-		identity.Kind = records.StreamOther
-		identity.NameUTF16LEBase64URL = utf16LEBase64URL(name)
-		identity.StreamType = "Unknown"
-		return identity
-	}
-
-	streamName := name[first+1 : last]
-	streamType := string(runesFromUTF16(name[last+1:]))
-	identity.StreamType = streamType
-
-	if len(streamName) == 0 && streamType == "$DATA" {
-		identity.Kind = records.StreamDefaultData
-		return identity
-	}
-
-	identity.NameUTF16LEBase64URL = utf16LEBase64URL(streamName)
-	if streamType == "$DATA" {
-		identity.Kind = records.StreamNamedData
-	} else {
-		identity.Kind = records.StreamOther
-	}
-	return identity
-}
-
-func runesFromUTF16(units []uint16) []rune {
-	runes := make([]rune, len(units))
-	for i, unit := range units {
-		runes[i] = rune(unit)
-	}
-	return runes
+	return records.StreamIdentityFromRawUTF16(name)
 }

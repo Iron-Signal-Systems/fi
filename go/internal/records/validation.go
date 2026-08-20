@@ -23,6 +23,11 @@ import (
 // These checks validate the shared record representation. They do not repeat
 // Windows API safety checks, which belong under internal/windows.
 
+const (
+	maxNTFSFileReferenceNumber uint64 = 0x0000FFFFFFFFFFFF
+	maxNTFSSequenceNumber      uint64 = 0xFFFF
+)
+
 // ValidationError gives a stable validation code and field name.
 type ValidationError struct {
 	Code  string
@@ -102,10 +107,10 @@ func ValidateNTFSObjectIdentity(identity NTFSObjectIdentity) error {
 	if err := require(identity.MethodVersion, "object_identity.method_version"); err != nil {
 		return err
 	}
-	if err := validateDecimal(identity.FileReferenceNumber, "object_identity.file_reference_number"); err != nil {
+	if err := validateDecimalMax(identity.FileReferenceNumber, maxNTFSFileReferenceNumber, "object_identity.file_reference_number"); err != nil {
 		return err
 	}
-	return validateDecimal(identity.SequenceNumber, "object_identity.sequence_number")
+	return validateDecimalMax(identity.SequenceNumber, maxNTFSSequenceNumber, "object_identity.sequence_number")
 }
 
 // ValidateObservedAt validates the canonical UTC time when FI completed the
@@ -144,31 +149,16 @@ func ValidateObservationWarnings(warnings []ObservationWarning) error {
 // ValidatePathBinding validates the exact requested and resolved UTF-16LE path
 // representations.
 func ValidatePathBinding(binding PathBinding) error {
-	if err := require(
-		binding.RequestedPathUTF16LEBase64URL,
-		"path_binding.requested_path_utf16le_base64url",
-	); err != nil {
+	if err := require(binding.RequestedPathUTF16LEBase64URL, "path_binding.requested_path_utf16le_base64url"); err != nil {
 		return err
 	}
-
-	if err := validateUTF16LEBase64URL(
-		binding.RequestedPathUTF16LEBase64URL,
-		"path_binding.requested_path_utf16le_base64url",
-	); err != nil {
+	if err := validateUTF16LEBase64URL(binding.RequestedPathUTF16LEBase64URL, "path_binding.requested_path_utf16le_base64url"); err != nil {
 		return err
 	}
-
-	if err := require(
-		binding.ResolvedPathUTF16LEBase64URL,
-		"path_binding.resolved_path_utf16le_base64url",
-	); err != nil {
+	if err := require(binding.ResolvedPathUTF16LEBase64URL, "path_binding.resolved_path_utf16le_base64url"); err != nil {
 		return err
 	}
-
-	return validateUTF16LEBase64URL(
-		binding.ResolvedPathUTF16LEBase64URL,
-		"path_binding.resolved_path_utf16le_base64url",
-	)
+	return validateUTF16LEBase64URL(binding.ResolvedPathUTF16LEBase64URL, "path_binding.resolved_path_utf16le_base64url")
 }
 
 // ValidatePathContainment validates the recorded containment method.
@@ -177,7 +167,9 @@ func ValidatePathContainment(containment PathContainment) error {
 }
 
 // ValidateReparseObservation validates both the shape and the internal
-// consistency of the shared Windows reparse representation.
+// consistency of the shared Windows reparse representation. For documented
+// layouts FI understands, parsed fields must exactly match the preserved raw
+// reparse buffer.
 func ValidateReparseObservation(reparse ReparseObservation) error {
 	switch reparse.State {
 	case ReparseStateNotPresent:
@@ -239,57 +231,28 @@ func ValidateReparseObservation(reparse ReparseObservation) error {
 
 			switch reparse.DataFormat {
 			case ReparseDataFormatMountPoint:
-				if reparse.Tag != "0xA0000003" || reparse.SymbolicLinkFlags != "" || reparse.ReasonCode != "" {
+				if reparse.Tag != reparseTagMountPointCanonical || reparse.SymbolicLinkFlags != "" || reparse.ReasonCode != "" {
 					return invalid("Conflict", "reparse.data_format")
 				}
-				if reparse.PrintNameUTF16LEBase64URL != "" {
-					if err := validateUTF16LEBase64URL(reparse.PrintNameUTF16LEBase64URL, "reparse.print_name_utf16le_base64url"); err != nil {
-						return err
-					}
-				}
-				if reparse.SubstituteNameUTF16LEBase64URL != "" {
-					if err := validateUTF16LEBase64URL(reparse.SubstituteNameUTF16LEBase64URL, "reparse.substitute_name_utf16le_base64url"); err != nil {
-						return err
-					}
-				}
-				return nil
-
 			case ReparseDataFormatRaw:
 				if reparse.PrintNameUTF16LEBase64URL != "" ||
 					reparse.SubstituteNameUTF16LEBase64URL != "" ||
 					reparse.SymbolicLinkFlags != "" {
 					return invalid("Conflict", "reparse")
 				}
-				return nil
-
 			case ReparseDataFormatSymbolicLink:
-				if reparse.Tag != "0xA000000C" || reparse.ReasonCode != "" {
+				if reparse.Tag != reparseTagSymlinkCanonical || reparse.ReasonCode != "" {
 					return invalid("Conflict", "reparse.data_format")
 				}
 				if err := require(reparse.SymbolicLinkFlags, "reparse.symbolic_link_flags"); err != nil {
 					return err
 				}
-				if err := validateHex32(reparse.SymbolicLinkFlags, "reparse.symbolic_link_flags"); err != nil {
-					return err
-				}
-				if reparse.PrintNameUTF16LEBase64URL != "" {
-					if err := validateUTF16LEBase64URL(reparse.PrintNameUTF16LEBase64URL, "reparse.print_name_utf16le_base64url"); err != nil {
-						return err
-					}
-				}
-				if reparse.SubstituteNameUTF16LEBase64URL != "" {
-					if err := validateUTF16LEBase64URL(reparse.SubstituteNameUTF16LEBase64URL, "reparse.substitute_name_utf16le_base64url"); err != nil {
-						return err
-					}
-				}
-				return nil
-
 			case ReparseDataFormatNotApplicable, ReparseDataFormatNotKnown:
 				return invalid("Conflict", "reparse.data_format")
-
 			default:
 				return invalid("UnsupportedValue", "reparse.data_format")
 			}
+			return validateReparsePayloadConsistency(reparse, raw)
 
 		default:
 			return invalid("UnsupportedValue", "reparse.data_state")
@@ -300,12 +263,15 @@ func ValidateReparseObservation(reparse ReparseObservation) error {
 	}
 }
 
-// ValidateStreamIdentity validates the exact NTFS stream identity.
+// ValidateStreamIdentity validates the exact NTFS stream identity and proves
+// that every interpreted field is the deterministic projection of the raw
+// UTF-16 stream name.
 func ValidateStreamIdentity(identity StreamIdentity) error {
 	if err := require(identity.RawNameUTF16LEBase64URL, "stream_identity.raw_name_utf16le_base64url"); err != nil {
 		return err
 	}
-	if err := validateUTF16LEBase64URL(identity.RawNameUTF16LEBase64URL, "stream_identity.raw_name_utf16le_base64url"); err != nil {
+	rawUnits, err := decodeUTF16LEBase64URLUnits(identity.RawNameUTF16LEBase64URL, "stream_identity.raw_name_utf16le_base64url")
+	if err != nil {
 		return err
 	}
 
@@ -327,6 +293,11 @@ func ValidateStreamIdentity(identity StreamIdentity) error {
 	default:
 		return invalid("UnsupportedValue", "stream_identity.kind")
 	}
+
+	expected := StreamIdentityFromRawUTF16(rawUnits)
+	if identity != expected {
+		return invalid("Conflict", "stream_identity")
+	}
 	return nil
 }
 
@@ -335,7 +306,6 @@ func ValidateStreamInventory(inventory StreamInventory) error {
 	if err := validateObservationState(inventory.State, "stream_inventory.state"); err != nil {
 		return err
 	}
-
 	if inventory.State == ObservationStateError {
 		if err := require(inventory.ReasonCode, "stream_inventory.reason_code"); err != nil {
 			return err
@@ -345,7 +315,6 @@ func ValidateStreamInventory(inventory StreamInventory) error {
 		}
 		return nil
 	}
-
 	if inventory.ReasonCode != "" {
 		return invalid("Conflict", "stream_inventory.reason_code")
 	}
@@ -389,6 +358,9 @@ func ValidateVolumeIdentity(identity VolumeIdentity) error {
 	if err := require(identity.VolumeGUID, "volume_identity.volume_guid"); err != nil {
 		return err
 	}
+	if err := validateVolumeGUIDPath(identity.VolumeGUID, "volume_identity.volume_guid"); err != nil {
+		return err
+	}
 	return validateDecimal(identity.VolumeSerial, "volume_identity.volume_serial")
 }
 
@@ -418,6 +390,21 @@ func decodeBase64URL(value, field string) ([]byte, error) {
 	return decoded, nil
 }
 
+func decodeUTF16LEBase64URLUnits(value, field string) ([]uint16, error) {
+	decoded, err := decodeBase64URL(value, field)
+	if err != nil {
+		return nil, err
+	}
+	if len(decoded)%2 != 0 {
+		return nil, invalid("InvalidUTF16LE", field)
+	}
+	units := make([]uint16, len(decoded)/2)
+	for index := range units {
+		units[index] = binary.LittleEndian.Uint16(decoded[index*2:])
+	}
+	return units, nil
+}
+
 func invalid(code, field string) error {
 	return &ValidationError{Code: code, Field: field}
 }
@@ -432,6 +419,17 @@ func require(value, field string) error {
 func validateDecimal(value, field string) error {
 	if _, err := canonicalUnsigned(value); err != nil {
 		return invalid("InvalidDecimal", field)
+	}
+	return nil
+}
+
+func validateDecimalMax(value string, maximum uint64, field string) error {
+	parsed, err := canonicalUnsigned(value)
+	if err != nil {
+		return invalid("InvalidDecimal", field)
+	}
+	if parsed > maximum {
+		return invalid("OutOfRange", field)
 	}
 	return nil
 }
@@ -480,12 +478,32 @@ func validateTimestamp(value, field string) error {
 }
 
 func validateUTF16LEBase64URL(value, field string) error {
-	decoded, err := decodeBase64URL(value, field)
-	if err != nil {
-		return err
+	_, err := decodeUTF16LEBase64URLUnits(value, field)
+	return err
+}
+
+func validateVolumeGUIDPath(value, field string) error {
+	const prefix = `\\?\Volume{`
+	if !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, `}\`) {
+		return invalid("InvalidVolumeGUID", field)
 	}
-	if len(decoded)%2 != 0 {
-		return invalid("InvalidUTF16LE", field)
+	guid := value[len(prefix) : len(value)-2]
+	if len(guid) != 36 {
+		return invalid("InvalidVolumeGUID", field)
+	}
+	for index, character := range guid {
+		switch index {
+		case 8, 13, 18, 23:
+			if character != '-' {
+				return invalid("InvalidVolumeGUID", field)
+			}
+		default:
+			if !((character >= '0' && character <= '9') ||
+				(character >= 'a' && character <= 'f') ||
+				(character >= 'A' && character <= 'F')) {
+				return invalid("InvalidVolumeGUID", field)
+			}
+		}
 	}
 	return nil
 }

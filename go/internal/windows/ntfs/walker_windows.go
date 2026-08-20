@@ -44,7 +44,9 @@ type WalkVisitFunc func(
 // order because traversal order is not authoritative record content.
 //
 // Every discovered object is passed through CollectPath. Reparse objects are
-// observed but never recursively followed.
+// observed but never recursively followed. Before ReadDir begins, the opened
+// directory handle must still match the exact directory observation that
+// authorized traversal.
 func WalkGovernedRoot(
 	ctx context.Context,
 	scopeID string,
@@ -66,7 +68,7 @@ func WalkGovernedRoot(
 		return err
 	}
 
-	return walkDirectory(ctx, scopeID, governedRoot, governedRoot, true, visit)
+	return walkDirectory(ctx, scopeID, governedRoot, governedRoot, rootObservation, true, visit)
 }
 
 func walkDirectory(
@@ -74,6 +76,7 @@ func walkDirectory(
 	scopeID string,
 	governedRoot string,
 	directoryPath string,
+	expected Observation,
 	root bool,
 	visit WalkVisitFunc,
 ) error {
@@ -85,6 +88,13 @@ func walkDirectory(
 		return visit(directoryPath, Observation{}, err)
 	}
 	defer directory.Close()
+
+	if err := verifyWalkDirectoryIdentity(directory, expected); err != nil {
+		if root {
+			return err
+		}
+		return visit(directoryPath, Observation{}, err)
+	}
 
 	for {
 		if err := validateContext(ctx); err != nil {
@@ -139,5 +149,5 @@ func walkObject(
 		return nil
 	}
 
-	return walkDirectory(ctx, scopeID, governedRoot, path, false, visit)
+	return walkDirectory(ctx, scopeID, governedRoot, path, observation, false, visit)
 }

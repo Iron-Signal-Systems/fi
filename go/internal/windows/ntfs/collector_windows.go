@@ -56,8 +56,9 @@ func CollectPath(ctx context.Context, scopeID string, governedRoot string, targe
 //  3. open the target and prove handle-derived containment;
 //  4. collect identity, metadata, reparse state/payload, and streams;
 //  5. check for change/replacement while collection was running;
-//  6. stamp the completed observation time;
-//  7. build and validate the shared FI observation.
+//  6. revalidate the root/target handle scope at the acceptance boundary;
+//  7. stamp the completed observation time;
+//  8. build and validate the shared FI observation.
 func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, targetPath []uint16) (Observation, error) {
 	if scopeID == "" {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
@@ -270,6 +271,27 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		}
 	}
 
+	// Re-prove the root object/path binding and current target containment at the
+	// final acceptance boundary. This does not trust the root path snapshot taken
+	// at the beginning of collection.
+	finalTargetPath, err := revalidateScopeHandles(
+		rootHandle,
+		targetHandle,
+		governedRoot,
+		rootFinalPath,
+		rootState.ID,
+		post.ID,
+	)
+	if err != nil {
+		return Observation{}, &Error{Stage: StageConsistency, Op: "RevalidateGovernedScope", Err: err}
+	}
+	targetFinalPath = finalTargetPath
+	targetVolumeGUID, err = volumeGUIDFromFinalPath(targetFinalPath)
+	if err != nil {
+		return Observation{}, &Error{Stage: StageConsistency, Op: "ParseFinalTargetVolumeGUID", Err: err}
+	}
+	volumeIdentity.VolumeGUID = targetVolumeGUID
+
 	if err := validateContext(ctx); err != nil {
 		return Observation{}, err
 	}
@@ -359,8 +381,6 @@ func nulTerminate(path []uint16) []uint16 {
 	return append(append([]uint16(nil), path...), 0)
 }
 
-// streamObservations converts Windows FILE_STREAM_INFO entries and sorts them
-// by their preserved raw-name encoding so staged records are deterministic.
 func reparseStateChanged(left, right fileAttributeTagInfo) bool {
 	leftPresent := left.FileAttributes&fileAttributeReparse != 0
 	rightPresent := right.FileAttributes&fileAttributeReparse != 0
@@ -371,6 +391,8 @@ func reparseStateChanged(left, right fileAttributeTagInfo) bool {
 	return leftPresent && left.ReparseTag != right.ReparseTag
 }
 
+// streamObservations converts Windows FILE_STREAM_INFO entries and sorts them
+// by their preserved raw-name encoding so staged records are deterministic.
 func streamObservations(native []nativeStream) ([]records.StreamObservation, error) {
 	observations := make([]records.StreamObservation, 0, len(native))
 	for _, stream := range native {
