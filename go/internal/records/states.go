@@ -1,6 +1,12 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package records
 
-// SubjectKind identifies the primary NTFS object kind observed by FI.
+// Used by Windows Systems and Backend Recorder.
+
+// SubjectKind identifies the NTFS object kind observed by Windows.
 type SubjectKind string
 
 const (
@@ -9,34 +15,24 @@ const (
 	SubjectReparseObject SubjectKind = "ReparseObject"
 )
 
-// IdentityConfidence describes how authoritative an object identity is.
-type IdentityConfidence string
-
-const (
-	IdentityAuthoritative IdentityConfidence = "Authoritative"
-	IdentityCorroborated  IdentityConfidence = "Corroborated"
-	IdentityAmbiguous     IdentityConfidence = "Ambiguous"
-	IdentityUnavailable   IdentityConfidence = "Unavailable"
-	IdentityUnsupported   IdentityConfidence = "Unsupported"
-	IdentityInvalid       IdentityConfidence = "Invalid"
-)
-
-// ObservationState describes the result of one attempted field or field-group observation.
+// ObservationState describes a sub-observation that can fail without making the
+// entire source observation unusable.
+//
+// Add new states only when a real collector or record path emits them.
 type ObservationState string
 
 const (
-	ObservationStatePresent       ObservationState = "Present"
-	ObservationStateNotApplicable ObservationState = "NotApplicable"
-	ObservationStateNotObserved   ObservationState = "NotObserved"
-	ObservationStateUnavailable   ObservationState = "Unavailable"
-	ObservationStateUnsupported   ObservationState = "Unsupported"
-	ObservationStateAccessDenied  ObservationState = "AccessDenied"
-	ObservationStateAmbiguous     ObservationState = "Ambiguous"
-	ObservationStateInvalid       ObservationState = "Invalid"
-	ObservationStateError         ObservationState = "Error"
+	ObservationStatePresent ObservationState = "Present"
+	ObservationStateError   ObservationState = "Error"
 )
 
-// ObservationStatus describes the overall result of one source observation.
+// ObservationStatus describes the overall result of the current direct NTFS
+// collection.
+//
+// Complete means all current collection work succeeded. Partial means useful
+// facts were returned but a non-fatal sub-collection failed. The Changed and
+// Replaced states record consistency problems observed while the collector was
+// running.
 type ObservationStatus string
 
 const (
@@ -44,22 +40,19 @@ const (
 	ObservationPartial                  ObservationStatus = "Partial"
 	ObservationChangedDuringCollection  ObservationStatus = "ChangedDuringCollection"
 	ObservationReplacedDuringCollection ObservationStatus = "ReplacedDuringCollection"
-	ObservationSubjectNotFound          ObservationStatus = "SubjectNotFound"
-	ObservationSourceUnavailable        ObservationStatus = "SourceUnavailable"
-	ObservationContinuityLost           ObservationStatus = "ContinuityLost"
-	ObservationInvalid                  ObservationStatus = "Invalid"
-	ObservationCancelled                ObservationStatus = "Cancelled"
 )
 
-// CollectionMethod identifies the source-side mechanism that produced an observation.
+// CollectionMethod identifies the source-side mechanism that produced an
+// observation.
+//
+// Only mechanisms that actually exist belong here.
 type CollectionMethod string
 
 const (
 	CollectionDirectWindowsNTFS CollectionMethod = "DirectWindowsNTFS"
-	CollectionProtectedRead     CollectionMethod = "ProtectedReadBroker"
 )
 
-// StreamKind identifies the relationship of an NTFS stream to its parent object.
+// StreamKind identifies how an NTFS stream relates to its parent object.
 type StreamKind string
 
 const (
@@ -68,18 +61,4 @@ const (
 	StreamOther       StreamKind = "Other"
 )
 
-// JournalContinuityState describes whether incremental source coverage can continue safely.
-type JournalContinuityState string
-
-const (
-	JournalContinuous            JournalContinuityState = "Continuous"
-	JournalBaselineReplayPending JournalContinuityState = "BaselineReplayPending"
-	JournalReconciliationPending JournalContinuityState = "ReconciliationPending"
-	JournalDiscontinuous         JournalContinuityState = "Discontinuous"
-	JournalUnavailable           JournalContinuityState = "JournalUnavailable"
-	JournalRecreated             JournalContinuityState = "JournalRecreated"
-	JournalCursorExpired         JournalContinuityState = "CursorExpired"
-	JournalVolumeIdentityChanged JournalContinuityState = "VolumeIdentityChanged"
-	JournalInvalid               JournalContinuityState = "Invalid"
-	JournalUnknown               JournalContinuityState = "Unknown"
-)
+// END Used by Windows Systems and Backend Recorder.

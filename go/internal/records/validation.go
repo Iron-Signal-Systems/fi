@@ -1,3 +1,7 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package records
 
 import (
@@ -9,7 +13,16 @@ import (
 	"time"
 )
 
-// ValidationError provides one stable source-record validation failure identity.
+// Used by Windows Systems and Backend Recorder.
+//
+// Windows runs these checks before a source observation leaves the collection
+// boundary for record/staging work. Backend components can run the same checks
+// after receiving a record.
+//
+// These checks validate the shared record representation. They do not repeat
+// Windows API safety checks, which belong under internal/windows.
+
+// ValidationError gives a stable validation code and field name.
 type ValidationError struct {
 	Code  string
 	Field string
@@ -22,7 +35,9 @@ func (e *ValidationError) Error() string {
 	return e.Code + ": " + e.Field
 }
 
-func invalid(code, field string) error { return &ValidationError{Code: code, Field: field} }
+func invalid(code, field string) error {
+	return &ValidationError{Code: code, Field: field}
+}
 
 func require(value, field string) error {
 	if value == "" {
@@ -89,16 +104,14 @@ func validateUTF16LEBase64URL(value, field string) error {
 
 func validateObservationState(state ObservationState, field string) error {
 	switch state {
-	case ObservationStatePresent, ObservationStateNotApplicable, ObservationStateNotObserved,
-		ObservationStateUnavailable, ObservationStateUnsupported, ObservationStateAccessDenied,
-		ObservationStateAmbiguous, ObservationStateInvalid, ObservationStateError:
+	case ObservationStatePresent, ObservationStateError:
 		return nil
 	default:
 		return invalid("UnsupportedValue", field)
 	}
 }
 
-// ValidateVolumeIdentity validates one NTFS volume identity component.
+// ValidateVolumeIdentity validates a shared NTFS volume identity.
 func ValidateVolumeIdentity(identity VolumeIdentity) error {
 	if err := require(identity.MethodVersion, "volume_identity.method_version"); err != nil {
 		return err
@@ -109,7 +122,7 @@ func ValidateVolumeIdentity(identity VolumeIdentity) error {
 	return validateDecimal(identity.VolumeSerial, "volume_identity.volume_serial")
 }
 
-// ValidateNTFSObjectIdentity validates one NTFS object identity component.
+// ValidateNTFSObjectIdentity validates a shared NTFS object identity.
 func ValidateNTFSObjectIdentity(identity NTFSObjectIdentity) error {
 	if err := require(identity.MethodVersion, "object_identity.method_version"); err != nil {
 		return err
@@ -117,19 +130,10 @@ func ValidateNTFSObjectIdentity(identity NTFSObjectIdentity) error {
 	if err := validateDecimal(identity.FileReferenceNumber, "object_identity.file_reference_number"); err != nil {
 		return err
 	}
-	if err := validateDecimal(identity.SequenceNumber, "object_identity.sequence_number"); err != nil {
-		return err
-	}
-	switch identity.Confidence {
-	case IdentityAuthoritative, IdentityCorroborated, IdentityAmbiguous,
-		IdentityUnavailable, IdentityUnsupported, IdentityInvalid:
-		return nil
-	default:
-		return invalid("UnsupportedValue", "object_identity.confidence")
-	}
+	return validateDecimal(identity.SequenceNumber, "object_identity.sequence_number")
 }
 
-// ValidateGovernedRootIdentity validates one governed source-root identity.
+// ValidateGovernedRootIdentity validates the established governed root.
 func ValidateGovernedRootIdentity(root GovernedRootIdentity) error {
 	if err := require(root.ScopeID, "governed_root.scope_id"); err != nil {
 		return err
@@ -140,63 +144,27 @@ func ValidateGovernedRootIdentity(root GovernedRootIdentity) error {
 	if err := validateUTF16LEBase64URL(root.RequestedPathUTF16LEBase64URL, "governed_root.requested_path_utf16le_base64url"); err != nil {
 		return err
 	}
+	if err := require(root.ResolvedPathUTF16LEBase64URL, "governed_root.resolved_path_utf16le_base64url"); err != nil {
+		return err
+	}
+	if err := validateUTF16LEBase64URL(root.ResolvedPathUTF16LEBase64URL, "governed_root.resolved_path_utf16le_base64url"); err != nil {
+		return err
+	}
 	if err := require(root.MethodVersion, "governed_root.method_version"); err != nil {
 		return err
 	}
-	if err := validateObservationState(root.State, "governed_root.state"); err != nil {
+	if err := ValidateVolumeIdentity(root.VolumeIdentity); err != nil {
 		return err
 	}
-	if root.State == ObservationStatePresent {
-		if err := require(root.ResolvedPathUTF16LEBase64URL, "governed_root.resolved_path_utf16le_base64url"); err != nil {
-			return err
-		}
-		if err := validateUTF16LEBase64URL(root.ResolvedPathUTF16LEBase64URL, "governed_root.resolved_path_utf16le_base64url"); err != nil {
-			return err
-		}
-		if root.VolumeIdentity == nil || root.ObjectIdentity == nil {
-			return invalid("IdentityMissing", "governed_root")
-		}
-		if err := ValidateVolumeIdentity(*root.VolumeIdentity); err != nil {
-			return err
-		}
-		if err := ValidateNTFSObjectIdentity(*root.ObjectIdentity); err != nil {
-			return err
-		}
-		if root.ReasonCode != "" {
-			return invalid("Conflict", "governed_root.reason_code")
-		}
-		return nil
-	}
-	if root.ReasonCode == "" {
-		return invalid("Required", "governed_root.reason_code")
-	}
-	if root.ResolvedPathUTF16LEBase64URL != "" || root.VolumeIdentity != nil || root.ObjectIdentity != nil {
-		return invalid("Conflict", "governed_root")
-	}
-	return nil
+	return ValidateNTFSObjectIdentity(root.ObjectIdentity)
 }
 
-// ValidatePathContainment validates one handle-derived scope conclusion.
+// ValidatePathContainment validates the recorded containment method.
 func ValidatePathContainment(containment PathContainment) error {
-	if err := require(containment.MethodVersion, "containment.method_version"); err != nil {
-		return err
-	}
-	if err := validateObservationState(containment.State, "containment.state"); err != nil {
-		return err
-	}
-	if containment.State == ObservationStatePresent {
-		if containment.ReasonCode != "" {
-			return invalid("Conflict", "containment.reason_code")
-		}
-		return nil
-	}
-	if containment.ReasonCode == "" {
-		return invalid("Required", "containment.reason_code")
-	}
-	return nil
+	return require(containment.MethodVersion, "containment.method_version")
 }
 
-// ValidateSubjectKind validates one NTFS subject-kind value.
+// ValidateSubjectKind validates the NTFS object kind emitted by the collector.
 func ValidateSubjectKind(kind SubjectKind) error {
 	switch kind {
 	case SubjectFile, SubjectDirectory, SubjectReparseObject:
@@ -206,78 +174,72 @@ func ValidateSubjectKind(kind SubjectKind) error {
 	}
 }
 
-// ValidatePathBinding validates one exact UTF-16LE path binding.
+// ValidatePathBinding validates the exact UTF-16LE path representation.
 func ValidatePathBinding(binding PathBinding) error {
-	if binding.PathUTF16LEBase64URL == "" {
-		return invalid("Required", "path_binding.path_utf16le_base64url")
-	}
-	if err := validateUTF16LEBase64URL(binding.PathUTF16LEBase64URL, "path_binding.path_utf16le_base64url"); err != nil {
+	if err := require(binding.PathUTF16LEBase64URL, "path_binding.path_utf16le_base64url"); err != nil {
 		return err
 	}
-	if err := validateObservationState(binding.State, "path_binding.state"); err != nil {
-		return err
-	}
-	if binding.ParentObject != nil {
-		return ValidateNTFSObjectIdentity(*binding.ParentObject)
-	}
-	return nil
+	return validateUTF16LEBase64URL(binding.PathUTF16LEBase64URL, "path_binding.path_utf16le_base64url")
 }
 
-// ValidateMetadataObservation validates bounded NTFS metadata.
+// ValidateMetadataObservation validates canonical metadata values in a fixed
+// order so the first reported error is deterministic.
 func ValidateMetadataObservation(metadata MetadataObservation) error {
-	if err := validateObservationState(metadata.State, "metadata.state"); err != nil {
-		return err
+	decimals := []struct {
+		field string
+		value string
+	}{
+		{"metadata.logical_size", metadata.LogicalSize},
+		{"metadata.allocated_size", metadata.AllocatedSize},
+		{"metadata.raw_attributes", metadata.RawAttributes},
+		{"metadata.link_count", metadata.LinkCount},
 	}
-	if metadata.State != ObservationStatePresent {
-		if metadata.ReasonCode == "" {
-			return invalid("Required", "metadata.reason_code")
-		}
-		return nil
-	}
-	if metadata.ObjectKind == "" {
-		return invalid("Required", "metadata.object_kind")
-	}
-	for field, value := range map[string]string{
-		"metadata.logical_size": metadata.LogicalSize, "metadata.allocated_size": metadata.AllocatedSize,
-		"metadata.raw_attributes": metadata.RawAttributes, "metadata.link_count": metadata.LinkCount,
-	} {
-		if err := validateDecimal(value, field); err != nil {
+	for _, item := range decimals {
+		if err := validateDecimal(item.value, item.field); err != nil {
 			return err
 		}
 	}
-	for field, value := range map[string]string{
-		"metadata.creation_time": metadata.CreationTime, "metadata.last_write_time": metadata.LastWriteTime,
-		"metadata.change_time": metadata.ChangeTime, "metadata.last_access_time": metadata.LastAccessTime,
-	} {
-		if err := validateTimestamp(value, field); err != nil {
+
+	timestamps := []struct {
+		field string
+		value string
+	}{
+		{"metadata.creation_time", metadata.CreationTime},
+		{"metadata.last_write_time", metadata.LastWriteTime},
+		{"metadata.change_time", metadata.ChangeTime},
+		{"metadata.last_access_time", metadata.LastAccessTime},
+	}
+	for _, item := range timestamps {
+		if err := validateTimestamp(item.value, item.field); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ValidateStreamIdentity validates exact NTFS stream identity fields.
+// ValidateStreamIdentity validates the exact NTFS stream identity.
 func ValidateStreamIdentity(identity StreamIdentity) error {
-	if identity.RawNameUTF16LEBase64URL == "" {
-		return invalid("Required", "stream_identity.raw_name_utf16le_base64url")
+	if err := require(identity.RawNameUTF16LEBase64URL, "stream_identity.raw_name_utf16le_base64url"); err != nil {
+		return err
 	}
 	if err := validateUTF16LEBase64URL(identity.RawNameUTF16LEBase64URL, "stream_identity.raw_name_utf16le_base64url"); err != nil {
 		return err
 	}
+
 	switch identity.Kind {
 	case StreamDefaultData:
 		if identity.NameUTF16LEBase64URL != "" || identity.StreamType != "$DATA" {
 			return invalid("Conflict", "stream_identity")
 		}
 	case StreamNamedData, StreamOther:
-		if identity.NameUTF16LEBase64URL == "" {
-			return invalid("Required", "stream_identity.name_utf16le_base64url")
+		if err := require(identity.NameUTF16LEBase64URL, "stream_identity.name_utf16le_base64url"); err != nil {
+			return err
 		}
 		if err := validateUTF16LEBase64URL(identity.NameUTF16LEBase64URL, "stream_identity.name_utf16le_base64url"); err != nil {
 			return err
 		}
-		if identity.StreamType == "" {
-			return invalid("Required", "stream_identity.stream_type")
+		if err := require(identity.StreamType, "stream_identity.stream_type"); err != nil {
+			return err
 		}
 	default:
 		return invalid("UnsupportedValue", "stream_identity.kind")
@@ -285,36 +247,30 @@ func ValidateStreamIdentity(identity StreamIdentity) error {
 	return nil
 }
 
-// ValidateStreamInventory validates stream enumeration and stable ordering.
+// ValidateStreamInventory validates stream-enumeration state and ordering.
 func ValidateStreamInventory(inventory StreamInventory) error {
 	if err := validateObservationState(inventory.State, "stream_inventory.state"); err != nil {
 		return err
 	}
-	if inventory.State != ObservationStatePresent {
-		if inventory.ReasonCode == "" {
-			return invalid("Required", "stream_inventory.reason_code")
+
+	if inventory.State == ObservationStateError {
+		if err := require(inventory.ReasonCode, "stream_inventory.reason_code"); err != nil {
+			return err
 		}
 		if len(inventory.Streams) != 0 {
 			return invalid("Conflict", "stream_inventory.streams")
 		}
 		return nil
 	}
+
 	if inventory.ReasonCode != "" {
 		return invalid("Conflict", "stream_inventory.reason_code")
 	}
+
 	previous := ""
 	for i, stream := range inventory.Streams {
 		if err := ValidateStreamIdentity(stream.Identity); err != nil {
 			return err
-		}
-		if err := validateObservationState(stream.State, fmt.Sprintf("stream_inventory.streams[%d].state", i)); err != nil {
-			return err
-		}
-		if stream.State != ObservationStatePresent {
-			if stream.ReasonCode == "" {
-				return invalid("Required", fmt.Sprintf("stream_inventory.streams[%d].reason_code", i))
-			}
-			continue
 		}
 		if err := validateDecimal(stream.LogicalSize, fmt.Sprintf("stream_inventory.streams[%d].logical_size", i)); err != nil {
 			return err
@@ -331,25 +287,24 @@ func ValidateStreamInventory(inventory StreamInventory) error {
 	return nil
 }
 
-// ValidateObservationStatus validates one whole-observation status.
+// ValidateObservationStatus validates the statuses the current NTFS collector
+// can actually emit.
 func ValidateObservationStatus(status ObservationStatus) error {
 	switch status {
 	case ObservationComplete, ObservationPartial, ObservationChangedDuringCollection,
-		ObservationReplacedDuringCollection, ObservationSubjectNotFound,
-		ObservationSourceUnavailable, ObservationContinuityLost, ObservationInvalid,
-		ObservationCancelled:
+		ObservationReplacedDuringCollection:
 		return nil
 	default:
 		return invalid("UnsupportedValue", "observation_status")
 	}
 }
 
-// ValidateObservationWarnings validates stable sorted warning identities.
+// ValidateObservationWarnings validates stable warning identities and ordering.
 func ValidateObservationWarnings(warnings []ObservationWarning) error {
 	previous := ""
 	for i, warning := range warnings {
-		if warning.Code == "" {
-			return invalid("Required", fmt.Sprintf("warnings[%d].code", i))
+		if err := require(warning.Code, fmt.Sprintf("warnings[%d].code", i)); err != nil {
+			return err
 		}
 		if previous != "" && warning.Code <= previous {
 			return invalid("UnsortedCollection", "warnings")
@@ -358,3 +313,5 @@ func ValidateObservationWarnings(warnings []ObservationWarning) error {
 	}
 	return nil
 }
+
+// END Used by Windows Systems and Backend Recorder.

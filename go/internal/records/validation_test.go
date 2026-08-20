@@ -1,3 +1,7 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package records
 
 import (
@@ -22,16 +26,18 @@ func TestValidateStreamInventory(t *testing.T) {
 		State: ObservationStatePresent,
 		Streams: []StreamObservation{
 			{
-				Identity: StreamIdentity{Kind: StreamNamedData, NameUTF16LEBase64URL: utf16b64("payload"), StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64(":payload:$DATA")},
-				State:    ObservationStatePresent, LogicalSize: "42", AllocatedSize: "4096",
+				Identity:      StreamIdentity{Kind: StreamNamedData, NameUTF16LEBase64URL: utf16b64("payload"), StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64(":payload:$DATA")},
+				LogicalSize:   "42",
+				AllocatedSize: "4096",
 			},
 			{
-				Identity: StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
-				State:    ObservationStatePresent, LogicalSize: "100", AllocatedSize: "4096",
+				Identity:      StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
+				LogicalSize:   "100",
+				AllocatedSize: "4096",
 			},
 		},
 	}
-	// Ordering is by canonical raw-name encoding, so sort for a deterministic test.
+
 	if inventory.Streams[0].Identity.RawNameUTF16LEBase64URL > inventory.Streams[1].Identity.RawNameUTF16LEBase64URL {
 		inventory.Streams[0], inventory.Streams[1] = inventory.Streams[1], inventory.Streams[0]
 	}
@@ -41,11 +47,30 @@ func TestValidateStreamInventory(t *testing.T) {
 }
 
 func TestValidateStreamInventoryRejectsLeadingZero(t *testing.T) {
-	inventory := StreamInventory{State: ObservationStatePresent, Streams: []StreamObservation{{
-		Identity: StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
-		State:    ObservationStatePresent, LogicalSize: "042", AllocatedSize: "4096",
-	}}}
+	inventory := StreamInventory{
+		State: ObservationStatePresent,
+		Streams: []StreamObservation{{
+			Identity:      StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
+			LogicalSize:   "042",
+			AllocatedSize: "4096",
+		}},
+	}
 	if err := ValidateStreamInventory(inventory); err == nil || !strings.Contains(err.Error(), "InvalidDecimal") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateStreamInventoryRejectsErrorWithStreams(t *testing.T) {
+	inventory := StreamInventory{
+		State:      ObservationStateError,
+		ReasonCode: "StreamEnumerationFailed",
+		Streams: []StreamObservation{{
+			Identity:      StreamIdentity{Kind: StreamDefaultData, StreamType: "$DATA", RawNameUTF16LEBase64URL: utf16b64("::$DATA")},
+			LogicalSize:   "1",
+			AllocatedSize: "8",
+		}},
+	}
+	if err := ValidateStreamInventory(inventory); err == nil || !strings.Contains(err.Error(), "Conflict") {
 		t.Fatalf("error = %v", err)
 	}
 }

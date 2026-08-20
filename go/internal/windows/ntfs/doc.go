@@ -2,11 +2,14 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-// Package ntfs collects bounded Windows/NTFS object identity, metadata, path
-// containment, and stream inventory from explicitly governed local NTFS roots.
-//
-// It is intentionally source-side and read-only. Security descriptors, share
-// state, directory identity, USN consumption, Windows event collection, EA,
-// reparse payloads, object IDs, hashing, and other Phase 1 capabilities are
-// separate work still to be implemented around this foundation.
+// Package ntfs contains the Windows-specific direct NTFS collector.
+
+// This package opens governed local NTFS objects read-only and collects the
+// source facts that only Windows can provide directly: volume/object identity,
+// metadata, governed-root containment, and stream/ADS inventory.
+
+// Shared FI record definitions live under internal/records. Staging, transport,
+// USN, security-descriptor, share, hashing, and other responsibilities belong in
+// their own packages when those capabilities are implemented.
+
 package ntfs

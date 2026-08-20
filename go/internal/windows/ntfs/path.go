@@ -4,6 +4,16 @@
 
 package ntfs
 
+// This file owns caller-path validation and governed-root containment rules.
+// Caller text is validated before Windows opens it, but the final containment
+// decision uses paths resolved from open handles rather than trusting the
+// caller's original strings.
+
+// validateLocalAbsolutePath accepts only local drive-absolute paths supported by
+// the direct NTFS collector.
+//
+// Named-stream paths such as C:\file.txt:Zone.Identifier are rejected. FI opens
+// the base NTFS object and enumerates its streams separately.
 func validateLocalAbsolutePath(path []uint16) error {
 	if len(path) == 0 {
 		return ErrInvalidPath
@@ -13,10 +23,30 @@ func validateLocalAbsolutePath(path []uint16) error {
 			return ErrInvalidPath
 		}
 	}
-	if isDriveAbsolutePath(path) || isExtendedDrivePath(path) {
+
+	switch {
+	case isDriveAbsolutePath(path):
+		if containsColonAfter(path, 1) {
+			return ErrStreamQualifiedPath
+		}
 		return nil
+	case isExtendedDrivePath(path):
+		if containsColonAfter(path, 5) {
+			return ErrStreamQualifiedPath
+		}
+		return nil
+	default:
+		return ErrUnsafePathForm
 	}
-	return ErrUnsafePathForm
+}
+
+func containsColonAfter(path []uint16, driveColon int) bool {
+	for i := driveColon + 1; i < len(path); i++ {
+		if path[i] == ':' {
+			return true
+		}
+	}
+	return false
 }
 
 func isDriveAbsolutePath(path []uint16) bool {
@@ -24,7 +54,11 @@ func isDriveAbsolutePath(path []uint16) bool {
 }
 
 func isExtendedDrivePath(path []uint16) bool {
-	return len(path) >= 7 && hasASCIIPrefix(path, `\\?\`) && isASCIILetter(path[4]) && path[5] == ':' && path[6] == '\\'
+	return len(path) >= 7 &&
+		hasASCIIPrefix(path, `\\?\`) &&
+		isASCIILetter(path[4]) &&
+		path[5] == ':' &&
+		path[6] == '\\'
 }
 
 func isASCIILetter(unit uint16) bool {
@@ -75,8 +109,12 @@ func hasUTF16Prefix(value, prefix []uint16) bool {
 	return true
 }
 
-// pathContainedBy compares handle-derived normalized volume-GUID paths. It never
-// uses caller-supplied string-prefix containment.
+// pathContainedBy compares normalized volume-GUID paths returned from open
+// Windows handles.
+//
+// Equality is allowed because the governed root itself is a valid target.
+// Prefix matches require a path separator boundary so \Data does not authorize
+// \Database.
 func pathContainedBy(root, target []uint16) bool {
 	root = trimTrailingSeparators(root)
 	target = trimTrailingSeparators(target)
@@ -86,5 +124,7 @@ func pathContainedBy(root, target []uint16) bool {
 	if equalUTF16(root, target) {
 		return true
 	}
-	return len(target) > len(root) && hasUTF16Prefix(target, root) && target[len(root)] == '\\'
+	return len(target) > len(root) &&
+		hasUTF16Prefix(target, root) &&
+		target[len(root)] == '\\'
 }

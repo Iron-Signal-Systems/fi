@@ -6,7 +6,12 @@ package ntfs
 
 import "github.com/Iron-Signal-Systems/fi/go/internal/records"
 
-// ValidateObservation validates every source component emitted by the NTFS collector.
+// ValidateObservation checks the shared record representation immediately
+// before a successful NTFS observation leaves this package.
+//
+// Windows API/path safety is checked while collecting. This function checks the
+// record boundary: required identities, canonical values, stream ordering,
+// current collection method/status, and warning ordering.
 func ValidateObservation(observation Observation) error {
 	if err := records.ValidateGovernedRootIdentity(observation.GovernedRoot); err != nil {
 		return err

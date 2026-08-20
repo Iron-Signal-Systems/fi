@@ -1,34 +1,62 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 package records
 
-// MetadataObservation records bounded NTFS metadata using canonical string values.
+// Used by Windows Systems and Backend Recorder.
+//
+// Windows creates these observations from source facts. Backend components
+// receive the same values rather than reinterpreting Windows API structures.
+
+// MetadataObservation records the NTFS metadata FI successfully collected for
+// one object.
+//
+// Values are canonical strings because this structure is a shared source-record
+// representation that is staged and shipped across system boundaries.
 type MetadataObservation struct {
-	State          ObservationState `json:"state"`
-	ObjectKind     string           `json:"object_kind,omitempty"`
-	LogicalSize    string           `json:"logical_size,omitempty"`
-	AllocatedSize  string           `json:"allocated_size,omitempty"`
-	CreationTime   string           `json:"creation_time,omitempty"`
-	LastWriteTime  string           `json:"last_write_time,omitempty"`
-	ChangeTime     string           `json:"change_time,omitempty"`
-	LastAccessTime string           `json:"last_access_time,omitempty"`
-	RawAttributes  string           `json:"raw_attributes,omitempty"`
-	LinkCount      string           `json:"link_count,omitempty"`
-	ReasonCode     string           `json:"reason_code,omitempty"`
+	LogicalSize    string `json:"logical_size"`
+	AllocatedSize  string `json:"allocated_size"`
+	CreationTime   string `json:"creation_time"`
+	LastWriteTime  string `json:"last_write_time"`
+	ChangeTime     string `json:"change_time"`
+	LastAccessTime string `json:"last_access_time"`
+	RawAttributes  string `json:"raw_attributes"`
+	LinkCount      string `json:"link_count"`
 }
 
-// StreamObservation records one enumerated NTFS stream and its source-reported sizes.
-// Hashing and classification are separate observations and are intentionally not
-// fabricated by this low-level collector.
+// StreamObservation records one stream returned by Windows and the sizes
+// Windows reported for that stream.
+//
+// Hashing and classification are separate capabilities and are not represented
+// here unless those capabilities actually collect them.
 type StreamObservation struct {
-	Identity      StreamIdentity   `json:"identity"`
-	State         ObservationState `json:"state"`
-	LogicalSize   string           `json:"logical_size,omitempty"`
-	AllocatedSize string           `json:"allocated_size,omitempty"`
-	ReasonCode    string           `json:"reason_code,omitempty"`
+	Identity      StreamIdentity `json:"identity"`
+	LogicalSize   string         `json:"logical_size"`
+	AllocatedSize string         `json:"allocated_size"`
 }
 
-// StreamInventory records the completeness of stream enumeration for an object.
+// StreamInventory records the result of enumerating all streams for one object.
+//
+// Stream enumeration is allowed to fail without discarding otherwise useful
+// object identity and metadata. State is Present when enumeration succeeded and
+// Error when it failed. Error requires ReasonCode and an empty Streams list.
 type StreamInventory struct {
 	State      ObservationState    `json:"state"`
 	Streams    []StreamObservation `json:"streams"`
 	ReasonCode string              `json:"reason_code,omitempty"`
 }
+
+// ObservationWarning records a non-fatal problem found during collection.
+//
+// Windows emits a warning when FI can still return useful source facts but
+// could not prove every expected condition, for example when metadata changed
+// during collection or path consistency could not be rechecked.
+//
+// Fatal failures are returned as errors instead.
+type ObservationWarning struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// END Used by Windows Systems and Backend Recorder.

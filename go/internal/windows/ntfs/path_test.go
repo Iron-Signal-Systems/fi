@@ -18,7 +18,10 @@ func asciiUTF16(value string) []uint16 {
 }
 
 func TestLocalAbsolutePathValidation(t *testing.T) {
-	accepted := []string{`C:\Data\object.txt`, `\\?\C:\Data\object.txt`}
+	accepted := []string{
+		`C:\Data\object.txt`,
+		`\\?\C:\Data\object.txt`,
+	}
 	for _, value := range accepted {
 		if err := validateLocalAbsolutePath(asciiUTF16(value)); err != nil {
 			t.Fatalf("validateLocalAbsolutePath(%q) = %v", value, err)
@@ -26,14 +29,32 @@ func TestLocalAbsolutePathValidation(t *testing.T) {
 	}
 
 	rejected := []string{
-		`Data\object.txt`, `C:object.txt`, `\\server\share\object.txt`,
-		`\\?\UNC\server\share\object.txt`, `\\?\Volume{11111111-1111-1111-1111-111111111111}\object.txt`,
-		`\\?\GLOBALROOT\Device\HarddiskVolume1\object.txt`, `\\.\C:\Data\object.txt`, `\\.\pipe\fi`,
+		`Data\object.txt`,
+		`C:object.txt`,
+		`\\server\share\object.txt`,
+		`\\?\UNC\server\share\object.txt`,
+		`\\?\Volume{11111111-1111-1111-1111-111111111111}\object.txt`,
+		`\\?\GLOBALROOT\Device\HarddiskVolume1\object.txt`,
+		`\\.\C:\Data\object.txt`,
+		`\\.\pipe\fi`,
 	}
 	for _, value := range rejected {
 		err := validateLocalAbsolutePath(asciiUTF16(value))
 		if !errors.Is(err, ErrUnsafePathForm) {
 			t.Fatalf("validateLocalAbsolutePath(%q) = %v, want ErrUnsafePathForm", value, err)
+		}
+	}
+}
+
+func TestLocalAbsolutePathRejectsNamedStream(t *testing.T) {
+	streamPaths := []string{
+		`C:\Data\object.txt:payload`,
+		`\\?\C:\Data\object.txt:Zone.Identifier`,
+	}
+	for _, value := range streamPaths {
+		err := validateLocalAbsolutePath(asciiUTF16(value))
+		if !errors.Is(err, ErrStreamQualifiedPath) {
+			t.Fatalf("validateLocalAbsolutePath(%q) = %v, want ErrStreamQualifiedPath", value, err)
 		}
 	}
 }
