@@ -8,18 +8,22 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 )
 
 type walkOutput struct {
-	Path        string            `json:"path"`
-	Observation *ntfs.Observation `json:"observation,omitempty"`
-	Error       string            `json:"error,omitempty"`
+	Error                string            `json:"error,omitempty"`
+	Observation          *ntfs.Observation `json:"observation,omitempty"`
+	PathDisplay          string            `json:"path_display"`
+	PathUTF16LEBase64URL string            `json:"path_utf16le_base64url"`
 }
 
 func main() {
@@ -71,7 +75,7 @@ func main() {
 		flag.Arg(1),
 	)
 	if err != nil {
-		fmt.Println("ERROR:", err)
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
 
@@ -80,7 +84,6 @@ func main() {
 	switch {
 	case *collectPath:
 		output = observation
-
 	case *identity:
 		output = struct {
 			Volume any `json:"volume_identity"`
@@ -91,10 +94,8 @@ func main() {
 			observation.ObjectIdentity,
 			observation.PathBinding,
 		}
-
 	case *metadata:
 		output = observation.Metadata
-
 	case *ads:
 		output = observation.StreamInventory
 	}
@@ -103,43 +104,23 @@ func main() {
 	encoder.SetIndent("", "  ")
 
 	if err := encoder.Encode(output); err != nil {
-		fmt.Println("ERROR:", err)
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
 }
 
-func runWalk(governedRoot string) {
-	// Walk output is intentionally JSON Lines: one discovered filesystem object
-	// per line. Large governed roots therefore do not require FI to construct or
-	// retain one enormous JSON array in memory.
-	encoder := json.NewEncoder(os.Stdout)
-
-	err := ntfs.WalkGovernedRoot(
-		context.Background(),
-		"manual-test",
-		governedRoot,
-		func(
-			path string,
-			observation ntfs.Observation,
-			collectErr error,
-		) error {
-			if collectErr != nil {
-				return encoder.Encode(walkOutput{
-					Path:  path,
-					Error: collectErr.Error(),
-				})
-			}
-
-			return encoder.Encode(walkOutput{
-				Path:        path,
-				Observation: &observation,
-			})
-		},
-	)
+func pathUTF16LEBase64URL(path string) (string, error) {
+	units, err := syscall.UTF16FromString(path)
 	if err != nil {
-		fmt.Println("ERROR:", err)
-		os.Exit(1)
+		return "", err
 	}
+	units = units[:len(units)-1]
+
+	encoded := make([]byte, len(units)*2)
+	for index, unit := range units {
+		binary.LittleEndian.PutUint16(encoded[index*2:], unit)
+	}
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
 func printUsage() {
@@ -149,4 +130,43 @@ func printUsage() {
 	fmt.Println(`  fi.exe -identity     <governed-root> <target>`)
 	fmt.Println(`  fi.exe -metadata     <governed-root> <target>`)
 	fmt.Println(`  fi.exe -ads          <governed-root> <target>`)
+}
+
+func runWalk(governedRoot string) {
+	// Walk output is JSON Lines. PathDisplay is human convenience only. The exact
+	// Windows path is PathUTF16LEBase64URL and is losslessly reconstructed from
+	// the Go Windows WTF-8 string before JSON encoding.
+	encoder := json.NewEncoder(os.Stdout)
+
+	err := ntfs.WalkGovernedRoot(
+		context.Background(),
+		"manual-test",
+		governedRoot,
+		func(
+			path string,
+			observation ntfs.Observation,
+			objectErr error,
+		) error {
+			exactPath, err := pathUTF16LEBase64URL(path)
+			if err != nil {
+				return err
+			}
+
+			output := walkOutput{
+				PathDisplay:          path,
+				PathUTF16LEBase64URL: exactPath,
+			}
+			if observation.ObservedAt != "" {
+				output.Observation = &observation
+			}
+			if objectErr != nil {
+				output.Error = objectErr.Error()
+			}
+			return encoder.Encode(output)
+		},
+	)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
 }

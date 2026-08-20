@@ -13,15 +13,17 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 // CollectPath collects one governed local NTFS object.
 //
-// governedRoot is the authorized collection boundary. targetPath must identify
-// the base NTFS object inside that root; named-stream paths are rejected because
-// FI enumerates ADS/streams from the opened base object.
+// governedRoot is the authorized collection boundary and must resolve to a
+// non-reparse NTFS directory. targetPath must identify the base NTFS object
+// inside that root; named-stream paths are rejected because FI enumerates
+// ADS/streams from the opened base object.
 //
 // The function returns a complete or explicitly partial Observation. Fatal
 // failures return an error instead of manufacturing a successful record.
@@ -50,11 +52,12 @@ func CollectPath(ctx context.Context, scopeID string, governedRoot string, targe
 //
 // The flow is intentionally linear:
 //  1. validate scope and caller paths;
-//  2. establish the governed root from an open handle;
+//  2. establish a non-reparse directory governed root from an open handle;
 //  3. open the target and prove handle-derived containment;
-//  4. collect identity, metadata, reparse state, and streams;
+//  4. collect identity, metadata, reparse state/payload, and streams;
 //  5. check for change/replacement while collection was running;
-//  6. build and validate the shared FI observation.
+//  6. stamp the completed observation time;
+//  7. build and validate the shared FI observation.
 func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, targetPath []uint16) (Observation, error) {
 	if scopeID == "" {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
@@ -69,7 +72,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, &Error{Stage: StageValidatePath, Op: "ValidatePath", Err: err}
 	}
 
-	// Establish the governed root from the object Windows actually opens.
 	rootHandle, err := openPath(nulTerminate(governedRoot))
 	if err != nil {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "CreateFileW", Err: err}
@@ -87,6 +89,9 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 	rootState, err := queryNativeState(rootHandle)
 	if err != nil {
 		return Observation{}, err
+	}
+	if rootState.Standard.Directory == 0 && rootState.Basic.FileAttributes&fileAttributeDirectory == 0 {
+		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "VerifyDirectory", Err: ErrGovernedRootNotDirectory}
 	}
 	if rootState.Basic.FileAttributes&fileAttributeReparse != 0 {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "RejectReparseRoot", Err: ErrGovernedRootReparse}
@@ -110,8 +115,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 	}
 	rootVolumeIdentity.VolumeGUID = rootVolumeGUID
 
-	// Open the target independently and prove that the resolved object remains
-	// inside the already-established governed root.
 	targetHandle, err := openPath(nulTerminate(targetPath))
 	if err != nil {
 		return Observation{}, &Error{Stage: StageOpen, Op: "CreateFileW", Err: err}
@@ -138,8 +141,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, &Error{Stage: StageContainment, Op: "HandleDerivedContainment", Err: ErrOutsideGovernedRoot}
 	}
 
-	// Read target state before stream enumeration so FI can detect a change that
-	// occurs while the collector is working.
 	pre, err := queryNativeState(targetHandle)
 	if err != nil {
 		return Observation{}, err
@@ -154,8 +155,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 
 	nativeStreams, streamErr := queryStreams(targetHandle)
 	if streamErr != nil {
-		// Stream enumeration is non-fatal. Identity and metadata remain useful,
-		// so FI returns a Partial observation and records exactly what failed.
 		streamInventory = records.StreamInventory{
 			State:      records.ObservationStateError,
 			Streams:    []records.StreamObservation{},
@@ -173,14 +172,51 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		}
 	}
 
-	// Read the same handle again. An identity change on the same open handle is
-	// not accepted as a trustworthy observation.
+	mid, err := queryNativeState(targetHandle)
+	if err != nil {
+		return Observation{}, err
+	}
+	if pre.ID != mid.ID {
+		return Observation{}, &Error{Stage: StageConsistency, Op: "SameHandleIdentity", Err: ErrIdentityChanged}
+	}
+
+	reparse := reparseObservationNotPresent()
+	if mid.AttributeTag.FileAttributes&fileAttributeReparse != 0 {
+		rawReparse, reparseErr := queryReparseData(targetHandle)
+		if reparseErr != nil {
+			reparse = reparseObservationError(mid.AttributeTag.ReparseTag, "ReparseDataReadFailed")
+			status = records.ObservationPartial
+			warnings = append(warnings, records.ObservationWarning{
+				Code:   "ReparseDataReadFailed",
+				Detail: reparseErr.Error(),
+			})
+		} else {
+			parsedReparse, parseErr := parseReparseData(rawReparse)
+			if parseErr != nil {
+				reparse = reparseObservationRaw(mid.AttributeTag.ReparseTag, rawReparse, "ReparseDataParseFailed")
+				status = records.ObservationPartial
+				warnings = append(warnings, records.ObservationWarning{
+					Code:   "ReparseDataParseFailed",
+					Detail: parseErr.Error(),
+				})
+			} else {
+				if parsedReparse.Tag != mid.AttributeTag.ReparseTag {
+					return Observation{}, &Error{Stage: StageConsistency, Op: "ReparseTagConsistency", Err: ErrReparseChangedDuringCollection}
+				}
+				reparse = reparseObservationParsed(parsedReparse)
+			}
+		}
+	}
+
 	post, err := queryNativeState(targetHandle)
 	if err != nil {
 		return Observation{}, err
 	}
-	if pre.ID != post.ID {
+	if mid.ID != post.ID {
 		return Observation{}, &Error{Stage: StageConsistency, Op: "SameHandleIdentity", Err: ErrIdentityChanged}
+	}
+	if reparseStateChanged(mid.AttributeTag, post.AttributeTag) {
+		return Observation{}, &Error{Stage: StageConsistency, Op: "ReparseStateConsistency", Err: ErrReparseChangedDuringCollection}
 	}
 
 	volumeIdentity, objectIdentity, err := buildObjectIdentity(
@@ -197,11 +233,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, &Error{Stage: StageMetadata, Op: "Convert", Err: err}
 	}
 
-	reparse := reparseObservation(
-		post.AttributeTag.FileAttributes&fileAttributeReparse != 0,
-		post.AttributeTag.ReparseTag,
-	)
-
 	if pre.AttributeTag != post.AttributeTag || pre.Basic != post.Basic || pre.Standard != post.Standard {
 		if status == records.ObservationComplete {
 			status = records.ObservationChangedDuringCollection
@@ -213,9 +244,6 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		})
 	}
 
-	// Reopen by pathname after collection. This detects a pathname that was
-	// replaced with a different NTFS object while FI still held the original
-	// object handle.
 	reopened, reopenErr := openPath(nulTerminate(targetPath))
 	if reopenErr != nil {
 		status = records.ObservationPartial
@@ -246,10 +274,11 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, err
 	}
 
-	// Shared record validation requires deterministic warning ordering.
 	sort.Slice(warnings, func(i, j int) bool {
 		return warnings[i].Code < warnings[j].Code
 	})
+
+	observedAt := time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
 
 	observation := Observation{
 		GovernedRoot: records.GovernedRootIdentity{
@@ -270,6 +299,7 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 			RequestedPathUTF16LEBase64URL: utf16LEBase64URL(targetPath),
 			ResolvedPathUTF16LEBase64URL:  utf16LEBase64URL(targetFinalPath),
 		},
+		ObservedAt:        observedAt,
 		Metadata:          metadata,
 		Reparse:           reparse,
 		StreamInventory:   streamInventory,
@@ -331,6 +361,16 @@ func nulTerminate(path []uint16) []uint16 {
 
 // streamObservations converts Windows FILE_STREAM_INFO entries and sorts them
 // by their preserved raw-name encoding so staged records are deterministic.
+func reparseStateChanged(left, right fileAttributeTagInfo) bool {
+	leftPresent := left.FileAttributes&fileAttributeReparse != 0
+	rightPresent := right.FileAttributes&fileAttributeReparse != 0
+
+	if leftPresent != rightPresent {
+		return true
+	}
+	return leftPresent && left.ReparseTag != right.ReparseTag
+}
+
 func streamObservations(native []nativeStream) ([]records.StreamObservation, error) {
 	observations := make([]records.StreamObservation, 0, len(native))
 	for _, stream := range native {

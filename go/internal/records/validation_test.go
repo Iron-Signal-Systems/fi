@@ -6,15 +6,26 @@ package records
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"strings"
 	"testing"
 )
 
+func TestValidateObservedAt(t *testing.T) {
+	if err := ValidateObservedAt("2026-08-20T15:30:00.123456700Z"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateReparseObservationKnown(t *testing.T) {
+	raw := reparseTestBuffer(0xA0000003, 8)
 	reparse := ReparseObservation{
-		State:   ReparseStatePresent,
-		Tag:     "0xA0000003",
-		TagName: "IO_REPARSE_TAG_MOUNT_POINT",
+		DataFormat:         ReparseDataFormatMountPoint,
+		DataState:          ReparseDataStatePresent,
+		RawBufferBase64URL: base64.RawURLEncoding.EncodeToString(raw),
+		State:              ReparseStatePresent,
+		Tag:                "0xA0000003",
+		TagName:            "IO_REPARSE_TAG_MOUNT_POINT",
 	}
 
 	if err := ValidateReparseObservation(reparse); err != nil {
@@ -24,9 +35,11 @@ func TestValidateReparseObservationKnown(t *testing.T) {
 
 func TestValidateReparseObservationNotPresentRejectsTag(t *testing.T) {
 	reparse := ReparseObservation{
-		State:   ReparseStateNotPresent,
-		Tag:     "0xA0000003",
-		TagName: "IO_REPARSE_TAG_MOUNT_POINT",
+		DataFormat: ReparseDataFormatNotApplicable,
+		DataState:  ReparseDataStateNotApplicable,
+		State:      ReparseStateNotPresent,
+		Tag:        "0xA0000003",
+		TagName:    "IO_REPARSE_TAG_MOUNT_POINT",
 	}
 
 	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "Conflict") {
@@ -36,9 +49,12 @@ func TestValidateReparseObservationNotPresentRejectsTag(t *testing.T) {
 
 func TestValidateReparseObservationRejectsMalformedTag(t *testing.T) {
 	reparse := ReparseObservation{
-		State:   ReparseStatePresent,
-		Tag:     "0xa0000003",
-		TagName: "IO_REPARSE_TAG_MOUNT_POINT",
+		DataFormat: ReparseDataFormatNotKnown,
+		DataState:  ReparseDataStateError,
+		ReasonCode: "ReparseDataReadFailed",
+		State:      ReparseStatePresent,
+		Tag:        "0xa0000003",
+		TagName:    "IO_REPARSE_TAG_MOUNT_POINT",
 	}
 
 	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "InvalidReparseTag") {
@@ -46,15 +62,65 @@ func TestValidateReparseObservationRejectsMalformedTag(t *testing.T) {
 	}
 }
 
-func TestValidateReparseObservationUnknown(t *testing.T) {
+func TestValidateReparseObservationRejectsMismatchedKnownName(t *testing.T) {
 	reparse := ReparseObservation{
-		State:   ReparseStatePresent,
-		Tag:     "0xDEADBEEF",
-		TagName: ReparseTagNameNotKnown,
+		DataFormat: ReparseDataFormatNotKnown,
+		DataState:  ReparseDataStateError,
+		ReasonCode: "ReparseDataReadFailed",
+		State:      ReparseStatePresent,
+		Tag:        "0xA0000003",
+		TagName:    "IO_REPARSE_TAG_SYMLINK",
+	}
+
+	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "reparse.tag_name") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateReparseObservationRejectsRawTagMismatch(t *testing.T) {
+	raw := reparseTestBuffer(0xA000000C, 12)
+	reparse := ReparseObservation{
+		DataFormat:         ReparseDataFormatMountPoint,
+		DataState:          ReparseDataStatePresent,
+		RawBufferBase64URL: base64.RawURLEncoding.EncodeToString(raw),
+		State:              ReparseStatePresent,
+		Tag:                "0xA0000003",
+		TagName:            "IO_REPARSE_TAG_MOUNT_POINT",
+	}
+
+	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "raw_buffer") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateReparseObservationUnknown(t *testing.T) {
+	raw := reparseTestBuffer(0xDEADBEEF, 0)
+	reparse := ReparseObservation{
+		DataFormat:         ReparseDataFormatRaw,
+		DataState:          ReparseDataStatePresent,
+		RawBufferBase64URL: base64.RawURLEncoding.EncodeToString(raw),
+		State:              ReparseStatePresent,
+		Tag:                "0xDEADBEEF",
+		TagName:            ReparseTagNameNotKnown,
 	}
 
 	if err := ValidateReparseObservation(reparse); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateReparseObservationUnknownRejectsInventedName(t *testing.T) {
+	reparse := ReparseObservation{
+		DataFormat: ReparseDataFormatNotKnown,
+		DataState:  ReparseDataStateError,
+		ReasonCode: "ReparseDataReadFailed",
+		State:      ReparseStatePresent,
+		Tag:        "0xDEADBEEF",
+		TagName:    "SomethingElse",
+	}
+
+	if err := ValidateReparseObservation(reparse); err == nil || !strings.Contains(err.Error(), "reparse.tag_name") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -110,6 +176,13 @@ func TestValidateStreamInventoryRejectsLeadingZero(t *testing.T) {
 	if err := ValidateStreamInventory(inventory); err == nil || !strings.Contains(err.Error(), "InvalidDecimal") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+func reparseTestBuffer(tag uint32, dataLength uint16) []byte {
+	buffer := make([]byte, 8+int(dataLength))
+	binary.LittleEndian.PutUint32(buffer[0:4], tag)
+	binary.LittleEndian.PutUint16(buffer[4:6], dataLength)
+	return buffer
 }
 
 func utf16b64(s string) string {

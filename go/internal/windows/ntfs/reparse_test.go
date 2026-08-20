@@ -5,119 +5,125 @@
 package ntfs
 
 import (
+	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
-func TestKnownReparseTagNames(t *testing.T) {
-	tests := []struct {
-		name string
-		tag  uint32
-	}{
-		{"IO_REPARSE_TAG_AF_UNIX", reparseTagAFUnix},
-		{"IO_REPARSE_TAG_APPEXECLINK", reparseTagAppExecLink},
-		{"IO_REPARSE_TAG_APPXSTRM", reparseTagAppxStrm},
-		{"IO_REPARSE_TAG_CLOUD", reparseTagCloud},
-		{"IO_REPARSE_TAG_CLOUD_1", reparseTagCloud1},
-		{"IO_REPARSE_TAG_CLOUD_2", reparseTagCloud2},
-		{"IO_REPARSE_TAG_CLOUD_3", reparseTagCloud3},
-		{"IO_REPARSE_TAG_CLOUD_4", reparseTagCloud4},
-		{"IO_REPARSE_TAG_CLOUD_5", reparseTagCloud5},
-		{"IO_REPARSE_TAG_CLOUD_6", reparseTagCloud6},
-		{"IO_REPARSE_TAG_CLOUD_7", reparseTagCloud7},
-		{"IO_REPARSE_TAG_CLOUD_8", reparseTagCloud8},
-		{"IO_REPARSE_TAG_CLOUD_9", reparseTagCloud9},
-		{"IO_REPARSE_TAG_CLOUD_A", reparseTagCloudA},
-		{"IO_REPARSE_TAG_CLOUD_B", reparseTagCloudB},
-		{"IO_REPARSE_TAG_CLOUD_C", reparseTagCloudC},
-		{"IO_REPARSE_TAG_CLOUD_D", reparseTagCloudD},
-		{"IO_REPARSE_TAG_CLOUD_E", reparseTagCloudE},
-		{"IO_REPARSE_TAG_CLOUD_F", reparseTagCloudF},
-		{"IO_REPARSE_TAG_CSV", reparseTagCSV},
-		{"IO_REPARSE_TAG_DEDUP", reparseTagDedup},
-		{"IO_REPARSE_TAG_DFM", reparseTagDFM},
-		{"IO_REPARSE_TAG_DFS", reparseTagDFS},
-		{"IO_REPARSE_TAG_DFSR", reparseTagDFSR},
-		{"IO_REPARSE_TAG_DRIVE_EXTENDER", reparseTagDriveExtender},
-		{"IO_REPARSE_TAG_FILE_PLACEHOLDER", reparseTagFilePlaceholder},
-		{"IO_REPARSE_TAG_FILTER_MANAGER", reparseTagFilterManager},
-		{"IO_REPARSE_TAG_GLOBAL_REPARSE", reparseTagGlobalReparse},
-		{"IO_REPARSE_TAG_HSM", reparseTagHSM},
-		{"IO_REPARSE_TAG_HSM2", reparseTagHSM2},
-		{"IO_REPARSE_TAG_IIS_CACHE", reparseTagIISCache},
-		{"IO_REPARSE_TAG_LX_BLK", reparseTagLXBLK},
-		{"IO_REPARSE_TAG_LX_CHR", reparseTagLXCHR},
-		{"IO_REPARSE_TAG_LX_FIFO", reparseTagLXFIFO},
-		{"IO_REPARSE_TAG_LX_SYMLINK", reparseTagLXSymlink},
-		{"IO_REPARSE_TAG_MOUNT_POINT", reparseTagMountPoint},
-		{"IO_REPARSE_TAG_NFS", reparseTagNFS},
-		{"IO_REPARSE_TAG_ONEDRIVE", reparseTagOneDrive},
-		{"IO_REPARSE_TAG_PROJFS", reparseTagProjFS},
-		{"IO_REPARSE_TAG_PROJFS_TOMBSTONE", reparseTagProjFSTombstone},
-		{"IO_REPARSE_TAG_RESERVED_ONE", reparseTagReservedOne},
-		{"IO_REPARSE_TAG_RESERVED_TWO", reparseTagReservedTwo},
-		{"IO_REPARSE_TAG_RESERVED_ZERO", reparseTagReservedZero},
-		{"IO_REPARSE_TAG_SIS", reparseTagSIS},
-		{"IO_REPARSE_TAG_STORAGE_SYNC", reparseTagStorageSync},
-		{"IO_REPARSE_TAG_STORAGE_SYNC_FOLDER", reparseTagStorageSyncFolder},
-		{"IO_REPARSE_TAG_SYMLINK", reparseTagSymlink},
-		{"IO_REPARSE_TAG_UNHANDLED", reparseTagUnhandled},
-		{"IO_REPARSE_TAG_WCI", reparseTagWCI},
-		{"IO_REPARSE_TAG_WCI_1", reparseTagWCI1},
-		{"IO_REPARSE_TAG_WCI_LINK", reparseTagWCILink},
-		{"IO_REPARSE_TAG_WCI_LINK_1", reparseTagWCILink1},
-		{"IO_REPARSE_TAG_WCI_TOMBSTONE", reparseTagWCITombstone},
-		{"IO_REPARSE_TAG_WIM", reparseTagWIM},
-		{"IO_REPARSE_TAG_WOF", reparseTagWOF},
+func TestParseReparseDataMountPoint(t *testing.T) {
+	raw := testMountPointReparseData(`\??\C:\target`, `C:\target`)
+	got, err := parseReparseData(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := knownReparseTagName(test.tag); got != test.name {
-				t.Fatalf("tag 0x%08X name = %q, want %q", test.tag, got, test.name)
-			}
-		})
+	if got.DataFormat != records.ReparseDataFormatMountPoint || got.Tag != reparseTagMountPoint {
+		t.Fatalf("parsed = %+v", got)
+	}
+	if !bytes.Equal(testUTF16Bytes(got.SubstituteName), testUTF16Bytes(testUTF16(`\??\C:\target`))) {
+		t.Fatalf("substitute = %v", got.SubstituteName)
+	}
+	if !bytes.Equal(testUTF16Bytes(got.PrintName), testUTF16Bytes(testUTF16(`C:\target`))) {
+		t.Fatalf("print = %v", got.PrintName)
 	}
 }
 
-func TestReparseObservationKnown(t *testing.T) {
-	got := reparseObservation(true, reparseTagMountPoint)
+func TestParseReparseDataRejectsInvalidOffset(t *testing.T) {
+	raw := testMountPointReparseData(`\??\C:\target`, `C:\target`)
+	binary.LittleEndian.PutUint16(raw[8:10], 0xFFFF)
 
-	if got.State != records.ReparseStatePresent {
-		t.Fatalf("state = %q", got.State)
-	}
-	if got.Tag != "0xA0000003" {
-		t.Fatalf("tag = %q", got.Tag)
-	}
-	if got.TagName != "IO_REPARSE_TAG_MOUNT_POINT" {
-		t.Fatalf("tag name = %q", got.TagName)
+	if _, err := parseReparseData(raw); err == nil {
+		t.Fatal("expected malformed reparse data error")
 	}
 }
 
-func TestReparseObservationNotPresent(t *testing.T) {
-	got := reparseObservation(false, reparseTagMountPoint)
-
-	if got.State != records.ReparseStateNotPresent {
-		t.Fatalf("state = %q", got.State)
+func TestParseReparseDataSymbolicLink(t *testing.T) {
+	raw := testSymbolicLinkReparseData(`\??\C:\target.txt`, `C:\target.txt`, 0)
+	got, err := parseReparseData(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got.Tag != "" || got.TagName != "" {
-		t.Fatalf("not-present reparse retained tag data: %+v", got)
+	if got.DataFormat != records.ReparseDataFormatSymbolicLink || got.Tag != reparseTagSymlink {
+		t.Fatalf("parsed = %+v", got)
+	}
+	if got.SymbolicLinkFlags != 0 {
+		t.Fatalf("flags = 0x%08X", got.SymbolicLinkFlags)
 	}
 }
 
-func TestReparseObservationUnknown(t *testing.T) {
-	const unknownTag uint32 = 0xDEADBEEF
+func TestParseReparseDataUnknownPreservesRaw(t *testing.T) {
+	raw := make([]byte, 28)
+	binary.LittleEndian.PutUint32(raw[0:4], 0xDEADBEEF)
+	binary.LittleEndian.PutUint16(raw[4:6], 4)
+	copy(raw[8:24], []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+	copy(raw[24:], []byte{1, 2, 3, 4})
 
-	got := reparseObservation(true, unknownTag)
+	got, err := parseReparseData(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DataFormat != records.ReparseDataFormatRaw || got.Tag != 0xDEADBEEF {
+		t.Fatalf("parsed = %+v", got)
+	}
+	if !bytes.Equal(got.RawBuffer, raw) {
+		t.Fatal("raw reparse buffer was not preserved")
+	}
 
-	if got.State != records.ReparseStatePresent {
-		t.Fatalf("state = %q", got.State)
+	observation := reparseObservationParsed(got)
+	if observation.TagName != records.ReparseTagNameNotKnown ||
+		observation.RawBufferBase64URL == "" {
+		t.Fatalf("observation = %+v", observation)
 	}
-	if got.Tag != "0xDEADBEEF" {
-		t.Fatalf("tag = %q", got.Tag)
+}
+
+func testMountPointReparseData(substitute string, print string) []byte {
+	substituteBytes := testUTF16Bytes(testUTF16(substitute))
+	printBytes := testUTF16Bytes(testUTF16(print))
+	pathBytes := append(append([]byte(nil), substituteBytes...), printBytes...)
+
+	dataLength := 8 + len(pathBytes)
+	raw := make([]byte, 8+dataLength)
+	binary.LittleEndian.PutUint32(raw[0:4], reparseTagMountPoint)
+	binary.LittleEndian.PutUint16(raw[4:6], uint16(dataLength))
+	binary.LittleEndian.PutUint16(raw[8:10], 0)
+	binary.LittleEndian.PutUint16(raw[10:12], uint16(len(substituteBytes)))
+	binary.LittleEndian.PutUint16(raw[12:14], uint16(len(substituteBytes)))
+	binary.LittleEndian.PutUint16(raw[14:16], uint16(len(printBytes)))
+	copy(raw[16:], pathBytes)
+	return raw
+}
+
+func testSymbolicLinkReparseData(substitute string, print string, flags uint32) []byte {
+	substituteBytes := testUTF16Bytes(testUTF16(substitute))
+	printBytes := testUTF16Bytes(testUTF16(print))
+	pathBytes := append(append([]byte(nil), substituteBytes...), printBytes...)
+
+	dataLength := 12 + len(pathBytes)
+	raw := make([]byte, 8+dataLength)
+	binary.LittleEndian.PutUint32(raw[0:4], reparseTagSymlink)
+	binary.LittleEndian.PutUint16(raw[4:6], uint16(dataLength))
+	binary.LittleEndian.PutUint16(raw[8:10], 0)
+	binary.LittleEndian.PutUint16(raw[10:12], uint16(len(substituteBytes)))
+	binary.LittleEndian.PutUint16(raw[12:14], uint16(len(substituteBytes)))
+	binary.LittleEndian.PutUint16(raw[14:16], uint16(len(printBytes)))
+	binary.LittleEndian.PutUint32(raw[16:20], flags)
+	copy(raw[20:], pathBytes)
+	return raw
+}
+
+func testUTF16(value string) []uint16 {
+	units := make([]uint16, len(value))
+	for index := range value {
+		units[index] = uint16(value[index])
 	}
-	if got.TagName != records.ReparseTagNameNotKnown {
-		t.Fatalf("tag name = %q", got.TagName)
+	return units
+}
+
+func testUTF16Bytes(units []uint16) []byte {
+	encoded := make([]byte, len(units)*2)
+	for index, unit := range units {
+		binary.LittleEndian.PutUint16(encoded[index*2:], unit)
 	}
+	return encoded
 }

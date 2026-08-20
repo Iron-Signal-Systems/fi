@@ -38,18 +38,32 @@ type ObservationWarning struct {
 }
 
 // ReparseObservation records the exact reparse-point state Windows reported for
-// one object.
+// one object and the exact reparse buffer when it could be obtained.
 //
 // State is NotPresent when Windows did not report FILE_ATTRIBUTE_REPARSE_POINT.
-// In that state Tag and TagName are omitted.
+// DataState and DataFormat are then NotApplicable.
 //
-// State is Present when Windows reported FILE_ATTRIBUTE_REPARSE_POINT. Tag then
-// preserves the exact 32-bit Windows reparse tag as canonical hexadecimal.
-// TagName is the exact documented name when FI knows it, otherwise NotKnown.
+// State is Present when Windows reported FILE_ATTRIBUTE_REPARSE_POINT. Tag
+// preserves the exact 32-bit tag. TagName is the exact shared FI mapping or
+// NotKnown. RawBufferBase64URL preserves every byte returned by
+// FSCTL_GET_REPARSE_POINT.
+//
+// FI parses only documented structures it understands exactly. MountPoint and
+// SymbolicLink expose the documented substitute and print names. A zero-length
+// parsed name is represented by an omitted/empty encoded value and is still
+// interpreted as the exact zero-length field for that parsed format. Raw means
+// FI preserved the buffer without claiming to understand its payload.
 type ReparseObservation struct {
-	State   ReparseState `json:"state"`
-	Tag     string       `json:"tag,omitempty"`
-	TagName string       `json:"tag_name,omitempty"`
+	DataFormat                     ReparseDataFormat `json:"data_format"`
+	DataState                      ReparseDataState  `json:"data_state"`
+	PrintNameUTF16LEBase64URL      string            `json:"print_name_utf16le_base64url,omitempty"`
+	RawBufferBase64URL             string            `json:"raw_buffer_base64url,omitempty"`
+	ReasonCode                     string            `json:"reason_code,omitempty"`
+	State                          ReparseState      `json:"state"`
+	SubstituteNameUTF16LEBase64URL string            `json:"substitute_name_utf16le_base64url,omitempty"`
+	SymbolicLinkFlags              string            `json:"symbolic_link_flags,omitempty"`
+	Tag                            string            `json:"tag,omitempty"`
+	TagName                        string            `json:"tag_name,omitempty"`
 }
 
 // StreamInventory records the result of enumerating all streams for one object.

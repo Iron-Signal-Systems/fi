@@ -6,6 +6,7 @@ package records
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -107,6 +108,12 @@ func ValidateNTFSObjectIdentity(identity NTFSObjectIdentity) error {
 	return validateDecimal(identity.SequenceNumber, "object_identity.sequence_number")
 }
 
+// ValidateObservedAt validates the canonical UTC time when FI completed the
+// source observation.
+func ValidateObservedAt(value string) error {
+	return validateTimestamp(value, "observed_at")
+}
+
 // ValidateObservationStatus validates the statuses the current NTFS collector
 // can actually emit.
 func ValidateObservationStatus(status ObservationStatus) error {
@@ -169,20 +176,125 @@ func ValidatePathContainment(containment PathContainment) error {
 	return require(containment.MethodVersion, "containment.method_version")
 }
 
-// ValidateReparseObservation validates the shared representation of Windows
-// reparse state.
+// ValidateReparseObservation validates both the shape and the internal
+// consistency of the shared Windows reparse representation.
 func ValidateReparseObservation(reparse ReparseObservation) error {
 	switch reparse.State {
 	case ReparseStateNotPresent:
-		if reparse.Tag != "" || reparse.TagName != "" {
+		if reparse.DataFormat != ReparseDataFormatNotApplicable ||
+			reparse.DataState != ReparseDataStateNotApplicable ||
+			reparse.PrintNameUTF16LEBase64URL != "" ||
+			reparse.RawBufferBase64URL != "" ||
+			reparse.ReasonCode != "" ||
+			reparse.SubstituteNameUTF16LEBase64URL != "" ||
+			reparse.SymbolicLinkFlags != "" ||
+			reparse.Tag != "" ||
+			reparse.TagName != "" {
 			return invalid("Conflict", "reparse")
 		}
 		return nil
+
 	case ReparseStatePresent:
 		if err := validateReparseTag(reparse.Tag, "reparse.tag"); err != nil {
 			return err
 		}
-		return require(reparse.TagName, "reparse.tag_name")
+		if reparse.TagName != ReparseTagName(reparse.Tag) {
+			return invalid("Conflict", "reparse.tag_name")
+		}
+
+		switch reparse.DataState {
+		case ReparseDataStateError:
+			if reparse.DataFormat != ReparseDataFormatNotKnown {
+				return invalid("Conflict", "reparse.data_format")
+			}
+			if err := require(reparse.ReasonCode, "reparse.reason_code"); err != nil {
+				return err
+			}
+			if reparse.PrintNameUTF16LEBase64URL != "" ||
+				reparse.RawBufferBase64URL != "" ||
+				reparse.SubstituteNameUTF16LEBase64URL != "" ||
+				reparse.SymbolicLinkFlags != "" {
+				return invalid("Conflict", "reparse")
+			}
+			return nil
+
+		case ReparseDataStateNotApplicable:
+			return invalid("Conflict", "reparse.data_state")
+
+		case ReparseDataStatePresent:
+			if err := require(reparse.RawBufferBase64URL, "reparse.raw_buffer_base64url"); err != nil {
+				return err
+			}
+			raw, err := decodeBase64URL(reparse.RawBufferBase64URL, "reparse.raw_buffer_base64url")
+			if err != nil {
+				return err
+			}
+			if len(raw) < 8 {
+				return invalid("InvalidReparseBuffer", "reparse.raw_buffer_base64url")
+			}
+			rawTag := fmt.Sprintf("0x%08X", binary.LittleEndian.Uint32(raw[0:4]))
+			if rawTag != reparse.Tag {
+				return invalid("Conflict", "reparse.raw_buffer_base64url")
+			}
+
+			switch reparse.DataFormat {
+			case ReparseDataFormatMountPoint:
+				if reparse.Tag != "0xA0000003" || reparse.SymbolicLinkFlags != "" || reparse.ReasonCode != "" {
+					return invalid("Conflict", "reparse.data_format")
+				}
+				if reparse.PrintNameUTF16LEBase64URL != "" {
+					if err := validateUTF16LEBase64URL(reparse.PrintNameUTF16LEBase64URL, "reparse.print_name_utf16le_base64url"); err != nil {
+						return err
+					}
+				}
+				if reparse.SubstituteNameUTF16LEBase64URL != "" {
+					if err := validateUTF16LEBase64URL(reparse.SubstituteNameUTF16LEBase64URL, "reparse.substitute_name_utf16le_base64url"); err != nil {
+						return err
+					}
+				}
+				return nil
+
+			case ReparseDataFormatRaw:
+				if reparse.PrintNameUTF16LEBase64URL != "" ||
+					reparse.SubstituteNameUTF16LEBase64URL != "" ||
+					reparse.SymbolicLinkFlags != "" {
+					return invalid("Conflict", "reparse")
+				}
+				return nil
+
+			case ReparseDataFormatSymbolicLink:
+				if reparse.Tag != "0xA000000C" || reparse.ReasonCode != "" {
+					return invalid("Conflict", "reparse.data_format")
+				}
+				if err := require(reparse.SymbolicLinkFlags, "reparse.symbolic_link_flags"); err != nil {
+					return err
+				}
+				if err := validateHex32(reparse.SymbolicLinkFlags, "reparse.symbolic_link_flags"); err != nil {
+					return err
+				}
+				if reparse.PrintNameUTF16LEBase64URL != "" {
+					if err := validateUTF16LEBase64URL(reparse.PrintNameUTF16LEBase64URL, "reparse.print_name_utf16le_base64url"); err != nil {
+						return err
+					}
+				}
+				if reparse.SubstituteNameUTF16LEBase64URL != "" {
+					if err := validateUTF16LEBase64URL(reparse.SubstituteNameUTF16LEBase64URL, "reparse.substitute_name_utf16le_base64url"); err != nil {
+						return err
+					}
+				}
+				return nil
+
+			case ReparseDataFormatNotApplicable, ReparseDataFormatNotKnown:
+				return invalid("Conflict", "reparse.data_format")
+
+			default:
+				return invalid("UnsupportedValue", "reparse.data_format")
+			}
+
+		default:
+			return invalid("UnsupportedValue", "reparse.data_state")
+		}
+
 	default:
 		return invalid("UnsupportedValue", "reparse.state")
 	}
@@ -324,6 +436,21 @@ func validateDecimal(value, field string) error {
 	return nil
 }
 
+func validateHex32(value, field string) error {
+	if len(value) != 10 || value[0:2] != "0x" {
+		return invalid("InvalidHex32", field)
+	}
+	for _, character := range value[2:] {
+		switch {
+		case character >= '0' && character <= '9':
+		case character >= 'A' && character <= 'F':
+		default:
+			return invalid("InvalidHex32", field)
+		}
+	}
+	return nil
+}
+
 func validateObservationState(state ObservationState, field string) error {
 	switch state {
 	case ObservationStateError, ObservationStatePresent:
@@ -334,19 +461,9 @@ func validateObservationState(state ObservationState, field string) error {
 }
 
 func validateReparseTag(value, field string) error {
-	if len(value) != 10 || value[0:2] != "0x" {
+	if err := validateHex32(value, field); err != nil {
 		return invalid("InvalidReparseTag", field)
 	}
-
-	for _, character := range value[2:] {
-		switch {
-		case character >= '0' && character <= '9':
-		case character >= 'A' && character <= 'F':
-		default:
-			return invalid("InvalidReparseTag", field)
-		}
-	}
-
 	return nil
 }
 

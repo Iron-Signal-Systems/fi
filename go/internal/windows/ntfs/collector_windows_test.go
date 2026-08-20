@@ -13,9 +13,33 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
+
+func TestCollectPathObservedAt(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "object.txt")
+	if err := os.WriteFile(target, []byte("time"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC()
+	observation, err := CollectPath(context.Background(), "scope-test", root, target)
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	observedAt, err := time.Parse("2006-01-02T15:04:05.000000000Z", observation.ObservedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observedAt.Before(before) || observedAt.After(after) {
+		t.Fatalf("observed_at = %s outside [%s, %s]", observedAt, before, after)
+	}
+}
 
 // This is a native Windows integration test. It creates a real NTFS file and a
 // real ADS, runs the production collector, and verifies the returned facts.
@@ -50,6 +74,9 @@ func TestCollectPathOnWindowsNTFS(t *testing.T) {
 		observation.Containment.MethodVersion == "" {
 		t.Fatalf("scope result is incomplete: %+v %+v", observation.GovernedRoot, observation.Containment)
 	}
+	if observation.ObservedAt == "" {
+		t.Fatal("observed_at is empty")
+	}
 	if observation.ObservationStatus != records.ObservationComplete {
 		t.Fatalf("status = %s", observation.ObservationStatus)
 	}
@@ -66,6 +93,19 @@ func TestCollectPathOnWindowsNTFS(t *testing.T) {
 	}
 	if !foundDefault || !foundADS {
 		t.Fatalf("stream inventory missing default or named data stream: %+v", observation.StreamInventory.Streams)
+	}
+}
+
+func TestCollectPathRejectsFileGovernedRoot(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "not-a-root.txt")
+	if err := os.WriteFile(file, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := CollectPath(context.Background(), "scope-test", file, file)
+	if !errors.Is(err, ErrGovernedRootNotDirectory) {
+		t.Fatalf("error = %v, want ErrGovernedRootNotDirectory", err)
 	}
 }
 

@@ -20,8 +20,11 @@ const (
 //
 // The NTFS collector creates this structure after it has established the
 // governed root, proved containment, collected object identity/metadata,
-// collected reparse state, and attempted stream enumeration. Windows
-// record/staging code can consume this result next.
+// collected reparse state and payload where applicable, attempted stream
+// enumeration, and completed consistency checks.
+//
+// ObservedAt is the source collector's UTC time when the facts represented by
+// this observation finished collection. It is distinct from NTFS timestamps.
 //
 // This is not a Windows API structure and is not the backend database schema.
 type Observation struct {
@@ -31,6 +34,7 @@ type Observation struct {
 	ObjectIdentity    records.NTFSObjectIdentity   `json:"object_identity"`
 	SubjectKind       records.SubjectKind          `json:"subject_kind"`
 	PathBinding       records.PathBinding          `json:"path_binding"`
+	ObservedAt        string                       `json:"observed_at"`
 	Metadata          records.MetadataObservation  `json:"metadata"`
 	Reparse           records.ReparseObservation   `json:"reparse"`
 	StreamInventory   records.StreamInventory      `json:"stream_inventory"`

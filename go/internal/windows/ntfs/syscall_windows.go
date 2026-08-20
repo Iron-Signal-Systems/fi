@@ -39,11 +39,23 @@ const (
 	// It does not grant write access.
 	fileReadAttributes = 0x0080
 
+	// FSCTL_GET_REPARSE_POINT retrieves the reparse buffer associated with an
+	// already-open file or directory.
+	//
+	// Reference:
+	// Microsoft Learn, "FSCTL_GET_REPARSE_POINT IOCTL (winioctl.h)".
+	// https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_get_reparse_point
+	fsctlGetReparsePoint = 0x000900A8
+
 	// Stream enumeration grows only to this fixed ceiling so a malformed or
 	// hostile source cannot make FI allocate without bound.
 	fileStreamInfoHeader    = 24
 	initialStreamInfoBuffer = 64 * 1024
 	maximumStreamInfoBuffer = 4 * 1024 * 1024
+
+	// Windows defines MAXIMUM_REPARSE_DATA_BUFFER_SIZE as 16 KiB. FI therefore
+	// uses one fixed bounded output buffer for FSCTL_GET_REPARSE_POINT.
+	maximumReparseDataBufferSize = 16 * 1024
 
 	volumeNameGUID = 0x0001
 )
@@ -56,6 +68,7 @@ const (
 
 var (
 	kernel32                          = syscall.NewLazyDLL("kernel32.dll")
+	procDeviceIoControl               = kernel32.NewProc("DeviceIoControl")
 	procGetFileInformationByHandleEx  = kernel32.NewProc("GetFileInformationByHandleEx")
 	procGetFinalPathNameByHandleW     = kernel32.NewProc("GetFinalPathNameByHandleW")
 	procGetVolumeInformationByHandleW = kernel32.NewProc("GetVolumeInformationByHandleW")
@@ -321,6 +334,41 @@ func queryNativeState(handle syscall.Handle) (nativeState, error) {
 	}
 
 	return state, nil
+}
+
+// queryReparseData asks Windows for the exact reparse buffer associated with the
+// already-open final object. The fixed 16 KiB buffer is the Windows-defined
+// maximum reparse buffer size.
+func queryReparseData(handle syscall.Handle) ([]byte, error) {
+	buffer := make([]byte, maximumReparseDataBufferSize)
+	var bytesReturned uint32
+
+	r1, _, callErr := procDeviceIoControl.Call(
+		uintptr(handle),
+		uintptr(fsctlGetReparsePoint),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(len(buffer)),
+		uintptr(unsafe.Pointer(&bytesReturned)),
+		0,
+	)
+	if r1 == 0 {
+		return nil, &Error{
+			Stage: StageReparse,
+			Op:    "DeviceIoControl(FSCTL_GET_REPARSE_POINT)",
+			Err:   callErr,
+		}
+	}
+	if bytesReturned < 8 || bytesReturned > uint32(len(buffer)) {
+		return nil, &Error{
+			Stage: StageReparse,
+			Op:    "DeviceIoControl(FSCTL_GET_REPARSE_POINT)",
+			Err:   ErrMalformedReparseData,
+		}
+	}
+
+	return append([]byte(nil), buffer[:bytesReturned]...), nil
 }
 
 // queryStreams asks Windows for FILE_STREAM_INFO using a bounded growing buffer.

@@ -9,36 +9,42 @@ package ntfs
 import (
 	"context"
 	"errors"
-	"io/fs"
+	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
+const walkDirectoryBatchSize = 128
+
 var (
-	ErrWalkRootNotDirectory = errors.New("governed root is not a directory")
-	ErrWalkVisitorRequired  = errors.New("walk visitor is required")
+	ErrWalkVisitorRequired = errors.New("walk visitor is required")
 )
 
-// WalkVisitFunc receives the result of collecting one object discovered during
-// a governed-root walk.
+// WalkVisitFunc receives one walk event.
 //
-// collectErr is nil when observation contains a successful FI observation.
-// Returning an error stops the walk.
+// objectErr is nil when observation contains a successful FI observation.
+// When traversal of an already-observed directory later fails, FI can emit a
+// second event for the same path containing the traversal error and an empty
+// observation. Returning an error stops the walk.
 type WalkVisitFunc func(
 	path string,
 	observation Observation,
-	collectErr error,
+	objectErr error,
 ) error
 
 // WalkGovernedRoot recursively walks one governed local NTFS directory tree.
 //
-// The governed root itself is collected first. Every discovered object is
-// passed through CollectPath so the existing NTFS collector remains responsible
-// for containment, identity, metadata, reparse state, streams, consistency, and
-// validation.
+// The governed root itself is collected first. CollectPath owns the definition
+// of a valid governed root, including the requirement that it be a non-reparse
+// NTFS directory.
 //
-// Reparse objects are collected but are not recursively followed.
+// Directory entries are read in bounded batches. FI does not sort traversal
+// order because traversal order is not authoritative record content.
+//
+// Every discovered object is passed through CollectPath. Reparse objects are
+// observed but never recursively followed.
 func WalkGovernedRoot(
 	ctx context.Context,
 	scopeID string,
@@ -48,82 +54,90 @@ func WalkGovernedRoot(
 	if visit == nil {
 		return ErrWalkVisitorRequired
 	}
-
 	if err := validateContext(ctx); err != nil {
 		return err
 	}
 
-	rootObservation, err := CollectPath(
-		ctx,
-		scopeID,
-		governedRoot,
-		governedRoot,
-	)
+	rootObservation, err := CollectPath(ctx, scopeID, governedRoot, governedRoot)
 	if err != nil {
 		return err
 	}
-
-	if rootObservation.SubjectKind != records.SubjectDirectory {
-		return ErrWalkRootNotDirectory
-	}
-
 	if err := visit(governedRoot, rootObservation, nil); err != nil {
 		return err
 	}
 
-	first := true
+	return walkDirectory(ctx, scopeID, governedRoot, governedRoot, true, visit)
+}
 
-	return filepath.WalkDir(
-		governedRoot,
-		func(path string, entry fs.DirEntry, walkErr error) error {
-			if first {
-				first = false
+func walkDirectory(
+	ctx context.Context,
+	scopeID string,
+	governedRoot string,
+	directoryPath string,
+	root bool,
+	visit WalkVisitFunc,
+) error {
+	directory, err := os.Open(directoryPath)
+	if err != nil {
+		if root {
+			return err
+		}
+		return visit(directoryPath, Observation{}, err)
+	}
+	defer directory.Close()
 
-				if walkErr != nil {
-					return walkErr
-				}
+	for {
+		if err := validateContext(ctx); err != nil {
+			return err
+		}
 
-				return nil
-			}
-
-			if err := validateContext(ctx); err != nil {
+		entries, readErr := directory.ReadDir(walkDirectoryBatchSize)
+		for _, entry := range entries {
+			childPath := filepath.Join(directoryPath, entry.Name())
+			if err := walkObject(ctx, scopeID, governedRoot, childPath, visit); err != nil {
 				return err
 			}
+		}
 
-			if walkErr != nil {
-				if err := visit(path, Observation{}, walkErr); err != nil {
-					return err
-				}
-
-				return nil
-			}
-
-			observation, collectErr := CollectPath(
-				ctx,
-				scopeID,
-				governedRoot,
-				path,
-			)
-
-			if err := visit(path, observation, collectErr); err != nil {
-				return err
-			}
-
-			// Do not descend through a directory FI could not safely collect.
-			if collectErr != nil {
-				if entry.IsDir() {
-					return filepath.SkipDir
-				}
-
-				return nil
-			}
-
-			// Record reparse objects, but do not recursively follow them.
-			if observation.Reparse.State == records.ReparseStatePresent && entry.IsDir() {
-				return filepath.SkipDir
-			}
-
+		switch readErr {
+		case nil:
+			continue
+		case io.EOF:
 			return nil
-		},
-	)
+		default:
+			if root {
+				return readErr
+			}
+			if err := visit(directoryPath, Observation{}, readErr); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+}
+
+func walkObject(
+	ctx context.Context,
+	scopeID string,
+	governedRoot string,
+	path string,
+	visit WalkVisitFunc,
+) error {
+	if err := validateContext(ctx); err != nil {
+		return err
+	}
+
+	observation, collectErr := CollectPath(ctx, scopeID, governedRoot, path)
+	if collectErr != nil {
+		return visit(path, Observation{}, collectErr)
+	}
+	if err := visit(path, observation, nil); err != nil {
+		return err
+	}
+	if observation.SubjectKind != records.SubjectDirectory ||
+		observation.Reparse.State == records.ReparseStatePresent {
+		return nil
+	}
+
+	return walkDirectory(ctx, scopeID, governedRoot, path, false, visit)
 }

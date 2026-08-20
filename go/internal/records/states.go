@@ -43,6 +43,27 @@ const (
 	ObservationReplacedDuringCollection ObservationStatus = "ReplacedDuringCollection"
 )
 
+// ReparseDataFormat records how FI represented the reparse payload returned by
+// Windows.
+type ReparseDataFormat string
+
+const (
+	ReparseDataFormatMountPoint    ReparseDataFormat = "MountPoint"
+	ReparseDataFormatNotApplicable ReparseDataFormat = "NotApplicable"
+	ReparseDataFormatNotKnown      ReparseDataFormat = "NotKnown"
+	ReparseDataFormatRaw           ReparseDataFormat = "Raw"
+	ReparseDataFormatSymbolicLink  ReparseDataFormat = "SymbolicLink"
+)
+
+// ReparseDataState records whether FI obtained the reparse payload from Windows.
+type ReparseDataState string
+
+const (
+	ReparseDataStateError         ReparseDataState = "Error"
+	ReparseDataStateNotApplicable ReparseDataState = "NotApplicable"
+	ReparseDataStatePresent       ReparseDataState = "Present"
+)
+
 // ReparseState records whether Windows reported a reparse point for the object.
 type ReparseState string
 
@@ -50,10 +71,6 @@ const (
 	ReparseStateNotPresent ReparseState = "NotPresent"
 	ReparseStatePresent    ReparseState = "Present"
 )
-
-// ReparseTagNameNotKnown means FI preserved an exact reparse tag value but does
-// not have an exact documented name for that value.
-const ReparseTagNameNotKnown = "NotKnown"
 
 // StreamKind identifies how an NTFS stream relates to its parent object.
 type StreamKind string

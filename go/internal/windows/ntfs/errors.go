@@ -14,32 +14,36 @@ import (
 // collection Stage and Windows operation through Error.
 
 var (
-	ErrNotLocalVolume      = errors.New("path is not on a local volume")
-	ErrNotNTFS             = errors.New("path is not on an NTFS volume")
-	ErrIdentityChanged     = errors.New("object identity changed during collection")
-	ErrInvalidPath         = errors.New("path is invalid")
-	ErrUnsafePathForm      = errors.New("path form is not authorized for direct NTFS collection")
-	ErrStreamQualifiedPath = errors.New("path must identify the base NTFS object, not a named stream")
-	ErrOutsideGovernedRoot = errors.New("path is outside the governed root")
-	ErrGovernedRootReparse = errors.New("governed root cannot be a reparse object")
-	ErrScopeRequired       = errors.New("scope ID is required")
-	ErrStreamBufferLimit   = errors.New("NTFS stream inventory exceeded bounded buffer limit")
-	ErrMalformedStreamInfo = errors.New("Windows returned malformed FILE_STREAM_INFO data")
+	ErrGovernedRootNotDirectory       = errors.New("governed root must be a directory")
+	ErrGovernedRootReparse            = errors.New("governed root cannot be a reparse object")
+	ErrIdentityChanged                = errors.New("object identity changed during collection")
+	ErrInvalidPath                    = errors.New("path is invalid")
+	ErrMalformedReparseData           = errors.New("Windows returned malformed reparse data")
+	ErrMalformedStreamInfo            = errors.New("Windows returned malformed FILE_STREAM_INFO data")
+	ErrNotLocalVolume                 = errors.New("path is not on a local volume")
+	ErrNotNTFS                        = errors.New("path is not on an NTFS volume")
+	ErrOutsideGovernedRoot            = errors.New("path is outside the governed root")
+	ErrReparseChangedDuringCollection = errors.New("reparse state changed during collection")
+	ErrScopeRequired                  = errors.New("scope ID is required")
+	ErrStreamBufferLimit              = errors.New("NTFS stream inventory exceeded bounded buffer limit")
+	ErrStreamQualifiedPath            = errors.New("path must identify the base NTFS object, not a named stream")
+	ErrUnsafePathForm                 = errors.New("path form is not authorized for direct NTFS collection")
 )
 
 // Stage identifies the part of NTFS collection that failed.
 type Stage string
 
 const (
-	StageValidatePath Stage = "ValidatePath"
-	StageGovernedRoot Stage = "GovernedRoot"
+	StageConsistency  Stage = "Consistency"
 	StageContainment  Stage = "Containment"
-	StageOpen         Stage = "Open"
-	StageVolume       Stage = "Volume"
+	StageGovernedRoot Stage = "GovernedRoot"
 	StageIdentity     Stage = "Identity"
 	StageMetadata     Stage = "Metadata"
+	StageOpen         Stage = "Open"
+	StageReparse      Stage = "Reparse"
 	StageStreams      Stage = "Streams"
-	StageConsistency  Stage = "Consistency"
+	StageValidatePath Stage = "ValidatePath"
+	StageVolume       Stage = "Volume"
 )
 
 // Error keeps the collection stage and Windows operation with the underlying
