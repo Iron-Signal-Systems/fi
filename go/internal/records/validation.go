@@ -174,12 +174,34 @@ func ValidateSubjectKind(kind SubjectKind) error {
 	}
 }
 
-// ValidatePathBinding validates the exact UTF-16LE path representation.
+// ValidatePathBinding validates the exact requested and resolved UTF-16LE path
+// representations.
 func ValidatePathBinding(binding PathBinding) error {
-	if err := require(binding.PathUTF16LEBase64URL, "path_binding.path_utf16le_base64url"); err != nil {
+	if err := require(
+		binding.RequestedPathUTF16LEBase64URL,
+		"path_binding.requested_path_utf16le_base64url",
+	); err != nil {
 		return err
 	}
-	return validateUTF16LEBase64URL(binding.PathUTF16LEBase64URL, "path_binding.path_utf16le_base64url")
+
+	if err := validateUTF16LEBase64URL(
+		binding.RequestedPathUTF16LEBase64URL,
+		"path_binding.requested_path_utf16le_base64url",
+	); err != nil {
+		return err
+	}
+
+	if err := require(
+		binding.ResolvedPathUTF16LEBase64URL,
+		"path_binding.resolved_path_utf16le_base64url",
+	); err != nil {
+		return err
+	}
+
+	return validateUTF16LEBase64URL(
+		binding.ResolvedPathUTF16LEBase64URL,
+		"path_binding.resolved_path_utf16le_base64url",
+	)
 }
 
 // ValidateMetadataObservation validates canonical metadata values in a fixed

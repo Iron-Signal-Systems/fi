@@ -78,7 +78,8 @@ type PathContainment struct {
 // object identity. NTFSObjectIdentity remains the object identity if a path is
 // renamed, moved, hard-linked, or later reused by another object.
 type PathBinding struct {
-	PathUTF16LEBase64URL string `json:"path_utf16le_base64url"`
+	RequestedPathUTF16LEBase64URL string `json:"requested_path_utf16le_base64url"`
+	ResolvedPathUTF16LEBase64URL  string `json:"resolved_path_utf16le_base64url"`
 }
 
 // END Used by Windows Systems and Backend Recorder.

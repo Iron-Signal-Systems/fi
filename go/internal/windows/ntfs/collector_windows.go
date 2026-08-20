@@ -262,7 +262,8 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		ObjectIdentity: objectIdentity,
 		SubjectKind:    subjectKind,
 		PathBinding: records.PathBinding{
-			PathUTF16LEBase64URL: utf16LEBase64URL(targetPath),
+			RequestedPathUTF16LEBase64URL: utf16LEBase64URL(targetPath),
+			ResolvedPathUTF16LEBase64URL:  utf16LEBase64URL(targetFinalPath),
 		},
 		Metadata:          metadata,
 		StreamInventory:   streamInventory,
