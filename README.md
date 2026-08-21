@@ -15,7 +15,7 @@ Copyright ownership and licensing for FI are held and granted by **John Joseph W
 
 ## Purpose
 
-FI is being developed as a historical forensic model of governed files.
+FI is being developed as a historical readonly forensic model of governed files.
 
 FI is intended to continuously record what is known or deterministically discoverable about a governed file's:
 
