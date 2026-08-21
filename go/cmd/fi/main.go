@@ -29,6 +29,7 @@ type walkOutput struct {
 func main() {
 	collectPath := flag.Bool("collect-path", false, "show complete NTFS collection")
 	walkRoot := flag.Bool("walk-root", false, "recursively collect a governed NTFS root")
+	perfRoot := flag.Bool("perf-root", false, "measure FI collection on a governed NTFS root")
 	identity := flag.Bool("identity", false, "show NTFS identity")
 	metadata := flag.Bool("metadata", false, "show NTFS metadata")
 	ads := flag.Bool("ads", false, "show streams and ADS")
@@ -39,6 +40,7 @@ func main() {
 	for _, selected := range []bool{
 		*collectPath,
 		*walkRoot,
+		*perfRoot,
 		*identity,
 		*metadata,
 		*ads,
@@ -53,13 +55,21 @@ func main() {
 		os.Exit(2)
 	}
 
-	if *walkRoot {
+	switch {
+	case *walkRoot:
 		if flag.NArg() != 1 {
 			printUsage()
 			os.Exit(2)
 		}
-
 		runWalk(flag.Arg(0))
+		return
+
+	case *perfRoot:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runPerformance(flag.Arg(0))
 		return
 	}
 
@@ -127,6 +137,7 @@ func printUsage() {
 	fmt.Println("usage:")
 	fmt.Println(`  fi.exe -collect-path <governed-root> <target>`)
 	fmt.Println(`  fi.exe -walk-root    <governed-root>`)
+	fmt.Println(`  fi.exe -perf-root    <governed-root>`)
 	fmt.Println(`  fi.exe -identity     <governed-root> <target>`)
 	fmt.Println(`  fi.exe -metadata     <governed-root> <target>`)
 	fmt.Println(`  fi.exe -ads          <governed-root> <target>`)

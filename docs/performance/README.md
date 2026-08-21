@@ -1,39 +1,50 @@
 # Performance Measurement
 
-FI records baseline performance so later engineering changes can be compared to known measurements. These numbers are measurements, not release gates or optimization targets.
+FI measures resource use before performance thresholds are established. Performance observation is diagnostic engineering data, not authoritative file history and not a release gate.
 
-## Windows NTFS baseline
+## Real NTFS collection
 
-Run from the repository root on a representative NTFS system:
+Build FI normally, then run the collector against a representative governed root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\perf\windows-baseline.ps1 `
-  -Root "C:\Path\To\Representative\Tree" `
-  -Label "server2016-representative"
+go build -o .\cmd\fi\fi.exe .\cmd\fi
+.\cmd\fi\fi.exe -perf-root "C:\Path\To\Representative\Tree"
 ```
 
-The script:
+`-perf-root` uses the same `ntfs.WalkGovernedRoot` and `ntfs.CollectPath` path as normal recursive collection. It does not emit each object record. Instead it emits one JSON resource report containing:
 
-- builds the current `fi.exe`;
-- runs `-walk-root` three times by default;
-- records objects, files, directories, elapsed time, objects/second, files/second, peak working set, process CPU time, collection errors, observation states, and named ADS count;
-- runs the Windows NTFS Go benchmark suite with `-benchmem`;
-- writes one Markdown report under `docs/performance/results/`.
+- elapsed time, objects/second, and files/second;
+- files, directories, reparse objects, and stream counts;
+- Complete, Partial, ChangedDuringCollection, and ReplacedDuringCollection counts;
+- warning-code and collection-error-stage counts;
+- process CPU time, current and peak working set, and private bytes;
+- Go heap, allocation, garbage-collection, and goroutine observations;
+- Windows, Go, CPU-count, host, VCS revision, and governed-root/volume identity context.
 
-The Go benchmark suite contains focused measurements for:
+The report states:
 
-- plain-file `CollectPath`;
-- ADS-heavy `CollectPath` with 32 named streams;
-- `queryNativeState`;
-- default-only stream enumeration;
-- ADS-heavy stream enumeration;
-- governed-root sibling rejection;
-- recursive collection of a synthetic 1,000-file tree.
+```text
+Resource observation: RECORDED
+Performance thresholds: NOT_EVALUATED
+```
 
-Run only the Go benchmarks from `go\` with:
+until representative same-environment measurements exist and a real operational threshold is intentionally defined.
+
+To retain a report during development, redirect the JSON output:
+
+```powershell
+.\cmd\fi\fi.exe -perf-root "C:\Path\To\Representative\Tree" `
+  > .\docs\performance\results\server2016-representative.json
+```
+
+## Focused Go benchmarks
+
+The Windows NTFS benchmark file measures nearby syscall-sensitive paths separately from the full collector run, including ordinary files, ADS-heavy files, native state queries, stream enumeration, containment rejection, and a synthetic recursive tree.
+
+From `go\`:
 
 ```powershell
 go test ./internal/windows/ntfs -run '^$' -bench '^Benchmark' -benchmem -count 3
 ```
 
-Do not optimize against one machine or one run. Record the baseline first, then compare later changes under the same dataset and environment.
+Do not optimize against one machine or one run. Record measurements first and compare only like workloads on like environments.
