@@ -40,12 +40,14 @@ func TestWriteBaselineRootStreamsContextBeforeObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(events) < 3 {
-		t.Fatalf("baseline emitted %d events, want at least 3", len(events))
+	if len(events) < 5 {
+		t.Fatalf("baseline emitted %d events, want at least 5", len(events))
 	}
+
 	if events[0].Kind != baselineKindCollectorIdentity || events[0].CollectorIdentity == nil {
 		t.Fatalf("first event = %+v, want collector identity", events[0])
 	}
+
 	if events[1].Kind != baselineKindSMBShareSnapshot {
 		t.Fatalf("second event kind = %q, want %q", events[1].Kind, baselineKindSMBShareSnapshot)
 	}
@@ -53,8 +55,22 @@ func TestWriteBaselineRootStreamsContextBeforeObjects(t *testing.T) {
 		t.Fatal("SMB share event contains neither snapshot nor explicit error")
 	}
 
+	if events[2].Kind != baselineKindLocalPrincipals {
+		t.Fatalf("third event kind = %q, want %q", events[2].Kind, baselineKindLocalPrincipals)
+	}
+	if events[2].LocalPrincipals == nil && events[2].Error == "" {
+		t.Fatal("local principal event contains neither snapshot nor explicit error")
+	}
+
+	if events[3].Kind != baselineKindDirectoryPrincipals {
+		t.Fatalf("fourth event kind = %q, want %q", events[3].Kind, baselineKindDirectoryPrincipals)
+	}
+	if events[3].DirectoryPrincipals == nil && events[3].Error == "" {
+		t.Fatal("directory principal event contains neither snapshot nor explicit error")
+	}
+
 	foundObject := false
-	for _, event := range events[2:] {
+	for _, event := range events[4:] {
 		if event.Kind != baselineKindNTFSObservation {
 			t.Fatalf("unexpected event kind %q after baseline context", event.Kind)
 		}
