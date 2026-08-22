@@ -40,7 +40,8 @@ directory object. This establishes the starting historical record.
 | USN journal change detection | in-process | Queries journal state, reads bounded USN batches, re-observes changed objects by NTFS file ID, and supports local checkpoint initialization/status. Continuous scheduling and full monitoring integration remain. |
 | Activity history | Planned | Relevant Windows filesystem, SMB, security, identity, logon, and session activity collection has not yet been implemented. |
 | Continuity and reconciliation | in-process | USN checkpoint state and continuity assessment are implemented. Durable progression tied to downstream custody, explicit gap history, restart recovery, and bounded reconciliation remain. |
-| Operation journal | in-process | Operation lifecycle entries, validation, local append-only JSONL storage with flush, and bounded USN read/re-observation integration are implemented. Durable Started entries are written before source work; terminal Finished entries record the outcome. Broader operation coverage and interrupted-operation recovery remain. |
+| Operation journal | in-process | Operation lifecycle entries, validation, local append-only JSONL storage with flush, and bounded USN read/re-observation integration are implemented. Durable Started entries are written before source work; terminal Finished entries record the outcome. A new journaled USN invocation recovers unmatched Started entries from a prior FI process as Interrupted with reason ProcessRestart. Broader operation coverage remains. |
+| FI runtime resource journal | in-process | Separate append-only resource JSONL records FI process CPU, RAM, and process-I/O usage by operation ID. Bounded USN operations are the first integration; broader operation coverage remains. |
 | Protected source-content read broker | Planned | Bounded protected access to source content for later classification is not yet implemented. |
 
 ## File, Storage, and Location Intelligence
@@ -238,8 +239,18 @@ outcomes.
 The current operation-journal core validates lifecycle entries and writes them as
 append-only local JSONL with a flush before return. Bounded USN read and
 re-observation operations write a durable Started entry before source work and a
-Finished entry afterward. Broader operation coverage and restart recovery of
-unmatched Started operations remain.
+Finished entry afterward. Before a new journaled USN invocation begins, FI
+recovers unmatched Started entries from a prior process by appending an
+Interrupted terminal entry with reason ProcessRestart. Recovery is append-only
+and idempotent. Broader operation coverage remains.
+
+FI process resource history is intentionally separate from the operation journal.
+For journaled operations FI records CPU time, current and sampled-peak RAM, and
+Windows process-I/O counters to a separate append-only resource JSONL file. Each
+resource record carries the same operation ID so the backend can correlate cost
+with operation kind and outcome without mixing resource measurements into the
+operation lifecycle journal. Resource sampling begins immediately, repeats every
+five seconds while an operation is running, and ends with a final summary.
 
 ## Gate 1 — Source Intelligence & Continuity
 

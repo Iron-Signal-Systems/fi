@@ -21,6 +21,26 @@ func TestCurrentProcessResourceSnapshot(t *testing.T) {
 	}
 }
 
+func TestCurrentProcessIOCountersAreReadable(t *testing.T) {
+	before, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ReadOperationCount < before.ReadOperationCount {
+		t.Fatal("read operation counter moved backward")
+	}
+	if after.WriteOperationCount < before.WriteOperationCount {
+		t.Fatal("write operation counter moved backward")
+	}
+	if after.OtherOperationCount < before.OtherOperationCount {
+		t.Fatal("other operation counter moved backward")
+	}
+}
+
 func TestWindowsVersion(t *testing.T) {
 	version, err := WindowsVersion()
 	if err != nil {

@@ -18,15 +18,24 @@ var (
 	ntdll                = syscall.NewLazyDLL("ntdll.dll")
 	procGetProcessTimes  = kernel32.NewProc("GetProcessTimes")
 	procGetProcessMemory = psapi.NewProc("GetProcessMemoryInfo")
+	procGetProcessIO     = kernel32.NewProc("GetProcessIoCounters")
 	procRtlGetVersion    = ntdll.NewProc("RtlGetVersion")
 )
 
 // Snapshot records process-wide resource counters available from Windows.
+// CPU and I/O counters are cumulative for the lifetime of the FI process.
+// Callers can subtract two snapshots to measure one bounded interval.
 type Snapshot struct {
 	CPU100Nanoseconds   uint64
 	PeakWorkingSetBytes uint64
 	WorkingSetBytes     uint64
 	PrivateBytes        uint64
+	ReadOperationCount  uint64
+	WriteOperationCount uint64
+	OtherOperationCount uint64
+	ReadTransferBytes   uint64
+	WriteTransferBytes  uint64
+	OtherTransferBytes  uint64
 }
 
 type processMemoryCountersEx struct {
@@ -41,6 +50,15 @@ type processMemoryCountersEx struct {
 	PagefileUsage              uintptr
 	PeakPagefileUsage          uintptr
 	PrivateUsage               uintptr
+}
+
+type ioCounters struct {
+	ReadOperationCount  uint64
+	WriteOperationCount uint64
+	OtherOperationCount uint64
+	ReadTransferCount   uint64
+	WriteTransferCount  uint64
+	OtherTransferCount  uint64
 }
 
 type rtlOSVersionInfoEx struct {
@@ -75,6 +93,15 @@ func Current() (Snapshot, error) {
 		return Snapshot{}, windowsCallError("GetProcessMemoryInfo", callErr)
 	}
 
+	var io ioCounters
+	result, _, callErr = procGetProcessIO.Call(
+		uintptr(handle),
+		uintptr(unsafe.Pointer(&io)),
+	)
+	if result == 0 {
+		return Snapshot{}, windowsCallError("GetProcessIoCounters", callErr)
+	}
+
 	var creation syscall.Filetime
 	var exit syscall.Filetime
 	var kernel syscall.Filetime
@@ -95,6 +122,12 @@ func Current() (Snapshot, error) {
 		PeakWorkingSetBytes: uint64(memory.PeakWorkingSetSize),
 		WorkingSetBytes:     uint64(memory.WorkingSetSize),
 		PrivateBytes:        uint64(memory.PrivateUsage),
+		ReadOperationCount:  io.ReadOperationCount,
+		WriteOperationCount: io.WriteOperationCount,
+		OtherOperationCount: io.OtherOperationCount,
+		ReadTransferBytes:   io.ReadTransferCount,
+		WriteTransferBytes:  io.WriteTransferCount,
+		OtherTransferBytes:  io.OtherTransferCount,
 	}, nil
 }
 
