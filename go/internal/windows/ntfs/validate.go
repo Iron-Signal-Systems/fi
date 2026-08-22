@@ -10,9 +10,10 @@ import "github.com/Iron-Signal-Systems/fi/go/internal/records"
 // before a successful NTFS observation leaves this package.
 //
 // Windows API/path safety is checked while collecting. This function checks the
-// record boundary: required identities, canonical values, observation time,
-// security state, reparse state/payload, stream ordering, current collection
-// method/status, warning ordering, and whole-observation state consistency.
+// record boundary: required identities, canonical values, parent binding,
+// observation time, security state, reparse state/payload, stream ordering,
+// current collection method/status, warning ordering, and whole-observation
+// state consistency.
 func ValidateObservation(observation Observation) error {
 	if err := records.ValidateGovernedRootIdentity(observation.GovernedRoot); err != nil {
 		return err
@@ -24,6 +25,9 @@ func ValidateObservation(observation Observation) error {
 		return err
 	}
 	if err := records.ValidateNTFSObjectIdentity(observation.ObjectIdentity); err != nil {
+		return err
+	}
+	if err := records.ValidateParentObjectBinding(observation.ParentBinding); err != nil {
 		return err
 	}
 	if err := records.ValidateSubjectKind(observation.SubjectKind); err != nil {

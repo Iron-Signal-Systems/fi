@@ -8,15 +8,25 @@ package ntfs
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
+
+// governedRootContext is the already-open, already-proven governed-root state
+// shared by collection entry points. Keeping the root handle open lets the
+// collection core reason from handles instead of reopening/trusting text paths.
+type governedRootContext struct {
+	scopeID        string
+	requestedPath  []uint16
+	handle         syscall.Handle
+	state          nativeState
+	finalPath      []uint16
+	volumeGUID     string
+	volumeIdentity records.VolumeIdentity
+	objectIdentity records.NTFSObjectIdentity
+}
 
 // CollectPath collects one governed local NTFS object.
 //
@@ -47,18 +57,12 @@ func CollectPath(ctx context.Context, scopeID string, governedRoot string, targe
 	)
 }
 
-// CollectUTF16 is the direct Windows collection flow using exact UTF-16 path
-// code units.
+// CollectUTF16 validates caller paths, opens the governed root and target, and
+// then delegates the actual NTFS observation to collectOpenedTarget.
 //
-// The flow is intentionally linear:
-//  1. validate scope and caller paths;
-//  2. establish a non-reparse directory governed root from an open handle;
-//  3. open the target and prove handle-derived containment;
-//  4. collect identity, metadata, security, SACL, reparse state/payload, and streams;
-//  5. check for change/replacement while collection was running;
-//  6. revalidate the root/target handle scope at the acceptance boundary;
-//  7. stamp the completed observation time;
-//  8. build and validate the shared FI observation.
+// The split is deliberate: future change-feed collection can open an object by
+// NTFS file ID and reuse the same opened-handle observation core instead of
+// creating a second NTFS collector.
 func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, targetPath []uint16) (Observation, error) {
 	if scopeID == "" {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
@@ -73,48 +77,11 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		return Observation{}, &Error{Stage: StageValidatePath, Op: "ValidatePath", Err: err}
 	}
 
-	rootHandle, err := openPath(nulTerminate(governedRoot))
-	if err != nil {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "CreateFileW", Err: err}
-	}
-	defer syscall.CloseHandle(rootHandle)
-
-	rootFileSystem, err := queryVolume(rootHandle)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "GetVolumeInformationByHandleW", Err: err}
-	}
-	if !strings.EqualFold(rootFileSystem, "NTFS") {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "VerifyNTFS", Err: ErrNotNTFS}
-	}
-
-	rootState, err := queryNativeState(rootHandle)
+	root, err := openGovernedRoot(scopeID, governedRoot)
 	if err != nil {
 		return Observation{}, err
 	}
-	if rootState.Standard.Directory == 0 && rootState.Basic.FileAttributes&fileAttributeDirectory == 0 {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "VerifyDirectory", Err: ErrGovernedRootNotDirectory}
-	}
-	if rootState.Basic.FileAttributes&fileAttributeReparse != 0 {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "RejectReparseRoot", Err: ErrGovernedRootReparse}
-	}
-
-	rootFinalPath, err := finalVolumePath(rootHandle)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "GetFinalPathNameByHandleW", Err: err}
-	}
-	rootVolumeGUID, err := volumeGUIDFromFinalPath(rootFinalPath)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ParseVolumeGUID", Err: err}
-	}
-
-	rootVolumeIdentity, rootObjectIdentity, err := buildObjectIdentity(
-		rootState.ID.VolumeSerialNumber,
-		rootState.ID.FileID,
-	)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "DecodeNTFSFileID", Err: err}
-	}
-	rootVolumeIdentity.VolumeGUID = rootVolumeGUID
+	defer syscall.CloseHandle(root.handle)
 
 	targetHandle, err := openPath(nulTerminate(targetPath))
 	if err != nil {
@@ -122,344 +89,69 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 	}
 	defer syscall.CloseHandle(targetHandle)
 
-	targetFileSystem, err := queryVolume(targetHandle)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageVolume, Op: "GetVolumeInformationByHandleW", Err: err}
-	}
-	if !strings.EqualFold(targetFileSystem, "NTFS") {
-		return Observation{}, &Error{Stage: StageVolume, Op: "VerifyNTFS", Err: ErrNotNTFS}
-	}
+	return collectOpenedTarget(ctx, root, targetPath, targetHandle)
+}
 
-	targetFinalPath, err := finalVolumePath(targetHandle)
+func openGovernedRoot(scopeID string, governedRoot []uint16) (governedRootContext, error) {
+	rootHandle, err := openPath(nulTerminate(governedRoot))
 	if err != nil {
-		return Observation{}, &Error{Stage: StageContainment, Op: "GetFinalPathNameByHandleW", Err: err}
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "CreateFileW", Err: err}
 	}
-	targetVolumeGUID, err := volumeGUIDFromFinalPath(targetFinalPath)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageContainment, Op: "ParseVolumeGUID", Err: err}
-	}
-	if targetVolumeGUID != rootVolumeGUID || !pathContainedBy(rootFinalPath, targetFinalPath) {
-		return Observation{}, &Error{Stage: StageContainment, Op: "HandleDerivedContainment", Err: ErrOutsideGovernedRoot}
-	}
-
-	pre, err := queryNativeState(targetHandle)
-	if err != nil {
-		return Observation{}, err
-	}
-
-	streamInventory := records.StreamInventory{
-		State:   records.ObservationStatePresent,
-		Streams: []records.StreamObservation{},
-	}
-	warnings := []records.ObservationWarning{}
-	status := records.ObservationComplete
-
-	nativeStreams, streamErr := queryStreams(targetHandle)
-	if streamErr != nil {
-		streamInventory = records.StreamInventory{
-			State:      records.ObservationStateError,
-			Streams:    []records.StreamObservation{},
-			ReasonCode: "StreamEnumerationFailed",
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			syscall.CloseHandle(rootHandle)
 		}
-		status = records.ObservationPartial
-		warnings = append(warnings, records.ObservationWarning{
-			Code:   "StreamEnumerationFailed",
-			Detail: streamErr.Error(),
-		})
-	} else {
-		streamInventory.Streams, err = streamObservations(nativeStreams)
-		if err != nil {
-			return Observation{}, &Error{Stage: StageStreams, Op: "Convert", Err: err}
-		}
-	}
+	}()
 
-	var security records.SecurityObservation
-	rawSecurity, securityErr := querySecurityDescriptor(targetHandle)
-	if securityErr != nil {
-		security = records.SecurityObservationError("SecurityDescriptorReadFailed")
-		status = records.ObservationPartial
-		warnings = append(warnings, records.ObservationWarning{
-			Code:   "SecurityDescriptorReadFailed",
-			Detail: securityErr.Error(),
-		})
-	} else {
-		parsedSecurity, parseErr := records.ParseSecurityDescriptor(rawSecurity)
-		if parseErr != nil {
-			security = records.RawSecurityObservation(rawSecurity, "SecurityDescriptorParseFailed")
-			status = records.ObservationPartial
-			warnings = append(warnings, records.ObservationWarning{
-				Code:   "SecurityDescriptorParseFailed",
-				Detail: parseErr.Error(),
-			})
-		} else {
-			security = parsedSecurity
-		}
-	}
-
-	var sacl records.SACLObservation
-	rawSACL, saclErr := querySACLDescriptor(targetHandle)
-	if saclErr != nil {
-		reasonCode := saclQueryReasonCode(saclErr)
-		sacl = records.SACLObservationError(reasonCode)
-		status = records.ObservationPartial
-		warnings = append(warnings, records.ObservationWarning{
-			Code:   reasonCode,
-			Detail: saclErr.Error(),
-		})
-	} else {
-		parsedSACL, parseErr := records.ParseSACLDescriptor(rawSACL)
-		if parseErr != nil {
-			sacl = records.RawSACLObservation(rawSACL, "SACLDescriptorParseFailed")
-			status = records.ObservationPartial
-			warnings = append(warnings, records.ObservationWarning{
-				Code:   "SACLDescriptorParseFailed",
-				Detail: parseErr.Error(),
-			})
-		} else {
-			sacl = parsedSACL
-		}
-	}
-
-	mid, err := queryNativeState(targetHandle)
+	rootFileSystem, err := queryVolume(rootHandle)
 	if err != nil {
-		return Observation{}, err
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "GetVolumeInformationByHandleW", Err: err}
 	}
-	if pre.ID != mid.ID {
-		return Observation{}, &Error{Stage: StageConsistency, Op: "SameHandleIdentity", Err: ErrIdentityChanged}
-	}
-
-	reparse := reparseObservationNotPresent()
-	if mid.AttributeTag.FileAttributes&fileAttributeReparse != 0 {
-		rawReparse, reparseErr := queryReparseData(targetHandle)
-		if reparseErr != nil {
-			reparse = reparseObservationError(mid.AttributeTag.ReparseTag, "ReparseDataReadFailed")
-			status = records.ObservationPartial
-			warnings = append(warnings, records.ObservationWarning{
-				Code:   "ReparseDataReadFailed",
-				Detail: reparseErr.Error(),
-			})
-		} else {
-			parsedReparse, parseErr := parseReparseData(rawReparse)
-			if parseErr != nil {
-				reparse = reparseObservationRaw(mid.AttributeTag.ReparseTag, rawReparse, "ReparseDataParseFailed")
-				status = records.ObservationPartial
-				warnings = append(warnings, records.ObservationWarning{
-					Code:   "ReparseDataParseFailed",
-					Detail: parseErr.Error(),
-				})
-			} else {
-				if parsedReparse.Tag != mid.AttributeTag.ReparseTag {
-					return Observation{}, &Error{Stage: StageConsistency, Op: "ReparseTagConsistency", Err: ErrReparseChangedDuringCollection}
-				}
-				reparse = reparseObservationParsed(parsedReparse)
-			}
-		}
+	if !strings.EqualFold(rootFileSystem, "NTFS") {
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "VerifyNTFS", Err: ErrNotNTFS}
 	}
 
-	post, err := queryNativeState(targetHandle)
+	rootState, err := queryNativeState(rootHandle)
 	if err != nil {
-		return Observation{}, err
+		return governedRootContext{}, err
 	}
-	if mid.ID != post.ID {
-		return Observation{}, &Error{Stage: StageConsistency, Op: "SameHandleIdentity", Err: ErrIdentityChanged}
+	if rootState.Standard.Directory == 0 && rootState.Basic.FileAttributes&fileAttributeDirectory == 0 {
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "VerifyDirectory", Err: ErrGovernedRootNotDirectory}
 	}
-	if reparseStateChanged(mid.AttributeTag, post.AttributeTag) {
-		return Observation{}, &Error{Stage: StageConsistency, Op: "ReparseStateConsistency", Err: ErrReparseChangedDuringCollection}
+	if rootState.Basic.FileAttributes&fileAttributeReparse != 0 {
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "RejectReparseRoot", Err: ErrGovernedRootReparse}
 	}
 
-	volumeIdentity, objectIdentity, err := buildObjectIdentity(
-		post.ID.VolumeSerialNumber,
-		post.ID.FileID,
+	rootFinalPath, err := finalVolumePath(rootHandle)
+	if err != nil {
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "GetFinalPathNameByHandleW", Err: err}
+	}
+	rootVolumeGUID, err := volumeGUIDFromFinalPath(rootFinalPath)
+	if err != nil {
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "ParseVolumeGUID", Err: err}
+	}
+
+	rootVolumeIdentity, rootObjectIdentity, err := buildObjectIdentity(
+		rootState.ID.VolumeSerialNumber,
+		rootState.ID.FileID,
 	)
 	if err != nil {
-		return Observation{}, &Error{Stage: StageIdentity, Op: "DecodeNTFSFileID", Err: err}
+		return governedRootContext{}, &Error{Stage: StageGovernedRoot, Op: "DecodeNTFSFileID", Err: err}
 	}
-	volumeIdentity.VolumeGUID = targetVolumeGUID
+	rootVolumeIdentity.VolumeGUID = rootVolumeGUID
 
-	metadata, subjectKind, err := metadataFromState(post)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageMetadata, Op: "Convert", Err: err}
-	}
-
-	if pre.AttributeTag != post.AttributeTag || pre.Basic != post.Basic || pre.Standard != post.Standard {
-		if status == records.ObservationComplete {
-			status = records.ObservationChangedDuringCollection
-		} else {
-			status = records.ObservationPartial
-		}
-		warnings = append(warnings, records.ObservationWarning{
-			Code: "MetadataChangedDuringCollection",
-		})
-	}
-
-	reopened, reopenErr := openPath(nulTerminate(targetPath))
-	if reopenErr != nil {
-		status = records.ObservationPartial
-		warnings = append(warnings, records.ObservationWarning{
-			Code: "PathConsistencyNotVerified",
-		})
-	} else {
-		reopenedFinalPath, finalErr := finalVolumePath(reopened)
-		reopenedState, stateErr := queryNativeState(reopened)
-		syscall.CloseHandle(reopened)
-
-		if finalErr != nil || stateErr != nil {
-			status = records.ObservationPartial
-			warnings = append(warnings, records.ObservationWarning{
-				Code: "PathConsistencyNotVerified",
-			})
-		} else if !pathContainedBy(rootFinalPath, reopenedFinalPath) {
-			return Observation{}, &Error{Stage: StageContainment, Op: "ReopenContainment", Err: ErrOutsideGovernedRoot}
-		} else if reopenedState.ID != post.ID {
-			status = records.ObservationReplacedDuringCollection
-			warnings = append(warnings, records.ObservationWarning{
-				Code: "PathNowReferencesDifferentObject",
-			})
-		}
-	}
-
-	// Re-prove the root object/path binding and current target containment at the
-	// final acceptance boundary. This does not trust the root path snapshot taken
-	// at the beginning of collection.
-	finalTargetPath, err := revalidateScopeHandles(
-		rootHandle,
-		targetHandle,
-		governedRoot,
-		rootFinalPath,
-		rootState.ID,
-		post.ID,
-	)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageConsistency, Op: "RevalidateGovernedScope", Err: err}
-	}
-	targetFinalPath = finalTargetPath
-	targetVolumeGUID, err = volumeGUIDFromFinalPath(targetFinalPath)
-	if err != nil {
-		return Observation{}, &Error{Stage: StageConsistency, Op: "ParseFinalTargetVolumeGUID", Err: err}
-	}
-	volumeIdentity.VolumeGUID = targetVolumeGUID
-
-	if err := validateContext(ctx); err != nil {
-		return Observation{}, err
-	}
-
-	sort.Slice(warnings, func(i, j int) bool {
-		return warnings[i].Code < warnings[j].Code
-	})
-
-	observedAt := time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
-
-	observation := Observation{
-		GovernedRoot: records.GovernedRootIdentity{
-			ScopeID:                       scopeID,
-			RequestedPathUTF16LEBase64URL: utf16LEBase64URL(governedRoot),
-			ResolvedPathUTF16LEBase64URL:  utf16LEBase64URL(rootFinalPath),
-			MethodVersion:                 ContainmentMethodVersion,
-			VolumeIdentity:                rootVolumeIdentity,
-			ObjectIdentity:                rootObjectIdentity,
-		},
-		Containment: records.PathContainment{
-			MethodVersion: ContainmentMethodVersion,
-		},
-		VolumeIdentity: volumeIdentity,
-		ObjectIdentity: objectIdentity,
-		SubjectKind:    subjectKind,
-		PathBinding: records.PathBinding{
-			RequestedPathUTF16LEBase64URL: utf16LEBase64URL(targetPath),
-			ResolvedPathUTF16LEBase64URL:  utf16LEBase64URL(targetFinalPath),
-		},
-		ObservedAt:        observedAt,
-		Metadata:          metadata,
-		Security:          security,
-		SACL:              sacl,
-		Reparse:           reparse,
-		StreamInventory:   streamInventory,
-		CollectionMethod:  records.CollectionDirectWindowsNTFS,
-		ObservationStatus: status,
-		Warnings:          warnings,
-	}
-
-	if err := ValidateObservation(observation); err != nil {
-		return Observation{}, &Error{Stage: StageMetadata, Op: "ValidateObservation", Err: err}
-	}
-	return observation, nil
-}
-
-// metadataFromState converts the Windows basic/standard information returned
-// for the open handle into the shared FI metadata representation.
-func metadataFromState(state nativeState) (records.MetadataObservation, records.SubjectKind, error) {
-	if state.Standard.EndOfFile < 0 || state.Standard.AllocationSize < 0 {
-		return records.MetadataObservation{}, "", fmt.Errorf("negative file size")
-	}
-
-	creationTime, err := filetimeToCanonical(state.Basic.CreationTime)
-	if err != nil {
-		return records.MetadataObservation{}, "", err
-	}
-	lastAccessTime, err := filetimeToCanonical(state.Basic.LastAccessTime)
-	if err != nil {
-		return records.MetadataObservation{}, "", err
-	}
-	lastWriteTime, err := filetimeToCanonical(state.Basic.LastWriteTime)
-	if err != nil {
-		return records.MetadataObservation{}, "", err
-	}
-	changeTime, err := filetimeToCanonical(state.Basic.ChangeTime)
-	if err != nil {
-		return records.MetadataObservation{}, "", err
-	}
-
-	subjectKind := records.SubjectFile
-	if state.Standard.Directory != 0 || state.Basic.FileAttributes&fileAttributeDirectory != 0 {
-		subjectKind = records.SubjectDirectory
-	}
-
-	return records.MetadataObservation{
-		LogicalSize:    strconv.FormatUint(uint64(state.Standard.EndOfFile), 10),
-		AllocatedSize:  strconv.FormatUint(uint64(state.Standard.AllocationSize), 10),
-		CreationTime:   creationTime,
-		LastWriteTime:  lastWriteTime,
-		ChangeTime:     changeTime,
-		LastAccessTime: lastAccessTime,
-		RawAttributes:  strconv.FormatUint(uint64(state.Basic.FileAttributes), 10),
-		LinkCount:      strconv.FormatUint(uint64(state.Standard.NumberOfLinks), 10),
-	}, subjectKind, nil
-}
-
-func nulTerminate(path []uint16) []uint16 {
-	return append(append([]uint16(nil), path...), 0)
-}
-
-func reparseStateChanged(left, right fileAttributeTagInfo) bool {
-	leftPresent := left.FileAttributes&fileAttributeReparse != 0
-	rightPresent := right.FileAttributes&fileAttributeReparse != 0
-
-	if leftPresent != rightPresent {
-		return true
-	}
-	return leftPresent && left.ReparseTag != right.ReparseTag
-}
-
-// streamObservations converts Windows FILE_STREAM_INFO entries and sorts them
-// by their preserved raw-name encoding so staged records are deterministic.
-func streamObservations(native []nativeStream) ([]records.StreamObservation, error) {
-	observations := make([]records.StreamObservation, 0, len(native))
-	for _, stream := range native {
-		if stream.Size < 0 || stream.AllocationSize < 0 {
-			return nil, fmt.Errorf("negative stream size")
-		}
-		observations = append(observations, records.StreamObservation{
-			Identity:      streamIdentityFromWindowsName(stream.Name),
-			LogicalSize:   strconv.FormatUint(uint64(stream.Size), 10),
-			AllocatedSize: strconv.FormatUint(uint64(stream.AllocationSize), 10),
-		})
-	}
-
-	sort.Slice(observations, func(i, j int) bool {
-		return observations[i].Identity.RawNameUTF16LEBase64URL <
-			observations[j].Identity.RawNameUTF16LEBase64URL
-	})
-	return observations, nil
+	closeOnError = false
+	return governedRootContext{
+		scopeID:        scopeID,
+		requestedPath:  append([]uint16(nil), governedRoot...),
+		handle:         rootHandle,
+		state:          rootState,
+		finalPath:      rootFinalPath,
+		volumeGUID:     rootVolumeGUID,
+		volumeIdentity: rootVolumeIdentity,
+		objectIdentity: rootObjectIdentity,
+	}, nil
 }
 
 func validateContext(ctx context.Context) error {
@@ -472,4 +164,8 @@ func validateContext(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+func nulTerminate(path []uint16) []uint16 {
+	return append(append([]uint16(nil), path...), 0)
 }

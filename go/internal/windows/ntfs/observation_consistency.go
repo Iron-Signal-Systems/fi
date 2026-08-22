@@ -6,6 +6,8 @@ package ntfs
 
 import "github.com/Iron-Signal-Systems/fi/go/internal/records"
 
+const parentBindingUnavailableReason = "ParentBindingUnavailable"
+
 func validateObservationConsistency(observation Observation) error {
 	warnings := make(map[string]struct{}, len(observation.Warnings))
 	for _, warning := range observation.Warnings {
@@ -17,6 +19,15 @@ func validateObservationConsistency(observation Observation) error {
 	}
 	conflict := func(field string) error {
 		return &records.ValidationError{Code: "Conflict", Field: field}
+	}
+
+	parentError := observation.ParentBinding.State == records.ParentBindingError
+	if parentError {
+		if observation.ParentBinding.ReasonCode != parentBindingUnavailableReason || !has(parentBindingUnavailableReason) {
+			return conflict("parent_binding")
+		}
+	} else if has(parentBindingUnavailableReason) {
+		return conflict("parent_binding")
 	}
 
 	streamError := observation.StreamInventory.State == records.ObservationStateError
@@ -88,7 +99,7 @@ func validateObservationConsistency(observation Observation) error {
 		return conflict("reparse")
 	}
 
-	partialCondition := streamError || securityReadError || securityParseFailure ||
+	partialCondition := parentError || streamError || securityReadError || securityParseFailure ||
 		saclReadError || saclParseFailure || reparseReadError || reparseParseFailure ||
 		has("PathConsistencyNotVerified")
 

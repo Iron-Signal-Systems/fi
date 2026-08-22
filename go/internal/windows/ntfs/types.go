@@ -20,8 +20,9 @@ const (
 //
 // The NTFS collector creates this structure after it has established the
 // governed root, proved containment, collected object identity/metadata,
-// collected security state, collected reparse state and payload where
-// applicable, attempted stream enumeration, and completed consistency checks.
+// collected the observed path's parent-object binding, collected security state,
+// collected reparse state and payload where applicable, attempted stream
+// enumeration, and completed consistency checks.
 //
 // ObservedAt is the source collector's UTC time when the facts represented by
 // this observation finished collection. It is distinct from NTFS timestamps.
@@ -32,6 +33,7 @@ type Observation struct {
 	Containment       records.PathContainment      `json:"containment"`
 	VolumeIdentity    records.VolumeIdentity       `json:"volume_identity"`
 	ObjectIdentity    records.NTFSObjectIdentity   `json:"object_identity"`
+	ParentBinding     records.ParentObjectBinding  `json:"parent_binding"`
 	SubjectKind       records.SubjectKind          `json:"subject_kind"`
 	PathBinding       records.PathBinding          `json:"path_binding"`
 	ObservedAt        string                       `json:"observed_at"`

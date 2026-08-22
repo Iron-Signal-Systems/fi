@@ -61,6 +61,45 @@ func isExtendedDrivePath(path []uint16) bool {
 		path[6] == '\\'
 }
 
+func localAbsoluteRootLength(path []uint16) (int, bool) {
+	switch {
+	case isDriveAbsolutePath(path):
+		return 3, true
+	case isExtendedDrivePath(path):
+		return 7, true
+	default:
+		return 0, false
+	}
+}
+
+// parentLocalAbsolutePath returns the lexical parent of an already-validated
+// local drive-absolute caller path without converting the path through UTF-8.
+// This preserves the exact UTF-16 code units used by the Windows collector.
+func parentLocalAbsolutePath(path []uint16) ([]uint16, error) {
+	if err := validateLocalAbsolutePath(path); err != nil {
+		return nil, err
+	}
+	rootLength, ok := localAbsoluteRootLength(path)
+	if !ok {
+		return nil, ErrUnsafePathForm
+	}
+
+	end := len(path)
+	for end > rootLength && path[end-1] == '\\' {
+		end--
+	}
+	if end <= rootLength {
+		return append([]uint16(nil), path[:rootLength]...), nil
+	}
+
+	for index := end - 1; index >= rootLength; index-- {
+		if path[index] == '\\' {
+			return append([]uint16(nil), path[:index]...), nil
+		}
+	}
+	return append([]uint16(nil), path[:rootLength]...), nil
+}
+
 func isASCIILetter(unit uint16) bool {
 	return (unit >= 'A' && unit <= 'Z') || (unit >= 'a' && unit <= 'z')
 }
