@@ -43,6 +43,7 @@ func main() {
 	baselineRoot := flag.Bool("baseline-root", false, "collect FI process identity, local SMB shares, and one governed NTFS root")
 	usnStateMode := flag.Bool("usn-state", false, "show current NTFS USN journal state for the governed-root volume")
 	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
+	usnReobserveMode := flag.Bool("usn-reobserve", false, "read one bounded USN batch and freshly observe each distinct changed object by NTFS file ID")
 
 	flag.Parse()
 
@@ -60,6 +61,7 @@ func main() {
 		*baselineRoot,
 		*usnStateMode,
 		*usnReadMode,
+		*usnReobserveMode,
 	} {
 		if selected {
 			modeCount++
@@ -72,6 +74,19 @@ func main() {
 	}
 
 	switch {
+	case *usnReobserveMode:
+		if flag.NArg() != 2 {
+			printUsage()
+			os.Exit(2)
+		}
+		batch, err := usn.ReadAndReobserve(context.Background(), "manual-test", flag.Arg(0), flag.Arg(1))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(batch)
+		return
+
 	case *usnStateMode:
 		if flag.NArg() != 1 {
 			printUsage()
@@ -238,6 +253,7 @@ func printUsage() {
 	fmt.Println(`  fi.exe -baseline-root      <governed-root>`)
 	fmt.Println(`  fi.exe -usn-state          <governed-root>`)
 	fmt.Println(`  fi.exe -usn-read           <governed-root> <start-usn>`)
+	fmt.Println(`  fi.exe -usn-reobserve      <governed-root> <start-usn>`)
 }
 
 func runWalk(governedRoot string) {
