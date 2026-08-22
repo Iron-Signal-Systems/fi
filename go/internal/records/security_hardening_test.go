@@ -117,26 +117,27 @@ func TestSecurityHardeningUnsupportedACEIsRawOnly(t *testing.T) {
 	}
 }
 
-func TestSecurityHardeningKnownButUnparsedACEIsRawOnly(t *testing.T) {
-	// ACCESS_ALLOWED_OBJECT_ACE is a documented ACE type, but Security 1A does
-	// not yet interpret its object GUID/SID payload. FI must preserve it without
-	// pretending that the simple ACE layout applies.
-	objectACE := []byte{0x05, 0x00, 0x08, 0x00, 0x11, 0x22, 0x33, 0x44}
-	raw := testSecurityDescriptorWithDACL([][]byte{objectACE})
+func TestSecurityHardeningKnownButUnparsedCallbackObjectACEIsRawOnly(t *testing.T) {
+	// ACCESS_ALLOWED_CALLBACK_OBJECT_ACE is documented, but callback ACEs may
+	// contain application data after the SID. Security 1B-1 deliberately leaves
+	// that variable payload raw-only rather than guessing its interpretation.
+	callbackObjectACE := []byte{0x0B, 0x00, 0x08, 0x00, 0x11, 0x22, 0x33, 0x44}
+	raw := testSecurityDescriptorWithDACL([][]byte{callbackObjectACE})
 
 	observation, err := ParseSecurityDescriptor(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ace := observation.DACL.ACEs[0]
-	if ace.TypeName != "AccessAllowedObject" {
+	if ace.TypeName != "AccessAllowedCallbackObject" {
 		t.Fatalf("type name = %q", ace.TypeName)
 	}
-	if ace.Mask != "" || ace.SID != "" {
-		t.Fatalf("object ACE was interpreted as simple ACE: %#v", ace)
+	if ace.Mask != "" || ace.ObjectFlags != "" || ace.ObjectTypeGUID != "" ||
+		ace.InheritedObjectTypeGUID != "" || ace.SID != "" {
+		t.Fatalf("callback object ACE was over-interpreted: %#v", ace)
 	}
-	if ace.RawBase64URL != base64.RawURLEncoding.EncodeToString(objectACE) {
-		t.Fatal("object ACE raw bytes changed")
+	if ace.RawBase64URL != base64.RawURLEncoding.EncodeToString(callbackObjectACE) {
+		t.Fatal("callback object ACE raw bytes changed")
 	}
 }
 

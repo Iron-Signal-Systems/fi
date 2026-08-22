@@ -61,14 +61,17 @@ type ACLObservation struct {
 // interprets the access mask and SID only for ACE layouts it understands
 // exactly; all other ACE types remain losslessly represented by RawBase64URL.
 type ACEObservation struct {
-	Index        string `json:"index"`
-	Type         string `json:"type"`
-	TypeName     string `json:"type_name"`
-	Flags        string `json:"flags"`
-	Size         string `json:"size"`
-	RawBase64URL string `json:"raw_base64url"`
-	Mask         string `json:"mask,omitempty"`
-	SID          string `json:"sid,omitempty"`
+	Index                   string `json:"index"`
+	Type                    string `json:"type"`
+	TypeName                string `json:"type_name"`
+	Flags                   string `json:"flags"`
+	Size                    string `json:"size"`
+	RawBase64URL            string `json:"raw_base64url"`
+	Mask                    string `json:"mask,omitempty"`
+	ObjectFlags             string `json:"object_flags,omitempty"`
+	ObjectTypeGUID          string `json:"object_type_guid,omitempty"`
+	InheritedObjectTypeGUID string `json:"inherited_object_type_guid,omitempty"`
+	SID                     string `json:"sid,omitempty"`
 }
 
 const (
@@ -78,6 +81,9 @@ const (
 	seDACLPresent                        = 0x0004
 	seSelfRelative                       = 0x8000
 	maxSIDSubAuthorities                 = 15
+	aceObjectTypePresent                 = 0x00000001
+	aceInheritedObjectTypePresent        = 0x00000002
+	knownObjectACEFlags                  = aceObjectTypePresent | aceInheritedObjectTypePresent
 )
 
 // ParseSecurityDescriptor converts one exact self-relative Windows security
@@ -270,25 +276,101 @@ func parseACE(index int, raw []byte) (ACEObservation, error) {
 		RawBase64URL: base64.RawURLEncoding.EncodeToString(raw),
 	}
 
-	// ACCESS_ALLOWED_ACE and ACCESS_DENIED_ACE have the same exact layout:
-	// ACE_HEADER, ACCESS_MASK, SID.
+	// These ACE types share the exact ACE_HEADER, ACCESS_MASK, SID layout.
+	// Callback ACEs are intentionally excluded because they may contain
+	// application data after the SID and are preserved raw-only for now.
 	switch aceType {
-	case 0x00, 0x01:
-		if len(raw) < 8 {
-			return ACEObservation{}, fmt.Errorf("simple access ACE shorter than mask/SID header")
+	case 0x00, 0x01, 0x02, 0x03, 0x11:
+		if err := parseSimpleSIDACE(&observation, raw); err != nil {
+			return ACEObservation{}, err
 		}
-		sid, sidLength, err := sidFromBytes(raw[8:])
-		if err != nil {
-			return ACEObservation{}, fmt.Errorf("ACE SID: %w", err)
+
+	// ACCESS_ALLOWED_OBJECT_ACE, ACCESS_DENIED_OBJECT_ACE,
+	// SYSTEM_AUDIT_OBJECT_ACE, and SYSTEM_ALARM_OBJECT_ACE share the same exact
+	// object-ACE layout. Callback-object ACEs remain raw-only because they may
+	// append application data after the SID.
+	case 0x05, 0x06, 0x07, 0x08:
+		if err := parseObjectACE(&observation, raw); err != nil {
+			return ACEObservation{}, err
 		}
-		if 8+sidLength != len(raw) {
-			return ACEObservation{}, fmt.Errorf("simple access ACE contains trailing bytes")
-		}
-		observation.Mask = strconv.FormatUint(uint64(binary.LittleEndian.Uint32(raw[4:8])), 10)
-		observation.SID = sid
 	}
 
 	return observation, nil
+}
+
+func parseSimpleSIDACE(observation *ACEObservation, raw []byte) error {
+	if len(raw) < 8 {
+		return fmt.Errorf("simple SID ACE shorter than mask/SID header")
+	}
+	sid, sidLength, err := sidFromBytes(raw[8:])
+	if err != nil {
+		return fmt.Errorf("ACE SID: %w", err)
+	}
+	if 8+sidLength != len(raw) {
+		return fmt.Errorf("simple SID ACE contains trailing bytes")
+	}
+	observation.Mask = strconv.FormatUint(uint64(binary.LittleEndian.Uint32(raw[4:8])), 10)
+	observation.SID = sid
+	return nil
+}
+
+func parseObjectACE(observation *ACEObservation, raw []byte) error {
+	if len(raw) < 12 {
+		return fmt.Errorf("object ACE shorter than mask/object-flags header")
+	}
+
+	objectFlags := binary.LittleEndian.Uint32(raw[8:12])
+	observation.Mask = strconv.FormatUint(uint64(binary.LittleEndian.Uint32(raw[4:8])), 10)
+	observation.ObjectFlags = strconv.FormatUint(uint64(objectFlags), 10)
+
+	// Unknown object-flag bits could change where later fields begin. Preserve
+	// the exact ACE and fixed fields, but do not guess at GUID or SID offsets.
+	if objectFlags&^uint32(knownObjectACEFlags) != 0 {
+		return nil
+	}
+
+	cursor := 12
+	if objectFlags&aceObjectTypePresent != 0 {
+		if cursor+16 > len(raw) {
+			return fmt.Errorf("object ACE ObjectType GUID outside ACE")
+		}
+		observation.ObjectTypeGUID = formatWindowsGUID(raw[cursor : cursor+16])
+		cursor += 16
+	}
+	if objectFlags&aceInheritedObjectTypePresent != 0 {
+		if cursor+16 > len(raw) {
+			return fmt.Errorf("object ACE InheritedObjectType GUID outside ACE")
+		}
+		observation.InheritedObjectTypeGUID = formatWindowsGUID(raw[cursor : cursor+16])
+		cursor += 16
+	}
+
+	sid, sidLength, err := sidFromBytes(raw[cursor:])
+	if err != nil {
+		return fmt.Errorf("object ACE SID: %w", err)
+	}
+	if cursor+sidLength != len(raw) {
+		return fmt.Errorf("object ACE contains trailing bytes")
+	}
+	observation.SID = sid
+	return nil
+}
+
+func formatWindowsGUID(raw []byte) string {
+	return fmt.Sprintf(
+		"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		binary.LittleEndian.Uint32(raw[0:4]),
+		binary.LittleEndian.Uint16(raw[4:6]),
+		binary.LittleEndian.Uint16(raw[6:8]),
+		raw[8],
+		raw[9],
+		raw[10],
+		raw[11],
+		raw[12],
+		raw[13],
+		raw[14],
+		raw[15],
+	)
 }
 
 func sidAtOffset(raw []byte, offset uint32) (string, error) {
