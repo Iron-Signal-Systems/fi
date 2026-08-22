@@ -33,12 +33,12 @@ directory object. This establishes the starting historical record.
 | Collection consistency checks | Implemented | Detects object replacement, metadata changes during collection, scope replacement, and incomplete observations. |
 | Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
 | Windows security descriptors and ACLs | Implemented | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are collected. |
-| SMB share state and share security | in-progress | Share exposure and share ACL collection are not yet implemented. |
-| Local Windows identity | in-progress | Local users, groups, memberships, and related identity records are not yet fully implemented. |
-| Active Directory identity | in-progress | Versioned directory identity collection through the intended gMSA boundary is not yet fully implemented. |
-| Effective-access analysis inputs | Planned | Required file, share, local, and directory security inputs are not yet complete. |
-| USN journal change detection | Planned | Continuous change detection and follow-up observation are not yet implemented. |
-| Activity history | Planned | Historical file activity records are not yet implemented. |
+| SMB share state and share security | Implemented | Share exposure and share ACL collection. |
+| Local Windows identity | Implemented | Local users, groups, memberships, and related identity records are now implemented. |
+| Active Directory identity | in-process | Versioned directory identity collection through the intended gMSA boundary is not yet fully implemented. |
+| Effective-access analysis inputs | in-process | Required file, share, local, and directory security inputs are not yet complete. |
+| USN journal change detection | in-process | Continuous change detection and follow-up observation are not yet fully implemented. |
+| Activity history | in-process | Historical file activity records are not yet fully implemented. |
 | Continuity and reconciliation | Planned | Gap detection, restart continuity, and reconciliation against current state are not yet implemented. |
 | Operation journal | Planned | Immutable collection-operation history is not yet implemented. |
 | Protected source-content read broker | Planned | Bounded protected access to source content for later classification is not yet implemented. |
