@@ -54,7 +54,7 @@ func CollectPath(ctx context.Context, scopeID string, governedRoot string, targe
 //  1. validate scope and caller paths;
 //  2. establish a non-reparse directory governed root from an open handle;
 //  3. open the target and prove handle-derived containment;
-//  4. collect identity, metadata, security, reparse state/payload, and streams;
+//  4. collect identity, metadata, security, SACL, reparse state/payload, and streams;
 //  5. check for change/replacement while collection was running;
 //  6. revalidate the root/target handle scope at the acceptance boundary;
 //  7. stamp the completed observation time;
@@ -193,6 +193,30 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 			})
 		} else {
 			security = parsedSecurity
+		}
+	}
+
+	var sacl records.SACLObservation
+	rawSACL, saclErr := querySACLDescriptor(targetHandle)
+	if saclErr != nil {
+		reasonCode := saclQueryReasonCode(saclErr)
+		sacl = records.SACLObservationError(reasonCode)
+		status = records.ObservationPartial
+		warnings = append(warnings, records.ObservationWarning{
+			Code:   reasonCode,
+			Detail: saclErr.Error(),
+		})
+	} else {
+		parsedSACL, parseErr := records.ParseSACLDescriptor(rawSACL)
+		if parseErr != nil {
+			sacl = records.RawSACLObservation(rawSACL, "SACLDescriptorParseFailed")
+			status = records.ObservationPartial
+			warnings = append(warnings, records.ObservationWarning{
+				Code:   "SACLDescriptorParseFailed",
+				Detail: parseErr.Error(),
+			})
+		} else {
+			sacl = parsedSACL
 		}
 	}
 
@@ -347,6 +371,7 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 		ObservedAt:        observedAt,
 		Metadata:          metadata,
 		Security:          security,
+		SACL:              sacl,
 		Reparse:           reparse,
 		StreamInventory:   streamInventory,
 		CollectionMethod:  records.CollectionDirectWindowsNTFS,

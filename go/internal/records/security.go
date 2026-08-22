@@ -31,7 +31,7 @@ const (
 )
 
 // SecurityObservation records the owner, primary group, DACL, and exact raw
-// self-relative Windows security descriptor returned for one NTFS object.
+// self-relative Windows security descriptor returned for one Windows securable object.
 //
 // RawDescriptorBase64URL is authoritative. Interpreted fields are deterministic
 // projections of the raw descriptor and are revalidated against it.

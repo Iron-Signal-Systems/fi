@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
 )
 
 type walkOutput struct {
@@ -33,6 +34,7 @@ func main() {
 	identity := flag.Bool("identity", false, "show NTFS identity")
 	metadata := flag.Bool("metadata", false, "show NTFS metadata")
 	ads := flag.Bool("ads", false, "show streams and ADS")
+	shares := flag.Bool("shares", false, "show local SMB share state and share security")
 
 	flag.Parse()
 
@@ -44,6 +46,7 @@ func main() {
 		*identity,
 		*metadata,
 		*ads,
+		*shares,
 	} {
 		if selected {
 			modeCount++
@@ -56,6 +59,14 @@ func main() {
 	}
 
 	switch {
+	case *shares:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		runShares()
+		return
+
 	case *walkRoot:
 		if flag.NArg() != 1 {
 			printUsage()
@@ -141,6 +152,7 @@ func printUsage() {
 	fmt.Println(`  fi.exe -identity     <governed-root> <target>`)
 	fmt.Println(`  fi.exe -metadata     <governed-root> <target>`)
 	fmt.Println(`  fi.exe -ads          <governed-root> <target>`)
+	fmt.Println(`  fi.exe -shares`)
 }
 
 func runWalk(governedRoot string) {
@@ -177,6 +189,21 @@ func runWalk(governedRoot string) {
 		},
 	)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+}
+
+func runShares() {
+	snapshot, err := smb.CollectLocalShares(context.Background())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(snapshot); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}

@@ -77,7 +77,21 @@ func TestCollectPathOnWindowsNTFS(t *testing.T) {
 	if observation.ObservedAt == "" {
 		t.Fatal("observed_at is empty")
 	}
-	if observation.ObservationStatus != records.ObservationComplete {
+
+	switch observation.ObservationStatus {
+	case records.ObservationComplete:
+		if observation.SACL.State != records.ObservationStatePresent {
+			t.Fatalf("complete observation has SACL state %q", observation.SACL.State)
+		}
+	case records.ObservationPartial:
+		if observation.SACL.State != records.ObservationStateError {
+			t.Fatalf("partial observation has unexpected SACL state %q", observation.SACL.State)
+		}
+		if observation.SACL.ReasonCode != "SACLPrivilegeUnavailable" &&
+			observation.SACL.ReasonCode != "SACLDescriptorReadFailed" {
+			t.Fatalf("partial observation has unexpected SACL reason %q", observation.SACL.ReasonCode)
+		}
+	default:
 		t.Fatalf("status = %s", observation.ObservationStatus)
 	}
 

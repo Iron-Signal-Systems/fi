@@ -43,6 +43,39 @@ func validateObservationConsistency(observation Observation) error {
 		return conflict("security")
 	}
 
+	saclReadError := observation.SACL.State == records.ObservationStateError
+	saclPrivilegeWarning := has("SACLPrivilegeUnavailable")
+	saclReadWarning := has("SACLDescriptorReadFailed")
+	if saclPrivilegeWarning && saclReadWarning {
+		return conflict("sacl")
+	}
+	if saclReadError {
+		switch observation.SACL.ReasonCode {
+		case "SACLPrivilegeUnavailable":
+			if !saclPrivilegeWarning {
+				return conflict("sacl")
+			}
+		case "SACLDescriptorReadFailed":
+			if !saclReadWarning {
+				return conflict("sacl")
+			}
+		default:
+			return conflict("sacl")
+		}
+	} else if saclPrivilegeWarning || saclReadWarning {
+		return conflict("sacl")
+	}
+
+	saclParseFailure := observation.SACL.State == records.ObservationStatePresent &&
+		observation.SACL.DataFormat == records.SecurityDataFormatRaw
+	if saclParseFailure {
+		if observation.SACL.ReasonCode != "SACLDescriptorParseFailed" || !has("SACLDescriptorParseFailed") {
+			return conflict("sacl")
+		}
+	} else if has("SACLDescriptorParseFailed") {
+		return conflict("sacl")
+	}
+
 	reparseReadError := observation.Reparse.DataState == records.ReparseDataStateError
 	if reparseReadError != has("ReparseDataReadFailed") {
 		return conflict("reparse")
@@ -56,7 +89,8 @@ func validateObservationConsistency(observation Observation) error {
 	}
 
 	partialCondition := streamError || securityReadError || securityParseFailure ||
-		reparseReadError || reparseParseFailure || has("PathConsistencyNotVerified")
+		saclReadError || saclParseFailure || reparseReadError || reparseParseFailure ||
+		has("PathConsistencyNotVerified")
 
 	switch observation.ObservationStatus {
 	case records.ObservationComplete:
