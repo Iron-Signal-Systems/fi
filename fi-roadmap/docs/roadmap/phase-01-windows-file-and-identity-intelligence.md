@@ -32,7 +32,7 @@ directory object. This establishes the starting historical record.
 | Reparse-point observation | Implemented | Preserves raw reparse data and parses supported mount-point and symbolic-link forms without guessing unknown formats. |
 | Collection consistency checks | Implemented | Detects object replacement, metadata changes during collection, scope replacement, and incomplete observations. |
 | Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
-| Windows security descriptors and ACLs | Planned | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are not yet collected. |
+| Windows security descriptors and ACLs | Implemented | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are not yet collected. |
 | SMB share state and share security | Planned | Share exposure and share ACL collection are not yet implemented. |
 | Local Windows identity | Planned | Local users, groups, memberships, and related identity records are not yet implemented. |
 | Active Directory identity | Planned | Versioned directory identity collection through the intended gMSA boundary is not yet implemented. |
