@@ -45,6 +45,7 @@ func main() {
 	usnStateMode := flag.Bool("usn-state", false, "show current NTFS USN journal state for the governed-root volume")
 	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
 	usnReobserveMode := flag.Bool("usn-reobserve", false, "read one bounded USN batch and freshly observe each distinct changed object by NTFS file ID")
+	usnOperationMode := flag.Bool("usn-operation", false, "journal one bounded USN read and re-observation operation")
 	usnCheckpointInitMode := flag.Bool("usn-checkpoint-init", false, "initialize FI local USN checkpoint state after a known baseline")
 	usnCheckpointStatusMode := flag.Bool("usn-checkpoint-status", false, "compare FI local USN checkpoint state with the current governed root and journal")
 
@@ -65,6 +66,7 @@ func main() {
 		*usnStateMode,
 		*usnReadMode,
 		*usnReobserveMode,
+		*usnOperationMode,
 		*usnCheckpointInitMode,
 		*usnCheckpointStatusMode,
 	} {
@@ -117,6 +119,19 @@ func main() {
 			Assessment checkpoint.ContinuityAssessment `json:"assessment"`
 		}{statePath, assessment})
 		return
+	case *usnOperationMode:
+		if flag.NArg() != 2 {
+			printUsage()
+			os.Exit(2)
+		}
+		result, err := usn.ReadAndReobserveJournaled(context.Background(), "manual-test", flag.Arg(0), flag.Arg(1))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(result)
+		return
+
 	case *usnReobserveMode:
 		if flag.NArg() != 2 {
 			printUsage()
@@ -297,6 +312,7 @@ func printUsage() {
 	fmt.Println(`  fi.exe -usn-state          <governed-root>`)
 	fmt.Println(`  fi.exe -usn-read           <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-reobserve      <governed-root> <start-usn>`)
+	fmt.Println(`  fi.exe -usn-operation      <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-init   <governed-root>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-status <governed-root>`)
 }
