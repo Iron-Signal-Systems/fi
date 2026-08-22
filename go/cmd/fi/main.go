@@ -37,6 +37,7 @@ func main() {
 	ads := flag.Bool("ads", false, "show streams and ADS")
 	shares := flag.Bool("shares", false, "show local SMB share state and share security")
 	collectorIdentity := flag.Bool("collector-identity", false, "show FI process identity and token facts")
+	baselineRoot := flag.Bool("baseline-root", false, "collect FI process identity, local SMB shares, and one governed NTFS root")
 
 	flag.Parse()
 
@@ -50,6 +51,7 @@ func main() {
 		*ads,
 		*shares,
 		*collectorIdentity,
+		*baselineRoot,
 	} {
 		if selected {
 			modeCount++
@@ -62,6 +64,14 @@ func main() {
 	}
 
 	switch {
+	case *baselineRoot:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runBaselineRoot(flag.Arg(0))
+		return
+
 	case *collectorIdentity:
 		if flag.NArg() != 0 {
 			printUsage()
@@ -165,6 +175,7 @@ func printUsage() {
 	fmt.Println(`  fi.exe -ads                <governed-root> <target>`)
 	fmt.Println(`  fi.exe -shares`)
 	fmt.Println(`  fi.exe -collector-identity`)
+	fmt.Println(`  fi.exe -baseline-root      <governed-root>`)
 }
 
 func runWalk(governedRoot string) {
