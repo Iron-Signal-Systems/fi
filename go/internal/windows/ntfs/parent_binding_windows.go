@@ -14,12 +14,12 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
-// collectParentBinding records the parent directory for the observed pathname.
-// It proves the relationship with handle-derived normalized paths rather than
-// assuming that the caller's lexical parent remained authoritative.
+// collectParentBinding records the parent directory for the handle-resolved
+// pathname binding. It derives and opens the parent from the target handle's
+// normalized volume-GUID path, so the same logic works for path-opened and
+// OpenFileById-opened objects.
 func collectParentBinding(
 	root governedRootContext,
-	targetPath []uint16,
 	targetFinalPath []uint16,
 	targetState nativeState,
 ) (records.ParentObjectBinding, error) {
@@ -27,11 +27,11 @@ func collectParentBinding(
 		return records.ParentObjectBinding{State: records.ParentBindingGovernedRoot}, nil
 	}
 
-	callerParent, err := parentLocalAbsolutePath(targetPath)
+	expectedParent, err := directParentVolumePath(targetFinalPath)
 	if err != nil {
 		return records.ParentObjectBinding{}, err
 	}
-	parentHandle, err := openPath(nulTerminate(callerParent))
+	parentHandle, err := openPath(nulTerminate(expectedParent))
 	if err != nil {
 		return records.ParentObjectBinding{}, fmt.Errorf("open parent: %w", err)
 	}
@@ -61,13 +61,8 @@ func collectParentBinding(
 	if err != nil {
 		return records.ParentObjectBinding{}, err
 	}
-	if parentVolumeGUID != root.volumeGUID {
+	if parentVolumeGUID != root.volumeGUID || !pathContainedBy(root.finalPath, parentFinalPath) {
 		return records.ParentObjectBinding{}, ErrOutsideGovernedRoot
-	}
-
-	expectedParent, err := directParentVolumePath(targetFinalPath)
-	if err != nil {
-		return records.ParentObjectBinding{}, err
 	}
 	if !equalUTF16(parentFinalPath, expectedParent) {
 		return records.ParentObjectBinding{}, fmt.Errorf("parent handle does not match target handle parent")

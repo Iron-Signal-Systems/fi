@@ -21,14 +21,17 @@ import (
 // collectOpenedTarget performs the NTFS observation against an already-open
 // target handle. The caller owns targetHandle and the governed-root handle.
 //
-// targetPath is currently the exact caller path used to open the handle. Future
-// OpenFileById/USN entry points can reuse this collection core after establishing
-// the equivalent path-binding and reopen semantics for an ID-opened handle.
+// entryMethod records how the initial target handle was obtained. targetPath is
+// required for path entry and nil for NTFSFileID entry. ID-opened collection
+// derives the current path from the handle, then uses that path only for
+// namespace consistency checks and the observed PathBinding.
 func collectOpenedTarget(
 	ctx context.Context,
 	root governedRootContext,
+	entryMethod CollectionEntryMethod,
 	targetPath []uint16,
 	targetHandle syscall.Handle,
+	expectedIdentity *records.NTFSObjectIdentity,
 ) (Observation, error) {
 	if err := validateContext(ctx); err != nil {
 		return Observation{}, err
@@ -57,6 +60,28 @@ func collectOpenedTarget(
 	pre, err := queryNativeState(targetHandle)
 	if err != nil {
 		return Observation{}, err
+	}
+	if expectedIdentity != nil {
+		_, openedIdentity, identityErr := buildObjectIdentity(pre.ID.VolumeSerialNumber, pre.ID.FileID)
+		if identityErr != nil {
+			return Observation{}, &Error{Stage: StageIdentity, Op: "DecodeOpenedNTFSFileID", Err: identityErr}
+		}
+		if openedIdentity != *expectedIdentity {
+			return Observation{}, &Error{Stage: StageIdentity, Op: "VerifyOpenFileByIdIdentity", Err: ErrObjectIdentityMismatch}
+		}
+	}
+
+	switch entryMethod {
+	case CollectionEntryPath:
+		if len(targetPath) == 0 {
+			return Observation{}, &Error{Stage: StageValidatePath, Op: "ValidateEntryPath", Err: ErrInvalidPath}
+		}
+	case CollectionEntryNTFSFileID:
+		// The ID open has no caller target path. Use the handle-resolved current
+		// path for the namespace consistency check and PathBinding record.
+		targetPath = append([]uint16(nil), targetFinalPath...)
+	default:
+		return Observation{}, &Error{Stage: StageOpen, Op: "ValidateCollectionEntryMethod", Err: fmt.Errorf("unsupported collection entry method %q", entryMethod)}
 	}
 
 	streamInventory := records.StreamInventory{
@@ -251,7 +276,7 @@ func collectOpenedTarget(
 	}
 	volumeIdentity.VolumeGUID = targetVolumeGUID
 
-	parentBinding, parentErr := collectParentBinding(root, targetPath, targetFinalPath, post)
+	parentBinding, parentErr := collectParentBinding(root, targetFinalPath, post)
 	if parentErr != nil {
 		parentBinding = records.ParentObjectBindingError(parentBindingUnavailableReason)
 		if status != records.ObservationReplacedDuringCollection {
@@ -293,15 +318,16 @@ func collectOpenedTarget(
 			RequestedPathUTF16LEBase64URL: utf16LEBase64URL(targetPath),
 			ResolvedPathUTF16LEBase64URL:  utf16LEBase64URL(targetFinalPath),
 		},
-		ObservedAt:        observedAt,
-		Metadata:          metadata,
-		Security:          security,
-		SACL:              sacl,
-		Reparse:           reparse,
-		StreamInventory:   streamInventory,
-		CollectionMethod:  records.CollectionDirectWindowsNTFS,
-		ObservationStatus: status,
-		Warnings:          warnings,
+		ObservedAt:            observedAt,
+		Metadata:              metadata,
+		Security:              security,
+		SACL:                  sacl,
+		Reparse:               reparse,
+		StreamInventory:       streamInventory,
+		CollectionEntryMethod: entryMethod,
+		CollectionMethod:      records.CollectionDirectWindowsNTFS,
+		ObservationStatus:     status,
+		Warnings:              warnings,
 	}
 
 	if err := ValidateObservation(observation); err != nil {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
@@ -30,6 +31,7 @@ type walkOutput struct {
 
 func main() {
 	collectPath := flag.Bool("collect-path", false, "show complete NTFS collection")
+	collectID := flag.Bool("collect-id", false, "show complete NTFS collection by NTFS object identity")
 	walkRoot := flag.Bool("walk-root", false, "recursively collect a governed NTFS root")
 	perfRoot := flag.Bool("perf-root", false, "measure FI collection on a governed NTFS root")
 	identity := flag.Bool("identity", false, "show NTFS identity")
@@ -44,6 +46,7 @@ func main() {
 	modeCount := 0
 	for _, selected := range []bool{
 		*collectPath,
+		*collectID,
 		*walkRoot,
 		*perfRoot,
 		*identity,
@@ -103,6 +106,28 @@ func main() {
 		}
 		runPerformance(flag.Arg(0))
 		return
+
+	case *collectID:
+		if flag.NArg() != 3 {
+			printUsage()
+			os.Exit(2)
+		}
+		observation, err := ntfs.CollectFileReference(
+			context.Background(),
+			"manual-test",
+			flag.Arg(0),
+			records.NTFSObjectIdentity{
+				MethodVersion:       ntfs.IdentityMethodVersion,
+				FileReferenceNumber: flag.Arg(1),
+				SequenceNumber:      flag.Arg(2),
+			},
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(observation)
+		return
 	}
 
 	if flag.NArg() != 2 {
@@ -142,10 +167,13 @@ func main() {
 		output = observation.StreamInventory
 	}
 
+	writeIndentedJSON(output)
+}
+
+func writeIndentedJSON(value any) {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
-
-	if err := encoder.Encode(output); err != nil {
+	if err := encoder.Encode(value); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
@@ -168,6 +196,7 @@ func pathUTF16LEBase64URL(path string) (string, error) {
 func printUsage() {
 	fmt.Println("usage:")
 	fmt.Println(`  fi.exe -collect-path       <governed-root> <target>`)
+	fmt.Println(`  fi.exe -collect-id         <governed-root> <file-reference-number> <sequence-number>`)
 	fmt.Println(`  fi.exe -walk-root          <governed-root>`)
 	fmt.Println(`  fi.exe -perf-root          <governed-root>`)
 	fmt.Println(`  fi.exe -identity           <governed-root> <target>`)
@@ -224,12 +253,7 @@ func runShares() {
 		os.Exit(1)
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(snapshot); err != nil {
-		fmt.Fprintln(os.Stderr, "ERROR:", err)
-		os.Exit(1)
-	}
+	writeIndentedJSON(snapshot)
 }
 
 func runCollectorIdentity() {
@@ -239,10 +263,5 @@ func runCollectorIdentity() {
 		os.Exit(1)
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(observation); err != nil {
-		fmt.Fprintln(os.Stderr, "ERROR:", err)
-		os.Exit(1)
-	}
+	writeIndentedJSON(observation)
 }

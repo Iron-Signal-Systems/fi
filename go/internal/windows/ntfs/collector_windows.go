@@ -89,7 +89,66 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 	}
 	defer syscall.CloseHandle(targetHandle)
 
-	return collectOpenedTarget(ctx, root, targetPath, targetHandle)
+	return collectOpenedTarget(ctx, root, CollectionEntryPath, targetPath, targetHandle, nil)
+}
+
+// CollectFileReference collects one governed NTFS object by FI object identity.
+//
+// The governed root is still supplied as an authorized path so FI can establish
+// and continuously revalidate the collection boundary. The target itself is
+// opened with OpenFileById using the root handle as the volume hint. FI verifies
+// the opened handle still matches the requested record/sequence identity and is
+// currently contained by the governed root before accepting the observation.
+//
+// This is the entry point intended for later USN-triggered re-observation.
+func CollectFileReference(
+	ctx context.Context,
+	scopeID string,
+	governedRoot string,
+	objectIdentity records.NTFSObjectIdentity,
+) (Observation, error) {
+	if scopeID == "" {
+		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
+	}
+	if err := validateContext(ctx); err != nil {
+		return Observation{}, err
+	}
+	if objectIdentity.MethodVersion != IdentityMethodVersion {
+		return Observation{}, &Error{Stage: StageIdentity, Op: "ValidateIdentityMethod", Err: ErrUnsupportedIdentityMethod}
+	}
+	if err := records.ValidateNTFSObjectIdentity(objectIdentity); err != nil {
+		return Observation{}, &Error{Stage: StageIdentity, Op: "ValidateObjectIdentity", Err: err}
+	}
+
+	rootUnits, err := syscall.UTF16FromString(governedRoot)
+	if err != nil {
+		return Observation{}, &Error{Stage: StageValidatePath, Op: "UTF16FromString(GovernedRoot)", Err: err}
+	}
+	rootPath := rootUnits[:len(rootUnits)-1]
+	if err := validateLocalAbsolutePath(rootPath); err != nil {
+		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidatePath", Err: err}
+	}
+
+	root, err := openGovernedRoot(scopeID, rootPath)
+	if err != nil {
+		return Observation{}, err
+	}
+	defer syscall.CloseHandle(root.handle)
+
+	targetHandle, err := openFileByObjectIdentity(root.handle, objectIdentity)
+	if err != nil {
+		return Observation{}, &Error{Stage: StageOpen, Op: "OpenFileById", Err: err}
+	}
+	defer syscall.CloseHandle(targetHandle)
+
+	return collectOpenedTarget(
+		ctx,
+		root,
+		CollectionEntryNTFSFileID,
+		nil,
+		targetHandle,
+		&objectIdentity,
+	)
 }
 
 func openGovernedRoot(scopeID string, governedRoot []uint16) (governedRootContext, error) {

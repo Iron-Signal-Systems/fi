@@ -45,7 +45,7 @@ func TestCollectOpenedTargetMatchesCollectPathIdentity(t *testing.T) {
 	}
 	defer syscall.CloseHandle(handle)
 
-	openedObservation, err := collectOpenedTarget(context.Background(), root, targetUnits, handle)
+	openedObservation, err := collectOpenedTarget(context.Background(), root, CollectionEntryPath, targetUnits, handle, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +54,9 @@ func TestCollectOpenedTargetMatchesCollectPathIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if openedObservation.CollectionEntryMethod != CollectionEntryPath || pathObservation.CollectionEntryMethod != CollectionEntryPath {
+		t.Fatalf("unexpected collection entry methods: opened=%q path=%q", openedObservation.CollectionEntryMethod, pathObservation.CollectionEntryMethod)
+	}
 	if !reflect.DeepEqual(openedObservation.ObjectIdentity, pathObservation.ObjectIdentity) {
 		t.Fatalf("opened identity = %+v, path identity = %+v", openedObservation.ObjectIdentity, pathObservation.ObjectIdentity)
 	}
