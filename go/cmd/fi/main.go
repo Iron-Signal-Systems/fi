@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
@@ -44,6 +45,8 @@ func main() {
 	usnStateMode := flag.Bool("usn-state", false, "show current NTFS USN journal state for the governed-root volume")
 	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
 	usnReobserveMode := flag.Bool("usn-reobserve", false, "read one bounded USN batch and freshly observe each distinct changed object by NTFS file ID")
+	usnCheckpointInitMode := flag.Bool("usn-checkpoint-init", false, "initialize FI local USN checkpoint state after a known baseline")
+	usnCheckpointStatusMode := flag.Bool("usn-checkpoint-status", false, "compare FI local USN checkpoint state with the current governed root and journal")
 
 	flag.Parse()
 
@@ -62,6 +65,8 @@ func main() {
 		*usnStateMode,
 		*usnReadMode,
 		*usnReobserveMode,
+		*usnCheckpointInitMode,
+		*usnCheckpointStatusMode,
 	} {
 		if selected {
 			modeCount++
@@ -74,6 +79,44 @@ func main() {
 	}
 
 	switch {
+	case *usnCheckpointInitMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		statePath, err := checkpoint.DefaultPath("manual-test")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		initialization, err := checkpoint.Initialize(context.Background(), "manual-test", flag.Arg(0), statePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(initialization)
+		return
+
+	case *usnCheckpointStatusMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		statePath, err := checkpoint.DefaultPath("manual-test")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		assessment, err := checkpoint.Check(context.Background(), "manual-test", flag.Arg(0), statePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(struct {
+			StatePath  string                          `json:"state_path"`
+			Assessment checkpoint.ContinuityAssessment `json:"assessment"`
+		}{statePath, assessment})
+		return
 	case *usnReobserveMode:
 		if flag.NArg() != 2 {
 			printUsage()
@@ -254,6 +297,8 @@ func printUsage() {
 	fmt.Println(`  fi.exe -usn-state          <governed-root>`)
 	fmt.Println(`  fi.exe -usn-read           <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-reobserve      <governed-root> <start-usn>`)
+	fmt.Println(`  fi.exe -usn-checkpoint-init   <governed-root>`)
+	fmt.Println(`  fi.exe -usn-checkpoint-status <governed-root>`)
 }
 
 func runWalk(governedRoot string) {
