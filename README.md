@@ -199,6 +199,22 @@ authority to change the systems involved.
 
 ---
 
+## Customer-controlled deployment
+
+FI is designed to operate entirely within infrastructure controlled by the customer.
+
+Windows collectors, FI records, historical information, identity and security metadata, classification results, PostgreSQL data, and other FI backend information remain on customer-controlled systems unless the customer explicitly chooses otherwise.
+
+The FI backend may be deployed on a customer-provided server or virtual machine, or on a dedicated FI appliance located within the customer environment.
+
+Iron Signal Systems does not require persistent administrative or remote access for FI to operate.
+
+Customers may optionally grant Iron Signal Systems controlled access for maintenance, upgrades, troubleshooting, or other support services. Any such access is customer-authorized and is not required for normal FI operation.
+
+FI is intended to remain fully operational in environments where no vendor remote access is permitted.
+
+---
+
 ## Initial platform scope
 
 Initial development targets **Windows Server and NTFS file services**.
