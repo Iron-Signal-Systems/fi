@@ -14,3 +14,27 @@ func TestFormatWindowsGUID(t *testing.T) {
 		t.Fatalf("GUID = %q, want %q", got, want)
 	}
 }
+
+func TestPrimaryGroupSID(t *testing.T) {
+	got, err := primaryGroupSID("S-1-5-21-1-2-3-1106", "513")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "S-1-5-21-1-2-3-513"; got != want {
+		t.Fatalf("primary group SID = %q, want %q", got, want)
+	}
+}
+
+func TestPrimaryGroupSIDRejectsNonDomainSID(t *testing.T) {
+	if _, err := primaryGroupSID("S-1-5-32-544", "513"); err == nil {
+		t.Fatal("expected non-domain SID rejection")
+	}
+}
+
+func TestLDAPFilterEscapeValue(t *testing.T) {
+	got := ldapFilterEscapeValue("CN=Smith (Ops)*\\Test\x00,DC=iss,DC=local")
+	want := "CN=Smith \\28Ops\\29\\2a\\5cTest\\00,DC=iss,DC=local"
+	if got != want {
+		t.Fatalf("escaped filter value = %q, want %q", got, want)
+	}
+}

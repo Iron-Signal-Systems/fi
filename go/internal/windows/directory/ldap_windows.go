@@ -23,15 +23,18 @@ import (
 )
 
 const (
-	ldapPort                  = 389
-	ldapVersion3              = 3
-	ldapOptProtocolVersion    = 0x11
-	ldapAuthNegotiate         = 0x0486
-	ldapScopeBase             = 0
-	ldapScopeSubtree          = 2
-	ldapSuccess               = 0
-	maxDirectoryPrincipalSIDs = 512
-	maxLDAPStringUnits        = 1 << 20
+	ldapPort                = 389
+	ldapVersion3            = 3
+	ldapOptProtocolVersion  = 0x11
+	ldapAuthNegotiate       = 0x0486
+	ldapScopeBase           = 0
+	ldapScopeSubtree        = 2
+	ldapSuccess             = 0
+	maxDirectorySeedSIDs    = 16384
+	maxDirectoryPrincipals  = 65536
+	maxDirectoryMemberships = 262144
+	directorySIDSearchBatch = 64
+	maxLDAPStringUnits      = 1 << 20
 )
 
 var (
@@ -59,10 +62,14 @@ type berval struct {
 	Val *byte
 }
 
-// CollectCurrentDomainPrincipals resolves the supplied SIDs against the Active
-// Directory domain named by domainDNSName using the current Windows process
-// token for LDAP authentication. It performs read-only LDAP searches and does
-// not calculate effective access.
+// CollectCurrentDomainPrincipals resolves the supplied seed SIDs against the
+// Active Directory domain named by domainDNSName using the current Windows
+// process token for LDAP authentication.
+//
+// The collector also follows direct group relationships so the resulting
+// snapshot contains the direct membership edges PostgreSQL will later use for
+// nested membership and effective-access correlation. It never emits a
+// transitive membership conclusion and never calculates file/share access.
 func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, sids []string) (records.DirectoryPrincipalSnapshot, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -78,41 +85,15 @@ func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, s
 	if len(requested) == 0 {
 		return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("at least one SID is required")
 	}
-	if len(requested) > maxDirectoryPrincipalSIDs {
-		return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("SID lookup count %d exceeds limit %d", len(requested), maxDirectoryPrincipalSIDs)
+	if len(requested) > maxDirectorySeedSIDs {
+		return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("SID seed count %d exceeds limit %d", len(requested), maxDirectorySeedSIDs)
 	}
 
-	binarySIDs := make(map[string][]byte, len(requested))
-	for _, sid := range requested {
-		raw, err := sidStringToBytes(sid)
-		if err != nil {
-			return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("SID %q: %w", sid, err)
-		}
-		binarySIDs[sid] = raw
-	}
-
-	host, err := syscall.UTF16PtrFromString(domainDNSName)
+	ld, err := openLDAP(domainDNSName)
 	if err != nil {
-		return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("domain DNS name: %w", err)
-	}
-	ld, _, _ := procLDAPInitW.Call(uintptr(unsafe.Pointer(host)), ldapPort)
-	runtime.KeepAlive(host)
-	if ld == 0 {
-		code, _, _ := procLdapGetLastError.Call()
-		return records.DirectoryPrincipalSnapshot{}, ldapError("ldap_initW", code)
+		return records.DirectoryPrincipalSnapshot{}, err
 	}
 	defer procLDAPUnbind.Call(ld)
-
-	version := uint32(ldapVersion3)
-	code, _, _ := procLDAPSetOptionW.Call(ld, ldapOptProtocolVersion, uintptr(unsafe.Pointer(&version)))
-	if code != ldapSuccess {
-		return records.DirectoryPrincipalSnapshot{}, ldapError("ldap_set_optionW(LDAPv3)", code)
-	}
-
-	code, _, _ = procLDAPBindSW.Call(ld, 0, 0, ldapAuthNegotiate)
-	if code != ldapSuccess {
-		return records.DirectoryPrincipalSnapshot{}, ldapError("ldap_bind_sW(Negotiate)", code)
-	}
 
 	serverDNSName, namingContext, err := readRootDSE(ld)
 	if err != nil {
@@ -122,23 +103,124 @@ func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, s
 		return records.DirectoryPrincipalSnapshot{}, err
 	}
 
-	principals, err := searchPrincipals(ld, namingContext, requested, binarySIDs)
+	seedPrincipals, err := searchPrincipalSIDs(ld, namingContext, requested)
 	if err != nil {
 		return records.DirectoryPrincipalSnapshot{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return records.DirectoryPrincipalSnapshot{}, err
+
+	principalBySID := make(map[string]records.DirectoryPrincipalObservation, len(seedPrincipals))
+	queue := make([]string, 0, len(seedPrincipals))
+	for _, principal := range seedPrincipals {
+		newPrincipal, err := addDirectoryPrincipal(principalBySID, principal)
+		if err != nil {
+			return records.DirectoryPrincipalSnapshot{}, err
+		}
+		if newPrincipal {
+			queue = append(queue, principal.SID)
+		}
 	}
 
-	found := make(map[string]struct{}, len(principals))
-	for _, principal := range principals {
-		found[principal.SID] = struct{}{}
+	foundRequested := make(map[string]struct{}, len(seedPrincipals))
+	for _, principal := range seedPrincipals {
+		foundRequested[principal.SID] = struct{}{}
 	}
 	notFound := make([]string, 0)
 	for _, sid := range requested {
-		if _, ok := found[sid]; !ok {
+		if _, ok := foundRequested[sid]; !ok {
 			notFound = append(notFound, sid)
 		}
+	}
+
+	membershipByKey := make(map[string]records.DirectoryMembershipObservation)
+	processed := make(map[string]struct{})
+
+	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return records.DirectoryPrincipalSnapshot{}, err
+		}
+
+		sid := queue[0]
+		queue = queue[1:]
+		if _, ok := processed[sid]; ok {
+			continue
+		}
+		principal, ok := principalBySID[sid]
+		if !ok {
+			return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("directory membership queue referenced unknown SID %s", sid)
+		}
+		processed[sid] = struct{}{}
+
+		directGroups, err := searchDirectGroupsForMember(ld, namingContext, principal.DistinguishedName)
+		if err != nil {
+			return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("direct groups for %s: %w", principal.SID, err)
+		}
+		for _, group := range directGroups {
+			newPrincipal, err := addDirectoryPrincipal(principalBySID, group)
+			if err != nil {
+				return records.DirectoryPrincipalSnapshot{}, err
+			}
+			if newPrincipal {
+				if len(principalBySID) > maxDirectoryPrincipals {
+					return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("directory principal count exceeds limit %d", maxDirectoryPrincipals)
+				}
+				queue = append(queue, group.SID)
+			}
+
+			membership := records.DirectoryMembershipObservation{
+				MemberSID: principal.SID,
+				GroupSID:  group.SID,
+				Source:    records.DirectoryMembershipSourceGroupMember,
+			}
+			if err := addDirectoryMembership(membershipByKey, membership); err != nil {
+				return records.DirectoryPrincipalSnapshot{}, err
+			}
+		}
+
+		if principal.PrimaryGroupIDRaw != "" {
+			groupSID, err := primaryGroupSID(principal.SID, principal.PrimaryGroupIDRaw)
+			if err != nil {
+				return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("primary group for %s: %w", principal.SID, err)
+			}
+			if groupSID != principal.SID {
+				if _, ok := principalBySID[groupSID]; !ok {
+					groups, err := searchPrincipalSIDs(ld, namingContext, []string{groupSID})
+					if err != nil {
+						return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("primary group lookup %s: %w", groupSID, err)
+					}
+					if len(groups) != 1 {
+						return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("primary group SID %s for %s was not found in current domain", groupSID, principal.SID)
+					}
+					newPrincipal, err := addDirectoryPrincipal(principalBySID, groups[0])
+					if err != nil {
+						return records.DirectoryPrincipalSnapshot{}, err
+					}
+					if newPrincipal {
+						if len(principalBySID) > maxDirectoryPrincipals {
+							return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("directory principal count exceeds limit %d", maxDirectoryPrincipals)
+						}
+						queue = append(queue, groupSID)
+					}
+				}
+
+				membership := records.DirectoryMembershipObservation{
+					MemberSID: principal.SID,
+					GroupSID:  groupSID,
+					Source:    records.DirectoryMembershipSourcePrimaryGroupID,
+				}
+				if err := addDirectoryMembership(membershipByKey, membership); err != nil {
+					return records.DirectoryPrincipalSnapshot{}, err
+				}
+			}
+		}
+	}
+
+	principals := make([]records.DirectoryPrincipalObservation, 0, len(principalBySID))
+	for _, principal := range principalBySID {
+		principals = append(principals, principal)
+	}
+	memberships := make([]records.DirectoryMembershipObservation, 0, len(membershipByKey))
+	for _, membership := range membershipByKey {
+		memberships = append(memberships, membership)
 	}
 
 	snapshot := records.DirectoryPrincipalSnapshot{
@@ -149,12 +231,41 @@ func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, s
 		NamingContext:    namingContext,
 		RequestedSIDs:    requested,
 		Principals:       principals,
+		Memberships:      memberships,
 		NotFoundSIDs:     notFound,
 	}
+	records.SortDirectoryPrincipalSnapshot(&snapshot)
 	if err := records.ValidateDirectoryPrincipalSnapshot(snapshot); err != nil {
 		return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("validate directory snapshot: %w", err)
 	}
 	return snapshot, nil
+}
+
+func openLDAP(domainDNSName string) (uintptr, error) {
+	host, err := syscall.UTF16PtrFromString(domainDNSName)
+	if err != nil {
+		return 0, fmt.Errorf("domain DNS name: %w", err)
+	}
+	ld, _, _ := procLDAPInitW.Call(uintptr(unsafe.Pointer(host)), ldapPort)
+	runtime.KeepAlive(host)
+	if ld == 0 {
+		code, _, _ := procLdapGetLastError.Call()
+		return 0, ldapError("ldap_initW", code)
+	}
+
+	version := uint32(ldapVersion3)
+	code, _, _ := procLDAPSetOptionW.Call(ld, ldapOptProtocolVersion, uintptr(unsafe.Pointer(&version)))
+	if code != ldapSuccess {
+		procLDAPUnbind.Call(ld)
+		return 0, ldapError("ldap_set_optionW(LDAPv3)", code)
+	}
+
+	code, _, _ = procLDAPBindSW.Call(ld, 0, 0, ldapAuthNegotiate)
+	if code != ldapSuccess {
+		procLDAPUnbind.Call(ld)
+		return 0, ldapError("ldap_bind_sW(Negotiate)", code)
+	}
+	return ld, nil
 }
 
 func readRootDSE(ld uintptr) (string, string, error) {
@@ -182,6 +293,51 @@ func readRootDSE(ld uintptr) (string, string, error) {
 	return server, base, nil
 }
 
+func searchPrincipalSIDs(ld uintptr, namingContext string, sids []string) ([]records.DirectoryPrincipalObservation, error) {
+	requested := sortedUnique(sids)
+	if len(requested) == 0 {
+		return []records.DirectoryPrincipalObservation{}, nil
+	}
+
+	principalBySID := make(map[string]records.DirectoryPrincipalObservation, len(requested))
+	for start := 0; start < len(requested); start += directorySIDSearchBatch {
+		end := start + directorySIDSearchBatch
+		if end > len(requested) {
+			end = len(requested)
+		}
+		batch := requested[start:end]
+		binarySIDs := make(map[string][]byte, len(batch))
+		for _, sid := range batch {
+			raw, err := sidStringToBytes(sid)
+			if err != nil {
+				return nil, fmt.Errorf("SID %q: %w", sid, err)
+			}
+			binarySIDs[sid] = raw
+		}
+
+		principals, err := searchPrincipals(ld, namingContext, batch, binarySIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, principal := range principals {
+			if _, expected := binarySIDs[principal.SID]; !expected {
+				return nil, fmt.Errorf("principal search returned unrequested SID %s", principal.SID)
+			}
+			if _, duplicate := principalBySID[principal.SID]; duplicate {
+				return nil, fmt.Errorf("principal search returned duplicate SID %s", principal.SID)
+			}
+			principalBySID[principal.SID] = principal
+		}
+	}
+
+	principals := make([]records.DirectoryPrincipalObservation, 0, len(principalBySID))
+	for _, principal := range principalBySID {
+		principals = append(principals, principal)
+	}
+	sort.Slice(principals, func(i, j int) bool { return principals[i].SID < principals[j].SID })
+	return principals, nil
+}
+
 func searchPrincipals(ld uintptr, namingContext string, requested []string, binarySIDs map[string][]byte) ([]records.DirectoryPrincipalObservation, error) {
 	var filter strings.Builder
 	if len(requested) > 1 {
@@ -196,7 +352,43 @@ func searchPrincipals(ld uintptr, namingContext string, requested []string, bina
 		filter.WriteByte(')')
 	}
 
-	attrs := []string{
+	result, err := ldapSearch(ld, namingContext, ldapScopeSubtree, filter.String(), principalLDAPAttributes())
+	if err != nil {
+		return nil, fmt.Errorf("principal search: %w", err)
+	}
+	defer procLDAPMsgFree.Call(result)
+
+	return readPrincipalSearchResults(ld, result)
+}
+
+// searchDirectGroupsForMember returns only groups in the current naming context
+// whose member attribute directly contains memberDN. This deliberately avoids
+// transitive LDAP matching rules; PostgreSQL owns nested membership traversal.
+func searchDirectGroupsForMember(ld uintptr, namingContext, memberDN string) ([]records.DirectoryPrincipalObservation, error) {
+	if memberDN == "" {
+		return nil, fmt.Errorf("member distinguished name is required")
+	}
+	filter := "(&(objectClass=group)(member=" + ldapFilterEscapeValue(memberDN) + "))"
+	result, err := ldapSearch(ld, namingContext, ldapScopeSubtree, filter, principalLDAPAttributes())
+	if err != nil {
+		return nil, fmt.Errorf("group member search: %w", err)
+	}
+	defer procLDAPMsgFree.Call(result)
+
+	groups, err := readPrincipalSearchResults(ld, result)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		if !containsFold(group.ObjectClasses, "group") {
+			return nil, fmt.Errorf("member search returned non-group SID %s", group.SID)
+		}
+	}
+	return groups, nil
+}
+
+func principalLDAPAttributes() []string {
+	return []string{
 		"objectSid",
 		"objectGUID",
 		"distinguishedName",
@@ -206,19 +398,22 @@ func searchPrincipals(ld uintptr, namingContext string, requested []string, bina
 		"userAccountControl",
 		"primaryGroupID",
 	}
-	result, err := ldapSearch(ld, namingContext, ldapScopeSubtree, filter.String(), attrs)
-	if err != nil {
-		return nil, fmt.Errorf("principal search: %w", err)
-	}
-	defer procLDAPMsgFree.Call(result)
+}
 
-	principals := make([]records.DirectoryPrincipalObservation, 0, len(requested))
+func readPrincipalSearchResults(ld, result uintptr) ([]records.DirectoryPrincipalObservation, error) {
+	principals := []records.DirectoryPrincipalObservation{}
+	seen := map[string]struct{}{}
 	for entry, _, _ := procLDAPFirstEntry.Call(ld, result); entry != 0; {
 		principal, err := readPrincipal(ld, entry)
 		if err != nil {
 			return nil, err
 		}
+		if _, duplicate := seen[principal.SID]; duplicate {
+			return nil, fmt.Errorf("LDAP result contained duplicate SID %s", principal.SID)
+		}
+		seen[principal.SID] = struct{}{}
 		principals = append(principals, principal)
+
 		next, _, _ := procLDAPNextEntry.Call(ld, entry)
 		entry = next
 	}
@@ -265,6 +460,7 @@ func readPrincipal(ld, entry uintptr) (records.DirectoryPrincipalObservation, er
 	if err != nil {
 		return records.DirectoryPrincipalObservation{}, fmt.Errorf("directory principal primaryGroupID: %w", err)
 	}
+
 	principal := records.DirectoryPrincipalObservation{
 		SID:                    sid,
 		SIDRawBase64URL:        base64.RawURLEncoding.EncodeToString(sidValues[0]),
@@ -286,6 +482,70 @@ func readPrincipal(ld, entry uintptr) (records.DirectoryPrincipalObservation, er
 		principal.AccountDisabled = &disabled
 	}
 	return principal, nil
+}
+
+func addDirectoryPrincipal(principals map[string]records.DirectoryPrincipalObservation, principal records.DirectoryPrincipalObservation) (bool, error) {
+	if principal.SID == "" {
+		return false, fmt.Errorf("directory principal SID is empty")
+	}
+	if existing, ok := principals[principal.SID]; ok {
+		if existing.ObjectGUID != principal.ObjectGUID || existing.DistinguishedName != principal.DistinguishedName {
+			return false, fmt.Errorf("directory SID %s resolved to conflicting objects", principal.SID)
+		}
+		return false, nil
+	}
+	principals[principal.SID] = principal
+	return true, nil
+}
+
+func addDirectoryMembership(memberships map[string]records.DirectoryMembershipObservation, membership records.DirectoryMembershipObservation) error {
+	if len(memberships) >= maxDirectoryMemberships {
+		return fmt.Errorf("directory membership count exceeds limit %d", maxDirectoryMemberships)
+	}
+	key := membership.MemberSID + "\x00" + membership.GroupSID + "\x00" + string(membership.Source)
+	memberships[key] = membership
+	return nil
+}
+
+func primaryGroupSID(principalSID, primaryGroupIDRaw string) (string, error) {
+	parts := strings.Split(principalSID, "-")
+	if len(parts) != 8 || parts[0] != "S" || parts[1] != "1" || parts[2] != "5" || parts[3] != "21" {
+		return "", fmt.Errorf("principal SID %q is not an account-domain SID", principalSID)
+	}
+	rid, err := strconv.ParseUint(primaryGroupIDRaw, 10, 32)
+	if err != nil {
+		return "", fmt.Errorf("invalid primaryGroupID %q: %w", primaryGroupIDRaw, err)
+	}
+	parts[7] = strconv.FormatUint(rid, 10)
+	return strings.Join(parts, "-"), nil
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// ldapFilterEscapeValue applies RFC 4515 escaping to a filter assertion value.
+// The distinguished-name text itself is not reinterpreted; only bytes that have
+// special meaning in an LDAP filter are escaped.
+func ldapFilterEscapeValue(value string) string {
+	var builder strings.Builder
+	for _, b := range []byte(value) {
+		switch b {
+		case 0x00, '(', ')', '*', '\\':
+			builder.WriteByte('\\')
+			const hex = "0123456789abcdef"
+			builder.WriteByte(hex[b>>4])
+			builder.WriteByte(hex[b&0x0f])
+		default:
+			builder.WriteByte(b)
+		}
+	}
+	return builder.String()
 }
 
 func ldapSearch(ld uintptr, base string, scope uintptr, filter string, attrs []string) (uintptr, error) {

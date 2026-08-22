@@ -29,6 +29,8 @@ const (
 	baselineKindLocalPrincipals     = "LocalPrincipalSnapshot"
 	baselineKindDirectoryPrincipals = "DirectoryPrincipalSnapshot"
 	baselineKindNTFSObservation     = "NTFSObservation"
+
+	maxBaselineObservedSIDs = 262144
 )
 
 // baselineEvent is the JSON Lines envelope used by the current baseline-root
@@ -46,6 +48,29 @@ type baselineEvent struct {
 	Error                string                              `json:"error,omitempty"`
 }
 
+type observedSIDSet struct {
+	values   map[string]struct{}
+	overflow bool
+}
+
+func newObservedSIDSet() *observedSIDSet {
+	return &observedSIDSet{values: make(map[string]struct{})}
+}
+
+func (set *observedSIDSet) add(sid string) {
+	if set == nil || sid == "" {
+		return
+	}
+	if _, exists := set.values[sid]; exists {
+		return
+	}
+	if len(set.values) >= maxBaselineObservedSIDs {
+		set.overflow = true
+		return
+	}
+	set.values[sid] = struct{}{}
+}
+
 func runBaselineRoot(governedRoot string) {
 	if err := writeBaselineRoot(context.Background(), os.Stdout, governedRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
@@ -53,25 +78,32 @@ func runBaselineRoot(governedRoot string) {
 	}
 }
 
-// writeBaselineRoot collects the process identity once, records the local SMB
-// share state once, records local principals and direct local-group membership,
-// resolves related current-domain principals once, then walks the governed NTFS
-// root in the same FI process.
+// writeBaselineRoot records collector identity, local SMB share state, local
+// principals/direct local-group membership, and the governed NTFS baseline.
+// While those source facts stream, FI gathers the unique SIDs it actually saw.
+// After the NTFS walk completes, those observed current-domain SIDs seed one AD
+// snapshot containing principals plus direct AD membership edges.
 //
-// Process identity is required. SMB and directory collection are useful access
-// context but are not allowed to discard a valid NTFS baseline; their failures
-// are emitted explicitly and the NTFS walk continues.
+// The NTFS observations continue to stream and are never retained as one giant
+// in-memory baseline. Only the bounded unique SID set is retained for the later
+// directory lookup.
+//
+// Process identity is required. SMB, local-identity, and directory collection
+// failures are emitted explicitly and do not discard an otherwise valid NTFS
+// baseline.
 func writeBaselineRoot(ctx context.Context, writer io.Writer, governedRoot string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	encoder := json.NewEncoder(writer)
+	observedSIDs := newObservedSIDSet()
 
 	identity, err := process.CurrentIdentity()
 	if err != nil {
 		return fmt.Errorf("collector identity: %w", err)
 	}
+	addProcessIdentitySIDs(observedSIDs, identity)
 	if err := encoder.Encode(baselineEvent{
 		Kind:              baselineKindCollectorIdentity,
 		CollectorIdentity: &identity,
@@ -85,6 +117,7 @@ func writeBaselineRoot(ctx context.Context, writer io.Writer, governedRoot strin
 		shareEvent.Error = shareErr.Error()
 	} else {
 		shareEvent.SMBShareSnapshot = &shareSnapshot
+		addSMBShareSnapshotSIDs(observedSIDs, shareSnapshot)
 	}
 	if err := encoder.Encode(shareEvent); err != nil {
 		return fmt.Errorf("encode SMB share snapshot: %w", err)
@@ -97,31 +130,13 @@ func writeBaselineRoot(ctx context.Context, writer io.Writer, governedRoot strin
 		localEvent.Error = localErr.Error()
 	} else {
 		localEvent.LocalPrincipals = &localSnapshot
+		addLocalPrincipalSIDs(observedSIDs, localSnapshot)
 	}
 	if err := encoder.Encode(localEvent); err != nil {
 		return fmt.Errorf("encode local principal snapshot: %w", err)
 	}
 
-	directoryEvent := baselineEvent{Kind: baselineKindDirectoryPrincipals}
-	directorySIDs := currentDomainRelatedSIDs(identity, localSnapshot, localErr == nil)
-	switch {
-	case identity.Computer.DNSDomain == "":
-		directoryEvent.Error = "DirectoryDomainDNSNameUnavailable"
-	case len(directorySIDs) == 0:
-		directoryEvent.Error = "DirectoryDomainSIDsUnavailable"
-	default:
-		directorySnapshot, directoryErr := directory.CollectCurrentDomainPrincipals(ctx, identity.Computer.DNSDomain, directorySIDs)
-		if directoryErr != nil {
-			directoryEvent.Error = directoryErr.Error()
-		} else {
-			directoryEvent.DirectoryPrincipals = &directorySnapshot
-		}
-	}
-	if err := encoder.Encode(directoryEvent); err != nil {
-		return fmt.Errorf("encode directory principal snapshot: %w", err)
-	}
-
-	return ntfs.WalkGovernedRoot(
+	walkErr := ntfs.WalkGovernedRoot(
 		ctx,
 		"manual-test",
 		governedRoot,
@@ -138,6 +153,7 @@ func writeBaselineRoot(ctx context.Context, writer io.Writer, governedRoot strin
 			}
 			if observation.ObservedAt != "" {
 				event.Observation = &observation
+				addNTFSObservationSIDs(observedSIDs, observation)
 			}
 			if objectErr != nil {
 				event.Error = objectErr.Error()
@@ -148,20 +164,103 @@ func writeBaselineRoot(ctx context.Context, writer io.Writer, governedRoot strin
 			return nil
 		},
 	)
+	if walkErr != nil {
+		return walkErr
+	}
+
+	directoryEvent := baselineEvent{Kind: baselineKindDirectoryPrincipals}
+	directorySIDs := currentDomainObservedSIDs(identity, observedSIDs.values)
+	switch {
+	case observedSIDs.overflow:
+		directoryEvent.Error = fmt.Sprintf("DirectorySIDCandidateLimitExceeded:%d", maxBaselineObservedSIDs)
+	case identity.Computer.DNSDomain == "":
+		directoryEvent.Error = "DirectoryDomainDNSNameUnavailable"
+	case len(directorySIDs) == 0:
+		directoryEvent.Error = "DirectoryDomainSIDsUnavailable"
+	default:
+		directorySnapshot, directoryErr := directory.CollectCurrentDomainPrincipals(ctx, identity.Computer.DNSDomain, directorySIDs)
+		if directoryErr != nil {
+			directoryEvent.Error = directoryErr.Error()
+		} else {
+			directoryEvent.DirectoryPrincipals = &directorySnapshot
+		}
+	}
+	if err := encoder.Encode(directoryEvent); err != nil {
+		return fmt.Errorf("encode directory principal snapshot: %w", err)
+	}
+
+	return nil
 }
 
-// currentDomainTokenSIDs selects only principals in the collector user's AD
-// domain SID namespace. Well-known, local-machine, logon-session, integrity,
-// and other non-domain SIDs remain in the token record but are not sent to the
-// current-domain LDAP lookup.
-// currentDomainTokenSIDs keeps the token-only selector used by the
-// Directory Principal 1A tests and callers. Local Principal 1A expands the
-// baseline lookup through currentDomainRelatedSIDs below.
+func addProcessIdentitySIDs(set *observedSIDSet, identity records.ProcessIdentityObservation) {
+	set.add(identity.Token.User.SID)
+	for _, group := range identity.Token.Groups {
+		set.add(group.Principal.SID)
+	}
+}
+
+func addLocalPrincipalSIDs(set *observedSIDSet, snapshot records.LocalPrincipalSnapshot) {
+	for _, user := range snapshot.Users {
+		set.add(user.SID)
+	}
+	for _, group := range snapshot.Groups {
+		set.add(group.SID)
+	}
+	for _, membership := range snapshot.Memberships {
+		set.add(membership.GroupSID)
+		set.add(membership.MemberSID)
+	}
+}
+
+func addSMBShareSnapshotSIDs(set *observedSIDSet, snapshot records.SMBShareSnapshot) {
+	for _, share := range snapshot.Shares {
+		addSecurityObservationSIDs(set, share.Security)
+	}
+}
+
+func addNTFSObservationSIDs(set *observedSIDSet, observation ntfs.Observation) {
+	addSecurityObservationSIDs(set, observation.Security)
+	addSACLObservationSIDs(set, observation.SACL)
+}
+
+func addSecurityObservationSIDs(set *observedSIDSet, security records.SecurityObservation) {
+	set.add(security.OwnerSID)
+	set.add(security.PrimaryGroupSID)
+	for _, ace := range security.DACL.ACEs {
+		set.add(ace.SID)
+	}
+}
+
+func addSACLObservationSIDs(set *observedSIDSet, sacl records.SACLObservation) {
+	for _, ace := range sacl.ACL.ACEs {
+		set.add(ace.SID)
+	}
+}
+
+// currentDomainTokenSIDs keeps the token-only selector used by existing tests
+// and callers.
 func currentDomainTokenSIDs(identity records.ProcessIdentityObservation) []string {
-	return currentDomainRelatedSIDs(identity, records.LocalPrincipalSnapshot{}, false)
+	set := newObservedSIDSet()
+	addProcessIdentitySIDs(set, identity)
+	return currentDomainObservedSIDs(identity, set.values)
 }
 
+// currentDomainRelatedSIDs keeps the earlier token/local selector while the
+// baseline itself now expands the candidate set from share and NTFS security.
 func currentDomainRelatedSIDs(identity records.ProcessIdentityObservation, local records.LocalPrincipalSnapshot, includeLocal bool) []string {
+	set := newObservedSIDSet()
+	addProcessIdentitySIDs(set, identity)
+	if includeLocal {
+		addLocalPrincipalSIDs(set, local)
+	}
+	return currentDomainObservedSIDs(identity, set.values)
+}
+
+// currentDomainObservedSIDs filters an observed SID set to the collector
+// account's AD domain SID namespace. Well-known, local-machine, logon-session,
+// integrity, service, and foreign-domain SIDs remain preserved in their source
+// records but are not falsely sent to the current-domain LDAP collector.
+func currentDomainObservedSIDs(identity records.ProcessIdentityObservation, observed map[string]struct{}) []string {
 	if identity.Token.User.DomainName == "" || strings.EqualFold(identity.Token.User.DomainName, identity.Computer.NetBIOSName) {
 		return []string{}
 	}
@@ -170,25 +269,11 @@ func currentDomainRelatedSIDs(identity records.ProcessIdentityObservation, local
 		return []string{}
 	}
 
-	set := map[string]struct{}{}
-	add := func(sid string) {
+	result := make([]string, 0)
+	for sid := range observed {
 		if sid == prefix || strings.HasPrefix(sid, prefix+"-") {
-			set[sid] = struct{}{}
+			result = append(result, sid)
 		}
-	}
-	add(identity.Token.User.SID)
-	for _, group := range identity.Token.Groups {
-		add(group.Principal.SID)
-	}
-	if includeLocal {
-		for _, membership := range local.Memberships {
-			add(membership.MemberSID)
-		}
-	}
-
-	result := make([]string, 0, len(set))
-	for sid := range set {
-		result = append(result, sid)
 	}
 	sort.Strings(result)
 	return result
