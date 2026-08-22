@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
 )
 
@@ -35,6 +36,7 @@ func main() {
 	metadata := flag.Bool("metadata", false, "show NTFS metadata")
 	ads := flag.Bool("ads", false, "show streams and ADS")
 	shares := flag.Bool("shares", false, "show local SMB share state and share security")
+	collectorIdentity := flag.Bool("collector-identity", false, "show FI process identity and token facts")
 
 	flag.Parse()
 
@@ -47,6 +49,7 @@ func main() {
 		*metadata,
 		*ads,
 		*shares,
+		*collectorIdentity,
 	} {
 		if selected {
 			modeCount++
@@ -59,6 +62,14 @@ func main() {
 	}
 
 	switch {
+	case *collectorIdentity:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		runCollectorIdentity()
+		return
+
 	case *shares:
 		if flag.NArg() != 0 {
 			printUsage()
@@ -146,13 +157,14 @@ func pathUTF16LEBase64URL(path string) (string, error) {
 
 func printUsage() {
 	fmt.Println("usage:")
-	fmt.Println(`  fi.exe -collect-path <governed-root> <target>`)
-	fmt.Println(`  fi.exe -walk-root    <governed-root>`)
-	fmt.Println(`  fi.exe -perf-root    <governed-root>`)
-	fmt.Println(`  fi.exe -identity     <governed-root> <target>`)
-	fmt.Println(`  fi.exe -metadata     <governed-root> <target>`)
-	fmt.Println(`  fi.exe -ads          <governed-root> <target>`)
+	fmt.Println(`  fi.exe -collect-path       <governed-root> <target>`)
+	fmt.Println(`  fi.exe -walk-root          <governed-root>`)
+	fmt.Println(`  fi.exe -perf-root          <governed-root>`)
+	fmt.Println(`  fi.exe -identity           <governed-root> <target>`)
+	fmt.Println(`  fi.exe -metadata           <governed-root> <target>`)
+	fmt.Println(`  fi.exe -ads                <governed-root> <target>`)
 	fmt.Println(`  fi.exe -shares`)
+	fmt.Println(`  fi.exe -collector-identity`)
 }
 
 func runWalk(governedRoot string) {
@@ -204,6 +216,21 @@ func runShares() {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(snapshot); err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+}
+
+func runCollectorIdentity() {
+	observation, err := process.CurrentIdentity()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(observation); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
