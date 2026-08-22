@@ -21,6 +21,28 @@ policy, activity/audit policy, and classification policy.
 FI performs an applicable observation of every governed file and relevant
 directory object. This establishes the starting historical record.
 
+## Implementation Status
+
+| Capability | Status | Current State |
+| --- | --- | --- |
+| Governed-root NTFS collection | Implemented | Collects only within explicitly governed local NTFS roots and validates scope using handle-derived identity and paths. |
+| NTFS object identity | Implemented | Records volume identity, file reference number, and sequence number independently of path. |
+| File and directory metadata | Implemented | Records size, allocation, timestamps, attributes, link count, and subject type. |
+| Alternate data streams | Implemented | Enumerates NTFS streams and preserves exact stream names and raw representation. |
+| Reparse-point observation | Implemented | Preserves raw reparse data and parses supported mount-point and symbolic-link forms without guessing unknown formats. |
+| Collection consistency checks | Implemented | Detects object replacement, metadata changes during collection, scope replacement, and incomplete observations. |
+| Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
+| Windows security descriptors and ACLs | Planned | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are not yet collected. |
+| SMB share state and share security | Planned | Share exposure and share ACL collection are not yet implemented. |
+| Local Windows identity | Planned | Local users, groups, memberships, and related identity records are not yet implemented. |
+| Active Directory identity | Planned | Versioned directory identity collection through the intended gMSA boundary is not yet implemented. |
+| Effective-access analysis inputs | Planned | Required file, share, local, and directory security inputs are not yet complete. |
+| USN journal change detection | Planned | Continuous change detection and follow-up observation are not yet implemented. |
+| Activity history | Planned | Historical file activity records are not yet implemented. |
+| Continuity and reconciliation | Planned | Gap detection, restart continuity, and reconciliation against current state are not yet implemented. |
+| Operation journal | Planned | Immutable collection-operation history is not yet implemented. |
+| Protected source-content read broker | Planned | Bounded protected access to source content for later classification is not yet implemented. |
+
 ## File, Storage, and Location Intelligence
 
 FI records where applicable and determinable:
