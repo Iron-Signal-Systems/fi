@@ -23,23 +23,29 @@ import (
 )
 
 const (
-	ldapPort                = 389
-	ldapVersion3            = 3
-	ldapOptProtocolVersion  = 0x11
-	ldapAuthNegotiate       = 0x0486
-	ldapScopeBase           = 0
-	ldapScopeSubtree        = 2
-	ldapSuccess             = 0
-	maxDirectorySeedSIDs    = 16384
-	maxDirectoryPrincipals  = 65536
-	maxDirectoryMemberships = 262144
-	directorySIDSearchBatch = 64
-	maxLDAPStringUnits      = 1 << 20
+	ldapSSLPort            = 636
+	ldapVersion3           = 3
+	ldapOptProtocolVersion = 0x11
+	ldapAuthNegotiate      = 0x0486
+	ldapScopeBase          = 0
+	ldapScopeSubtree       = 2
+	ldapSuccess            = 0
+
+	dsDirectoryServiceRequired = 0x00000010
+	dsIsDNSName                = 0x00020000
+	dsReturnDNSName            = 0x40000000
+	maxDirectorySeedSIDs       = 16384
+	maxDirectoryPrincipals     = 65536
+	maxDirectoryMemberships    = 262144
+	directorySIDSearchBatch    = 64
+	maxLDAPStringUnits         = 1 << 20
 )
 
 var (
 	wldap32                = syscall.NewLazyDLL("wldap32.dll")
-	procLDAPInitW          = wldap32.NewProc("ldap_initW")
+	netapi32               = syscall.NewLazyDLL("netapi32.dll")
+	procLDAPSSLInitW       = wldap32.NewProc("ldap_sslinitW")
+	procLDAPConnect        = wldap32.NewProc("ldap_connect")
 	procLDAPSetOptionW     = wldap32.NewProc("ldap_set_optionW")
 	procLDAPBindSW         = wldap32.NewProc("ldap_bind_sW")
 	procLDAPUnbind         = wldap32.NewProc("ldap_unbind")
@@ -55,11 +61,25 @@ var (
 	procLDAPMsgFree        = wldap32.NewProc("ldap_msgfree")
 	procLDAPErr2StringW    = wldap32.NewProc("ldap_err2stringW")
 	procLdapGetLastError   = wldap32.NewProc("LdapGetLastError")
+	procDsGetDcNameW       = netapi32.NewProc("DsGetDcNameW")
+	procNetApiBufferFree   = netapi32.NewProc("NetApiBufferFree")
 )
 
 type berval struct {
 	Len uint32
 	Val *byte
+}
+
+type domainControllerInfoW struct {
+	DomainControllerName        *uint16
+	DomainControllerAddress     *uint16
+	DomainControllerAddressType uint32
+	DomainGUID                  [16]byte
+	DomainName                  *uint16
+	DNSForestName               *uint16
+	Flags                       uint32
+	DCSiteName                  *uint16
+	ClientSiteName              *uint16
 }
 
 // CollectCurrentDomainPrincipals resolves the supplied seed SIDs against the
@@ -242,15 +262,28 @@ func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, s
 }
 
 func openLDAP(domainDNSName string) (uintptr, error) {
-	host, err := syscall.UTF16PtrFromString(domainDNSName)
+	dcDNSName, err := discoverDomainController(domainDNSName)
 	if err != nil {
-		return 0, fmt.Errorf("domain DNS name: %w", err)
+		return 0, err
 	}
-	ld, _, _ := procLDAPInitW.Call(uintptr(unsafe.Pointer(host)), ldapPort)
+
+	host, err := syscall.UTF16PtrFromString(dcDNSName)
+	if err != nil {
+		return 0, fmt.Errorf("domain controller DNS name: %w", err)
+	}
+
+	// FI requires LDAPS for directory collection. Use the discovered DC FQDN
+	// instead of the AD domain name so Schannel validates the certificate against
+	// the actual domain controller identity present in the certificate.
+	ld, _, _ := procLDAPSSLInitW.Call(
+		uintptr(unsafe.Pointer(host)),
+		ldapSSLPort,
+		1,
+	)
 	runtime.KeepAlive(host)
 	if ld == 0 {
 		code, _, _ := procLdapGetLastError.Call()
-		return 0, ldapError("ldap_initW", code)
+		return 0, ldapError("ldap_sslinitW(LDAPS)", code)
 	}
 
 	version := uint32(ldapVersion3)
@@ -260,12 +293,59 @@ func openLDAP(domainDNSName string) (uintptr, error) {
 		return 0, ldapError("ldap_set_optionW(LDAPv3)", code)
 	}
 
+	// Connect explicitly so TLS/certificate failures are reported separately
+	// from authentication failures.
+	code, _, _ = procLDAPConnect.Call(ld, 0)
+	if code != ldapSuccess {
+		procLDAPUnbind.Call(ld)
+		return 0, ldapError("ldap_connect(LDAPS "+dcDNSName+")", code)
+	}
+
 	code, _, _ = procLDAPBindSW.Call(ld, 0, 0, ldapAuthNegotiate)
 	if code != ldapSuccess {
 		procLDAPUnbind.Call(ld)
-		return 0, ldapError("ldap_bind_sW(Negotiate)", code)
+		return 0, ldapError("ldap_bind_sW(Negotiate over LDAPS)", code)
 	}
 	return ld, nil
+}
+
+func discoverDomainController(domainDNSName string) (string, error) {
+	domain, err := syscall.UTF16PtrFromString(domainDNSName)
+	if err != nil {
+		return "", fmt.Errorf("domain DNS name: %w", err)
+	}
+
+	var infoPointer uintptr
+	flags := uintptr(dsDirectoryServiceRequired | dsIsDNSName | dsReturnDNSName)
+	status, _, _ := procDsGetDcNameW.Call(
+		0,
+		uintptr(unsafe.Pointer(domain)),
+		0,
+		0,
+		flags,
+		uintptr(unsafe.Pointer(&infoPointer)),
+	)
+	runtime.KeepAlive(domain)
+	if status != 0 {
+		return "", fmt.Errorf("DsGetDcNameW(%s): Windows error %d", domainDNSName, status)
+	}
+	if infoPointer == 0 {
+		return "", fmt.Errorf("DsGetDcNameW(%s): returned no domain controller", domainDNSName)
+	}
+	defer procNetApiBufferFree.Call(infoPointer)
+
+	info := (*domainControllerInfoW)(unsafe.Pointer(infoPointer))
+	name, err := utf16PointerString(info.DomainControllerName)
+	if err != nil {
+		return "", fmt.Errorf("DsGetDcNameW(%s) domain controller name: %w", domainDNSName, err)
+	}
+
+	// DOMAIN_CONTROLLER_INFO returns the name with a leading UNC prefix.
+	name = strings.TrimPrefix(name, `\\`)
+	if name == "" {
+		return "", fmt.Errorf("DsGetDcNameW(%s): returned empty domain controller DNS name", domainDNSName)
+	}
+	return name, nil
 }
 
 func readRootDSE(ld uintptr) (string, string, error) {

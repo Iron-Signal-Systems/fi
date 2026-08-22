@@ -39,7 +39,7 @@ directory object. This establishes the starting historical record.
 | Effective-access analysis inputs | in-process | Required file, share, local, and directory security inputs are not yet complete. |
 | USN journal change detection | in-process | Continuous change detection and follow-up observation are not yet fully implemented. |
 | Activity history | in-process | Historical file activity records are not yet fully implemented. |
-| Continuity and reconciliation | Planned | Gap detection, restart continuity, and reconciliation against current state are not yet implemented. |
+| Continuity and reconciliation | in-process | Gap detection, restart continuity, and reconciliation against current state are not yet implemented. |
 | Operation journal | Planned | Immutable collection-operation history is not yet implemented. |
 | Protected source-content read broker | Planned | Bounded protected access to source content for later classification is not yet implemented. |
 
