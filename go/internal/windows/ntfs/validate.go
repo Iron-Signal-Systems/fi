@@ -38,6 +38,9 @@ func ValidateObservation(observation Observation) error {
 	if err := records.ValidateMetadataObservation(observation.Metadata); err != nil {
 		return err
 	}
+	if err := records.ValidateSecurityObservation(observation.Security); err != nil {
+		return err
+	}
 	if err := records.ValidateReparseObservation(observation.Reparse); err != nil {
 		return err
 	}

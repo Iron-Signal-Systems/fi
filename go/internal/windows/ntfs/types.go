@@ -36,6 +36,7 @@ type Observation struct {
 	PathBinding       records.PathBinding          `json:"path_binding"`
 	ObservedAt        string                       `json:"observed_at"`
 	Metadata          records.MetadataObservation  `json:"metadata"`
+	Security          records.SecurityObservation  `json:"security"`
 	Reparse           records.ReparseObservation   `json:"reparse"`
 	StreamInventory   records.StreamInventory      `json:"stream_inventory"`
 	CollectionMethod  records.CollectionMethod     `json:"collection_method"`

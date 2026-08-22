@@ -24,6 +24,25 @@ func validateObservationConsistency(observation Observation) error {
 		return conflict("stream_inventory")
 	}
 
+	securityReadError := observation.Security.State == records.ObservationStateError
+	if securityReadError {
+		if observation.Security.ReasonCode != "SecurityDescriptorReadFailed" || !has("SecurityDescriptorReadFailed") {
+			return conflict("security")
+		}
+	} else if has("SecurityDescriptorReadFailed") {
+		return conflict("security")
+	}
+
+	securityParseFailure := observation.Security.State == records.ObservationStatePresent &&
+		observation.Security.DataFormat == records.SecurityDataFormatRaw
+	if securityParseFailure {
+		if observation.Security.ReasonCode != "SecurityDescriptorParseFailed" || !has("SecurityDescriptorParseFailed") {
+			return conflict("security")
+		}
+	} else if has("SecurityDescriptorParseFailed") {
+		return conflict("security")
+	}
+
 	reparseReadError := observation.Reparse.DataState == records.ReparseDataStateError
 	if reparseReadError != has("ReparseDataReadFailed") {
 		return conflict("reparse")
@@ -36,7 +55,8 @@ func validateObservationConsistency(observation Observation) error {
 		return conflict("reparse")
 	}
 
-	partialCondition := streamError || reparseReadError || reparseParseFailure || has("PathConsistencyNotVerified")
+	partialCondition := streamError || securityReadError || securityParseFailure ||
+		reparseReadError || reparseParseFailure || has("PathConsistencyNotVerified")
 
 	switch observation.ObservationStatus {
 	case records.ObservationComplete:
