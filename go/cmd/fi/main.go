@@ -20,6 +20,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
 )
 
 type walkOutput struct {
@@ -40,6 +41,8 @@ func main() {
 	shares := flag.Bool("shares", false, "show local SMB share state and share security")
 	collectorIdentity := flag.Bool("collector-identity", false, "show FI process identity and token facts")
 	baselineRoot := flag.Bool("baseline-root", false, "collect FI process identity, local SMB shares, and one governed NTFS root")
+	usnStateMode := flag.Bool("usn-state", false, "show current NTFS USN journal state for the governed-root volume")
+	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
 
 	flag.Parse()
 
@@ -55,6 +58,8 @@ func main() {
 		*shares,
 		*collectorIdentity,
 		*baselineRoot,
+		*usnStateMode,
+		*usnReadMode,
 	} {
 		if selected {
 			modeCount++
@@ -67,6 +72,32 @@ func main() {
 	}
 
 	switch {
+	case *usnStateMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		state, err := usn.QueryJournal(context.Background(), "manual-test", flag.Arg(0))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(state)
+		return
+
+	case *usnReadMode:
+		if flag.NArg() != 2 {
+			printUsage()
+			os.Exit(2)
+		}
+		batch, err := usn.ReadJournal(context.Background(), "manual-test", flag.Arg(0), flag.Arg(1))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		writeIndentedJSON(batch)
+		return
+
 	case *baselineRoot:
 		if flag.NArg() != 1 {
 			printUsage()
@@ -205,6 +236,8 @@ func printUsage() {
 	fmt.Println(`  fi.exe -shares`)
 	fmt.Println(`  fi.exe -collector-identity`)
 	fmt.Println(`  fi.exe -baseline-root      <governed-root>`)
+	fmt.Println(`  fi.exe -usn-state          <governed-root>`)
+	fmt.Println(`  fi.exe -usn-read           <governed-root> <start-usn>`)
 }
 
 func runWalk(governedRoot string) {
