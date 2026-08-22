@@ -34,13 +34,13 @@ directory object. This establishes the starting historical record.
 | Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
 | Windows security descriptors and ACLs | Implemented | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are collected. |
 | SMB share state and share security | Implemented | Share exposure and share ACL collection. |
-| Local Windows identity | Implemented | Local users, groups, memberships, and related identity records are now implemented. |
-| Active Directory identity | in-process | Versioned directory identity collection through the intended gMSA boundary is not yet fully implemented. |
-| Effective-access analysis inputs | in-process | Required file, share, local, and directory security inputs are not yet complete. |
-| USN journal change detection | in-process | Continuous change detection and follow-up observation are not yet fully implemented. |
-| Activity history | in-process | Historical file activity records are not yet fully implemented. |
-| Continuity and reconciliation | in-process | Gap detection, restart continuity, and reconciliation against current state are not yet implemented. |
-| Operation journal | Planned | Immutable collection-operation history is not yet implemented. |
+| Local Windows identity | Implemented | Local users, groups, direct memberships, and related identity records are implemented. |
+| Active Directory identity | Implemented | Resolves current-domain principals and direct memberships required by observed SIDs using Windows DC Locator, LDAPS/636, certificate validation through Schannel, and current-token authentication. Directory collection fails closed when trusted LDAPS is unavailable. |
+| Effective-access analysis inputs | in-process | NTFS, share, local-identity, and directory direct-membership inputs are present. Remaining Phase 1 inputs include applicable privilege/bypass and activity observations; nested membership and effective-access reasoning belong to backend correlation. |
+| USN journal change detection | in-process | Queries journal state, reads bounded USN batches, re-observes changed objects by NTFS file ID, and supports local checkpoint initialization/status. Continuous scheduling and full monitoring integration remain. |
+| Activity history | Planned | Relevant Windows filesystem, SMB, security, identity, logon, and session activity collection has not yet been implemented. |
+| Continuity and reconciliation | in-process | USN checkpoint state and continuity assessment are implemented. Durable progression tied to downstream custody, explicit gap history, restart recovery, and bounded reconciliation remain. |
+| Operation journal | in-process | Operation lifecycle entries, validation, local append-only JSONL storage with flush, and bounded USN read/re-observation integration are implemented. Durable Started entries are written before source work; terminal Finished entries record the outcome. Broader operation coverage and interrupted-operation recovery remain. |
 | Protected source-content read broker | Planned | Bounded protected access to source content for later classification is not yet implemented. |
 
 ## File, Storage, and Location Intelligence
@@ -144,27 +144,33 @@ share ACL, and relationship between the governed object and each exposing share.
 
 ## Local and Directory Identity
 
-FI collects local identities, groups, membership relationships, and domain
+FI collects local identities, groups, direct membership relationships, and domain
 principal relationships required to explain access to governed files.
 
 FI performs:
 
-> **AD identity collection via gMSA, producing versioned directory identity records.**
+> **AD identity collection using Windows DC Locator and trusted LDAPS/636 through
+> the collector's current Windows token. In deployed service operation that token
+> is intended to be the FI gMSA.**
 
-Directory identity records include the versioned identity and membership
-relationships necessary for historical access analysis.
+Directory identity records preserve versioned principal facts and direct
+membership relationships. FI collectors do not calculate transitive/nested group
+membership or effective access; those relationships are correlated later by the
+backend from the collected source facts.
 
 Each monitored Windows source performs the identity collection necessary for its
 governed roots. FI does not require a centralized Windows identity tier.
 
 ## Historical Access-Analysis Inputs
 
-Phase 1 collects and versions sufficient inputs to reproduce historical effective
-access analysis, including NTFS security, share security, local identity,
-directory identity, nested membership, exact Windows rights, and applicable
-privilege/bypass considerations.
+Phase 1 collects and versions sufficient source inputs to reproduce historical
+effective-access analysis, including NTFS security, share security, local
+identity, directory identity, direct membership facts, exact Windows rights, and
+applicable privilege/bypass observations.
 
-Any access-analysis result must identify the exact versioned inputs used.
+Nested membership, cross-source identity correlation, and effective-access results
+are backend-derived relationships. Any access-analysis result must identify the
+exact versioned source inputs used.
 
 ## Windows Activity
 
@@ -185,6 +191,11 @@ identify the affected governed object and obtain fresh applicable observations.
 
 USN is a change detector, not forensic truth by itself.
 
+Current Phase 1 code can query USN journal state, read bounded batches, re-observe
+distinct changed objects by NTFS file ID, and assess a local USN checkpoint. The
+continuous monitor that schedules and advances those operations is still future
+work.
+
 ## Continuity
 
 FI durably tracks progress through applicable USN journals, Windows event
@@ -195,6 +206,10 @@ record identifying the affected source, feed, scope, and known incomplete
 interval.
 
 FI never silently treats a known gap as complete coverage.
+
+Local USN checkpoint initialization and continuity assessment exist now. Automatic
+checkpoint progression, restart recovery, explicit persisted gap history, and
+continuity tied to later durable downstream custody remain to be implemented.
 
 ## Reconciliation
 
@@ -219,6 +234,12 @@ Material Phase 1 operations produce immutable journal history, including baselin
 collection, re-observation, stream enumeration, activity collection,
 reconciliation, coverage degradation, continuity loss, and protected-read
 outcomes.
+
+The current operation-journal core validates lifecycle entries and writes them as
+append-only local JSONL with a flush before return. Bounded USN read and
+re-observation operations write a durable Started entry before source work and a
+Finished entry afterward. Broader operation coverage and restart recovery of
+unmatched Started operations remain.
 
 ## Gate 1 — Source Intelligence & Continuity
 
