@@ -61,6 +61,7 @@ func main() {
 	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
 	usnReobserveMode := flag.Bool("usn-reobserve", false, "read one bounded USN batch and freshly observe each distinct changed object by NTFS file ID")
 	usnOperationMode := flag.Bool("usn-operation", false, "journal one bounded USN read and re-observation operation")
+	usnNextMode := flag.Bool("usn-next", false, "read one checkpoint-driven USN batch and freshly observe changed objects")
 	usnCheckpointInitMode := flag.Bool("usn-checkpoint-init", false, "initialize FI local USN checkpoint state after a known baseline")
 	usnCheckpointStatusMode := flag.Bool("usn-checkpoint-status", false, "compare FI local USN checkpoint state with the current governed root and journal")
 
@@ -88,6 +89,7 @@ func main() {
 		*usnReadMode,
 		*usnReobserveMode,
 		*usnOperationMode,
+		*usnNextMode,
 		*usnCheckpointInitMode,
 		*usnCheckpointStatusMode,
 	} {
@@ -155,6 +157,14 @@ func main() {
 			StatePath  string                          `json:"state_path"`
 			Assessment checkpoint.ContinuityAssessment `json:"assessment"`
 		}{statePath, assessment})
+		return
+
+	case *usnNextMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runUSNNext(flag.Arg(0))
 		return
 
 	case *usnOperationMode:
@@ -401,6 +411,7 @@ func printUsage() {
 	fmt.Println(`  fi.exe -usn-read           <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-reobserve      <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-operation      <governed-root> <start-usn>`)
+	fmt.Println(`  fi.exe -usn-next           <governed-root>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-init   <governed-root>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-status <governed-root>`)
 }
