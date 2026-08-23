@@ -16,6 +16,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
@@ -32,6 +33,8 @@ type walkOutput struct {
 }
 
 func main() {
+	configMode := flag.Bool("config", false, "load and show the fixed FI configuration")
+	configFile := flag.Bool("config-file", false, "use the fixed FI configuration with -collect-path")
 	collectPath := flag.Bool("collect-path", false, "show complete NTFS collection")
 	collectID := flag.Bool("collect-id", false, "show complete NTFS collection by NTFS object identity")
 	walkRoot := flag.Bool("walk-root", false, "recursively collect a governed NTFS root")
@@ -51,8 +54,14 @@ func main() {
 
 	flag.Parse()
 
+	if *configFile && !*collectPath {
+		printUsage()
+		os.Exit(2)
+	}
+
 	modeCount := 0
 	for _, selected := range []bool{
+		*configMode,
 		*collectPath,
 		*collectID,
 		*walkRoot,
@@ -81,6 +90,22 @@ func main() {
 	}
 
 	switch {
+	case *collectPath && *configFile:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		runConfiguredCollection()
+		return
+
+	case *configMode:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		runConfig()
+		return
+
 	case *usnCheckpointInitMode:
 		if flag.NArg() != 1 {
 			printUsage()
@@ -119,6 +144,7 @@ func main() {
 			Assessment checkpoint.ContinuityAssessment `json:"assessment"`
 		}{statePath, assessment})
 		return
+
 	case *usnOperationMode:
 		if flag.NArg() != 2 {
 			printUsage()
@@ -274,6 +300,36 @@ func main() {
 	writeIndentedJSON(output)
 }
 
+func runConfiguredCollection() {
+	value, _, err := config.LoadDefault()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+
+	for _, governedRoot := range value.GovernedRoots {
+		runWalk(governedRoot)
+	}
+}
+
+func runConfig() {
+	value, path, err := config.LoadDefault()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+
+	writeIndentedJSON(struct {
+		ConfigPath    string   `json:"config_path"`
+		VersionID     string   `json:"version_id"`
+		GovernedRoots []string `json:"governed_roots"`
+	}{
+		ConfigPath:    path,
+		VersionID:     value.VersionID,
+		GovernedRoots: value.GovernedRoots,
+	})
+}
+
 func writeIndentedJSON(value any) {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -299,6 +355,8 @@ func pathUTF16LEBase64URL(path string) (string, error) {
 
 func printUsage() {
 	fmt.Println("usage:")
+	fmt.Println(`  fi.exe -config`)
+	fmt.Println(`  fi.exe -collect-path -config-file`)
 	fmt.Println(`  fi.exe -collect-path       <governed-root> <target>`)
 	fmt.Println(`  fi.exe -collect-id         <governed-root> <file-reference-number> <sequence-number>`)
 	fmt.Println(`  fi.exe -walk-root          <governed-root>`)

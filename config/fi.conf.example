@@ -1,0 +1,11 @@
+# FI configuration
+version_id: 1.0
+
+
+
+# Finance data
+
+governed_root: D:\Shares\Finance
+# HR
+
+governed_root: D:\Shares\HR
