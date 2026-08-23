@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"syscall"
 	"unsafe"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 const (
@@ -23,19 +25,23 @@ const (
 )
 
 var (
-	securityKernel32            = syscall.NewLazyDLL("kernel32.dll")
 	securityAdvapi32            = syscall.NewLazyDLL("advapi32.dll")
-	procReOpenFile              = securityKernel32.NewProc("ReOpenFile")
 	procGetKernelObjectSecurity = securityAdvapi32.NewProc("GetKernelObjectSecurity")
 )
 
-// querySecurityDescriptor reopens the already-proven NTFS object handle with
-// READ_CONTROL and retrieves owner, primary-group, and DACL state as one exact
-// self-relative security descriptor. No pathname lookup is performed here.
+// querySecurityDescriptor derives the exact NTFS object identity from the
+// already-proven FI handle, reopens that same object by ID with READ_CONTROL,
+// and retrieves owner, primary-group, and DACL state as one exact self-relative
+// security descriptor. No pathname lookup is performed.
 func querySecurityDescriptor(handle syscall.Handle) ([]byte, error) {
-	securityHandle, err := reopenSecurityHandle(handle)
+	identity, err := securityObjectIdentity(handle)
 	if err != nil {
 		return nil, err
+	}
+
+	securityHandle, err := openFileByObjectIdentityAccess(handle, identity, readControl)
+	if err != nil {
+		return nil, fmt.Errorf("OpenFileById(READ_CONTROL): %w", err)
 	}
 	defer syscall.CloseHandle(securityHandle)
 
@@ -75,18 +81,17 @@ func querySecurityDescriptor(handle syscall.Handle) ([]byte, error) {
 	return append([]byte(nil), buffer[:needed]...), nil
 }
 
-func reopenSecurityHandle(handle syscall.Handle) (syscall.Handle, error) {
-	result, _, callErr := procReOpenFile.Call(
-		uintptr(handle),
-		readControl,
-		uintptr(syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE),
-		uintptr(syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT),
-	)
-	securityHandle := syscall.Handle(result)
-	if securityHandle == syscall.InvalidHandle {
-		return syscall.InvalidHandle, windowsCallError("ReOpenFile(READ_CONTROL)", callErr)
+func securityObjectIdentity(handle syscall.Handle) (records.NTFSObjectIdentity, error) {
+	state, err := queryNativeState(handle)
+	if err != nil {
+		return records.NTFSObjectIdentity{}, err
 	}
-	return securityHandle, nil
+
+	_, identity, err := buildObjectIdentity(state.ID.VolumeSerialNumber, state.ID.FileID)
+	if err != nil {
+		return records.NTFSObjectIdentity{}, fmt.Errorf("decode NTFS object identity for security query: %w", err)
+	}
+	return identity, nil
 }
 
 func windowsCallError(operation string, callErr error) error {

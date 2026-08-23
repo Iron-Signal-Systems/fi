@@ -57,12 +57,27 @@ func composeNTFSFileID(identity records.NTFSObjectIdentity) (uint64, error) {
 }
 
 // openFileByObjectIdentity opens an NTFS object by the exact FI object identity
-// using the already-open governed-root handle as OpenFileById's volume hint.
+// using the supplied handle as OpenFileById's volume hint.
 //
-// OpenFileById is still read-only here: FI requests FILE_READ_ATTRIBUTES only.
-// Share flags allow normal workloads to continue modifying/renaming/deleting the
-// object while FI observes it; they do not grant FI write/delete access.
-func openFileByObjectIdentity(volumeHint syscall.Handle, identity records.NTFSObjectIdentity) (syscall.Handle, error) {
+// FI requests FILE_READ_ATTRIBUTES only. Share flags allow normal workloads to
+// continue modifying, renaming, or deleting the object while FI observes it;
+// they do not grant FI write or delete access.
+func openFileByObjectIdentity(
+	volumeHint syscall.Handle,
+	identity records.NTFSObjectIdentity,
+) (syscall.Handle, error) {
+	return openFileByObjectIdentityAccess(volumeHint, identity, fileReadAttributes)
+}
+
+// openFileByObjectIdentityAccess opens the exact NTFS object identity with only
+// the access explicitly requested by the caller. OpenFileById accepts a handle
+// to any file on the same volume as its volume hint, so an already-proven FI
+// object handle can be used to reopen that same object by ID for security reads.
+func openFileByObjectIdentityAccess(
+	volumeHint syscall.Handle,
+	identity records.NTFSObjectIdentity,
+	desiredAccess uint32,
+) (syscall.Handle, error) {
 	fileID, err := composeNTFSFileID(identity)
 	if err != nil {
 		return syscall.InvalidHandle, err
@@ -77,10 +92,10 @@ func openFileByObjectIdentity(volumeHint syscall.Handle, identity records.NTFSOb
 	r1, _, callErr := procOpenFileByID.Call(
 		uintptr(volumeHint),
 		uintptr(unsafe.Pointer(&descriptor)),
-		fileReadAttributes,
-		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		uintptr(desiredAccess),
+		uintptr(syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE),
 		0,
-		syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT,
+		uintptr(syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT),
 	)
 	runtime.KeepAlive(&descriptor)
 

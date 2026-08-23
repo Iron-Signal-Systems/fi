@@ -55,7 +55,7 @@ func (e *saclQueryError) Unwrap() error {
 }
 
 var (
-	procGetCurrentProcess        = securityKernel32.NewProc("GetCurrentProcess")
+	procGetCurrentProcess        = kernel32.NewProc("GetCurrentProcess")
 	procOpenProcessToken         = securityAdvapi32.NewProc("OpenProcessToken")
 	procLookupPrivilegeValueW    = securityAdvapi32.NewProc("LookupPrivilegeValueW")
 	procAdjustTokenPrivileges    = securityAdvapi32.NewProc("AdjustTokenPrivileges")
@@ -63,18 +63,27 @@ var (
 	seSecurityPrivilegeEnableErr error
 )
 
-// querySACLDescriptor retrieves the system ACL through the already-proven NTFS
-// object handle. FI enables SeSecurityPrivilege once for the process if the
-// process token contains it, then reopens the same object with
-// ACCESS_SYSTEM_SECURITY. No pathname lookup is performed.
+// querySACLDescriptor retrieves the system ACL from the exact NTFS object
+// identity derived from the already-proven FI handle. FI enables
+// SeSecurityPrivilege once for the process if the process token contains it,
+// then reopens that same object by ID with ACCESS_SYSTEM_SECURITY. No pathname
+// lookup is performed.
 func querySACLDescriptor(handle syscall.Handle) ([]byte, error) {
 	if err := ensureSeSecurityPrivilege(); err != nil {
 		return nil, &saclQueryError{ReasonCode: saclPrivilegeUnavailable, Err: err}
 	}
 
-	securityHandle, err := reopenSACLHandle(handle)
+	identity, err := securityObjectIdentity(handle)
 	if err != nil {
 		return nil, &saclQueryError{ReasonCode: saclDescriptorReadFailed, Err: err}
+	}
+
+	securityHandle, err := openFileByObjectIdentityAccess(handle, identity, accessSystemSecurity)
+	if err != nil {
+		return nil, &saclQueryError{
+			ReasonCode: saclDescriptorReadFailed,
+			Err:        fmt.Errorf("OpenFileById(ACCESS_SYSTEM_SECURITY): %w", err),
+		}
 	}
 	defer syscall.CloseHandle(securityHandle)
 
@@ -156,20 +165,6 @@ func enableSeSecurityPrivilege() error {
 		return fmt.Errorf("SeSecurityPrivilege is not assigned to the process token")
 	}
 	return nil
-}
-
-func reopenSACLHandle(handle syscall.Handle) (syscall.Handle, error) {
-	result, _, callErr := procReOpenFile.Call(
-		uintptr(handle),
-		accessSystemSecurity,
-		uintptr(syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE),
-		uintptr(syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT),
-	)
-	securityHandle := syscall.Handle(result)
-	if securityHandle == syscall.InvalidHandle {
-		return syscall.InvalidHandle, windowsCallError("ReOpenFile(ACCESS_SYSTEM_SECURITY)", callErr)
-	}
-	return securityHandle, nil
 }
 
 func getSACLDescriptor(handle syscall.Handle) ([]byte, error) {
