@@ -12,6 +12,35 @@ examples\
     ├── Setup-FIGMSA-DC.ps1
     └── Install-FIGMSA-Collector.ps1
 ```
+## Purpose and security model
+
+These files are **administrator examples and reference material**. They are not an automatic FI installer, and FI does not silently provision or modify Active Directory as part of its runtime operation.
+
+The administrator is expected to review the configuration and scripts, adapt them to the environment, and deliberately execute the required domain-controller and collector-side steps.
+
+FI is being developed and tested with gMSA so the collector can operate with a deliberately bounded service identity instead of Domain Admin, local Administrator, or other unnecessarily broad rights.
+
+Testing with excessive privileges could hide real access failures and create a misleading picture of what FI can actually observe in a customer environment.
+
+**FI's runtime collector is read-only against the systems it observes. FI is designed to run under a customer-provisioned, least-privilege service identity such as a gMSA. These example administrative scripts are provided only to assist with that configuration.**
+
+Each configured collector host receives its own gMSA, and only that computer account is authorized to retrieve the managed password for its assigned account. No static gMSA password is stored in FI configuration or scripts.
+
+### KDS root key
+
+The domain-controller example may create a KDS root key when one does not already exist. This is an explicit administrator-run example action, not an FI runtime action.
+
+The administrator should review that behavior before running the script and use the appropriate KDS procedure for the environment.
+
+The backdated KDS method documented below is intended only for a single-domain-controller lab/test environment. Normal production environments should use the standard KDS replication process.
+
+### Why bounded permissions matter
+
+Running FI under bounded permissions is intentional.
+
+Results such as `AccessDenied`, unavailable security information, or other partial observations can represent the actual access available to the collector. Those conditions should be reported rather than hidden by granting broad administrative rights simply to make collection appear complete.
+
+This allows FI development and testing to reflect the permissions expected in a real deployment instead of producing artificially complete results because the collector was given excessive access.
 
 ## Configuration
 

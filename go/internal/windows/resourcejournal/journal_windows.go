@@ -8,6 +8,7 @@ package resourcejournal
 
 import (
 	"bufio"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 )
 
@@ -38,12 +40,18 @@ const (
 // bounded FI operation by OperationID. CPU and I/O values are deltas since
 // resource tracking began for that operation. RAM values are process state at
 // the sample time plus the highest values sampled during the operation.
+//
+// ExecutablePath and ExecutableSHA256 identify the exact fi.exe file associated
+// with the process producing this record. They are source identity facts, not an
+// attestation that the executable is trusted.
 type Record struct {
 	RecordKind                 RecordKind            `json:"record_kind"`
 	OperationID                string                `json:"operation_id"`
 	ScopeID                    string                `json:"scope_id"`
 	OperationKind              records.OperationKind `json:"operation_kind"`
 	ObservedAt                 string                `json:"observed_at"`
+	ExecutablePath             string                `json:"executable_path"`
+	ExecutableSHA256           string                `json:"executable_sha256"`
 	Elapsed100Nanoseconds      string                `json:"elapsed_100ns"`
 	CPU100Nanoseconds          string                `json:"cpu_100ns"`
 	WorkingSetBytes            string                `json:"working_set_bytes"`
@@ -67,6 +75,7 @@ type Tracker struct {
 	operationID string
 	scopeID     string
 	kind        records.OperationKind
+	executable  runtimeidentity.Executable
 	startedAt   time.Time
 	start       process.Snapshot
 	peakWorking uint64
@@ -105,6 +114,11 @@ func Start(
 		return nil, err
 	}
 
+	executable, err := runtimeidentity.CurrentExecutable()
+	if err != nil {
+		return nil, err
+	}
+
 	snapshot, err := process.Current()
 	if err != nil {
 		return nil, err
@@ -115,6 +129,7 @@ func Start(
 		operationID: operationID,
 		scopeID:     scopeID,
 		kind:        kind,
+		executable:  executable,
 		startedAt:   time.Now().UTC(),
 		start:       snapshot,
 		peakWorking: snapshot.WorkingSetBytes,
@@ -201,6 +216,8 @@ func (tracker *Tracker) appendSnapshot(
 		ScopeID:                    tracker.scopeID,
 		OperationKind:              tracker.kind,
 		ObservedAt:                 observedAt.Format(timestampLayout),
+		ExecutablePath:             tracker.executable.Path,
+		ExecutableSHA256:           tracker.executable.SHA256,
 		Elapsed100Nanoseconds:      uintString(duration100Nanoseconds(observedAt.Sub(tracker.startedAt))),
 		CPU100Nanoseconds:          uintString(delta(snapshot.CPU100Nanoseconds, tracker.start.CPU100Nanoseconds)),
 		WorkingSetBytes:            uintString(snapshot.WorkingSetBytes),
@@ -219,7 +236,7 @@ func (tracker *Tracker) appendSnapshot(
 }
 
 func appendRecord(path string, record Record) error {
-	if err := validateRecord(record); err != nil {
+	if err := validateNewRecord(record); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -244,6 +261,9 @@ func appendRecord(path string, record Record) error {
 
 // ReadAll reads and validates one resource journal. It is intended for tests and
 // diagnostics; PostgreSQL will own long-term resource history after transport.
+//
+// Records written before executable fingerprinting was introduced are accepted
+// when both executable fields are absent. New records must always contain both.
 func ReadAll(path string) ([]Record, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -275,6 +295,16 @@ func ReadAll(path string) ([]Record, error) {
 	return result, nil
 }
 
+func validateNewRecord(record Record) error {
+	if record.ExecutablePath == "" {
+		return errors.New("Required: executable_path")
+	}
+	if record.ExecutableSHA256 == "" {
+		return errors.New("Required: executable_sha256")
+	}
+	return validateRecord(record)
+}
+
 func validateRecord(record Record) error {
 	switch record.RecordKind {
 	case ResourceSample, ResourceSummary:
@@ -286,6 +316,24 @@ func validateRecord(record Record) error {
 	}
 	if _, err := time.Parse(timestampLayout, record.ObservedAt); err != nil {
 		return errors.New("InvalidTimestamp: observed_at")
+	}
+
+	switch {
+	case record.ExecutablePath == "" && record.ExecutableSHA256 == "":
+		// Compatibility with resource records written before executable
+		// fingerprinting was introduced.
+	case record.ExecutablePath == "":
+		return errors.New("Required: executable_path")
+	case record.ExecutableSHA256 == "":
+		return errors.New("Required: executable_sha256")
+	default:
+		decoded, err := hex.DecodeString(record.ExecutableSHA256)
+		if err != nil || len(decoded) != 32 {
+			return errors.New("InvalidSHA256: executable_sha256")
+		}
+		if strings.ToLower(record.ExecutableSHA256) != record.ExecutableSHA256 {
+			return errors.New("NonCanonicalSHA256: executable_sha256")
+		}
 	}
 
 	for name, value := range map[string]string{

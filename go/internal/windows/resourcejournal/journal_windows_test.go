@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 )
 
 func TestStartFinishWritesSampleAndSummary(t *testing.T) {
@@ -47,6 +48,19 @@ func TestStartFinishWritesSampleAndSummary(t *testing.T) {
 	}
 	if values[1].PeakWorkingSetBytes == "0" {
 		t.Fatal("summary peak working set is zero")
+	}
+
+	executable, err := runtimeidentity.CurrentExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, value := range values {
+		if value.ExecutablePath != executable.Path {
+			t.Fatalf("record[%d] executable path = %q, want %q", index, value.ExecutablePath, executable.Path)
+		}
+		if value.ExecutableSHA256 != executable.SHA256 {
+			t.Fatalf("record[%d] executable SHA-256 = %q, want %q", index, value.ExecutableSHA256, executable.SHA256)
+		}
 	}
 }
 

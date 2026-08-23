@@ -18,6 +18,7 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
@@ -33,6 +34,11 @@ type walkOutput struct {
 }
 
 func main() {
+	if err := announceExecutable(); err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(1)
+	}
+
 	configMode := flag.Bool("config", false, "load and show the fixed FI configuration")
 	configFile := flag.Bool("config-file", false, "use the fixed FI configuration with -collect-path")
 	collectPath := flag.Bool("collect-path", false, "show complete NTFS collection")
@@ -328,6 +334,16 @@ func runConfig() {
 		VersionID:     value.VersionID,
 		GovernedRoots: value.GovernedRoots,
 	})
+}
+
+func announceExecutable() error {
+	executable, err := runtimeidentity.CurrentExecutable()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "FI executable:", executable.Path)
+	fmt.Fprintln(os.Stderr, "FI executable SHA-256:", executable.SHA256)
+	return nil
 }
 
 func writeIndentedJSON(value any) {

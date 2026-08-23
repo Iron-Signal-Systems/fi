@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	winprocess "github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 )
@@ -48,14 +49,16 @@ type performanceRoot struct {
 }
 
 type performanceEnvironment struct {
-	Hostname    string `json:"hostname,omitempty"`
-	Windows     string `json:"windows_version,omitempty"`
-	GoVersion   string `json:"go_version"`
-	GOARCH      string `json:"goarch"`
-	LogicalCPUs int    `json:"logical_cpus"`
-	VCSRevision string `json:"vcs_revision,omitempty"`
-	VCSTime     string `json:"vcs_time,omitempty"`
-	VCSModified string `json:"vcs_modified,omitempty"`
+	Hostname         string `json:"hostname,omitempty"`
+	Windows          string `json:"windows_version,omitempty"`
+	GoVersion        string `json:"go_version"`
+	GOARCH           string `json:"goarch"`
+	LogicalCPUs      int    `json:"logical_cpus"`
+	ExecutablePath   string `json:"executable_path,omitempty"`
+	ExecutableSHA256 string `json:"executable_sha256,omitempty"`
+	VCSRevision      string `json:"vcs_revision,omitempty"`
+	VCSTime          string `json:"vcs_time,omitempty"`
+	VCSModified      string `json:"vcs_modified,omitempty"`
 }
 
 type performanceTiming struct {
@@ -144,6 +147,13 @@ func measurePerformance(ctx context.Context, governedRoot string) (performanceRe
 			ErrorStages:  map[string]uint64{},
 		},
 		ResourceErrors: []string{},
+	}
+
+	if executable, executableErr := runtimeidentity.CurrentExecutable(); executableErr == nil {
+		report.Environment.ExecutablePath = executable.Path
+		report.Environment.ExecutableSHA256 = executable.SHA256
+	} else {
+		report.ResourceErrors = append(report.ResourceErrors, "executable identity: "+executableErr.Error())
 	}
 
 	if hostname, hostnameErr := os.Hostname(); hostnameErr == nil {
