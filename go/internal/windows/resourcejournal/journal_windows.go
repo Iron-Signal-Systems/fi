@@ -32,39 +32,48 @@ const (
 type RecordKind string
 
 const (
+	// ExecutableStart records one fi.exe process launch. It is intentionally
+	// stored in the same resource journal so later analysis can identify the
+	// exact executable that was started even when the selected CLI command does
+	// not itself create a bounded resource-tracked operation.
+	ExecutableStart RecordKind = "ExecutableStart"
+
 	ResourceSample  RecordKind = "ResourceSample"
 	ResourceSummary RecordKind = "ResourceSummary"
 )
 
-// Record is one immutable FI process-resource observation correlated to one
-// bounded FI operation by OperationID. CPU and I/O values are deltas since
-// resource tracking began for that operation. RAM values are process state at
-// the sample time plus the highest values sampled during the operation.
+// Record is one immutable FI runtime/resource observation.
+//
+// ExecutableStart records the executable path and SHA-256 at process startup.
+// ResourceSample and ResourceSummary additionally correlate process resource
+// usage to one bounded FI operation by OperationID.
 //
 // ExecutablePath and ExecutableSHA256 identify the exact fi.exe file associated
 // with the process producing this record. They are source identity facts, not an
-// attestation that the executable is trusted.
+// independent attestation that the executable is trusted.
 type Record struct {
-	RecordKind                 RecordKind            `json:"record_kind"`
-	OperationID                string                `json:"operation_id"`
-	ScopeID                    string                `json:"scope_id"`
-	OperationKind              records.OperationKind `json:"operation_kind"`
-	ObservedAt                 string                `json:"observed_at"`
-	ExecutablePath             string                `json:"executable_path"`
-	ExecutableSHA256           string                `json:"executable_sha256"`
-	Elapsed100Nanoseconds      string                `json:"elapsed_100ns"`
-	CPU100Nanoseconds          string                `json:"cpu_100ns"`
-	WorkingSetBytes            string                `json:"working_set_bytes"`
-	PrivateBytes               string                `json:"private_bytes"`
-	PeakWorkingSetBytes        string                `json:"peak_working_set_bytes"`
-	PeakPrivateBytes           string                `json:"peak_private_bytes"`
-	ReadOperations             string                `json:"read_operations"`
-	ReadBytes                  string                `json:"read_bytes"`
-	WriteOperations            string                `json:"write_operations"`
-	WriteBytes                 string                `json:"write_bytes"`
-	OtherOperations            string                `json:"other_operations"`
-	OtherBytes                 string                `json:"other_bytes"`
-	SampleIntervalMilliseconds string                `json:"sample_interval_ms"`
+	RecordKind       RecordKind `json:"record_kind"`
+	ScopeID          string     `json:"scope_id"`
+	ObservedAt       string     `json:"observed_at"`
+	ExecutablePath   string     `json:"executable_path"`
+	ExecutableSHA256 string     `json:"executable_sha256"`
+
+	OperationID   string                `json:"operation_id,omitempty"`
+	OperationKind records.OperationKind `json:"operation_kind,omitempty"`
+
+	Elapsed100Nanoseconds      string `json:"elapsed_100ns,omitempty"`
+	CPU100Nanoseconds          string `json:"cpu_100ns,omitempty"`
+	WorkingSetBytes            string `json:"working_set_bytes,omitempty"`
+	PrivateBytes               string `json:"private_bytes,omitempty"`
+	PeakWorkingSetBytes        string `json:"peak_working_set_bytes,omitempty"`
+	PeakPrivateBytes           string `json:"peak_private_bytes,omitempty"`
+	ReadOperations             string `json:"read_operations,omitempty"`
+	ReadBytes                  string `json:"read_bytes,omitempty"`
+	WriteOperations            string `json:"write_operations,omitempty"`
+	WriteBytes                 string `json:"write_bytes,omitempty"`
+	OtherOperations            string `json:"other_operations,omitempty"`
+	OtherBytes                 string `json:"other_bytes,omitempty"`
+	SampleIntervalMilliseconds string `json:"sample_interval_ms,omitempty"`
 }
 
 // Tracker samples FI process resource usage for one bounded operation. It keeps
@@ -100,6 +109,28 @@ func DefaultPath(scopeID string) (string, error) {
 		base = filepath.Join(programData, "FI", "state")
 	}
 	return filepath.Join(base, scopeID+"-resources.jsonl"), nil
+}
+
+// AppendExecutableStart appends one process-start identity record to the resource
+// journal. It is used once by fi.exe at process startup, before command dispatch.
+func AppendExecutableStart(path string, scopeID string) error {
+	if !safeScopeID(scopeID) {
+		return fmt.Errorf("invalid scope id for resource journal filename")
+	}
+
+	executable, err := runtimeidentity.CurrentExecutable()
+	if err != nil {
+		return err
+	}
+
+	record := Record{
+		RecordKind:       ExecutableStart,
+		ScopeID:          scopeID,
+		ObservedAt:       time.Now().UTC().Format(timestampLayout),
+		ExecutablePath:   executable.Path,
+		ExecutableSHA256: executable.SHA256,
+	}
+	return appendRecord(path, record)
 }
 
 // Start begins resource tracking for one operation. It immediately records one
@@ -236,7 +267,7 @@ func (tracker *Tracker) appendSnapshot(
 }
 
 func appendRecord(path string, record Record) error {
-	if err := validateNewRecord(record); err != nil {
+	if err := validateRecord(record); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -262,8 +293,10 @@ func appendRecord(path string, record Record) error {
 // ReadAll reads and validates one resource journal. It is intended for tests and
 // diagnostics; PostgreSQL will own long-term resource history after transport.
 //
-// Records written before executable fingerprinting was introduced are accepted
-// when both executable fields are absent. New records must always contain both.
+// Legacy ResourceSample/ResourceSummary records written before executable
+// fingerprinting was introduced are still accepted when both executable fields
+// are absent. ExecutableStart records and all newly written resource records
+// require both executable fields.
 func ReadAll(path string) ([]Record, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -295,68 +328,75 @@ func ReadAll(path string) ([]Record, error) {
 	return result, nil
 }
 
-func validateNewRecord(record Record) error {
-	if record.ExecutablePath == "" {
-		return errors.New("Required: executable_path")
-	}
-	if record.ExecutableSHA256 == "" {
-		return errors.New("Required: executable_sha256")
-	}
-	return validateRecord(record)
-}
-
 func validateRecord(record Record) error {
 	switch record.RecordKind {
+	case ExecutableStart:
+		if record.ScopeID == "" {
+			return errors.New("Required: scope_id")
+		}
+		if _, err := time.Parse(timestampLayout, record.ObservedAt); err != nil {
+			return errors.New("InvalidTimestamp: observed_at")
+		}
+		return validateExecutableIdentity(record, false)
+
 	case ResourceSample, ResourceSummary:
+		if err := validateOperationIdentity(record.OperationID, record.ScopeID, record.OperationKind); err != nil {
+			return err
+		}
+		if _, err := time.Parse(timestampLayout, record.ObservedAt); err != nil {
+			return errors.New("InvalidTimestamp: observed_at")
+		}
+		if err := validateExecutableIdentity(record, true); err != nil {
+			return err
+		}
+
+		for name, value := range map[string]string{
+			"elapsed_100ns":          record.Elapsed100Nanoseconds,
+			"cpu_100ns":              record.CPU100Nanoseconds,
+			"working_set_bytes":      record.WorkingSetBytes,
+			"private_bytes":          record.PrivateBytes,
+			"peak_working_set_bytes": record.PeakWorkingSetBytes,
+			"peak_private_bytes":     record.PeakPrivateBytes,
+			"read_operations":        record.ReadOperations,
+			"read_bytes":             record.ReadBytes,
+			"write_operations":       record.WriteOperations,
+			"write_bytes":            record.WriteBytes,
+			"other_operations":       record.OtherOperations,
+			"other_bytes":            record.OtherBytes,
+			"sample_interval_ms":     record.SampleIntervalMilliseconds,
+		} {
+			if value == "" {
+				return fmt.Errorf("Required: %s", name)
+			}
+			if _, err := strconv.ParseUint(value, 10, 64); err != nil {
+				return fmt.Errorf("InvalidUnsignedInteger: %s", name)
+			}
+		}
+		return nil
+
 	default:
 		return errors.New("UnsupportedValue: record_kind")
 	}
-	if err := validateOperationIdentity(record.OperationID, record.ScopeID, record.OperationKind); err != nil {
-		return err
-	}
-	if _, err := time.Parse(timestampLayout, record.ObservedAt); err != nil {
-		return errors.New("InvalidTimestamp: observed_at")
-	}
+}
 
+// validateExecutableIdentity accepts both fields missing only for legacy
+// ResourceSample/ResourceSummary records. ExecutableStart never permits that.
+func validateExecutableIdentity(record Record, allowLegacyMissing bool) error {
 	switch {
-	case record.ExecutablePath == "" && record.ExecutableSHA256 == "":
-		// Compatibility with resource records written before executable
-		// fingerprinting was introduced.
+	case record.ExecutablePath == "" && record.ExecutableSHA256 == "" && allowLegacyMissing:
+		return nil
 	case record.ExecutablePath == "":
 		return errors.New("Required: executable_path")
 	case record.ExecutableSHA256 == "":
 		return errors.New("Required: executable_sha256")
-	default:
-		decoded, err := hex.DecodeString(record.ExecutableSHA256)
-		if err != nil || len(decoded) != 32 {
-			return errors.New("InvalidSHA256: executable_sha256")
-		}
-		if strings.ToLower(record.ExecutableSHA256) != record.ExecutableSHA256 {
-			return errors.New("NonCanonicalSHA256: executable_sha256")
-		}
 	}
 
-	for name, value := range map[string]string{
-		"elapsed_100ns":          record.Elapsed100Nanoseconds,
-		"cpu_100ns":              record.CPU100Nanoseconds,
-		"working_set_bytes":      record.WorkingSetBytes,
-		"private_bytes":          record.PrivateBytes,
-		"peak_working_set_bytes": record.PeakWorkingSetBytes,
-		"peak_private_bytes":     record.PeakPrivateBytes,
-		"read_operations":        record.ReadOperations,
-		"read_bytes":             record.ReadBytes,
-		"write_operations":       record.WriteOperations,
-		"write_bytes":            record.WriteBytes,
-		"other_operations":       record.OtherOperations,
-		"other_bytes":            record.OtherBytes,
-		"sample_interval_ms":     record.SampleIntervalMilliseconds,
-	} {
-		if value == "" {
-			return fmt.Errorf("Required: %s", name)
-		}
-		if _, err := strconv.ParseUint(value, 10, 64); err != nil {
-			return fmt.Errorf("InvalidUnsignedInteger: %s", name)
-		}
+	decoded, err := hex.DecodeString(record.ExecutableSHA256)
+	if err != nil || len(decoded) != 32 {
+		return errors.New("InvalidSHA256: executable_sha256")
+	}
+	if strings.ToLower(record.ExecutableSHA256) != record.ExecutableSHA256 {
+		return errors.New("NonCanonicalSHA256: executable_sha256")
 	}
 	return nil
 }

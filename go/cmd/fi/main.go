@@ -22,6 +22,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/resourcejournal"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
 )
@@ -37,6 +38,11 @@ func main() {
 	if err := announceExecutable(); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
+	}
+	if err := journalExecutableStart(); err != nil {
+		// CLI diagnostics should remain available even if the local state
+		// directory is temporarily unwritable. The failure is made explicit.
+		fmt.Fprintln(os.Stderr, "WARNING: FI executable start was not journaled:", err)
 	}
 
 	configMode := flag.Bool("config", false, "load and show the fixed FI configuration")
@@ -344,6 +350,14 @@ func announceExecutable() error {
 	fmt.Fprintln(os.Stderr, "FI executable:", executable.Path)
 	fmt.Fprintln(os.Stderr, "FI executable SHA-256:", executable.SHA256)
 	return nil
+}
+
+func journalExecutableStart() error {
+	path, err := resourcejournal.DefaultPath("manual-test")
+	if err != nil {
+		return err
+	}
+	return resourcejournal.AppendExecutableStart(path, "manual-test")
 }
 
 func writeIndentedJSON(value any) {

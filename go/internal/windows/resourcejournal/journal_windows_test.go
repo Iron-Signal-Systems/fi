@@ -15,6 +15,43 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 )
 
+func TestAppendExecutableStartWritesRuntimeIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resources.jsonl")
+	if err := AppendExecutableStart(path, "manual-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	values, err := ReadAll(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 1 {
+		t.Fatalf("got %d records, want 1", len(values))
+	}
+
+	value := values[0]
+	if value.RecordKind != ExecutableStart {
+		t.Fatalf("record kind = %q, want %q", value.RecordKind, ExecutableStart)
+	}
+	if value.ScopeID != "manual-test" {
+		t.Fatalf("scope id = %q, want manual-test", value.ScopeID)
+	}
+	if value.OperationID != "" || value.OperationKind != "" {
+		t.Fatalf("ExecutableStart unexpectedly has operation identity: %+v", value)
+	}
+
+	executable, err := runtimeidentity.CurrentExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.ExecutablePath != executable.Path {
+		t.Fatalf("executable path = %q, want %q", value.ExecutablePath, executable.Path)
+	}
+	if value.ExecutableSHA256 != executable.SHA256 {
+		t.Fatalf("executable SHA-256 = %q, want %q", value.ExecutableSHA256, executable.SHA256)
+	}
+}
+
 func TestStartFinishWritesSampleAndSummary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "resources.jsonl")
 	tracker, err := Start(
