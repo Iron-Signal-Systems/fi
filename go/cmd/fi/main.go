@@ -62,6 +62,8 @@ func main() {
 	usnReobserveMode := flag.Bool("usn-reobserve", false, "read one bounded USN batch and freshly observe each distinct changed object by NTFS file ID")
 	usnOperationMode := flag.Bool("usn-operation", false, "journal one bounded USN read and re-observation operation")
 	usnNextMode := flag.Bool("usn-next", false, "read one checkpoint-driven USN batch and freshly observe changed objects")
+	spoolRootMode := flag.Bool("spool-root", false, "collect one governed NTFS root into verified local batches")
+	spoolVerifyMode := flag.Bool("spool-verify", false, "verify one finalized FI batch manifest and data file")
 	usnCheckpointInitMode := flag.Bool("usn-checkpoint-init", false, "initialize FI local USN checkpoint state after a known baseline")
 	usnCheckpointStatusMode := flag.Bool("usn-checkpoint-status", false, "compare FI local USN checkpoint state with the current governed root and journal")
 
@@ -90,6 +92,8 @@ func main() {
 		*usnReobserveMode,
 		*usnOperationMode,
 		*usnNextMode,
+		*spoolRootMode,
+		*spoolVerifyMode,
 		*usnCheckpointInitMode,
 		*usnCheckpointStatusMode,
 	} {
@@ -165,6 +169,22 @@ func main() {
 			os.Exit(2)
 		}
 		runUSNNext(flag.Arg(0))
+		return
+
+	case *spoolRootMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runSpoolRoot(flag.Arg(0))
+		return
+
+	case *spoolVerifyMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runSpoolVerify(flag.Arg(0))
 		return
 
 	case *usnOperationMode:
@@ -412,6 +432,8 @@ func printUsage() {
 	fmt.Println(`  fi.exe -usn-reobserve      <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-operation      <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-next           <governed-root>`)
+	fmt.Println(`  fi.exe -spool-root         <governed-root>`)
+	fmt.Println(`  fi.exe -spool-verify       <manifest-path>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-init   <governed-root>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-status <governed-root>`)
 }
