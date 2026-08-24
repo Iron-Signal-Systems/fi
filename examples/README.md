@@ -5,7 +5,7 @@ This example shows how to create and install one Group Managed Service Account (
 ## Example layout
 
 ```text
-examples\
+gmsa_provisioning\
 ├── config\
 │   └── gmsa.psd1
 └── scripts\
@@ -104,7 +104,7 @@ True
 
 ## 2. Create the FI gMSAs on the domain controller
 
-From the `examples\scripts` directory, run:
+From the `examples\gmsa_provisioning\scripts` directory, run:
 
 ```powershell
 .\Setup-FIGMSA-DC.ps1
@@ -129,7 +129,7 @@ Each computer account is authorized only to retrieve the password for its assign
 
 ## 3. Install the gMSA on each FI collector host
 
-Copy the `examples` folder to the collector host, or otherwise make the same configuration and scripts available.
+Copy the `gmsa_provisioning` folder to the collector host, or otherwise make the same configuration and scripts available.
 
 Run the following from an elevated PowerShell prompt on each collector:
 
