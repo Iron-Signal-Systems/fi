@@ -33,6 +33,13 @@ const (
 // collected reparse state and payload where applicable, attempted stream
 // enumeration, and completed consistency checks.
 //
+// ContentHashes is collected before the public collection call returns. For a
+// regular file FI reopens the same exact NTFS object identity with GENERIC_READ
+// while the original observation handle is still open, reads the unnamed/default
+// $DATA stream once, and calculates MD5, SHA-1, and SHA-256 in that one read.
+// Directories report NotApplicable. Content hash state is independent from the
+// structural NTFS ObservationStatus and carries its own explicit Error state.
+//
 // CollectionEntryMethod records whether the initial target handle came from a
 // caller path or from OpenFileById. Both entry methods feed the same opened-
 // handle collector and therefore produce the same NTFS fact model.
@@ -46,21 +53,22 @@ const (
 //
 // This is not a Windows API structure and is not the backend database schema.
 type Observation struct {
-	GovernedRoot          records.GovernedRootIdentity `json:"governed_root"`
-	Containment           records.PathContainment      `json:"containment"`
-	VolumeIdentity        records.VolumeIdentity       `json:"volume_identity"`
-	ObjectIdentity        records.NTFSObjectIdentity   `json:"object_identity"`
-	ParentBinding         records.ParentObjectBinding  `json:"parent_binding"`
-	SubjectKind           records.SubjectKind          `json:"subject_kind"`
-	PathBinding           records.PathBinding          `json:"path_binding"`
-	ObservedAt            string                       `json:"observed_at"`
-	Metadata              records.MetadataObservation  `json:"metadata"`
-	Security              records.SecurityObservation  `json:"security"`
-	SACL                  records.SACLObservation      `json:"sacl"`
-	Reparse               records.ReparseObservation   `json:"reparse"`
-	StreamInventory       records.StreamInventory      `json:"stream_inventory"`
-	CollectionEntryMethod CollectionEntryMethod        `json:"collection_entry_method"`
-	CollectionMethod      records.CollectionMethod     `json:"collection_method"`
-	ObservationStatus     records.ObservationStatus    `json:"observation_status"`
-	Warnings              []records.ObservationWarning `json:"warnings"`
+	GovernedRoot          records.GovernedRootIdentity    `json:"governed_root"`
+	Containment           records.PathContainment         `json:"containment"`
+	VolumeIdentity        records.VolumeIdentity          `json:"volume_identity"`
+	ObjectIdentity        records.NTFSObjectIdentity      `json:"object_identity"`
+	ParentBinding         records.ParentObjectBinding     `json:"parent_binding"`
+	SubjectKind           records.SubjectKind             `json:"subject_kind"`
+	PathBinding           records.PathBinding             `json:"path_binding"`
+	ObservedAt            string                          `json:"observed_at"`
+	Metadata              records.MetadataObservation     `json:"metadata"`
+	Security              records.SecurityObservation     `json:"security"`
+	SACL                  records.SACLObservation         `json:"sacl"`
+	Reparse               records.ReparseObservation      `json:"reparse"`
+	StreamInventory       records.StreamInventory         `json:"stream_inventory"`
+	ContentHashes         *records.ContentHashObservation `json:"content_hashes,omitempty"`
+	CollectionEntryMethod CollectionEntryMethod           `json:"collection_entry_method"`
+	CollectionMethod      records.CollectionMethod        `json:"collection_method"`
+	ObservationStatus     records.ObservationStatus       `json:"observation_status"`
+	Warnings              []records.ObservationWarning    `json:"warnings"`
 }

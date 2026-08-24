@@ -23,13 +23,14 @@ import (
 
 const contentHashBufferSize = 1024 * 1024
 
-// CollectContentHashes reads the regular file's unnamed/default $DATA stream
-// locally and calculates MD5, SHA-1, and SHA-256 in one pass.
+// CollectContentHashes is retained as a focused hash entry point for tests and
+// callers that intentionally need only content fingerprints. Normal FI object
+// collection now hashes before CollectPath/CollectFileReference returns, so the
+// spool layer does not call this function separately.
 //
-// It never returns source content bytes and does not hash named ADS. The target
-// is opened by exact NTFS object identity and must still prove containment in
-// governedRoot. If the object changes while hashing, FI returns an explicit
-// Error state instead of claiming a stable digest.
+// It reads the regular file's unnamed/default $DATA stream locally and
+// calculates MD5, SHA-1, and SHA-256 in one pass. It never returns source bytes
+// and does not hash named ADS.
 func CollectContentHashes(
 	ctx context.Context,
 	scopeID string,
@@ -37,13 +38,6 @@ func CollectContentHashes(
 	identity records.NTFSObjectIdentity,
 	subjectKind records.SubjectKind,
 ) (records.ContentHashObservation, error) {
-	if subjectKind == records.SubjectDirectory {
-		value := records.ContentHashObservation{State: records.ContentHashNotApplicable}
-		return value, records.ValidateContentHashObservation(value)
-	}
-	if subjectKind != records.SubjectFile {
-		return records.ContentHashObservation{}, errors.New("unsupported subject kind for content hashing")
-	}
 	if err := validateContext(ctx); err != nil {
 		return records.ContentHashObservation{}, err
 	}
@@ -62,7 +56,35 @@ func CollectContentHashes(
 	}
 	defer syscall.CloseHandle(root.handle)
 
-	handle, err := openFileByObjectIdentityAccess(root.handle, identity, syscall.GENERIC_READ)
+	return collectContentHashesOpened(ctx, root, root.handle, identity, subjectKind)
+}
+
+// collectContentHashesOpened performs the content portion of the same bounded
+// FI object collection. volumeHint is an already-open handle on the same NTFS
+// volume (normally the original target observation handle). FI reopens the
+// exact object identity with GENERIC_READ rather than trusting a pathname.
+func collectContentHashesOpened(
+	ctx context.Context,
+	root governedRootContext,
+	volumeHint syscall.Handle,
+	identity records.NTFSObjectIdentity,
+	subjectKind records.SubjectKind,
+) (records.ContentHashObservation, error) {
+	if subjectKind == records.SubjectDirectory {
+		value := records.ContentHashObservation{State: records.ContentHashNotApplicable}
+		return value, records.ValidateContentHashObservation(value)
+	}
+	if subjectKind != records.SubjectFile {
+		return records.ContentHashObservation{}, errors.New("unsupported subject kind for content hashing")
+	}
+	if err := validateContext(ctx); err != nil {
+		return records.ContentHashObservation{}, err
+	}
+	if err := records.ValidateNTFSObjectIdentity(identity); err != nil {
+		return records.ContentHashObservation{}, err
+	}
+
+	handle, err := openFileByObjectIdentityAccess(volumeHint, identity, syscall.GENERIC_READ)
 	if err != nil {
 		return contentHashError("ContentOpenFailed", err), nil
 	}

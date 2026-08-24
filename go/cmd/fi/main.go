@@ -57,11 +57,13 @@ func main() {
 	shares := flag.Bool("shares", false, "show local SMB share state and share security")
 	collectorIdentity := flag.Bool("collector-identity", false, "show FI process identity and token facts")
 	baselineRoot := flag.Bool("baseline-root", false, "collect FI process identity, local SMB shares, and one governed NTFS root")
+	baselineSpoolRootMode := flag.Bool("baseline-spool-root", false, "capture a pre-baseline USN anchor, write a verified hashed baseline, then initialize the checkpoint to that anchor")
 	usnStateMode := flag.Bool("usn-state", false, "show current NTFS USN journal state for the governed-root volume")
 	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
 	usnReobserveMode := flag.Bool("usn-reobserve", false, "read one bounded USN batch and freshly observe each distinct changed object by NTFS file ID")
 	usnOperationMode := flag.Bool("usn-operation", false, "journal one bounded USN read and re-observation operation")
 	usnNextMode := flag.Bool("usn-next", false, "read one checkpoint-driven USN batch and freshly observe changed objects")
+	usnSpoolNextMode := flag.Bool("usn-spool-next", false, "read checkpoint-driven USN changes into verified local batches and advance after verification")
 	spoolRootMode := flag.Bool("spool-root", false, "collect one governed NTFS root into verified local batches")
 	spoolVerifyMode := flag.Bool("spool-verify", false, "verify one finalized FI batch manifest and data file")
 	usnCheckpointInitMode := flag.Bool("usn-checkpoint-init", false, "initialize FI local USN checkpoint state after a known baseline")
@@ -87,11 +89,13 @@ func main() {
 		*shares,
 		*collectorIdentity,
 		*baselineRoot,
+		*baselineSpoolRootMode,
 		*usnStateMode,
 		*usnReadMode,
 		*usnReobserveMode,
 		*usnOperationMode,
 		*usnNextMode,
+		*usnSpoolNextMode,
 		*spoolRootMode,
 		*spoolVerifyMode,
 		*usnCheckpointInitMode,
@@ -122,6 +126,14 @@ func main() {
 			os.Exit(2)
 		}
 		runConfig()
+		return
+
+	case *baselineSpoolRootMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runBaselineSpoolRoot(flag.Arg(0))
 		return
 
 	case *usnCheckpointInitMode:
@@ -169,6 +181,14 @@ func main() {
 			os.Exit(2)
 		}
 		runUSNNext(flag.Arg(0))
+		return
+
+	case *usnSpoolNextMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		runUSNSpoolNext(flag.Arg(0))
 		return
 
 	case *spoolRootMode:
@@ -307,12 +327,27 @@ func main() {
 		os.Exit(2)
 	}
 
-	observation, err := ntfs.CollectPath(
-		context.Background(),
-		"manual-test",
-		flag.Arg(0),
-		flag.Arg(1),
+	var (
+		observation ntfs.Observation
+		err         error
 	)
+	switch {
+	case *collectPath:
+		observation, err = ntfs.CollectPath(
+			context.Background(),
+			"manual-test",
+			flag.Arg(0),
+			flag.Arg(1),
+		)
+	default:
+		// Focused diagnostic views do not need to read the file's content.
+		observation, err = ntfs.CollectPathStructural(
+			context.Background(),
+			"manual-test",
+			flag.Arg(0),
+			flag.Arg(1),
+		)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
@@ -427,11 +462,13 @@ func printUsage() {
 	fmt.Println(`  fi.exe -shares`)
 	fmt.Println(`  fi.exe -collector-identity`)
 	fmt.Println(`  fi.exe -baseline-root      <governed-root>`)
+	fmt.Println(`  fi.exe -baseline-spool-root <governed-root>`)
 	fmt.Println(`  fi.exe -usn-state          <governed-root>`)
 	fmt.Println(`  fi.exe -usn-read           <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-reobserve      <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-operation      <governed-root> <start-usn>`)
 	fmt.Println(`  fi.exe -usn-next           <governed-root>`)
+	fmt.Println(`  fi.exe -usn-spool-next     <governed-root>`)
 	fmt.Println(`  fi.exe -spool-root         <governed-root>`)
 	fmt.Println(`  fi.exe -spool-verify       <manifest-path>`)
 	fmt.Println(`  fi.exe -usn-checkpoint-init   <governed-root>`)

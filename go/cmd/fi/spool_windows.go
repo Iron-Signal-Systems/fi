@@ -36,7 +36,9 @@ type spoolRunSummary struct {
 	TargetBatchSize  int                    `json:"target_batch_size"`
 	FileObservations int                    `json:"file_observations"`
 	CollectionErrors int                    `json:"collection_errors"`
+	HashErrors       int                    `json:"hash_errors"`
 	Batches          []spool.FinalizedBatch `json:"batches"`
+	VerifiedBatches  int                    `json:"verified_batches"`
 }
 
 func runSpoolRoot(governedRoot string) {
@@ -80,29 +82,49 @@ func writeSpoolRoot(ctx context.Context, governedRoot string) (spoolRunSummary, 
 			})
 		}
 
-		hashes, hashErr := ntfs.CollectContentHashes(ctx, spoolScopeID, governedRoot, observation.ObjectIdentity, observation.SubjectKind)
-		if hashErr != nil {
-			hashes = records.ContentHashObservation{
-				State:      records.ContentHashError,
-				ReasonCode: "HashCollectionFailed",
-				Detail:     hashErr.Error(),
-			}
+		if observation.ContentHashes == nil {
+			return errors.New("NTFS observation missing integrated content hashes")
 		}
+		hashes := *observation.ContentHashes
 		if err := records.ValidateContentHashObservation(hashes); err != nil {
 			return err
 		}
+		if hashes.State == records.ContentHashError {
+			summary.HashErrors++
+		}
+
+		// Keep the established spool payload shape while ensuring collection is
+		// already complete before batching. This copy only changes serialization;
+		// it does not touch the source object again.
+		spooledNTFS := observation
+		spooledNTFS.ContentHashes = nil
 
 		summary.FileObservations++
 		return writer.Append("FileObservation", spoolScopeID, spooledFileObservation{
-			NTFS:          observation,
+			NTFS:          spooledNTFS,
 			ContentHashes: hashes,
 		})
 	})
 
 	closeErr := writer.Close()
 	summary.Batches = writer.FinalizedBatches()
-	if walkErr != nil || closeErr != nil {
-		return summary, errors.Join(walkErr, closeErr)
+
+	var verifyErr error
+	for _, finalized := range summary.Batches {
+		verification, err := spool.VerifyManifest(finalized.ManifestPath)
+		if err != nil {
+			verifyErr = errors.Join(verifyErr, err)
+			continue
+		}
+		if !verification.Verified {
+			verifyErr = errors.Join(verifyErr, errors.New("FI spool verification did not return verified=true"))
+			continue
+		}
+		summary.VerifiedBatches++
+	}
+
+	if err := errors.Join(walkErr, closeErr, verifyErr); err != nil {
+		return summary, err
 	}
 	return summary, nil
 }

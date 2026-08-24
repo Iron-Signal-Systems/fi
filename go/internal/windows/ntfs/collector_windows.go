@@ -28,7 +28,8 @@ type governedRootContext struct {
 	objectIdentity records.NTFSObjectIdentity
 }
 
-// CollectPath collects one governed local NTFS object.
+// CollectPath collects one governed local NTFS object and, for a regular file,
+// its unnamed/default $DATA content hashes before returning.
 //
 // governedRoot is the authorized collection boundary and must resolve to a
 // non-reparse NTFS directory. targetPath must identify the base NTFS object
@@ -58,11 +59,8 @@ func CollectPath(ctx context.Context, scopeID string, governedRoot string, targe
 }
 
 // CollectUTF16 validates caller paths, opens the governed root and target, and
-// then delegates the actual NTFS observation to collectOpenedTarget.
-//
-// The split is deliberate: future change-feed collection can open an object by
-// NTFS file ID and reuse the same opened-handle observation core instead of
-// creating a second NTFS collector.
+// then delegates the structural NTFS observation and integrated content hashing
+// while those original handles remain open.
 func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, targetPath []uint16) (Observation, error) {
 	if scopeID == "" {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
@@ -89,10 +87,19 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 	}
 	defer syscall.CloseHandle(targetHandle)
 
-	return collectOpenedTarget(ctx, root, CollectionEntryPath, targetPath, targetHandle, nil)
+	return collectOpenedTargetWithContentHashes(
+		ctx,
+		root,
+		CollectionEntryPath,
+		targetPath,
+		targetHandle,
+		nil,
+	)
 }
 
-// CollectFileReference collects one governed NTFS object by FI object identity.
+// CollectFileReference collects one governed NTFS object by FI object identity
+// and, for a regular file, its unnamed/default $DATA content hashes before
+// returning.
 //
 // The governed root is still supplied as an authorized path so FI can establish
 // and continuously revalidate the collection boundary. The target itself is
@@ -100,7 +107,7 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 // the opened handle still matches the requested record/sequence identity and is
 // currently contained by the governed root before accepting the observation.
 //
-// This is the entry point intended for later USN-triggered re-observation.
+// This is the entry point used for USN-triggered re-observation.
 func CollectFileReference(
 	ctx context.Context,
 	scopeID string,
@@ -141,7 +148,7 @@ func CollectFileReference(
 	}
 	defer syscall.CloseHandle(targetHandle)
 
-	return collectOpenedTarget(
+	return collectOpenedTargetWithContentHashes(
 		ctx,
 		root,
 		CollectionEntryNTFSFileID,

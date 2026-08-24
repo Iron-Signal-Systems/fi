@@ -12,8 +12,8 @@ import "github.com/Iron-Signal-Systems/fi/go/internal/records"
 // Windows API/path safety is checked while collecting. This function checks the
 // record boundary: required identities, canonical values, parent binding,
 // observation time, security state, reparse state/payload, stream ordering,
-// collection entry/method/status, warning ordering, and whole-observation state
-// consistency.
+// optional integrated content hashes, collection entry/method/status, warning
+// ordering, and whole-observation state consistency.
 func ValidateObservation(observation Observation) error {
 	if err := records.ValidateGovernedRootIdentity(observation.GovernedRoot); err != nil {
 		return err
@@ -53,6 +53,11 @@ func ValidateObservation(observation Observation) error {
 	}
 	if err := records.ValidateStreamInventory(observation.StreamInventory); err != nil {
 		return err
+	}
+	if observation.ContentHashes != nil {
+		if err := records.ValidateContentHashObservation(*observation.ContentHashes); err != nil {
+			return err
+		}
 	}
 	switch observation.CollectionEntryMethod {
 	case CollectionEntryPath, CollectionEntryNTFSFileID:
