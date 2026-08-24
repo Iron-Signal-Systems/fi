@@ -72,7 +72,7 @@ func writeBaselineSpoolRoot(ctx context.Context, scopeID string, governedRoot st
 	}
 	summary.Anchor = anchor
 
-	baseline, err := writeSpoolRoot(ctx, governedRoot)
+	baseline, err := writeSpoolRoot(ctx, scopeID, governedRoot)
 	summary.Baseline = baseline
 	if err != nil {
 		return summary, err

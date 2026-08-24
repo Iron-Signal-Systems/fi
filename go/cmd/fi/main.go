@@ -45,6 +45,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "WARNING: FI executable start was not journaled:", err)
 	}
 
+	runMode := flag.Bool("run", false, "run one configured FI collection cycle")
 	configMode := flag.Bool("config", false, "load and show the fixed FI configuration")
 	configFile := flag.Bool("config-file", false, "use the fixed FI configuration with -collect-path")
 	collectPath := flag.Bool("collect-path", false, "show complete NTFS collection")
@@ -78,6 +79,7 @@ func main() {
 
 	modeCount := 0
 	for _, selected := range []bool{
+		*runMode,
 		*configMode,
 		*collectPath,
 		*collectID,
@@ -112,6 +114,14 @@ func main() {
 	}
 
 	switch {
+	case *runMode:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		runConfiguredCollector()
+		return
+
 	case *collectPath && *configFile:
 		if flag.NArg() != 0 {
 			printUsage()
@@ -450,6 +460,7 @@ func pathUTF16LEBase64URL(path string) (string, error) {
 
 func printUsage() {
 	fmt.Println("usage:")
+	fmt.Println(`  fi.exe -run`)
 	fmt.Println(`  fi.exe -config`)
 	fmt.Println(`  fi.exe -collect-path -config-file`)
 	fmt.Println(`  fi.exe -collect-path       <governed-root> <target>`)

@@ -42,7 +42,7 @@ type spoolRunSummary struct {
 }
 
 func runSpoolRoot(governedRoot string) {
-	summary, err := writeSpoolRoot(context.Background(), governedRoot)
+	summary, err := writeSpoolRoot(context.Background(), spoolScopeID, governedRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
@@ -50,7 +50,7 @@ func runSpoolRoot(governedRoot string) {
 	writeIndentedJSON(summary)
 }
 
-func writeSpoolRoot(ctx context.Context, governedRoot string) (spoolRunSummary, error) {
+func writeSpoolRoot(ctx context.Context, scopeID string, governedRoot string) (spoolRunSummary, error) {
 	dir, err := spool.DefaultDir()
 	if err != nil {
 		return spoolRunSummary{}, err
@@ -68,14 +68,14 @@ func writeSpoolRoot(ctx context.Context, governedRoot string) (spoolRunSummary, 
 	}
 
 	summary := spoolRunSummary{SpoolDir: dir, TargetBatchSize: spool.DefaultBatchSize}
-	walkErr := ntfs.WalkGovernedRoot(ctx, spoolScopeID, governedRoot, func(path string, observation ntfs.Observation, objectErr error) error {
+	walkErr := ntfs.WalkGovernedRoot(ctx, scopeID, governedRoot, func(path string, observation ntfs.Observation, objectErr error) error {
 		exactPath, err := pathUTF16LEBase64URL(path)
 		if err != nil {
 			return err
 		}
 		if objectErr != nil {
 			summary.CollectionErrors++
-			return writer.Append("NTFSCollectionError", spoolScopeID, spooledCollectionError{
+			return writer.Append("NTFSCollectionError", scopeID, spooledCollectionError{
 				PathDisplay:          path,
 				PathUTF16LEBase64URL: exactPath,
 				Error:                objectErr.Error(),
@@ -100,7 +100,7 @@ func writeSpoolRoot(ctx context.Context, governedRoot string) (spoolRunSummary, 
 		spooledNTFS.ContentHashes = nil
 
 		summary.FileObservations++
-		return writer.Append("FileObservation", spoolScopeID, spooledFileObservation{
+		return writer.Append("FileObservation", scopeID, spooledFileObservation{
 			NTFS:          spooledNTFS,
 			ContentHashes: hashes,
 		})
