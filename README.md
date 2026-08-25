@@ -248,6 +248,31 @@ This includes, as development progresses:
 
 Other filesystems and operating systems are outside the initial scope.
 
+### Windows Security activity prerequisites
+
+FI reads Windows Security activity as an independent source. FI does not
+automatically enable Windows audit policy or add SACLs to governed roots.
+Those are administrator-controlled deployment settings.
+
+Current Windows Server 2016 validation uses:
+
+- **Audit File System**: Success and Failure;
+- **Audit Handle Manipulation**: Failure;
+- **Audit Policy Change**: Success; and
+- a matching Success/Failure audit ACE on each governed root.
+
+During validation on Windows Server 2016 build `10.0.14393`, successful file
+activity produced Event ID `4663` with File System auditing enabled, while a
+denied file-handle request did not produce Event ID `4656` until Handle
+Manipulation Failure auditing was also enabled.
+
+FI treats this as validated platform behavior rather than assuming every
+Windows Server version emits the same events under the same settings. Later
+Windows versions should be validated independently.
+
+See the [Windows auditing example](examples/windows_auditing/README.md) for the
+current PowerShell activation and SACL examples.
+
 ---
 
 ## Historical model
