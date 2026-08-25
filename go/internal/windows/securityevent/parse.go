@@ -66,6 +66,7 @@ func ParseEvent(rawXML string, observedAt time.Time) (records.WindowsSecurityEve
 	if raw.System.Provider.Name == "" || raw.System.EventID == "" || raw.System.EventRecordID == "" {
 		return records.WindowsSecurityEventObservation{}, errors.New("Security event missing required System fields")
 	}
+
 	eventID, err := strconv.ParseUint(strings.TrimSpace(raw.System.EventID), 10, 32)
 	if err != nil {
 		return records.WindowsSecurityEventObservation{}, fmt.Errorf("Security event ID: %w", err)
@@ -185,6 +186,7 @@ func projectCommonFields(value *records.WindowsSecurityEventObservation) {
 	value.ProcessName = field("ProcessName")
 	value.AccessMask = field("AccessMask")
 	value.AccessList = field("AccessList")
+	value.AccessReason = field("AccessReason")
 	value.TransactionID = field("TransactionId")
 	value.FileName = field("FileName")
 	value.LinkName = field("LinkName")
@@ -195,7 +197,6 @@ func projectCommonFields(value *records.WindowsSecurityEventObservation) {
 }
 
 func auditResult(keywords string, eventID uint32) records.WindowsSecurityAuditResult {
-	// 1102 and 4719 describe monitoring changes rather than a file access result.
 	if eventID == 1102 || eventID == 4719 {
 		return records.WindowsSecurityAuditNotApplicable
 	}

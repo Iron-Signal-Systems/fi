@@ -1,6 +1,7 @@
 package securityevent
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,13 +9,21 @@ import (
 )
 
 func TestParse4656Failure(t *testing.T) {
-	raw := `<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4656</EventID><Version>1</Version><Keywords>0x8010000000000000</Keywords><TimeCreated SystemTime="2026-08-24T10:07:23.268969100Z"/><EventRecordID>44</EventRecordID><Channel>Security</Channel><Computer>ISS-FS-01.iss.local</Computer></System><EventData><Data Name="SubjectUserSid">S-1-5-21-1</Data><Data Name="SubjectUserName">jwood.admin</Data><Data Name="SubjectDomainName">ISS</Data><Data Name="SubjectLogonId">0x123</Data><Data Name="ObjectType">File</Data><Data Name="ObjectName">C:\Program Files\Wireshark\README.txt</Data><Data Name="ProcessId">0x456</Data><Data Name="ProcessName">C:\Windows\notepad.exe</Data><Data Name="AccessMask">0x2</Data><Data Name="AccessList">%%4417</Data></EventData></Event>`
+	raw := `<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4656</EventID><Version>1</Version><Keywords>0x8010000000000000</Keywords><TimeCreated SystemTime="2026-08-24T10:07:23.268969100Z"/><EventRecordID>44</EventRecordID><Channel>Security</Channel><Computer>ISS-FS-01.iss.local</Computer></System><EventData><Data Name="SubjectUserSid">S-1-5-21-1</Data><Data Name="SubjectUserName">jwood.admin</Data><Data Name="SubjectDomainName">ISS</Data><Data Name="SubjectLogonId">0x123</Data><Data Name="ObjectType">File</Data><Data Name="ObjectName">C:\Program Files\Wireshark\README.txt</Data><Data Name="ProcessId">0x456</Data><Data Name="ProcessName">C:\Windows\notepad.exe</Data><Data Name="AccessMask">0x120089</Data><Data Name="AccessList">%%4416</Data><Data Name="AccessReason">%%4416: %%1802 D:(D;;CC;;;S-1-5-21-1)</Data></EventData></Event>`
 	value, err := ParseEvent(raw, time.Date(2026, 8, 24, 10, 8, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.AuditResult != records.WindowsSecurityAuditFailure || value.SubjectUserName != "jwood.admin" || value.ObjectName == "" {
+	if value.AuditResult != records.WindowsSecurityAuditFailure ||
+		value.SubjectUserName != "jwood.admin" ||
+		value.ObjectName == "" {
 		t.Fatalf("unexpected parsed value: %+v", value)
+	}
+	if value.AccessMask != "0x120089" {
+		t.Fatalf("access_mask=%q", value.AccessMask)
+	}
+	if !strings.Contains(value.AccessReason, "D:(D;;CC;;;S-1-5-21-1)") {
+		t.Fatalf("access_reason=%q", value.AccessReason)
 	}
 }
 

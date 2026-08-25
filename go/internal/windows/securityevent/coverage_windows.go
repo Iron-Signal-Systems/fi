@@ -18,44 +18,32 @@ import (
 
 const (
 	recommendedChangeAuditMask = uint64(0x000D0156)
-	recommendedAuditACEFlags   = uint64(0x000000C3) // OI | CI | Success | Failure
-	inheritOnlyACEFlag         = uint64(0x00000008)
+	recommendedReadAuditMask   = uint64(0x00000001)
+
+	recommendedChangeACEFlags = uint64(0x000000C3) // OI | CI | Success | Failure
+	recommendedReadACEFlags   = uint64(0x000000C1) // OI | Success | Failure
+	inheritOnlyACEFlag        = uint64(0x00000008)
 )
 
 func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.WindowsSecurityCoverageObservation, error) {
-	fileSystem, fileSystemErr := queryAuditPolicy(
-		fileSystemAuditGUID,
-		FileSystemAuditSubcategoryGUID,
-	)
+	fileSystem, fileSystemErr := queryAuditPolicy(fileSystemAuditGUID, FileSystemAuditSubcategoryGUID)
 	if fileSystemErr != nil {
 		fileSystem = records.WindowsSecurityAuditPolicyObservation{
-			SubcategoryGUID:     FileSystemAuditSubcategoryGUID,
-			AuditingInformation: "Unknown",
-			ReasonCode:          fileSystemErr.Error(),
+			SubcategoryGUID: FileSystemAuditSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: fileSystemErr.Error(),
 		}
 	}
 
-	handleManipulation, handleManipulationErr := queryAuditPolicy(
-		handleManipulationAuditGUID,
-		HandleManipulationSubcategoryGUID,
-	)
+	handleManipulation, handleManipulationErr := queryAuditPolicy(handleManipulationAuditGUID, HandleManipulationSubcategoryGUID)
 	if handleManipulationErr != nil {
 		handleManipulation = records.WindowsSecurityAuditPolicyObservation{
-			SubcategoryGUID:     HandleManipulationSubcategoryGUID,
-			AuditingInformation: "Unknown",
-			ReasonCode:          handleManipulationErr.Error(),
+			SubcategoryGUID: HandleManipulationSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: handleManipulationErr.Error(),
 		}
 	}
 
-	policyChange, policyChangeErr := queryAuditPolicy(
-		auditPolicyChangeGUID,
-		AuditPolicyChangeSubcategoryGUID,
-	)
+	policyChange, policyChangeErr := queryAuditPolicy(auditPolicyChangeGUID, AuditPolicyChangeSubcategoryGUID)
 	if policyChangeErr != nil {
 		policyChange = records.WindowsSecurityAuditPolicyObservation{
-			SubcategoryGUID:     AuditPolicyChangeSubcategoryGUID,
-			AuditingInformation: "Unknown",
-			ReasonCode:          policyChangeErr.Error(),
+			SubcategoryGUID: AuditPolicyChangeSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: policyChangeErr.Error(),
 		}
 	}
 
@@ -67,16 +55,10 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 	roots := make([]records.WindowsSecurityRootAuditCoverage, 0, len(scopes))
 	for _, scope := range scopes {
 		rootCoverage := records.WindowsSecurityRootAuditCoverage{
-			ScopeID:      scope.ScopeID,
-			GovernedRoot: scope.GovernedRoot,
+			ScopeID: scope.ScopeID, GovernedRoot: scope.GovernedRoot,
 		}
 
-		observation, err := ntfs.CollectPath(
-			ctx,
-			scope.ScopeID,
-			scope.GovernedRoot,
-			scope.GovernedRoot,
-		)
+		observation, err := ntfs.CollectPath(ctx, scope.ScopeID, scope.GovernedRoot, scope.GovernedRoot)
 		if err != nil {
 			rootCoverage.SACLState = "Error"
 			rootCoverage.ReasonCode = err.Error()
@@ -85,25 +67,16 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 		}
 
 		rootCoverage.SACLState = string(observation.SACL.ACL.State)
-		rootCoverage.RecommendedChangeAuditPresent = hasRecommendedAuditACE(
-			observation.SACL,
-		)
+		rootCoverage.RecommendedChangeAuditPresent = hasRecommendedChangeAuditACE(observation.SACL)
+		rootCoverage.RecommendedReadAuditPresent = hasRecommendedReadAuditACE(observation.SACL)
 		roots = append(roots, rootCoverage)
 	}
 
-	sort.Slice(roots, func(i, j int) bool {
-		return roots[i].ScopeID < roots[j].ScopeID
-	})
+	sort.Slice(roots, func(i, j int) bool { return roots[i].ScopeID < roots[j].ScopeID })
 
-	status := coverageStatus(
-		fileSystem,
-		handleManipulation,
-		policyChange,
-		logReadable,
-		roots,
-	)
+	status := coverageStatus(fileSystem, handleManipulation, policyChange, logReadable, roots)
 
-	value := records.WindowsSecurityCoverageObservation{
+	return records.WindowsSecurityCoverageObservation{
 		ObservedAt:               formatCanonicalTime(time.Now()),
 		CollectionMethod:         CollectionMethod,
 		SecurityLogReadable:      logReadable,
@@ -112,9 +85,7 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 		AuditPolicyChangePolicy:  policyChange,
 		Roots:                    roots,
 		Status:                   status,
-	}
-
-	return value, nil
+	}, nil
 }
 
 func coverageStatus(
@@ -133,7 +104,8 @@ func coverageStatus(
 	}
 
 	for _, root := range roots {
-		if !root.RecommendedChangeAuditPresent {
+		if !root.RecommendedChangeAuditPresent ||
+			!root.RecommendedReadAuditPresent {
 			return records.WindowsSecurityCoveragePartial
 		}
 	}
@@ -141,32 +113,51 @@ func coverageStatus(
 	return records.WindowsSecurityCoverageReady
 }
 
-func hasRecommendedAuditACE(sacl records.SACLObservation) bool {
-	if sacl.State != records.ObservationStatePresent ||
-		sacl.ACL.State != records.ACLStatePresent {
+func hasRecommendedChangeAuditACE(sacl records.SACLObservation) bool {
+	if sacl.State != records.ObservationStatePresent || sacl.ACL.State != records.ACLStatePresent {
 		return false
 	}
 
 	for _, ace := range sacl.ACL.ACEs {
-		// SYSTEM_AUDIT_ACE. Object-specific SYSTEM_AUDIT_OBJECT_ACE is not treated
-		// as the generic recommended FI rule because its GUID scope can narrow it.
-		if ace.Type != "2" ||
-			ace.SID != "S-1-1-0" ||
-			ace.Mask == "" ||
-			ace.Flags == "" {
+		if ace.Type != "2" || ace.SID != "S-1-1-0" || ace.Mask == "" || ace.Flags == "" {
 			continue
 		}
 
 		mask, err := strconv.ParseUint(ace.Mask, 10, 32)
-		if err != nil ||
-			mask&recommendedChangeAuditMask != recommendedChangeAuditMask {
+		if err != nil || mask&recommendedChangeAuditMask != recommendedChangeAuditMask {
 			continue
 		}
 
 		flags, err := strconv.ParseUint(ace.Flags, 10, 8)
 		if err != nil ||
-			flags&recommendedAuditACEFlags != recommendedAuditACEFlags ||
+			flags&recommendedChangeACEFlags != recommendedChangeACEFlags ||
 			flags&inheritOnlyACEFlag != 0 {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
+func hasRecommendedReadAuditACE(sacl records.SACLObservation) bool {
+	if sacl.State != records.ObservationStatePresent || sacl.ACL.State != records.ACLStatePresent {
+		return false
+	}
+
+	for _, ace := range sacl.ACL.ACEs {
+		if ace.Type != "2" || ace.SID != "S-1-1-0" || ace.Mask == "" || ace.Flags == "" {
+			continue
+		}
+
+		mask, err := strconv.ParseUint(ace.Mask, 10, 32)
+		if err != nil || mask&recommendedReadAuditMask != recommendedReadAuditMask {
+			continue
+		}
+
+		flags, err := strconv.ParseUint(ace.Flags, 10, 8)
+		if err != nil || flags&recommendedReadACEFlags != recommendedReadACEFlags {
 			continue
 		}
 

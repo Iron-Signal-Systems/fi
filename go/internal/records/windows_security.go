@@ -70,6 +70,7 @@ type WindowsSecurityEventObservation struct {
 	ProcessName           string `json:"process_name,omitempty"`
 	AccessMask            string `json:"access_mask,omitempty"`
 	AccessList            string `json:"access_list,omitempty"`
+	AccessReason          string `json:"access_reason,omitempty"`
 	TransactionID         string `json:"transaction_id,omitempty"`
 	FileName              string `json:"file_name,omitempty"`
 	LinkName              string `json:"link_name,omitempty"`
@@ -93,6 +94,7 @@ type WindowsSecurityRootAuditCoverage struct {
 	GovernedRoot                  string `json:"governed_root"`
 	SACLState                     string `json:"sacl_state"`
 	RecommendedChangeAuditPresent bool   `json:"recommended_change_audit_present"`
+	RecommendedReadAuditPresent   bool   `json:"recommended_read_audit_present"`
 	ReasonCode                    string `json:"reason_code,omitempty"`
 }
 
