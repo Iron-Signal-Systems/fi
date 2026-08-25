@@ -50,6 +50,10 @@ var (
 		Data1: 0x0CCE921D, Data2: 0x69AE, Data3: 0x11D9,
 		Data4: [8]byte{0xBE, 0xD3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30},
 	}
+	handleManipulationAuditGUID = windowsGUID{
+		Data1: 0x0CCE9223, Data2: 0x69AE, Data3: 0x11D9,
+		Data4: [8]byte{0xBE, 0xD3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30},
+	}
 	auditPolicyChangeGUID = windowsGUID{
 		Data1: 0x0CCE922F, Data2: 0x69AE, Data3: 0x11D9,
 		Data4: [8]byte{0xBE, 0xD3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30},
@@ -57,8 +61,9 @@ var (
 )
 
 const (
-	FileSystemAuditSubcategoryGUID   = "{0CCE921D-69AE-11D9-BED3-505054503030}"
-	AuditPolicyChangeSubcategoryGUID = "{0CCE922F-69AE-11D9-BED3-505054503030}"
+	FileSystemAuditSubcategoryGUID    = "{0CCE921D-69AE-11D9-BED3-505054503030}"
+	HandleManipulationSubcategoryGUID = "{0CCE9223-69AE-11D9-BED3-505054503030}"
+	AuditPolicyChangeSubcategoryGUID  = "{0CCE922F-69AE-11D9-BED3-505054503030}"
 )
 
 func QueryRequiredAuditPolicy() (records.WindowsSecurityAuditPolicyObservation, records.WindowsSecurityAuditPolicyObservation, error) {
@@ -101,5 +106,11 @@ func queryAuditPolicy(guid windowsGUID, textGUID string) (records.WindowsSecurit
 }
 
 func auditPolicyDescription(value records.WindowsSecurityAuditPolicyObservation) string {
-	return fmt.Sprintf("%s success=%t failure=%t raw=%s", value.SubcategoryGUID, value.SuccessEnabled, value.FailureEnabled, value.AuditingInformation)
+	return fmt.Sprintf(
+		"%s success=%t failure=%t raw=%s",
+		value.SubcategoryGUID,
+		value.SuccessEnabled,
+		value.FailureEnabled,
+		value.AuditingInformation,
+	)
 }

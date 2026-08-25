@@ -106,13 +106,14 @@ const (
 // WindowsSecurityCoverageObservation says whether the Windows sources needed
 // for actor/process-aware file activity were configured and readable when FI ran.
 type WindowsSecurityCoverageObservation struct {
-	ObservedAt              string                                `json:"observed_at"`
-	CollectionMethod        string                                `json:"collection_method"`
-	SecurityLogReadable     bool                                  `json:"security_log_readable"`
-	FileSystemPolicy        WindowsSecurityAuditPolicyObservation `json:"file_system_policy"`
-	AuditPolicyChangePolicy WindowsSecurityAuditPolicyObservation `json:"audit_policy_change_policy"`
-	Roots                   []WindowsSecurityRootAuditCoverage    `json:"roots"`
-	Status                  WindowsSecurityCoverageStatus         `json:"status"`
+	ObservedAt               string                                `json:"observed_at"`
+	CollectionMethod         string                                `json:"collection_method"`
+	SecurityLogReadable      bool                                  `json:"security_log_readable"`
+	FileSystemPolicy         WindowsSecurityAuditPolicyObservation `json:"file_system_policy"`
+	HandleManipulationPolicy WindowsSecurityAuditPolicyObservation `json:"handle_manipulation_policy"`
+	AuditPolicyChangePolicy  WindowsSecurityAuditPolicyObservation `json:"audit_policy_change_policy"`
+	Roots                    []WindowsSecurityRootAuditCoverage    `json:"roots"`
+	Status                   WindowsSecurityCoverageStatus         `json:"status"`
 }
 
 func ValidateWindowsSecurityEventObservation(value WindowsSecurityEventObservation) error {
@@ -159,7 +160,11 @@ func ValidateWindowsSecurityCoverageObservation(value WindowsSecurityCoverageObs
 	if value.CollectionMethod != WindowsSecurityCollectionMethod {
 		return errors.New("invalid Windows Security coverage collection method")
 	}
-	for _, policy := range []WindowsSecurityAuditPolicyObservation{value.FileSystemPolicy, value.AuditPolicyChangePolicy} {
+	for _, policy := range []WindowsSecurityAuditPolicyObservation{
+		value.FileSystemPolicy,
+		value.HandleManipulationPolicy,
+		value.AuditPolicyChangePolicy,
+	} {
 		if policy.SubcategoryGUID == "" || policy.AuditingInformation == "" {
 			return errors.New("invalid Windows Security audit policy observation")
 		}
