@@ -1,10 +1,19 @@
 # FI Windows file-auditing example
 
-This folder contains **example administrator actions** that change Windows audit configuration so FI can observe the actor/process side of file activity.
+This folder contains **example administrator actions** that configure the Windows audit settings and governed-root SACLs FI currently expects for Windows Security activity collection.
 
 The FI collector itself does not enable auditing, edit SACLs, grant access, or otherwise change the governed files/directories. FI only observes the effective configuration and reports whether monitoring coverage is complete or partial.
 
-These examples target Windows Server 2016 and later.
+## Current validated platform
+
+The current behavior has been validated on:
+
+```text
+Windows Server 2016
+Version 10.0.14393
+```
+
+Later Windows Server versions should be validated independently before FI assumes identical event-generation behavior.
 
 ## Why this is required
 
@@ -12,12 +21,19 @@ USN + direct NTFS re-observation tells FI what Windows reported changed and what
 
 Windows Security events can provide that missing source data, but they are generated only when the relevant audit policy and object SACL are configured.
 
-FI v6 checks:
+FI currently checks:
 
 - Audit File System `{0CCE921D-69AE-11D9-BED3-505054503030}`: Success + Failure
-- Audit Audit Policy Change `{0CCE922F-69AE-11D9-BED3-505054503030}`: Success
+- Audit Handle Manipulation `{0CCE9223-69AE-11D9-BED3-505054503030}`: Failure
+- Audit Policy Change `{0CCE922F-69AE-11D9-BED3-505054503030}`: Success
 - each configured governed root for the recommended FI change-auditing SACL
 - readability/continuity of the local `Security` event log
+
+On the validated Windows Server 2016 system, File System Success/Failure plus a matching governed-object SACL produced successful file activity such as Event ID `4663`, but denied file access did not produce Event ID `4656` until Handle Manipulation Failure auditing was also enabled.
+
+FI therefore treats Handle Manipulation Failure as a collector prerequisite for the current Windows Security coverage model.
+
+Handle Manipulation **Success** is not required by FI at this time.
 
 FI initially collects these Security event IDs:
 
@@ -30,7 +46,7 @@ FI initially collects these Security event IDs:
 - 1102: Security audit log cleared
 - 4719: system audit policy changed
 
-FI does not enable Audit Handle Manipulation/4658 by default because of its additional event volume.
+FI preserves Windows Security records independently from NTFS/USN observations. A denied access request must not be represented as though the file changed.
 
 ## Recommended SACL
 
@@ -55,7 +71,11 @@ A descendant can protect its SACL from inheritance. FI therefore does not claim 
 
 ## Domain/GPO warning
 
-`auditpol` changes the effective local advanced audit policy. In a domain, Group Policy can overwrite the local setting. For production deployment, configure the same subcategories through the organization's GPO rather than relying on a one-time local script.
+`auditpol` changes the effective local advanced audit policy. In a domain, Group Policy can overwrite the local setting.
+
+For production deployment, configure the same effective audit subcategories through the organization's GPO or configuration-management process rather than relying on a one-time local script.
+
+FI should observe and report the effective configuration. It should not silently change customer audit policy.
 
 The scripts use subcategory GUIDs instead of localized display names.
 
@@ -67,7 +87,24 @@ Run elevated if you want the SACL inspection to succeed:
 .\Test-FIFileAuditing.ps1 -Path 'C:\Program Files\Wireshark'
 ```
 
+Multiple roots:
+
+```powershell
+.\Test-FIFileAuditing.ps1 `
+  -Path 'C:\Users\jwood.admin\Downloads','C:\Program Files\Wireshark'
+```
+
 This script does not change the system.
+
+It displays:
+
+- File System audit policy
+- Handle Manipulation audit policy
+- Audit Policy Change audit policy
+- the visible audit ACEs on each supplied governed root
+- whether the FI-recommended root audit rule is present
+
+FI itself performs the authoritative locale-independent prerequisite check during `fi.exe -run`.
 
 ## 2. Enable the example configuration
 
@@ -84,7 +121,25 @@ Multiple roots:
   -Path 'C:\Users\jwood.admin\Downloads','C:\Program Files\Wireshark'
 ```
 
-The script is idempotent for the exact recommended ACE. It preserves the existing DACL and SACL and adds the FI-recommended audit ACE only when a sufficient explicit/inherited rule is not already visible on the governed root.
+The script enables:
+
+```text
+Audit File System
+    Success
+    Failure
+
+Audit Handle Manipulation
+    Failure
+
+Audit Policy Change
+    Success
+```
+
+It also adds the FI-recommended governed-root audit ACE when a sufficient rule is not already visible.
+
+The script is idempotent for the recommended ACE. It preserves the existing DACL and SACL and adds the FI-recommended audit ACE only when a sufficient explicit/inherited rule is not already visible on the governed root.
+
+The script does not disable unrelated audit settings.
 
 ## 3. Let FI verify the effective configuration
 
@@ -93,18 +148,42 @@ cd C:\Users\jwood.admin\src\fi\go
 .\fi.exe -run
 ```
 
-Look for:
+For the current validated configuration, look for:
 
 ```text
 monitoring_prerequisites_satisfied: true
 windows_security.coverage.status: Ready
 ```
 
-If policy or a root SACL is missing/unreadable, FI reports `Partial`. `Ready` means the required host policy and governed-root audit rule are present; it does not claim that a descendant with protected SACL inheritance is covered. Each NTFS object observation still records that object's actual SACL. It does not infer that missing Security events mean no activity occurred.
+The Windows Security coverage record should include:
+
+```text
+file_system_policy
+    success_enabled: true
+    failure_enabled: true
+
+handle_manipulation_policy
+    success_enabled: false
+    failure_enabled: true
+
+audit_policy_change_policy
+    success_enabled: true
+```
+
+If a required policy setting or governed-root SACL is missing/unreadable, FI reports:
+
+```text
+monitoring_prerequisites_satisfied: false
+windows_security.coverage.status: Partial
+```
+
+`Ready` means the required host policy and governed-root audit rule were observed when FI ran. It does not claim that a descendant with protected SACL inheritance is covered.
+
+FI does not infer that missing Security events mean no activity occurred.
 
 ## 4. Reproduce a denied write
 
-Use a normal, non-elevated application/window to attempt a write under a governed protected directory such as:
+Use a normal, non-elevated application/window to attempt a write against an existing governed file for which the current user can read but cannot write, for example:
 
 ```text
 C:\Program Files\Wireshark\README.txt
@@ -116,7 +195,22 @@ Then run FI again:
 .\fi.exe -run
 ```
 
-With Failure auditing and a matching SACL active, a denied file access should be represented by Security event 4656 when Windows emits the event. The spooled event preserves the account SID/name, logon ID, process information, requested access fields, result, object path, EventRecordID, timestamp, and raw event XML supplied by Windows.
+On the validated Windows Server 2016 system, a denied write produced Security Event ID `4656` once Handle Manipulation Failure auditing was enabled.
+
+The event supplied FI with source facts including:
+
+- account SID, domain, and username
+- logon ID
+- process ID and process path
+- object type and object path
+- requested access mask
+- requested access list
+- Windows access-reason data
+- Audit Failure result
+- EventRecordID and timestamp
+- raw event XML
+
+Two source events with different EventRecordIDs/timestamps are preserved as two source events. FI does not deduplicate separate Windows Security records merely because they refer to the same object/process.
 
 ## 5. Inspect the events directly in Windows
 
@@ -129,14 +223,18 @@ This is read-only:
 Optionally restrict output to a path fragment:
 
 ```powershell
-.\Show-FIFileAuditEvents.ps1 -Minutes 10 -PathContains 'C:\Program Files\Wireshark'
+.\Show-FIFileAuditEvents.ps1 `
+  -Minutes 10 `
+  -PathContains 'C:\Program Files\Wireshark'
 ```
 
 ## Rollback
 
 The safest production rollback is through the same GPO/configuration-management mechanism that established the policy.
 
-For the lab, `Remove-FIRecommendedAudit.ps1` removes only an **explicit** audit ACE that exactly matches the FI example rule from the specified root. It intentionally does not disable the global audit-policy subcategories because the script cannot know whether those settings predated FI or are required by another security control.
+For the lab, `Remove-FIRecommendedAudit.ps1` removes only an **explicit** audit ACE that exactly matches the FI example rule from the specified root.
+
+It intentionally does not disable global audit-policy subcategories because the script cannot know whether those settings predated FI or are required by another security control.
 
 ```powershell
 .\Remove-FIRecommendedAudit.ps1 -Path 'C:\Program Files\Wireshark'

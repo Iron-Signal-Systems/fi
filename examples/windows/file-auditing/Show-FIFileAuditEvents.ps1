@@ -10,15 +10,20 @@ $start = (Get-Date).AddMinutes(-1 * [math]::Abs($Minutes))
 $ids = 4656,4663,4660,4664,4670,4907,1102,4719
 
 $events = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = $ids; StartTime = $start } -ErrorAction Stop
+
 foreach ($event in $events) {
     $xml = $event.ToXml()
-    if ($PathContains -and $xml -notlike "*$PathContains*") { continue }
+
+    if ($PathContains -and $xml -notlike "*$PathContains*") {
+        continue
+    }
+
     [pscustomobject]@{
-        TimeCreated = $event.TimeCreated
+        TimeCreated   = $event.TimeCreated
         EventRecordID = $event.RecordId
-        EventID = $event.Id
-        Provider = $event.ProviderName
-        MachineName = $event.MachineName
-        XML = $xml
+        EventID       = $event.Id
+        Provider      = $event.ProviderName
+        MachineName   = $event.MachineName
+        XML           = $xml
     }
 }

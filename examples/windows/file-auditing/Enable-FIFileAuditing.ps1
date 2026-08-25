@@ -8,23 +8,40 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $FileSystemAuditGuid = '{0CCE921D-69AE-11D9-BED3-505054503030}'
+$HandleManipulationAuditGuid = '{0CCE9223-69AE-11D9-BED3-505054503030}'
 $AuditPolicyChangeGuid = '{0CCE922F-69AE-11D9-BED3-505054503030}'
 $RecommendedMask = 0x000D0156
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object -TypeName Security.Principal.WindowsPrincipal -ArgumentList $identity
+
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this example from an elevated PowerShell window.'
 }
 
-if ($PSCmdlet.ShouldProcess('Local advanced audit policy', 'Enable Audit Policy Change Success and Audit File System Success/Failure')) {
-    # Enable policy-change auditing first so later changes to File System auditing
-    # can themselves be represented by Security event 4719.
+if ($PSCmdlet.ShouldProcess(
+    'Local advanced audit policy',
+    'Enable FI Windows Security audit prerequisites'
+)) {
+    # Enable policy-change auditing first so later audit-policy changes can
+    # themselves be represented by Security event 4719.
     & auditpol.exe /set /subcategory:$AuditPolicyChangeGuid /success:enable
-    if ($LASTEXITCODE -ne 0) { throw "auditpol failed for Audit Policy Change with exit code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) {
+        throw "auditpol failed for Audit Policy Change with exit code $LASTEXITCODE"
+    }
 
     & auditpol.exe /set /subcategory:$FileSystemAuditGuid /success:enable /failure:enable
-    if ($LASTEXITCODE -ne 0) { throw "auditpol failed for File System with exit code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) {
+        throw "auditpol failed for File System with exit code $LASTEXITCODE"
+    }
+
+    # Windows Server 2016 validation showed that denied file-handle requests
+    # did not emit Event ID 4656 until Handle Manipulation failure auditing
+    # was enabled. Success auditing is not required by FI at this time.
+    & auditpol.exe /set /subcategory:$HandleManipulationAuditGuid /failure:enable
+    if ($LASTEXITCODE -ne 0) {
+        throw "auditpol failed for Handle Manipulation with exit code $LASTEXITCODE"
+    }
 }
 
 $everyone = New-Object -TypeName Security.Principal.SecurityIdentifier -ArgumentList 'S-1-1-0'
@@ -38,15 +55,30 @@ foreach ($requestedPath in $Path) {
     $acl = Get-Acl -LiteralPath $resolved -Audit
 
     $sufficient = $false
+
     foreach ($rule in $acl.GetAuditRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
         $mask = [int]$rule.FileSystemRights
+
         $hasRights = (($mask -band $RecommendedMask) -eq $RecommendedMask)
-        $hasInheritance = (($rule.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ObjectInherit) -ne 0) -and
-                          (($rule.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ContainerInherit) -ne 0)
-        $hasSuccess = (($rule.AuditFlags -band [Security.AccessControl.AuditFlags]::Success) -ne 0)
-        $hasFailure = (($rule.AuditFlags -band [Security.AccessControl.AuditFlags]::Failure) -ne 0)
-        if ($sid -eq 'S-1-1-0' -and $hasRights -and $hasInheritance -and $hasSuccess -and $hasFailure) {
+
+        $hasInheritance =
+            (($rule.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ObjectInherit) -ne 0) -and
+            (($rule.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ContainerInherit) -ne 0)
+
+        $hasSuccess =
+            (($rule.AuditFlags -band [Security.AccessControl.AuditFlags]::Success) -ne 0)
+
+        $hasFailure =
+            (($rule.AuditFlags -band [Security.AccessControl.AuditFlags]::Failure) -ne 0)
+
+        if (
+            $sid -eq 'S-1-1-0' -and
+            $hasRights -and
+            $hasInheritance -and
+            $hasSuccess -and
+            $hasFailure
+        ) {
             $sufficient = $true
             break
         }
@@ -65,9 +97,22 @@ foreach ($requestedPath in $Path) {
         $auditFlags
     )
 
-    if ($PSCmdlet.ShouldProcess($resolved, 'Add FI recommended Success/Failure change-auditing SACL')) {
+    if ($PSCmdlet.ShouldProcess(
+        $resolved,
+        'Add FI recommended Success/Failure change-auditing SACL'
+    )) {
         [void]$acl.AddAuditRule($rule)
         Set-Acl -LiteralPath $resolved -AclObject $acl
         Write-Host "Added FI recommended audit rule: $resolved"
     }
 }
+
+Write-Host ''
+Write-Host '=== Effective FI Windows audit prerequisites ==='
+
+& auditpol.exe /get /subcategory:$FileSystemAuditGuid
+& auditpol.exe /get /subcategory:$HandleManipulationAuditGuid
+& auditpol.exe /get /subcategory:$AuditPolicyChangeGuid
+
+Write-Host ''
+Write-Host 'FI itself performs the authoritative coverage check during: fi.exe -run'
