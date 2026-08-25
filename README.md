@@ -270,7 +270,7 @@ FI treats this as validated platform behavior rather than assuming every
 Windows Server version emits the same events under the same settings. Later
 Windows versions should be validated independently.
 
-See the [Windows auditing example](examples/windows_auditing/file-auditing/README.md) for the
+See the [Windows auditing example](examples/windows/file-auditing/README.md) for the
 current PowerShell activation and SACL examples.
 
 ---

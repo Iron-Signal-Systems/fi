@@ -180,4 +180,4 @@ It does not yet:
 - change NTFS permissions on governed roots;
 - configure the FI Windows Activity History reader.
 
-Windows audit policy and governed-root SACL examples are documented separately in [windows_auditing](../windows_auditing/file-auditing/README.md).
+Windows audit policy and governed-root SACL examples are documented separately in [file-auditing](../windows/file-auditing/README.md).
