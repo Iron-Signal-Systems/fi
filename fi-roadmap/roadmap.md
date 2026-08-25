@@ -3,8 +3,8 @@
 ## Purpose
 
 File Intelligence (FI) is a historical file-intelligence system that records the
-state, security, access, activity, and meaning of governed files as immutable
-history.
+state, security, access, governed-file activity, relationships, and later meaning
+of governed files as immutable history.
 
 The same FI history supports help desk, application support, administrators,
 security, disaster recovery, management/compliance, audit, and forensic
@@ -15,19 +15,40 @@ investigation.
 - FI operates only on explicitly configured governed roots.
 - Authoritative FI records are write-once.
 - Every material FI action and outcome has an immutable journal record.
-- FI distinguishes `Observed`, `Derived`, `Classified`, `Unknown`, and `Incomplete`.
+- FI distinguishes `Observed`, `Derived`, `Classified`, `Unknown`, and
+  `Incomplete`.
 - Customer source-file content never travels through normal FI record transport.
-- AD identity collection is performed via gMSA, producing versioned directory identity records.
+- AD identity collection is performed through the Windows collector's deployed
+  service identity, intended to be a gMSA.
 - Current-state views are rebuildable projections of immutable history.
+- FI collects Windows activity because it concerns governed objects, not to act
+  as a general Windows event collector or SIEM.
 
 ---
 
 ## Phase 1 — Windows File & Identity Intelligence
 
-Establish the complete source-side intelligence model for governed Windows/NTFS
-roots. Baseline files, deep NTFS state, ADS/streams, security, shares, local and
-directory identity, Windows activity, continuity, and ongoing change-driven
-re-observation.
+Establish and continuously maintain source-side history for explicitly governed
+Windows/NTFS roots.
+
+Phase 1 owns:
+
+- baseline file and directory observation;
+- NTFS identity and state;
+- ADS/streams;
+- security descriptors and ACLs;
+- share exposure and share security;
+- local and directory identity source facts;
+- USN-driven change detection and re-observation;
+- governed-file access/activity source facts;
+- source checkpoints and continuity assessment;
+- local durable spool creation and verification;
+- explicit gap/reconciliation state; and
+- source-side operation accountability.
+
+Phase 1 does **not** own general Windows telemetry, backend correlation,
+downstream transport acknowledgement, or protected classification content
+streaming.
 
 **Gate 1 — Source Intelligence & Continuity:** prove FI can establish and
 continuously maintain trustworthy governed-source history without silently losing
@@ -40,8 +61,12 @@ coverage.
 ## Phase 2 — Secure Record Transport
 
 Move FI records from Windows source custody to durable backend custody with
-authenticated, encrypted, retry-safe, duplicate-safe transport. A record is either
-durably received or remains safely queued at its source.
+authenticated, encrypted, retry-safe, duplicate-safe transport.
+
+A record is either durably received or remains safely queued at its source.
+
+Only after durable downstream acknowledgement may the source transport remove the
+acknowledged local spool batch.
 
 **Gate 2 — Secure Durable Record Transfer:** prove transport cannot ambiguously
 lose FI history across failures, retries, restarts, or network interruption.
@@ -53,8 +78,10 @@ lose FI history across failures, retries, restarts, or network interruption.
 ## Phase 3 — Ingest & Recorder
 
 Verify transported FI material and write the resulting history to the FI System
-of Record. Accepted, rejected, failed, interrupted, and conflicting ingest actions
-all leave immutable journal history.
+of Record.
+
+Accepted, rejected, failed, interrupted, and conflicting ingest actions leave
+immutable journal history.
 
 **Gate 3 — Authoritative Record & Journal Integrity:** prove authoritative FI
 history is write-once, reconstructable, and every material ingest outcome is
@@ -67,8 +94,11 @@ preserved.
 ## Phase 4 — Classification & Enrichment
 
 Add meaning to already-recorded file and stream observations through the
-**Separate Protected Classification Stream**. Source content is inspected
-transiently and is not persisted on the Linux FI system.
+**Separate Protected Classification Stream**.
+
+Phase 4 owns the protected streaming/read-broker path used to obtain bounded
+transient source content for classification. Source content is not carried by the
+normal FI record transport and is not persisted on the Linux FI system.
 
 **Gate 4 — Protected Classification & Enrichment:** prove bounded source-content
 inspection, exact observation correlation, safe failure, and immutable
@@ -80,13 +110,13 @@ classification history.
 
 ## Phase 5 — Projection, Query & Protected User Experience
 
-Turn the same immutable FI history into useful intelligence for help desk,
-developers, administrators, security teams, DR, management/compliance, auditors,
-and forensic investigators.
+Turn immutable FI history into useful intelligence for help desk, developers,
+administrators, security teams, DR, management/compliance, auditors, and forensic
+investigators.
 
 **Gate 5 — Operational, Security, DR & Forensic Intelligence:** prove FI can solve
 representative real-world questions at different levels of depth from the same
-underlying historical truth.
+underlying historical source facts.
 
 [Phase 5 details](docs/roadmap/phase-05-projection-query-and-user-experience.md)
 

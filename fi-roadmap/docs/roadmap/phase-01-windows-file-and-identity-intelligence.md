@@ -2,271 +2,380 @@
 
 ## Purpose
 
-Establish and continuously maintain the source-side historical intelligence model
-for each explicitly governed Windows/NTFS root.
+Establish and continuously maintain source-side historical intelligence for each
+explicitly governed Windows/NTFS root.
 
-Phase 1 owns what FI can directly observe from the governed source and the
-source-side mechanisms needed to maintain that knowledge over time.
+Phase 1 owns what FI can directly observe from the governed Windows source, the
+local mechanisms needed to maintain those observations over time, and durable
+local queueing before Phase 2 transport begins.
+
+Phase 1 is file-centered. It does not attempt to become a general Windows event
+collector or SIEM.
+
+---
 
 ## Governed Scope
 
-FI operates only against approved governed roots. Installing FI on a server does
-not mean the entire server, volume, or share is governed.
+FI operates only against approved governed roots.
+
+Installing FI on a server does not mean the entire server, volume, or share is
+governed.
 
 Each governed root is associated with its source server, volume, collection
-policy, activity/audit policy, and classification policy.
+policy, activity/audit policy, and later classification policy.
 
-## Initial Baseline
+---
 
-FI performs an applicable observation of every governed file and relevant
-directory object. This establishes the starting historical record.
-
-## Implementation Status
+## Current Implementation Status
 
 | Capability | Status | Current State |
 | --- | --- | --- |
 | Governed-root NTFS collection | Implemented | Collects only within explicitly governed local NTFS roots and validates scope using handle-derived identity and paths. |
 | NTFS object identity | Implemented | Records volume identity, file reference number, and sequence number independently of path. |
-| File and directory metadata | Implemented | Records size, allocation, timestamps, attributes, link count, and subject type. |
+| File and directory metadata | Implemented | Records size, allocation, timestamps, attributes, link count, subject type, and integrated content hashes. |
 | Alternate data streams | Implemented | Enumerates NTFS streams and preserves exact stream names and raw representation. |
 | Reparse-point observation | Implemented | Preserves raw reparse data and parses supported mount-point and symbolic-link forms without guessing unknown formats. |
 | Collection consistency checks | Implemented | Detects object replacement, metadata changes during collection, scope replacement, and incomplete observations. |
 | Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
 | Windows security descriptors and ACLs | Implemented | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are collected. |
-| SMB share state and share security | Implemented | Share exposure and share ACL collection. |
+| SMB share state and share security | Implemented | Records share exposure and share ACL state. |
 | Local Windows identity | Implemented | Local users, groups, direct memberships, and related identity records are implemented. |
-| Active Directory identity | Implemented | Resolves current-domain principals and direct memberships required by observed SIDs using Windows DC Locator, LDAPS/636, certificate validation through Schannel, and current-token authentication. Directory collection fails closed when trusted LDAPS is unavailable. |
-| Effective-access analysis inputs | in-process | NTFS, share, local-identity, and directory direct-membership inputs are present. Remaining Phase 1 inputs include applicable privilege/bypass and activity observations; nested membership and effective-access reasoning belong to backend correlation. |
-| USN journal change detection | in-process | Queries journal state, reads bounded USN batches, re-observes changed objects by NTFS file ID, and supports local checkpoint initialization/status. Continuous scheduling and full monitoring integration remain. |
-| Activity history | Planned | Relevant Windows filesystem, SMB, security, identity, logon, and session activity collection has not yet been implemented. |
-| Continuity and reconciliation | in-process | USN checkpoint state and continuity assessment are implemented. Durable progression tied to downstream custody, explicit gap history, restart recovery, and bounded reconciliation remain. |
-| Operation journal | in-process | Operation lifecycle entries, validation, local append-only JSONL storage with flush, and bounded USN read/re-observation integration are implemented. Durable Started entries are written before source work; terminal Finished entries record the outcome. A new journaled USN invocation recovers unmatched Started entries from a prior FI process as Interrupted with reason ProcessRestart. Broader operation coverage remains. |
-| FI runtime resource journal | in-process | Separate append-only resource JSONL records FI process CPU, RAM, and process-I/O usage by operation ID. Bounded USN operations are the first integration; broader operation coverage remains. |
-| Protected source-content read broker | Planned | Bounded protected access to source content for later classification is not yet implemented. |
+| Active Directory identity | Implemented; deployment validation remains | Resolves current-domain principals and direct memberships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Production service operation is intended to use the FI gMSA. |
+| Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Additional Windows privilege/bypass inputs are later Phase 1 hardening unless a concrete Gate 1 requirement proves they are needed sooner. Backend correlation owns nested membership and effective-access conclusions. |
+| USN journal change detection | Implemented and integrated | Configured runs use persistent checkpoints, bounded USN catch-up, governed-object selection, File-ID re-observation, durable local spooling, verification, and checkpoint advancement. |
+| Windows Security governed-file activity | Implemented foundation; completeness remains | Collects selected file/security events, preserves raw source facts, assesses audit coverage, durably spools and verifies records, and checkpoints the Security channel. Current validated SACL focuses on change-capable rights; complete read/access visibility and remote SMB context remain Phase 1 work. |
+| Local durable spool | Implemented | Writes finalized JSONL batches and manifests, verifies count/size/SHA-256, retains accepted local batches, and does not remove them before Phase 2 acknowledgement exists. |
+| Normal-run checkpoint continuity | Implemented and live validated | USN and Windows Security checkpoints persist across runs and resume exactly from the previously accepted boundary without replay. |
+| Continuity-gap history and reconciliation | In process | Continuity problems are detected. Explicit persisted gap records and bounded reconciliation/rebaseline behavior remain. |
+| Operation journal | In process | USN lifecycle operations have append-only Started/Finished/Interrupted history. Broader coverage should remain limited to major collector operations. |
+| FI runtime resource journal | In process / non-blocking | CPU, RAM, and process-I/O history exists for journaled operations. Broader coverage is useful for sizing and pilot validation but is not a Gate 1 blocker. |
+| Windows service / gMSA runtime | Remaining | FI still needs deployment and least-privilege validation as a Windows service under its intended gMSA identity. |
+
+---
+
+## Initial Baseline
+
+FI performs an applicable observation of every governed file and relevant
+directory object.
+
+The baseline establishes the starting historical record and a continuity boundary
+for ongoing monitoring.
+
+A missing checkpoint causes a safe baseline and catch-up. An existing continuous
+checkpoint causes catch-up rather than a new baseline.
+
+---
 
 ## File, Storage, and Location Intelligence
 
 FI records where applicable and determinable:
 
-- FI object identity;
-- source-server identity;
+- source-server and volume identity;
 - NTFS File ID and parent File ID;
-- NTFS volume identity and serial;
-- drive association;
-- disk/LUN relationship;
-- physical allocation/extents where policy requires;
+- volume serial and drive association;
 - filesystem and object type;
-- current and historical paths;
-- hard links;
-- applicable SMB shares and UNC exposure;
-- entry into and departure from governed scope.
+- current path;
+- applicable hard-link/parent relationship facts;
+- applicable SMB shares and UNC exposure; and
+- entry into or departure from governed scope where source data can establish it.
 
-Object identity is preferred over path alone so rename/move history follows the
-underlying NTFS object where possible.
+Object identity is preferred over path alone so rename/move history can follow
+the underlying NTFS object where possible.
+
+Deep storage implementation should remain bounded by concrete FI questions. Phase
+1 does not become an open-ended NTFS research project merely because Windows
+exposes additional structures.
+
+---
 
 ## File State
 
-FI records applicable logical and allocated size, attributes, timestamps, hashes,
-signature observations, reparse information, and journal-related state.
+FI records applicable logical and allocated size, attributes, timestamps, content
+hashes, stream state, reparse information, security state, and journal-related
+state.
 
-A Windows last-access timestamp is a Windows timestamp observation, not proof that
-a particular identity actually read a file.
+A Windows timestamp is a Windows source observation. It is not proof that a
+particular identity performed an action.
 
-## Deep NTFS Object Inspection
+---
 
-FI treats an NTFS object as a compound forensic object.
+## Streams and Reparse Information
 
-FI discovers and records where supported and applicable:
+The unnamed stream and observable named `$DATA` streams are preserved as source
+observations associated with the governed object.
 
-- unnamed/default data stream;
-- every observable named `$DATA` stream / Alternate Data Stream (ADS);
-- Extended Attributes (EA);
-- reparse information and raw reparse data where appropriate;
-- object identifiers;
-- relevant logged utility stream information;
-- relevant directory/index information;
-- other supported NTFS attributes material to identity, behavior, security,
-  storage, or forensic interpretation.
+FI preserves exact stream names and raw representation.
 
-### Stream Observations
+Reparse information is collected without following reparse-point directories out
+of the governed namespace. Supported forms may be parsed, while unknown formats
+remain raw rather than guessed.
 
-The unnamed stream and named streams are distinct observations associated with the
-governed object.
+---
 
-For each stream FI records where applicable:
-
-- exact stream name;
-- stream type;
-- parent NTFS object identity;
-- logical and allocated size;
-- hash;
-- observation time;
-- collection status;
-- access/read failure;
-- change relationship;
-- classification relationship.
-
-FI does not invent a recursive NTFS ADS hierarchy where NTFS does not expose one.
-
-Content within an ADS may itself contain structured or active material such as an
-executable, DLL, script, archive, document, database, configuration, encrypted
-content, or nested container. Classification may recursively inspect such content
-to a bounded policy-defined depth.
-
-Creation, modification, truncation, replacement, or deletion of an applicable
-stream results in fresh stream enumeration and new write-once FI observations.
-
-## Windows Security
+## Windows Security State
 
 FI records the Windows security state required for historical interpretation,
-including:
+including where available:
 
 - raw/native security descriptor;
-- descriptor identity/hash;
 - owner SID;
-- primary group SID where applicable;
 - DACL and SACL;
 - ACE ordering and type;
 - allow/deny semantics;
 - SID;
 - exact access mask;
 - inheritance/propagation flags;
-- direct/inherited state;
-- descriptor control flags;
-- integrity information where applicable.
+- direct/inherited state; and
+- descriptor control state.
 
 Underlying Windows rights/access masks are retained rather than only friendly
 labels such as Read, Modify, or Full Control.
 
+---
+
 ## Share Exposure
 
 FI records applicable share identity, name, backing path, security descriptor,
-share ACL, and relationship between the governed object and each exposing share.
+share ACL, and the relationship between a governed object/root and each exposing
+share.
+
+---
 
 ## Local and Directory Identity
 
-FI collects local identities, groups, direct membership relationships, and domain
-principal relationships required to explain access to governed files.
+FI collects local identities, local groups, direct membership relationships, and
+domain principal/direct-membership facts required to explain access to governed
+files.
 
-FI performs:
+AD identity collection uses Windows DC Locator and trusted LDAPS/636 through the
+collector's current Windows token. In deployed service operation that token is
+intended to be the FI gMSA.
 
-> **AD identity collection using Windows DC Locator and trusted LDAPS/636 through
-> the collector's current Windows token. In deployed service operation that token
-> is intended to be the FI gMSA.**
-
-Directory identity records preserve versioned principal facts and direct
-membership relationships. FI collectors do not calculate transitive/nested group
-membership or effective access; those relationships are correlated later by the
-backend from the collected source facts.
-
-Each monitored Windows source performs the identity collection necessary for its
-governed roots. FI does not require a centralized Windows identity tier.
-
-## Historical Access-Analysis Inputs
-
-Phase 1 collects and versions sufficient source inputs to reproduce historical
-effective-access analysis, including NTFS security, share security, local
-identity, directory identity, direct membership facts, exact Windows rights, and
-applicable privilege/bypass observations.
-
-Nested membership, cross-source identity correlation, and effective-access results
-are backend-derived relationships. Any access-analysis result must identify the
-exact versioned source inputs used.
-
-## Windows Activity
-
-FI continuously consumes relevant Windows filesystem, SMB, security, identity,
-logon, and session activity associated with governed roots.
-
-Where observable this may establish create, read, write, delete, rename, move,
-security change, share access, source identity, workstation, IP, session, or logon
+Collectors preserve source identity facts. They do not calculate transitive
+membership or final effective access. Backend correlation owns those
 relationships.
 
-FI captures applicable Windows activity into FI history before normal Windows log
-retention removes it.
+---
+
+## Governed-File Activity
+
+Phase 1 activity collection is explicitly **governed-object centered**.
+
+FI should preserve Windows activity involving a governed file or directory,
+including where observable:
+
+- access and attempted access;
+- successful and denied access;
+- creation;
+- modification;
+- deletion;
+- rename and move activity;
+- ownership and permission/security changes;
+- hard-link activity; and
+- SMB/share activity associated with the governed object.
+
+Where Windows provides it, FI should preserve source facts such as:
+
+- account/SID;
+- process;
+- object identity/path;
+- requested or used access mask;
+- success/failure;
+- event record identity and timestamp;
+- share used;
+- remote workstation/IP; and
+- supporting session/logon identifiers.
+
+Supporting SMB, logon, or session records are collected only when needed to
+explain governed-object activity.
+
+FI does not collect broad server logon/session/process activity simply because it
+exists.
+
+### Current activity boundary
+
+The current Windows Security implementation has established the file/security
+activity foundation, including selected Security events, audit-policy/SACL
+coverage assessment, Security-channel continuity, durable local spooling, and
+checkpoint progression.
+
+Current Windows Server 2016 validation proves change-capable activity and denied
+handle requests under the documented audit configuration.
+
+The currently recommended SACL does **not** claim complete successful-read
+visibility. Expanding and validating governed-file read/access coverage is
+remaining Phase 1 work.
+
+Remote SMB client/share context should be added only to the extent required to
+explain activity involving governed objects.
+
+A missing Windows event must never be interpreted as proof that no activity
+occurred.
+
+---
 
 ## Continuous Monitoring
 
-USN and relevant Windows activity act as change signals. A signal causes FI to
-identify the affected governed object and obtain fresh applicable observations.
+USN and governed-file Windows activity are independent source signals.
 
-USN is a change detector, not forensic truth by itself.
+USN identifies that an NTFS object changed and drives fresh File-ID
+re-observation.
 
-Current Phase 1 code can query USN journal state, read bounded batches, re-observe
-distinct changed objects by NTFS file ID, and assess a local USN checkpoint. The
-continuous monitor that schedules and advances those operations is still future
-work.
+Windows Security provides independent activity facts such as actor, process,
+requested/used access, and result where Windows emitted the applicable event.
+
+The configured `fi.exe -run` path currently:
+
+1. anchors the Windows Security source;
+2. processes each configured governed root;
+3. safely baselines a root when no checkpoint exists;
+4. otherwise performs bounded USN catch-up;
+5. re-observes selected changed governed objects;
+6. catches the Security source up through a fixed target;
+7. writes and verifies local spool batches; and
+8. advances checkpoints only after the applicable local durable boundary is
+   satisfied.
+
+Persistent service scheduling remains deployment/runtime work.
+
+---
+
+## Local Durable Spool Boundary
+
+Phase 1 owns durable local queue creation and verification.
+
+Finalized batches remain on the source until Phase 2 transport exists.
+
+Phase 1 does not delete a local batch merely because a later send attempt may
+occur.
+
+Phase 2 owns authenticated transport, retry behavior, duplicate safety, durable
+downstream acknowledgement, and removal of acknowledged local spool batches.
+
+---
 
 ## Continuity
 
-FI durably tracks progress through applicable USN journals, Windows event
-channels, and other continuous feeds.
+FI tracks progress through applicable USN and Windows Security sources.
 
-If source history is no longer available, FI writes a continuity/coverage-gap
-record identifying the affected source, feed, scope, and known incomplete
-interval.
+Normal-run behavior has been live validated to resume from the previously
+accepted checkpoint boundary without replaying the prior accepted range.
+
+If source history is no longer available, FI must preserve that fact explicitly.
+
+A continuity gap must identify, where known:
+
+- source/feed;
+- governed scope;
+- last known accepted boundary;
+- newly available boundary;
+- time observed;
+- reason/status; and
+- resulting incomplete interval/state.
 
 FI never silently treats a known gap as complete coverage.
 
-Local USN checkpoint initialization and continuity assessment exist now. Automatic
-checkpoint progression, restart recovery, explicit persisted gap history, and
-continuity tied to later durable downstream custody remain to be implemented.
+---
 
 ## Reconciliation
 
-FI performs bounded reconciliation to identify divergence between the maintained
-FI model and the governed source. Significant continuity loss may require broader
-reconciliation or re-baselining.
+When FI detects a continuity gap, it cannot reconstruct source history that
+Windows no longer retains.
 
-## Protected Read Broker
+FI should:
 
-Phase 1 owns the source-side Protected Read Broker used by the Separate Protected
-Classification Stream.
+1. persist the continuity gap;
+2. preserve the historical interval as incomplete;
+3. perform bounded reconciliation against current governed-source state; and
+4. rebaseline when the gap or source replacement makes a new baseline necessary.
 
-It validates the exact governed object/stream and scope, opens content read-only,
-and provides bounded sequential/range access with cancellation, timeout,
-backpressure, and safe handle cleanup.
+A reconciliation or new baseline establishes current knowledge. It does not erase
+or hide the historical gap.
 
-Source content never travels through normal FI record transport.
+---
 
-## Journal Requirements
+## Historical Access-Analysis Inputs
 
-Material Phase 1 operations produce immutable journal history, including baseline,
-collection, re-observation, stream enumeration, activity collection,
-reconciliation, coverage degradation, continuity loss, and protected-read
-outcomes.
+Phase 1 collects and versions the primary source inputs required for later
+historical access analysis:
 
-The current operation-journal core validates lifecycle entries and writes them as
-append-only local JSONL with a flush before return. Bounded USN read and
-re-observation operations write a durable Started entry before source work and a
-Finished entry afterward. Before a new journaled USN invocation begins, FI
-recovers unmatched Started entries from a prior process by appending an
-Interrupted terminal entry with reason ProcessRestart. Recovery is append-only
-and idempotent. Broader operation coverage remains.
+- NTFS security;
+- share security;
+- local identity;
+- AD identity/direct membership;
+- exact Windows rights; and
+- applicable governed-file activity.
 
-FI process resource history is intentionally separate from the operation journal.
-For journaled operations FI records CPU time, current and sampled-peak RAM, and
-Windows process-I/O counters to a separate append-only resource JSONL file. Each
-resource record carries the same operation ID so the backend can correlate cost
-with operation kind and outcome without mixing resource measurements into the
-operation lifecycle journal. Resource sampling begins immediately, repeats every
-five seconds while an operation is running, and ends with a final summary.
+Additional Windows privilege/bypass observations may be added where a concrete
+access-analysis requirement demonstrates that they materially change the answer.
+
+Nested membership, cross-source identity correlation, and effective-access
+conclusions belong to backend correlation.
+
+---
+
+## Operation Journal
+
+Operation journaling is used to distinguish:
+
+- no source activity;
+- an operation that completed successfully;
+- an operation that failed;
+- an operation interrupted by process restart; and
+- an operation that never reached a terminal result.
+
+Phase 1 should journal major collector boundaries, not every internal function.
+
+The intended major boundaries are:
+
+- baseline;
+- USN catch-up/re-observation;
+- Windows Security catch-up;
+- reconciliation/rebaseline; and
+- identity refresh where operationally useful.
+
+Resource measurements remain separate from the lifecycle journal and are useful
+for performance sizing and pilot validation.
+
+---
+
+## Classification Content Streaming Is Not Phase 1
+
+Protected source-content streaming/read-broker behavior is not owned by the
+normal Phase 1 Windows record collector.
+
+It belongs to the **Separate Protected Classification Stream** in Phase 4.
+
+Normal FI Phase 1 record transport does not carry customer source-file content.
+
+---
 
 ## Gate 1 — Source Intelligence & Continuity
 
-Gate 1 proves FI can baseline and continuously maintain a governed Windows/NTFS
-root while preserving:
+Gate 1 proves FI can baseline and continuously maintain an explicitly governed
+Windows/NTFS root while preserving:
 
 - file/object identity;
-- storage and location;
-- deep NTFS and ADS/stream state;
+- applicable NTFS/file state;
+- streams/reparse state;
 - security;
 - shares;
-- local and directory identity;
-- activity;
+- local and directory identity source facts;
+- governed-file activity;
 - historical access-analysis inputs;
-- continuity;
-- reconciliation state;
-- immutable operation journaling.
+- local durable queue state;
+- source checkpoints;
+- explicit continuity/gap state;
+- reconciliation state; and
+- major collector operation history.
 
-It also proves bounded source impact and safe Protected Read Broker operation.
+Gate 1 also proves:
+
+- the collector does not escape governed scope;
+- missing source history remains visibly incomplete;
+- previously accepted USN/Security ranges are not replayed as new activity;
+- unrelated volume-wide USN activity is not treated as governed activity;
+- local spool batches remain queued until Phase 2 owns acknowledgement/removal;
+- the deployed service identity has only the privileges/access FI actually
+  requires; and
+- source impact remains bounded and measurable.

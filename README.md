@@ -5,44 +5,44 @@
 </p>
 
 **File Intelligence (FI)** is a read-only system for building a historical
-understanding of governed files.
+understanding of explicitly governed files.
 
 FI is designed around a simple question:
 
 > **What do we know about this file?**
 
-Over time that includes its identity, locations, storage, metadata, security,
-access, activity, relationships, history, and eventually classification.
+Over time that includes its identity, locations, metadata, storage, security,
+access, activity, relationships, history, and later classification.
 
 The file remains the center of that history.
 
-FI does not modify customer files, permissions, identities, shares, systems,
-or infrastructure.
+FI does not modify customer files, permissions, identities, shares, systems, or
+infrastructure.
 
 ---
 
 ## Why FI exists
 
-Understanding a file in a real environment often requires information from
-many different places.
+Understanding a file in a real environment often requires information from many
+different sources.
 
-A single question such as:
+A question such as:
 
 > Why can this user access this file?
 
 may require correlating:
 
 - the file's identity;
-- its current and historical paths;
+- current and historical paths;
 - NTFS permissions;
 - SMB share permissions;
 - local identities;
-- Active Directory identities and nested group membership;
-- permission inheritance;
-- effective access;
-- changes to those permissions;
-- available activity records; and
-- the state of all of those things at the time being investigated.
+- Active Directory identities and membership;
+- inheritance;
+- effective-access inputs;
+- changes to permissions;
+- governed-file activity; and
+- the state of those facts at the time being investigated.
 
 A different question may start with an identity:
 
@@ -53,8 +53,8 @@ Or with a file:
 > Where has this file been, who could access it, what happened to it, and what
 > changed?
 
-FI is intended to preserve and correlate the information needed to answer
-those questions without changing the systems being examined.
+FI preserves the source facts needed to answer those questions without changing
+the systems being examined.
 
 ---
 
@@ -62,13 +62,9 @@ those questions without changing the systems being examined.
 
 FI treats a governed file as more than a pathname.
 
-A pathname can change.
-
-A file can be renamed, moved, exposed through different shares, have its
-permissions changed, or have relationships to different identities over time.
-
-FI is being designed to maintain the history necessary to understand those
-changes.
+A pathname can change. A file can be renamed, moved, exposed through different
+shares, have its permissions changed, or have relationships to different
+identities over time.
 
 For a governed file, FI is intended to answer questions such as:
 
@@ -81,15 +77,15 @@ For a governed file, FI is intended to answer questions such as:
 - What SMB shares exposed it?
 - Who could access it?
 - Why could that identity access it?
-- Was that access direct, inherited, or obtained through group membership?
+- Was access direct, inherited, or obtained through group membership?
 - When did access change?
 - Who changed permissions when the available source information can establish
   that?
-- What activity involving the file has been observed?
+- What access, attempted access, modification, creation, deletion, rename/move,
+  or security activity involving the file has been observed?
 - What was known about the file at a particular point in time?
 - Where are there gaps that prevent FI from making a definitive conclusion?
-- What classification was later associated with a particular observation of
-  the file?
+- What classification was later associated with a particular observation?
 
 FI must distinguish between what was directly observed, what can be
 deterministically derived, what was classified, and what remains unknown or
@@ -100,12 +96,51 @@ did not occur.
 
 ---
 
+## Governed-file activity
+
+FI is not intended to become a general Windows event collector or SIEM.
+
+Activity collection is file-centered.
+
+FI should preserve Windows activity when it concerns a governed file or
+directory, including where observable:
+
+- access and attempted access;
+- successful and denied access;
+- creation;
+- modification;
+- deletion;
+- rename and move activity;
+- ownership, ACL, and other security changes;
+- hard-link activity; and
+- SMB/share activity associated with the governed object.
+
+Where Windows provides the information, FI should preserve source facts such as:
+
+- account/SID;
+- process;
+- object identity and path;
+- access requested or used;
+- success/failure;
+- timestamp and source record identity;
+- share used;
+- remote workstation or IP; and
+- session/logon identifiers needed to explain the governed-object activity.
+
+Supporting SMB, logon, or session records are collected only when needed to
+explain activity associated with governed objects. FI does not collect broad
+server activity merely because Windows exposes it.
+
+Windows auditing is not perfect. FI must report coverage and limitations
+explicitly and must never interpret the absence of an event as proof that no
+activity occurred.
+
+---
+
 ## Useful across IT
 
-FI records one underlying history.
-
-Different parts of an IT organization can use PostgreSQL views over that same
-recorded and correlated information for different purposes.
+FI records one underlying history. Different parts of an IT organization can use
+views over that same recorded and correlated information for different purposes.
 
 ### Service Desk
 
@@ -133,26 +168,15 @@ Examples include:
 - Which shares expose it?
 - Which permissions are direct or inherited?
 - What changed in the filesystem or security configuration?
-- What objects may require review following compromise of a privileged
-  identity?
-
-### Network Administration
-
-FI is not a network-management system.
-
-However, file relationships can identify systems and services that may matter
-to network operations during troubleshooting or incident response.
-
-Future integration with other read-only intelligence systems may allow file,
-system, identity, and network relationships to be viewed together.
+- What objects may require review following compromise of a privileged identity?
 
 ### Security
 
 Examples include:
 
 - What governed files could a compromised identity reach?
-- What did that identity actually interact with where source information
-  supports that conclusion?
+- What did that identity actually interact with where source information supports
+  that conclusion?
 - What permissions changed?
 - What is the difference between observed activity and potential reach?
 - What is the possible blast radius?
@@ -192,26 +216,33 @@ FI does not:
 - alter network configuration; or
 - automatically remediate the environment.
 
-The purpose of FI is to help people understand the environment.
-
-The ability to observe and explain a problem must remain separate from the
-authority to change the systems involved.
+The ability to observe and explain a problem remains separate from the authority
+to change the systems involved.
 
 ---
 
 ## Customer-controlled deployment
 
-FI is designed to operate entirely within infrastructure controlled by the customer.
+FI is designed to operate entirely within infrastructure controlled by the
+customer.
 
-Windows collectors, FI records, historical information, identity and security metadata, classification results, PostgreSQL data, and other FI backend information remain on customer-controlled systems unless the customer explicitly chooses otherwise.
+Windows collectors, FI records, historical information, identity and security
+metadata, classification results, PostgreSQL data, and other FI backend
+information remain on customer-controlled systems unless the customer explicitly
+chooses otherwise.
 
-The FI backend may be deployed on a customer-provided server or virtual machine, or on a dedicated FI appliance located within the customer environment.
+The FI backend may be deployed on a customer-provided server or virtual machine,
+or on a dedicated FI appliance located within the customer environment.
 
-Iron Signal Systems does not require persistent administrative or remote access for FI to operate.
+Iron Signal Systems does not require persistent administrative or remote access
+for FI to operate.
 
-Customers may optionally grant Iron Signal Systems controlled access for maintenance, upgrades, troubleshooting, or other support services. Any such access is customer-authorized and is not required for normal FI operation.
+Customers may optionally grant Iron Signal Systems controlled access for
+maintenance, upgrades, troubleshooting, or other support services. Any such
+access is customer-authorized and is not required for normal FI operation.
 
-FI is intended to remain fully operational in environments where no vendor remote access is permitted.
+FI is intended to remain fully operational in environments where no vendor remote
+access is permitted.
 
 ---
 
@@ -219,40 +250,34 @@ FI is intended to remain fully operational in environments where no vendor remot
 
 Initial development targets **Windows Server and NTFS file services**.
 
-Monitoring is explicitly scope-driven.
+Monitoring is explicitly scope-driven. FI operates only against configured
+**governed roots**. Installing FI on a server does not mean the entire server,
+volume, or share is governed.
 
-FI operates only against configured **governed roots**, such as approved
-drives or directories. Installing FI on a server does not mean the entire
-server is governed.
+The initial Windows collector is intended to preserve:
 
-The Windows collector is being designed to observe the native Windows and
-NTFS information needed to establish file identity and history accurately.
-
-This includes, as development progresses:
-
-- NTFS object identity;
-- volume identity;
+- NTFS object and volume identity;
 - exact path representation;
 - file and directory metadata;
+- content hashes;
 - alternate data streams;
-- reparse points;
-- Windows security descriptors;
-- ACLs and ACEs;
-- SMB share exposure;
+- reparse information;
+- Windows security descriptors, ACLs, and ACEs;
+- SMB share exposure and share security;
 - local Windows identities;
-- Active Directory identities;
+- Active Directory identities and direct membership facts;
 - effective-access inputs;
-- USN journal changes;
-- available activity history; and
-- continuity of collection.
+- USN journal change signals;
+- governed-file Windows activity; and
+- explicit collection continuity.
 
 Other filesystems and operating systems are outside the initial scope.
 
-### Windows Security activity prerequisites
+### Current Windows Security activity validation
 
 FI reads Windows Security activity as an independent source. FI does not
-automatically enable Windows audit policy or add SACLs to governed roots.
-Those are administrator-controlled deployment settings.
+automatically enable Windows audit policy or add SACLs to governed roots. Those
+are administrator-controlled deployment settings.
 
 Current Windows Server 2016 validation uses:
 
@@ -261,17 +286,20 @@ Current Windows Server 2016 validation uses:
 - **Audit Policy Change**: Success; and
 - a matching Success/Failure audit ACE on each governed root.
 
-During validation on Windows Server 2016 build `10.0.14393`, successful file
-activity produced Event ID `4663` with File System auditing enabled, while a
-denied file-handle request did not produce Event ID `4656` until Handle
-Manipulation Failure auditing was also enabled.
+During validation on Windows Server 2016 build `10.0.14393`, successful
+change-capable file activity produced Event ID `4663`, while a denied file-handle
+request did not produce Event ID `4656` until Handle Manipulation Failure auditing
+was enabled.
 
-FI treats this as validated platform behavior rather than assuming every
-Windows Server version emits the same events under the same settings. Later
-Windows versions should be validated independently.
+The currently validated FI SACL is intentionally change-capable rather than
+read-complete. Complete governed-file read/access visibility remains Phase 1 work
+and must be validated separately before FI claims that coverage.
 
-See the [Windows auditing example](examples/windows/file-auditing/README.md) for the
-current PowerShell activation and SACL examples.
+FI treats observed behavior as platform-specific validation rather than assuming
+every Windows Server version emits the same events under the same settings.
+
+See the [Windows auditing example](examples/windows/file-auditing/README.md) for
+the current PowerShell activation and SACL examples.
 
 ---
 
@@ -279,68 +307,57 @@ current PowerShell activation and SACL examples.
 
 FI is not intended to keep only the latest state of a file.
 
-An initial governed-root baseline establishes what FI knows at the beginning
-of observation.
+An initial governed-root baseline establishes what FI knows at the beginning of
+observation. Subsequent observations add history.
 
-Subsequent observations add history.
+Material changes create new records rather than silently rewriting prior history.
 
-Material changes create new records rather than silently rewriting prior
-history.
-
-This allows FI to reconstruct questions such as:
-
-> What did FI know about this file at 10:00 yesterday?
-
-rather than being limited to:
-
-> What does this file look like right now?
-
-Historical records are authoritative.
-
-Current-state, operational, reporting, and role-oriented PostgreSQL views are
-rebuildable representations of that recorded history.
+Historical records are authoritative. Current-state, operational, reporting, and
+role-oriented backend views are rebuildable representations of that history.
 
 ---
 
 ## Collection and continuity
 
-FI is being designed to maintain governed file history continuously.
+The Windows source-side model is:
 
-The intended Windows model includes:
+1. establish an initial governed-root baseline;
+2. use the NTFS USN journal and relevant Windows activity as change/activity
+   signals;
+3. freshly observe affected governed objects;
+4. preserve applicable identity, security, share, and governed-file activity
+   source facts;
+5. write and verify durable local FI spool batches;
+6. advance source checkpoints only after the applicable local batch is safely
+   written and verified; and
+7. explicitly record continuity gaps, interruptions, or degraded coverage.
 
-1. establishing an initial baseline;
-2. detecting changes using appropriate Windows facilities such as the NTFS
-   USN journal;
-3. freshly observing affected objects;
-4. recording applicable Windows identity, security, share, and activity
-   information;
-5. transporting records safely to FI;
-6. preserving accepted records as historical facts; and
-7. explicitly recording gaps, interruptions, or degraded collection.
+Phase 1 owns local source collection and local durable queueing.
+
+Phase 2 owns authenticated transport, retries, downstream acknowledgement, and
+removal of acknowledged batches from the source spool.
 
 FI must not silently convert missing coverage into certainty.
 
 ---
 
-## Source file content
+## Source file content and classification
 
-Normal FI collection does not require customer source-file content to become
-part of the FI record stream.
+Normal FI record transport does not carry customer source-file content.
 
-Most FI intelligence is derived from filesystem, security, identity, activity,
-and relationship information.
+Later classification and enrichment may require bounded access to file or stream
+content. That capability belongs to the **Separate Protected Classification
+Stream** and its streaming/read-broker service, not to the normal Phase 1 record
+collector.
 
-Later classification and enrichment may require access to file content.
+Source content is processed transiently and is not stored as normal FI source-file
+content in the backend.
 
-When that capability is implemented, source content is intended to be read
-through a separate protected and bounded mechanism, processed transiently,
-and not stored as normal FI source-file content in the backend.
+Classification results become additional records associated with the exact file
+or stream observation that was classified.
 
-Classification results become additional records associated with the
-particular file observation that was classified.
-
-**Classification enriches FI's understanding of a file. It does not define
-the file's identity or history.**
+**Classification enriches FI's understanding of a file. It does not define the
+file's identity or history.**
 
 ---
 
@@ -348,6 +365,9 @@ the file's identity or history.**
 
 ```text
              Windows File & Identity Collection
+                         |
+                         v
+                 Durable Local Spool
                          |
                          v
                   Secure Transport
@@ -372,7 +392,7 @@ the file's identity or history.**
 
 The collector observes.
 
-PostgreSQL preserves and correlates.
+The backend preserves and correlates.
 
 Views present the same underlying information for different operational
 questions.
@@ -385,31 +405,29 @@ FI remains read-only toward the systems it observes.
 
 - The file is the primary subject of FI.
 - File identity must not depend solely on pathname.
+- FI operates only on explicitly governed roots.
 - FI observes customer systems but does not change them.
 - Preserve historical state instead of keeping only current state.
-- Preserve native source information where required for later verification or
+- Preserve native source information needed for later verification or
   reinterpretation.
 - Keep observed, derived, classified, unknown, and incomplete information
   distinct.
 - Never hide collection gaps or uncertainty.
+- Never interpret a missing Windows activity record as proof that no activity
+  occurred.
 - Maintain relationships between files, storage, paths, shares, permissions,
-  identities, activity, and time.
+  identities, governed-file activity, and time.
 - Make historical records append-only.
-- Treat current-state and purpose-specific PostgreSQL views as rebuildable
-  views of recorded history.
 - Keep normal customer source-file content outside the FI record path.
-- Add classification as enrichment after the underlying file observation
-  exists.
-- Prefer simple collectors that report facts over collectors that make
+- Add classification only after the underlying file/stream observation exists.
+- Prefer simple collectors that report source facts over collectors that make
   organizational decisions.
 
 ---
 
 ## Development roadmap
 
-FI is being developed in phases.
-
-The current roadmap covers:
+FI is being developed in phases:
 
 1. **Windows File & Identity Intelligence**
 2. **Secure Record Transport**
@@ -418,8 +436,8 @@ The current roadmap covers:
 5. **Projection, Query & Protected UX**
 6. **Integrated Deployment & Release**
 
-See the [FI Roadmap](fi-roadmap/roadmap.md) for detailed implementation
-status, boundaries, and phase gates.
+See the [FI Roadmap](fi-roadmap/roadmap.md) for detailed implementation status,
+boundaries, and phase gates.
 
 ---
 
@@ -427,33 +445,30 @@ status, boundaries, and phase gates.
 
 FI is currently **pre-alpha** and under active development.
 
-Current code, record structures, schemas, command names, interfaces, and
-internal package layouts may change as the architecture is implemented and
-validated.
+Current code, record structures, schemas, command names, interfaces, and internal
+package layouts may change as the architecture is implemented and validated.
 
-No production-readiness or compatibility guarantee should be inferred from
-the current repository.
+No production-readiness or compatibility guarantee should be inferred from the
+current repository.
 
 ---
 
 ## Licensing
 
-**FI is proprietary source-available software. It is not open-source
-software.**
+**FI is proprietary source-available software. It is not open-source software.**
 
-Source review and non-production evaluation are permitted only under the terms
-of the repository [LICENSE](LICENSE).
+Source review and non-production evaluation are permitted only under the terms of
+the repository [LICENSE](LICENSE).
 
-FI is developed by **John J. Wood** under the **Iron Signal Systems** project
-and brand name.
+FI is developed by **John J. Wood** under the **Iron Signal Systems** project and
+brand name.
 
 **Iron Signal Systems is currently a project/brand name and GitHub/domain
-identity used by John Joseph Wood. It is not represented by this repository
-as a separate corporation, LLC, or other legal entity.**
+identity used by John Joseph Wood. It is not represented by this repository as a
+separate corporation, LLC, or other legal entity.**
 
 Copyright ownership and licensing for FI are held and granted by
-**John Joseph Wood** unless a future written agreement expressly states
-otherwise.
+**John Joseph Wood** unless a future written agreement expressly states otherwise.
 
 ---
 

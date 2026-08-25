@@ -8,11 +8,15 @@ in the System of Record.
 Classification does not block or replace the underlying file or stream
 observation.
 
+---
+
 ## Separate Protected Classification Stream
 
-Source-file content is obtained only through the:
+Phase 4 owns the **Separate Protected Classification Stream**, including the
+protected streaming/read-broker service required to obtain bounded source
+content.
 
-> **Separate Protected Classification Stream**
+This path is intentionally separate from normal FI record transport.
 
 Conceptually:
 
@@ -25,7 +29,10 @@ classification request
 Classification Engine
         |
         v
-Windows Protected Read Broker
+Protected Classification Streaming Service
+        |
+        v
+Windows bounded read/broker path
         |
         v
 bounded transient source content
@@ -43,6 +50,11 @@ Ingest & Recorder
 FI System of Record
 ```
 
+The normal Phase 1 Windows record collector does not own this content-streaming
+boundary.
+
+---
+
 ## Classification Scope
 
 Classification may use:
@@ -56,13 +68,15 @@ Classification may use:
 - policy rules;
 - executable/script recognition;
 - archive/container inspection;
-- ADS/stream inspection;
+- ADS/stream inspection; and
 - recursive inspection of nested structured content to a bounded policy-defined
   depth.
 
 This may identify executables, DLLs, scripts, PowerShell, batch, JavaScript,
 documents, archives, databases, configuration, encrypted/opaque material,
 unknown binary content, or other governed categories.
+
+---
 
 ## Content Persistence Rule
 
@@ -74,8 +88,12 @@ It does not persist source content as:
 - a complete temporary file;
 - database BLOB;
 - object-store copy;
-- backend spool;
+- backend spool; or
 - persistent classification cache.
+
+Normal FI record transport never becomes a source-file copy mechanism.
+
+---
 
 ## Classification History
 
@@ -89,6 +107,8 @@ history.
 
 Every classification attempt also produces journal state.
 
+---
+
 ## Gate 4 — Protected Classification & Enrichment
 
 Gate 4 proves:
@@ -100,5 +120,5 @@ Gate 4 proves:
 - no persistent Linux copy of customer source content;
 - classifier/policy versioning;
 - immutable classification results;
-- classification journaling;
+- classification journaling; and
 - classification failure does not invalidate the base FI observation.
