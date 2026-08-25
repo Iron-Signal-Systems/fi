@@ -47,14 +47,16 @@ type configuredRootSummary struct {
 }
 
 type configuredRunSummary struct {
-	ConfigPath      string                  `json:"config_path"`
-	VersionID       string                  `json:"version_id"`
-	ConfiguredRoots int                     `json:"configured_roots"`
-	CompletedRoots  int                     `json:"completed_roots"`
-	FailedRoots     int                     `json:"failed_roots"`
-	Complete        bool                    `json:"complete"`
-	Roots           []configuredRootSummary `json:"roots"`
-	Semantics       string                  `json:"semantics"`
+	ConfigPath                       string                    `json:"config_path"`
+	VersionID                        string                    `json:"version_id"`
+	ConfiguredRoots                  int                       `json:"configured_roots"`
+	CompletedRoots                   int                       `json:"completed_roots"`
+	FailedRoots                      int                       `json:"failed_roots"`
+	Complete                         bool                      `json:"complete"`
+	MonitoringPrerequisitesSatisfied bool                      `json:"monitoring_prerequisites_satisfied"`
+	WindowsSecurity                  configuredSecuritySummary `json:"windows_security"`
+	Roots                            []configuredRootSummary   `json:"roots"`
+	Semantics                        string                    `json:"semantics"`
 }
 
 func runConfiguredCollector() {
@@ -78,10 +80,18 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 		ConfiguredRoots: len(value.GovernedRoots),
 		Complete:        true,
 		Roots:           make([]configuredRootSummary, 0, len(value.GovernedRoots)),
-		Semantics:       "FI processes each configured governed root independently. A missing checkpoint starts a safe pre-USN-anchor baseline and catch-up. An existing continuous checkpoint performs catch-up. An invalid or discontinuous existing checkpoint is reported and is not silently replaced by a new baseline.",
+		Semantics:       "FI processes Windows Security activity and each configured governed root as independent source observations. Missing root checkpoints start safe baselines; continuous root checkpoints catch up USN. Windows Security is anchored before root processing and caught up afterward. Monitoring coverage is reported explicitly and is not inferred from absent events.",
 	}
 
 	var runErr error
+	securityPrepared, securityPrepareErr := prepareConfiguredSecurity()
+	if securityPrepareErr != nil {
+		securityPrepared.Summary.Status = configuredSecurityFailed
+		securityPrepared.Summary.Error = securityPrepareErr.Error()
+		summary.WindowsSecurity = securityPrepared.Summary
+		summary.Complete = false
+		runErr = errors.Join(runErr, fmt.Errorf("Windows Security source: %w", securityPrepareErr))
+	}
 	for _, governedRoot := range value.GovernedRoots {
 		if err := ctx.Err(); err != nil {
 			summary.Complete = false
@@ -101,6 +111,20 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 			summary.CompletedRoots++
 		}
 		summary.Roots = append(summary.Roots, rootSummary)
+	}
+
+	if securityPrepareErr == nil {
+		securitySummary, securityErr := finishConfiguredSecurity(ctx, securityPrepared, configuredSecurityScopes(value.GovernedRoots))
+		if securityErr != nil {
+			securitySummary.Status = configuredSecurityFailed
+			securitySummary.Error = securityErr.Error()
+			summary.Complete = false
+			runErr = errors.Join(runErr, fmt.Errorf("Windows Security source: %w", securityErr))
+		}
+		summary.WindowsSecurity = securitySummary
+		if securitySummary.Coverage != nil && securitySummary.Coverage.Status == "Ready" {
+			summary.MonitoringPrerequisitesSatisfied = true
+		}
 	}
 
 	return summary, runErr
