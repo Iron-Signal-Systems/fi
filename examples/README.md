@@ -2,6 +2,8 @@
 
 This example shows how to create and install one Group Managed Service Account (gMSA) per FI collector host.
 
+Windows Security auditing is documented separately in the [FI Windows Auditing Example](windows_auditing/README.md), including the Server 2016 audit-policy settings currently validated for FI and the example PowerShell used to enable them.
+
 ## Example layout
 
 ```text
@@ -176,7 +178,6 @@ It does not yet:
 - grant `Log on as a service`;
 - grant `SeSecurityPrivilege`;
 - change NTFS permissions on governed roots;
-- configure Windows auditing;
 - configure the FI Windows Activity History reader.
 
-Those are separate FI deployment/runtime steps.
+Windows audit policy and governed-root SACL examples are documented separately in [windows_auditing](windows_auditing/README.md).
