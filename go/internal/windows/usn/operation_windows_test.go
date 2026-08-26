@@ -13,6 +13,19 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
+func TestInterruptedRecoveryEnabledByDefault(t *testing.T) {
+	if !shouldRecoverInterrupted(context.Background()) {
+		t.Fatal("standalone USN operation unexpectedly suppressed restart recovery")
+	}
+}
+
+func TestWithoutInterruptedRecovery(t *testing.T) {
+	ctx := WithoutInterruptedRecovery(context.Background())
+	if shouldRecoverInterrupted(ctx) {
+		t.Fatal("nested USN operation did not suppress restart recovery")
+	}
+}
+
 func TestReobservationOperationOutcomeCompleteForExpectedStates(t *testing.T) {
 	result := ReobservationBatch{
 		Reobservations: []ChangeReobservation{

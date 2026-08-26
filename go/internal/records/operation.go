@@ -15,12 +15,14 @@ import (
 type OperationKind string
 
 const (
-	OperationBaseline       OperationKind = "Baseline"
-	OperationUSNRead        OperationKind = "USNRead"
-	OperationReObservation  OperationKind = "ReObservation"
-	OperationReconciliation OperationKind = "Reconciliation"
-	OperationActivityRead   OperationKind = "ActivityRead"
-	OperationProtectedRead  OperationKind = "ProtectedRead"
+	OperationActivityRead           OperationKind = "ActivityRead"
+	OperationBaseline               OperationKind = "Baseline"
+	OperationProtectedRead          OperationKind = "ProtectedRead"
+	OperationReconciliation         OperationKind = "Reconciliation"
+	OperationReObservation          OperationKind = "ReObservation"
+	OperationUSNCatchUp             OperationKind = "USNCatchUp"
+	OperationUSNRead                OperationKind = "USNRead"
+	OperationWindowsSecurityCatchUp OperationKind = "WindowsSecurityCatchUp"
 )
 
 // OperationOutcome records how a bounded FI operation ended.
@@ -28,9 +30,9 @@ type OperationOutcome string
 
 const (
 	OperationComplete    OperationOutcome = "Complete"
-	OperationPartial     OperationOutcome = "Partial"
 	OperationFailed      OperationOutcome = "Failed"
 	OperationInterrupted OperationOutcome = "Interrupted"
+	OperationPartial     OperationOutcome = "Partial"
 )
 
 // OperationRecord describes one completed or explicitly interrupted FI
@@ -72,11 +74,10 @@ func ValidateOperationRecord(value OperationRecord) error {
 	if !validOperationOutcome(value.Outcome) {
 		return errors.New("UnsupportedValue: outcome")
 	}
-
 	switch value.Outcome {
 	case OperationComplete:
 		return nil
-	case OperationPartial, OperationFailed, OperationInterrupted:
+	case OperationFailed, OperationInterrupted, OperationPartial:
 		if strings.TrimSpace(value.ReasonCode) == "" {
 			return errors.New("Required: reason_code")
 		}
@@ -88,12 +89,9 @@ func ValidateOperationRecord(value OperationRecord) error {
 
 func validOperationKind(value OperationKind) bool {
 	switch value {
-	case OperationBaseline,
-		OperationUSNRead,
-		OperationReObservation,
-		OperationReconciliation,
-		OperationActivityRead,
-		OperationProtectedRead:
+	case OperationActivityRead, OperationBaseline, OperationProtectedRead,
+		OperationReconciliation, OperationReObservation, OperationUSNCatchUp,
+		OperationUSNRead, OperationWindowsSecurityCatchUp:
 		return true
 	default:
 		return false
@@ -102,7 +100,7 @@ func validOperationKind(value OperationKind) bool {
 
 func validOperationOutcome(value OperationOutcome) bool {
 	switch value {
-	case OperationComplete, OperationPartial, OperationFailed, OperationInterrupted:
+	case OperationComplete, OperationFailed, OperationInterrupted, OperationPartial:
 		return true
 	default:
 		return false

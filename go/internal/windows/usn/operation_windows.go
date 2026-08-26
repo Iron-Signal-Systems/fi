@@ -15,6 +15,21 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/resourcejournal"
 )
 
+type interruptedRecoverySuppressedKey struct{}
+
+// WithoutInterruptedRecovery marks a nested USN operation whose caller has
+// already performed scope-level restart recovery before durably starting its
+// parent operation. This prevents a nested USN read from mistaking that live
+// parent Started entry for an operation abandoned by an earlier FI process.
+func WithoutInterruptedRecovery(ctx context.Context) context.Context {
+	return context.WithValue(ctx, interruptedRecoverySuppressedKey{}, struct{}{})
+}
+
+func shouldRecoverInterrupted(ctx context.Context) bool {
+	_, suppressed := ctx.Value(interruptedRecoverySuppressedKey{}).(struct{})
+	return !suppressed
+}
+
 // JournaledReobservationResult keeps the normal source batch unchanged while
 // reporting the bounded USN-read and re-observation operations that produced it.
 // Operational lifecycle and FI process-resource history are written to separate
@@ -36,6 +51,11 @@ type JournaledReobservationResult struct {
 // immediate sample, periodic five-second samples while an operation is running,
 // and one final summary.
 //
+// By default, standalone callers recover operations abandoned by an earlier FI
+// process before beginning new work. A configured parent operation performs that
+// recovery once at its own scope boundary and passes WithoutInterruptedRecovery
+// to nested USN work so the live parent cannot be closed as ProcessRestart.
+//
 // OutsideGovernedRoot and Unavailable are explicit expected per-object source
 // outcomes and do not make the overall re-observation operation partial. Only
 // ReobservationError makes the operation Partial. Context cancellation makes it
@@ -55,12 +75,10 @@ func ReadAndReobserveJournaled(
 		return JournaledReobservationResult{}, err
 	}
 
-	// Close operations that were durably Started by an earlier FI process but
-	// never received a terminal entry. Recovery runs before this invocation
-	// starts any new bounded operation, so a currently running operation can
-	// never be mistaken for an abandoned one.
-	if _, err := fioperation.RecoverInterrupted(operationJournalPath, scopeID); err != nil {
-		return JournaledReobservationResult{}, err
+	if shouldRecoverInterrupted(ctx) {
+		if _, err := fioperation.RecoverInterrupted(operationJournalPath, scopeID); err != nil {
+			return JournaledReobservationResult{}, err
+		}
 	}
 
 	readStarted, err := fioperation.Start(scopeID, records.OperationUSNRead)

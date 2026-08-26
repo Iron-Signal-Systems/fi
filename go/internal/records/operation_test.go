@@ -13,6 +13,16 @@ func TestValidateOperationRecordComplete(t *testing.T) {
 	}
 }
 
+func TestValidateOperationRecordConfiguredKinds(t *testing.T) {
+	for _, kind := range []OperationKind{OperationBaseline, OperationReconciliation, OperationUSNCatchUp, OperationWindowsSecurityCatchUp} {
+		value := validOperationRecordForTest()
+		value.Kind = kind
+		if err := ValidateOperationRecord(value); err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+	}
+}
+
 func TestValidateOperationRecordPartialRequiresReason(t *testing.T) {
 	value := validOperationRecordForTest()
 	value.Outcome = OperationPartial
@@ -39,12 +49,5 @@ func TestValidateOperationRecordRejectsUnknownKind(t *testing.T) {
 }
 
 func validOperationRecordForTest() OperationRecord {
-	return OperationRecord{
-		OperationID: "op-0123456789abcdef0123456789abcdef",
-		ScopeID:     "manual-test",
-		Kind:        OperationUSNRead,
-		StartedAt:   "2026-08-22T17:00:00.000000000Z",
-		FinishedAt:  "2026-08-22T17:00:01.000000000Z",
-		Outcome:     OperationComplete,
-	}
+	return OperationRecord{OperationID: "op-0123456789abcdef0123456789abcdef", ScopeID: "manual-test", Kind: OperationUSNRead, StartedAt: "2026-08-22T17:00:00.000000000Z", FinishedAt: "2026-08-22T17:00:01.000000000Z", Outcome: OperationComplete}
 }
