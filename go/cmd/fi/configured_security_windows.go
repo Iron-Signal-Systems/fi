@@ -27,30 +27,42 @@ const (
 	configuredSecurityFailed   configuredSecurityStatus = "Failed"
 )
 
+type configuredSecurityReconciliation struct {
+	ScopeID      string          `json:"scope_id"`
+	GovernedRoot string          `json:"governed_root"`
+	Snapshot     spoolRunSummary `json:"snapshot"`
+}
+
 type configuredSecuritySummary struct {
-	StatePath               string                                      `json:"state_path"`
-	CheckpointFound         bool                                        `json:"checkpoint_found"`
-	Status                  configuredSecurityStatus                    `json:"status"`
-	InitialLogState         *securityevent.LogState                     `json:"initial_log_state,omitempty"`
-	TargetLogState          *securityevent.LogState                     `json:"target_log_state,omitempty"`
-	StartAfterEventRecordID string                                      `json:"start_after_event_record_id,omitempty"`
-	TargetEventRecordID     string                                      `json:"target_event_record_id,omitempty"`
-	Coverage                *records.WindowsSecurityCoverageObservation `json:"coverage,omitempty"`
-	SourceMatchingEvents    int                                         `json:"source_matching_events"`
-	SelectedEvents          int                                         `json:"selected_events"`
-	IgnoredEvents           int                                         `json:"ignored_events"`
-	UnresolvedFileDeletes   int                                         `json:"unresolved_file_deletes"`
-	Batches                 []spool.FinalizedBatch                      `json:"batches"`
-	VerifiedBatches         int                                         `json:"verified_batches"`
-	CheckpointAdvanced      bool                                        `json:"checkpoint_advanced"`
-	FinalCheckpoint         *securityevent.Checkpoint                   `json:"final_checkpoint,omitempty"`
-	Error                   string                                      `json:"error,omitempty"`
-	Semantics               string                                      `json:"semantics"`
+	StatePath               string                                           `json:"state_path"`
+	CheckpointFound         bool                                             `json:"checkpoint_found"`
+	Status                  configuredSecurityStatus                         `json:"status"`
+	InitialLogState         *securityevent.LogState                          `json:"initial_log_state,omitempty"`
+	TargetLogState          *securityevent.LogState                          `json:"target_log_state,omitempty"`
+	StartAfterEventRecordID string                                           `json:"start_after_event_record_id,omitempty"`
+	TargetEventRecordID     string                                           `json:"target_event_record_id,omitempty"`
+	Coverage                *records.WindowsSecurityCoverageObservation      `json:"coverage,omitempty"`
+	ContinuityGap           *records.WindowsSecurityContinuityGapObservation `json:"continuity_gap,omitempty"`
+	ContinuityGapSpool      *windowsSecurityGapSpoolSummary                  `json:"continuity_gap_spool,omitempty"`
+	Reconciliation          []configuredSecurityReconciliation               `json:"reconciliation"`
+	RecoveryCoverageSpool   *windowsSecurityGapSpoolSummary                  `json:"recovery_coverage_spool,omitempty"`
+	SourceMatchingEvents    int                                              `json:"source_matching_events"`
+	SelectedEvents          int                                              `json:"selected_events"`
+	IgnoredEvents           int                                              `json:"ignored_events"`
+	UnresolvedFileDeletes   int                                              `json:"unresolved_file_deletes"`
+	Batches                 []spool.FinalizedBatch                           `json:"batches"`
+	VerifiedBatches         int                                              `json:"verified_batches"`
+	CheckpointAdvanced      bool                                             `json:"checkpoint_advanced"`
+	CheckpointReinitialized bool                                             `json:"checkpoint_reinitialized"`
+	FinalCheckpoint         *securityevent.Checkpoint                        `json:"final_checkpoint,omitempty"`
+	Error                   string                                           `json:"error,omitempty"`
+	Semantics               string                                           `json:"semantics"`
 }
 
 type configuredSecurityPrepared struct {
-	Summary    configuredSecuritySummary
-	Checkpoint securityevent.Checkpoint
+	Summary       configuredSecuritySummary
+	Checkpoint    securityevent.Checkpoint
+	GapAssessment *securityevent.ContinuityAssessment
 }
 
 func configuredSecurityScopes(roots []string) []securityevent.GovernedScope {
@@ -67,9 +79,10 @@ func prepareConfiguredSecurity() (configuredSecurityPrepared, error) {
 		return configuredSecurityPrepared{}, err
 	}
 	summary := configuredSecuritySummary{
-		StatePath: statePath,
-		Batches:   []spool.FinalizedBatch{},
-		Semantics: "FI anchors the local Windows Security channel before configured root processing, then reads through a fixed post-root target. Security events are preserved as an independent source and are not used by the collector to infer actor intent. The Security checkpoint advances only after the selected events and coverage record are durably spooled and verified.",
+		StatePath:      statePath,
+		Batches:        []spool.FinalizedBatch{},
+		Reconciliation: []configuredSecurityReconciliation{},
+		Semantics:      "FI anchors the local Windows Security channel before configured root processing, then reads through a fixed post-root target. A detected Security-log continuity gap is durably recorded before FI captures current governed-root state and establishes a new forward Security boundary. Current state does not reconstruct missing historical Security events.",
 	}
 	state, err := securityevent.QueryLogState()
 	if err != nil {
@@ -83,31 +96,41 @@ func prepareConfiguredSecurity() (configuredSecurityPrepared, error) {
 	}
 	summary.CheckpointFound = found
 
-	var checkpoint securityevent.Checkpoint
+	prepared := configuredSecurityPrepared{Summary: summary}
+
 	switch found {
 	case false:
-		checkpoint, err = securityevent.InitializeCheckpoint(statePath, state)
+		checkpoint, err := securityevent.InitializeCheckpoint(statePath, state)
 		if err != nil {
-			return configuredSecurityPrepared{Summary: summary}, err
+			return prepared, err
 		}
+		prepared.Checkpoint = checkpoint
+
 	case true:
-		checkpoint, err = securityevent.LoadCheckpoint(statePath)
+		checkpoint, err := securityevent.LoadCheckpoint(statePath)
 		if err != nil {
-			return configuredSecurityPrepared{Summary: summary}, err
+			return prepared, err
 		}
+		prepared.Checkpoint = checkpoint
+
 		assessment, err := securityevent.AssessCheckpoint(checkpoint, state)
 		if err != nil {
-			return configuredSecurityPrepared{Summary: summary}, err
+			return prepared, err
 		}
-		if assessment.Status != securityevent.ContinuityContinuous {
-			return configuredSecurityPrepared{Summary: summary}, fmt.Errorf("Windows Security checkpoint is not continuous: %s", assessment.ReasonCode)
+		if assessment.Status == securityevent.ContinuityGap {
+			prepared.GapAssessment = &assessment
 		}
 	}
-	summary.StartAfterEventRecordID = checkpoint.LastEventRecordID
-	return configuredSecurityPrepared{Summary: summary, Checkpoint: checkpoint}, nil
+
+	prepared.Summary.StartAfterEventRecordID = prepared.Checkpoint.LastEventRecordID
+	return prepared, nil
 }
 
-func finishConfiguredSecurity(ctx context.Context, prepared configuredSecurityPrepared, scopes []securityevent.GovernedScope) (configuredSecuritySummary, error) {
+func finishConfiguredSecurity(
+	ctx context.Context,
+	prepared configuredSecurityPrepared,
+	scopes []securityevent.GovernedScope,
+) (configuredSecuritySummary, error) {
 	summary := prepared.Summary
 	if err := ctx.Err(); err != nil {
 		return summary, err
@@ -120,12 +143,16 @@ func finishConfiguredSecurity(ctx context.Context, prepared configuredSecurityPr
 	summary.TargetLogState = &target
 	summary.TargetEventRecordID = target.NewestEventRecordID
 
-	assessment, err := securityevent.AssessCheckpoint(prepared.Checkpoint, target)
+	targetAssessment, err := securityevent.AssessCheckpoint(prepared.Checkpoint, target)
 	if err != nil {
 		return summary, err
 	}
-	if assessment.Status != securityevent.ContinuityContinuous {
-		return summary, fmt.Errorf("Windows Security checkpoint lost continuity during configured run: %s", assessment.ReasonCode)
+
+	switch {
+	case prepared.GapAssessment != nil:
+		return reconcileConfiguredSecurityGap(ctx, summary, *prepared.GapAssessment, target, scopes)
+	case targetAssessment.Status == securityevent.ContinuityGap:
+		return reconcileConfiguredSecurityGap(ctx, summary, targetAssessment, target, scopes)
 	}
 
 	start, err := strconv.ParseUint(prepared.Checkpoint.LastEventRecordID, 10, 64)
@@ -217,12 +244,102 @@ func finishConfiguredSecurity(ctx context.Context, prepared configuredSecurityPr
 		return summary, errors.New("not every Windows Security spool batch verified")
 	}
 
-	advanced, err := securityevent.AdvanceCheckpoint(summary.StatePath, prepared.Checkpoint.LastEventRecordID, target.NewestEventRecordID)
+	advanced, err := securityevent.AdvanceCheckpoint(
+		summary.StatePath,
+		prepared.Checkpoint.LastEventRecordID,
+		target.NewestEventRecordID,
+	)
 	if err != nil {
 		return summary, err
 	}
 	summary.CheckpointAdvanced = true
 	summary.FinalCheckpoint = &advanced
+	summary.Status = configuredSecurityComplete
+	return summary, nil
+}
+
+func reconcileConfiguredSecurityGap(
+	ctx context.Context,
+	summary configuredSecuritySummary,
+	gapAssessment securityevent.ContinuityAssessment,
+	target securityevent.LogState,
+	scopes []securityevent.GovernedScope,
+) (configuredSecuritySummary, error) {
+	gap, err := newWindowsSecurityContinuityGapObservation(gapAssessment)
+	if err != nil {
+		return summary, err
+	}
+	if err := records.ValidateWindowsSecurityContinuityGapObservation(gap); err != nil {
+		return summary, err
+	}
+	summary.ContinuityGap = &gap
+
+	gapSpool, err := writeWindowsSecurityContinuityGap(gap)
+	summary.ContinuityGapSpool = &gapSpool
+	if err != nil {
+		return summary, err
+	}
+
+	// A Security-log gap means historical actor/process events are incomplete.
+	// Reconciliation captures current governed-root filesystem state only. It
+	// neither invents the missing Security events nor changes USN checkpoints.
+	for _, scope := range scopes {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+
+		snapshot, err := writeSpoolRoot(ctx, scope.ScopeID, scope.GovernedRoot)
+		summary.Reconciliation = append(summary.Reconciliation, configuredSecurityReconciliation{
+			ScopeID:      scope.ScopeID,
+			GovernedRoot: scope.GovernedRoot,
+			Snapshot:     snapshot,
+		})
+		if err != nil {
+			return summary, err
+		}
+		if err := validateBaselineSpoolForCheckpoint(snapshot); err != nil {
+			return summary, fmt.Errorf(
+				"Windows Security gap reconciliation for %q: %w",
+				scope.GovernedRoot,
+				err,
+			)
+		}
+	}
+
+	coverage, err := securityevent.AssessCoverage(ctx, scopes)
+	if err != nil {
+		return summary, err
+	}
+	if err := records.ValidateWindowsSecurityCoverageObservation(coverage); err != nil {
+		return summary, err
+	}
+	summary.Coverage = &coverage
+
+	coverageSpool, err := writeWindowsSecurityRecoveryCoverage(coverage)
+	summary.RecoveryCoverageSpool = &coverageSpool
+	if err != nil {
+		return summary, err
+	}
+
+	// The replacement checkpoint uses the fixed target captured before the
+	// reconciliation snapshots. Security events generated afterward remain
+	// eligible for the next normal catch-up. If the log loses that target before
+	// the next run, continuity checking records another gap instead of hiding it.
+	reinitialized, err := securityevent.InitializeCheckpoint(summary.StatePath, target)
+	if err != nil {
+		return summary, err
+	}
+	persisted, err := securityevent.LoadCheckpoint(summary.StatePath)
+	if err != nil {
+		return summary, err
+	}
+	if persisted.LastEventRecordID != reinitialized.LastEventRecordID ||
+		persisted.LastEventRecordID != target.NewestEventRecordID {
+		return summary, errors.New("persisted Windows Security recovery checkpoint does not match the fixed recovery target")
+	}
+
+	summary.CheckpointReinitialized = true
+	summary.FinalCheckpoint = &persisted
 	summary.Status = configuredSecurityComplete
 	return summary, nil
 }
