@@ -22,6 +22,64 @@ func TestSelect4660Conservative(t *testing.T) {
 	}
 }
 
+func TestSelect5145SharePath(t *testing.T) {
+	value := records.WindowsSecurityEventObservation{
+		EventID:            "5145",
+		ShareLocalPath:     `\??\C:\Users\jwood.admin\Downloads`,
+		RelativeTargetName: `nested\fi-smb-remote-test.txt`,
+	}
+	selected, ok := SelectEvent(value, []GovernedScope{{
+		ScopeID:      "root-a",
+		GovernedRoot: `C:\Users\jwood.admin\Downloads`,
+	}})
+	if !ok || len(selected.MatchedScopes) != 1 || selected.ScopeBasis != records.WindowsSecurityScopeSharePathMatched {
+		t.Fatalf("unexpected 5145 selection: %+v ok=%t", selected, ok)
+	}
+}
+
+func TestSelect5145ParentSharePath(t *testing.T) {
+	value := records.WindowsSecurityEventObservation{
+		EventID:            "5145",
+		ShareLocalPath:     `\??\C:`,
+		RelativeTargetName: `Users\jwood.admin\Downloads\fi-smb-admin-share-test.txt`,
+	}
+	selected, ok := SelectEvent(value, []GovernedScope{{
+		ScopeID:      "root-a",
+		GovernedRoot: `C:\Users\jwood.admin\Downloads`,
+	}})
+	if !ok || len(selected.MatchedScopes) != 1 || selected.ScopeBasis != records.WindowsSecurityScopeSharePathMatched {
+		t.Fatalf("unexpected parent-share 5145 selection: %+v ok=%t", selected, ok)
+	}
+}
+
+func TestSelect5145ShareRootIgnored(t *testing.T) {
+	value := records.WindowsSecurityEventObservation{
+		EventID:            "5145",
+		ShareLocalPath:     `\??\C:\Users\jwood.admin\Downloads`,
+		RelativeTargetName: `\`,
+	}
+	if _, ok := SelectEvent(value, []GovernedScope{{
+		ScopeID:      "root-a",
+		GovernedRoot: `C:\Users\jwood.admin\Downloads`,
+	}}); ok {
+		t.Fatal("bare 5145 share-root access was selected")
+	}
+}
+
+func TestSelect5145UnrelatedSharePathIgnored(t *testing.T) {
+	value := records.WindowsSecurityEventObservation{
+		EventID:            "5145",
+		ShareLocalPath:     `\??\C:\Windows`,
+		RelativeTargetName: `Temp\x.txt`,
+	}
+	if _, ok := SelectEvent(value, []GovernedScope{{
+		ScopeID:      "root-a",
+		GovernedRoot: `C:\Users\jwood.admin\Downloads`,
+	}}); ok {
+		t.Fatal("unrelated 5145 event selected")
+	}
+}
+
 func TestUnrelatedPathIgnored(t *testing.T) {
 	value := records.WindowsSecurityEventObservation{EventID: "4663", ObjectType: "File", ObjectName: `C:\Windows\Temp\x.txt`}
 	_, ok := SelectEvent(value, []GovernedScope{{ScopeID: "root-a", GovernedRoot: `C:\Data`}})

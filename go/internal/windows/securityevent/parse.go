@@ -30,6 +30,7 @@ var selectedEventIDs = map[uint32]struct{}{
 	4670: {},
 	4719: {},
 	4907: {},
+	5145: {},
 }
 
 type eventXML struct {
@@ -190,6 +191,11 @@ func projectCommonFields(value *records.WindowsSecurityEventObservation) {
 	value.TransactionID = field("TransactionId")
 	value.FileName = field("FileName")
 	value.LinkName = field("LinkName")
+	value.SourceIP = field("IpAddress")
+	value.SourcePort = field("IpPort")
+	value.ShareName = field("ShareName")
+	value.ShareLocalPath = field("ShareLocalPath")
+	value.RelativeTargetName = field("RelativeTargetName")
 	value.OldSecurityDescriptor = field("OldSd")
 	value.NewSecurityDescriptor = field("NewSd")
 	value.SubcategoryGUID = field("SubcategoryGuid")

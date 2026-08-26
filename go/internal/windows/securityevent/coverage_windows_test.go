@@ -8,29 +8,45 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
-func TestCoverageStatusRequiresHandleManipulationFailureAndReadAudit(t *testing.T) {
+func TestCoverageStatusRequiresHandleManipulationDetailedFileShareAndReadAudit(t *testing.T) {
 	fileSystem := records.WindowsSecurityAuditPolicyObservation{
 		SuccessEnabled: true,
 		FailureEnabled: true,
 	}
 	handleManipulation := records.WindowsSecurityAuditPolicyObservation{}
+	detailedFileShare := records.WindowsSecurityAuditPolicyObservation{
+		SuccessEnabled: true,
+		FailureEnabled: true,
+	}
 	policyChange := records.WindowsSecurityAuditPolicyObservation{SuccessEnabled: true}
 	roots := []records.WindowsSecurityRootAuditCoverage{{
 		RecommendedChangeAuditPresent: true,
 		RecommendedReadAuditPresent:   true,
 	}}
 
-	if got := coverageStatus(fileSystem, handleManipulation, policyChange, true, roots); got != records.WindowsSecurityCoveragePartial {
+	if got := coverageStatus(fileSystem, handleManipulation, detailedFileShare, policyChange, true, roots); got != records.WindowsSecurityCoveragePartial {
 		t.Fatalf("without Handle Manipulation failure: got %q", got)
 	}
 
 	handleManipulation.FailureEnabled = true
-	if got := coverageStatus(fileSystem, handleManipulation, policyChange, true, roots); got != records.WindowsSecurityCoverageReady {
+	detailedFileShare.FailureEnabled = false
+	if got := coverageStatus(fileSystem, handleManipulation, detailedFileShare, policyChange, true, roots); got != records.WindowsSecurityCoveragePartial {
+		t.Fatalf("without Detailed File Share failure: got %q", got)
+	}
+
+	detailedFileShare.FailureEnabled = true
+	detailedFileShare.SuccessEnabled = false
+	if got := coverageStatus(fileSystem, handleManipulation, detailedFileShare, policyChange, true, roots); got != records.WindowsSecurityCoveragePartial {
+		t.Fatalf("without Detailed File Share success: got %q", got)
+	}
+
+	detailedFileShare.SuccessEnabled = true
+	if got := coverageStatus(fileSystem, handleManipulation, detailedFileShare, policyChange, true, roots); got != records.WindowsSecurityCoverageReady {
 		t.Fatalf("complete coverage: got %q", got)
 	}
 
 	roots[0].RecommendedReadAuditPresent = false
-	if got := coverageStatus(fileSystem, handleManipulation, policyChange, true, roots); got != records.WindowsSecurityCoveragePartial {
+	if got := coverageStatus(fileSystem, handleManipulation, detailedFileShare, policyChange, true, roots); got != records.WindowsSecurityCoveragePartial {
 		t.Fatalf("without read audit: got %q", got)
 	}
 }

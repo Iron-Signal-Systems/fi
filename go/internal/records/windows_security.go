@@ -25,6 +25,7 @@ type WindowsSecurityScopeBasis string
 const (
 	WindowsSecurityScopePathMatched                  WindowsSecurityScopeBasis = "PathMatched"
 	WindowsSecurityScopeHardLinkPathMatched          WindowsSecurityScopeBasis = "HardLinkPathMatched"
+	WindowsSecurityScopeSharePathMatched             WindowsSecurityScopeBasis = "SharePathMatched"
 	WindowsSecurityScopeUnresolvedFileDeleteIncluded WindowsSecurityScopeBasis = "UnresolvedFileDeleteIncluded"
 	WindowsSecurityScopeHostMonitoringChange         WindowsSecurityScopeBasis = "HostMonitoringChange"
 )
@@ -43,20 +44,22 @@ type WindowsSecurityMatchedScope struct {
 // channel event and common file-activity projections. RawXML remains the source
 // representation; the projected fields do not infer actor intent or outcome.
 type WindowsSecurityEventObservation struct {
-	ObservedAt       string                        `json:"observed_at"`
-	CollectionMethod string                        `json:"collection_method"`
-	Channel          string                        `json:"channel"`
-	Provider         string                        `json:"provider"`
-	EventID          string                        `json:"event_id"`
-	Version          string                        `json:"version,omitempty"`
-	EventRecordID    string                        `json:"event_record_id"`
-	TimeCreated      string                        `json:"time_created"`
-	Computer         string                        `json:"computer"`
-	Keywords         string                        `json:"keywords,omitempty"`
-	AuditResult      WindowsSecurityAuditResult    `json:"audit_result"`
-	ScopeBasis       WindowsSecurityScopeBasis     `json:"scope_basis"`
-	MatchedScopes    []WindowsSecurityMatchedScope `json:"matched_scopes"`
-	Fields           []WindowsSecurityEventField   `json:"fields"`
+	ObservedAt       string `json:"observed_at"`
+	CollectionMethod string `json:"collection_method"`
+	Channel          string `json:"channel"`
+	Provider         string `json:"provider"`
+	EventID          string `json:"event_id"`
+	Version          string `json:"version,omitempty"`
+	EventRecordID    string `json:"event_record_id"`
+	TimeCreated      string `json:"time_created"`
+	Computer         string `json:"computer"`
+	Keywords         string `json:"keywords,omitempty"`
+	// AuditResult preserves Windows' audit result for this event. For 5145 it
+	// describes the Detailed File Share check, not the later NTFS outcome.
+	AuditResult   WindowsSecurityAuditResult    `json:"audit_result"`
+	ScopeBasis    WindowsSecurityScopeBasis     `json:"scope_basis"`
+	MatchedScopes []WindowsSecurityMatchedScope `json:"matched_scopes"`
+	Fields        []WindowsSecurityEventField   `json:"fields"`
 
 	SubjectUserSID        string `json:"subject_user_sid,omitempty"`
 	SubjectUserName       string `json:"subject_user_name,omitempty"`
@@ -74,6 +77,11 @@ type WindowsSecurityEventObservation struct {
 	TransactionID         string `json:"transaction_id,omitempty"`
 	FileName              string `json:"file_name,omitempty"`
 	LinkName              string `json:"link_name,omitempty"`
+	SourceIP              string `json:"source_ip,omitempty"`
+	SourcePort            string `json:"source_port,omitempty"`
+	ShareName             string `json:"share_name,omitempty"`
+	ShareLocalPath        string `json:"share_local_path,omitempty"`
+	RelativeTargetName    string `json:"relative_target_name,omitempty"`
 	OldSecurityDescriptor string `json:"old_security_descriptor,omitempty"`
 	NewSecurityDescriptor string `json:"new_security_descriptor,omitempty"`
 	SubcategoryGUID       string `json:"subcategory_guid,omitempty"`
@@ -113,6 +121,7 @@ type WindowsSecurityCoverageObservation struct {
 	SecurityLogReadable      bool                                  `json:"security_log_readable"`
 	FileSystemPolicy         WindowsSecurityAuditPolicyObservation `json:"file_system_policy"`
 	HandleManipulationPolicy WindowsSecurityAuditPolicyObservation `json:"handle_manipulation_policy"`
+	DetailedFileSharePolicy  WindowsSecurityAuditPolicyObservation `json:"detailed_file_share_policy"`
 	AuditPolicyChangePolicy  WindowsSecurityAuditPolicyObservation `json:"audit_policy_change_policy"`
 	Roots                    []WindowsSecurityRootAuditCoverage    `json:"roots"`
 	Status                   WindowsSecurityCoverageStatus         `json:"status"`
@@ -143,7 +152,8 @@ func ValidateWindowsSecurityEventObservation(value WindowsSecurityEventObservati
 	}
 	switch value.ScopeBasis {
 	case WindowsSecurityScopePathMatched, WindowsSecurityScopeHardLinkPathMatched,
-		WindowsSecurityScopeUnresolvedFileDeleteIncluded, WindowsSecurityScopeHostMonitoringChange:
+		WindowsSecurityScopeSharePathMatched, WindowsSecurityScopeUnresolvedFileDeleteIncluded,
+		WindowsSecurityScopeHostMonitoringChange:
 	default:
 		return errors.New("invalid Windows Security scope basis")
 	}
@@ -165,6 +175,7 @@ func ValidateWindowsSecurityCoverageObservation(value WindowsSecurityCoverageObs
 	for _, policy := range []WindowsSecurityAuditPolicyObservation{
 		value.FileSystemPolicy,
 		value.HandleManipulationPolicy,
+		value.DetailedFileSharePolicy,
 		value.AuditPolicyChangePolicy,
 	} {
 		if policy.SubcategoryGUID == "" || policy.AuditingInformation == "" {

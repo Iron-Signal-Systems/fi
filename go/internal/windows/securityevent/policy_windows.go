@@ -54,6 +54,10 @@ var (
 		Data1: 0x0CCE9223, Data2: 0x69AE, Data3: 0x11D9,
 		Data4: [8]byte{0xBE, 0xD3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30},
 	}
+	detailedFileShareAuditGUID = windowsGUID{
+		Data1: 0x0CCE9244, Data2: 0x69AE, Data3: 0x11D9,
+		Data4: [8]byte{0xBE, 0xD3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30},
+	}
 	auditPolicyChangeGUID = windowsGUID{
 		Data1: 0x0CCE922F, Data2: 0x69AE, Data3: 0x11D9,
 		Data4: [8]byte{0xBE, 0xD3, 0x50, 0x50, 0x54, 0x50, 0x30, 0x30},
@@ -63,6 +67,7 @@ var (
 const (
 	FileSystemAuditSubcategoryGUID    = "{0CCE921D-69AE-11D9-BED3-505054503030}"
 	HandleManipulationSubcategoryGUID = "{0CCE9223-69AE-11D9-BED3-505054503030}"
+	DetailedFileShareSubcategoryGUID  = "{0CCE9244-69AE-11D9-BED3-505054503030}"
 	AuditPolicyChangeSubcategoryGUID  = "{0CCE922F-69AE-11D9-BED3-505054503030}"
 )
 

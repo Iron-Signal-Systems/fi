@@ -55,8 +55,52 @@ func SelectEvent(value records.WindowsSecurityEventObservation, scopes []Governe
 		value.ScopeBasis = records.WindowsSecurityScopePathMatched
 		value.MatchedScopes = matched
 		return value, true
+
+	case 5145:
+		candidate, ok := detailedFileShareTargetPath(value.ShareLocalPath, value.RelativeTargetName)
+		if !ok {
+			return value, false
+		}
+		matched := matchPaths([]string{candidate}, scopes)
+		if len(matched) == 0 {
+			return value, false
+		}
+		value.ScopeBasis = records.WindowsSecurityScopeSharePathMatched
+		value.MatchedScopes = matched
+		return value, true
 	}
 	return value, false
+}
+
+func detailedFileShareTargetPath(shareLocalPath, relativeTargetName string) (string, bool) {
+	base := strings.TrimSpace(shareLocalPath)
+	if base == "" {
+		return "", false
+	}
+
+	switch {
+	case strings.HasPrefix(base, `\??\`):
+		base = strings.TrimPrefix(base, `\??\`)
+	case strings.HasPrefix(base, `\\?\`):
+		base = strings.TrimPrefix(base, `\\?\`)
+	}
+	base = strings.TrimRight(base, `\/`)
+	if base == "" {
+		return "", false
+	}
+
+	relative := strings.TrimSpace(relativeTargetName)
+	if relative == "" || relative == `\` || relative == `/` {
+		// Bare share-root access is connection/enumeration noise for FI's
+		// file-centered source. Keep specific descendants only.
+		return "", false
+	}
+	relative = strings.TrimLeft(relative, `\/`)
+	if relative == "" {
+		return "", false
+	}
+
+	return base + `\` + relative, true
 }
 
 func matchPaths(paths []string, scopes []GovernedScope) []records.WindowsSecurityMatchedScope {

@@ -40,6 +40,13 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 		}
 	}
 
+	detailedFileShare, detailedFileShareErr := queryAuditPolicy(detailedFileShareAuditGUID, DetailedFileShareSubcategoryGUID)
+	if detailedFileShareErr != nil {
+		detailedFileShare = records.WindowsSecurityAuditPolicyObservation{
+			SubcategoryGUID: DetailedFileShareSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: detailedFileShareErr.Error(),
+		}
+	}
+
 	policyChange, policyChangeErr := queryAuditPolicy(auditPolicyChangeGUID, AuditPolicyChangeSubcategoryGUID)
 	if policyChangeErr != nil {
 		policyChange = records.WindowsSecurityAuditPolicyObservation{
@@ -74,7 +81,7 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 
 	sort.Slice(roots, func(i, j int) bool { return roots[i].ScopeID < roots[j].ScopeID })
 
-	status := coverageStatus(fileSystem, handleManipulation, policyChange, logReadable, roots)
+	status := coverageStatus(fileSystem, handleManipulation, detailedFileShare, policyChange, logReadable, roots)
 
 	return records.WindowsSecurityCoverageObservation{
 		ObservedAt:               formatCanonicalTime(time.Now()),
@@ -82,6 +89,7 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 		SecurityLogReadable:      logReadable,
 		FileSystemPolicy:         fileSystem,
 		HandleManipulationPolicy: handleManipulation,
+		DetailedFileSharePolicy:  detailedFileShare,
 		AuditPolicyChangePolicy:  policyChange,
 		Roots:                    roots,
 		Status:                   status,
@@ -91,6 +99,7 @@ func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.Window
 func coverageStatus(
 	fileSystem records.WindowsSecurityAuditPolicyObservation,
 	handleManipulation records.WindowsSecurityAuditPolicyObservation,
+	detailedFileShare records.WindowsSecurityAuditPolicyObservation,
 	policyChange records.WindowsSecurityAuditPolicyObservation,
 	logReadable bool,
 	roots []records.WindowsSecurityRootAuditCoverage,
@@ -99,6 +108,8 @@ func coverageStatus(
 		!fileSystem.SuccessEnabled ||
 		!fileSystem.FailureEnabled ||
 		!handleManipulation.FailureEnabled ||
+		!detailedFileShare.SuccessEnabled ||
+		!detailedFileShare.FailureEnabled ||
 		!policyChange.SuccessEnabled {
 		return records.WindowsSecurityCoveragePartial
 	}

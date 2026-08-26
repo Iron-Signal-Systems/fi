@@ -23,6 +23,31 @@ func TestValidateWindowsSecurityEventObservation(t *testing.T) {
 	}
 }
 
+func TestValidateWindowsSecurityEventObservationAllowsSharePathMatch(t *testing.T) {
+	value := WindowsSecurityEventObservation{
+		ObservedAt:         "2026-08-25T22:00:00.000000000Z",
+		CollectionMethod:   WindowsSecurityCollectionMethod,
+		Channel:            "Security",
+		Provider:           "Microsoft-Windows-Security-Auditing",
+		EventID:            "5145",
+		EventRecordID:      "29486",
+		TimeCreated:        "2026-08-25T22:00:00.000000000Z",
+		Computer:           "AdminBox.iss.local",
+		AuditResult:        WindowsSecurityAuditSuccess,
+		ScopeBasis:         WindowsSecurityScopeSharePathMatched,
+		MatchedScopes:      []WindowsSecurityMatchedScope{{ScopeID: "root-a", GovernedRoot: `C:\Users\jwood.admin\Downloads`}},
+		Fields:             []WindowsSecurityEventField{},
+		SourceIP:           "192.168.1.210",
+		ShareName:          `\\*\FI-Downloads`,
+		ShareLocalPath:     `\??\C:\Users\jwood.admin\Downloads`,
+		RelativeTargetName: "fi-smb-remote-denied.txt",
+		RawXML:             "<Event/>",
+	}
+	if err := ValidateWindowsSecurityEventObservation(value); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateWindowsSecurityCoverageObservation(t *testing.T) {
 	value := WindowsSecurityCoverageObservation{
 		ObservedAt:          "2026-08-25T09:00:00.000000000Z",
@@ -39,6 +64,12 @@ func TestValidateWindowsSecurityCoverageObservation(t *testing.T) {
 			AuditingInformation: "2",
 			FailureEnabled:      true,
 		},
+		DetailedFileSharePolicy: WindowsSecurityAuditPolicyObservation{
+			SubcategoryGUID:     "{0CCE9244-69AE-11D9-BED3-505054503030}",
+			AuditingInformation: "3",
+			SuccessEnabled:      true,
+			FailureEnabled:      true,
+		},
 		AuditPolicyChangePolicy: WindowsSecurityAuditPolicyObservation{
 			SubcategoryGUID:     "{0CCE922F-69AE-11D9-BED3-505054503030}",
 			AuditingInformation: "1",
@@ -52,9 +83,9 @@ func TestValidateWindowsSecurityCoverageObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	value.HandleManipulationPolicy = WindowsSecurityAuditPolicyObservation{}
+	value.DetailedFileSharePolicy = WindowsSecurityAuditPolicyObservation{}
 
 	if err := ValidateWindowsSecurityCoverageObservation(value); err == nil {
-		t.Fatal("missing Handle Manipulation policy was accepted")
+		t.Fatal("missing Detailed File Share policy was accepted")
 	}
 }

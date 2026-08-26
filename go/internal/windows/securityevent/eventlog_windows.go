@@ -116,7 +116,7 @@ func ReadSelectedEvents(startAfterRecordID, throughRecordID uint64) ([]records.W
 		return nil, err
 	}
 	queryText := fmt.Sprintf(
-		"*[System[(EventRecordID > %d and EventRecordID <= %d) and (EventID=4656 or EventID=4663 or EventID=4660 or EventID=4664 or EventID=4670 or EventID=4907 or EventID=1102 or EventID=4719)]]",
+		"*[System[(EventRecordID > %d and EventRecordID <= %d) and (EventID=4656 or EventID=4663 or EventID=4660 or EventID=4664 or EventID=4670 or EventID=4907 or EventID=5145 or EventID=1102 or EventID=4719)]]",
 		startAfterRecordID,
 		throughRecordID,
 	)
