@@ -8,7 +8,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/supportingstate"
 )
 
 const maxBaselineObservedSIDs = 262144
@@ -264,4 +267,103 @@ func accountDomainSIDPrefix(sid string) (string, bool) {
 		return "", false
 	}
 	return strings.Join(parts[:7], "-"), true
+}
+
+// addDirectoryPrincipalSIDs retains every domain SID returned by the bounded
+// directory lookup. These are still source principals/direct-membership facts;
+// FI does not calculate transitive membership here.
+func addDirectoryPrincipalSIDs(
+	set *observedSIDSet,
+	snapshot records.DirectoryPrincipalSnapshot,
+) {
+	for _, sid := range snapshot.RequestedSIDs {
+		set.add(sid)
+	}
+	for _, principal := range snapshot.Principals {
+		set.add(principal.SID)
+	}
+	for _, membership := range snapshot.Memberships {
+		set.add(membership.MemberSID)
+		set.add(membership.GroupSID)
+	}
+	for _, sid := range snapshot.NotFoundSIDs {
+		set.add(sid)
+	}
+}
+
+// saveSupportingSIDState persists the monotonic set of current-domain SIDs that
+// have become relevant to governed history on this host.
+//
+// The source observations themselves remain in FI spool/history. This file is
+// only operational state used to bound later AD refreshes.
+func saveSupportingSIDState(
+	identity records.ProcessIdentityObservation,
+	observedSIDs *observedSIDSet,
+) (string, int, error) {
+	if observedSIDs == nil {
+		return "", 0, errors.New("supporting SID state requires observed SID set")
+	}
+	if observedSIDs.overflow {
+		return "", 0, fmt.Errorf(
+			"supporting SID state candidate limit exceeded: %d",
+			maxBaselineObservedSIDs,
+		)
+	}
+
+	domainPrefix, ok := accountDomainSIDPrefix(identity.Token.User.SID)
+	if !ok ||
+		identity.Token.User.DomainName == "" ||
+		strings.EqualFold(identity.Token.User.DomainName, identity.Computer.NetBIOSName) ||
+		identity.Computer.DNSDomain == "" {
+		return "", 0, nil
+	}
+
+	domainSIDs := currentDomainObservedSIDs(identity, observedSIDs.values)
+
+	statePath, err := supportingstate.DefaultPath()
+	if err != nil {
+		return "", 0, err
+	}
+
+	current, err := supportingstate.Load(statePath)
+	switch {
+	case err == nil:
+		if !strings.EqualFold(
+			current.ComputerNetBIOSName,
+			identity.Computer.NetBIOSName,
+		) {
+			return statePath, 0, errors.New(
+				"supporting SID state computer identity does not match current collector",
+			)
+		}
+		if !strings.EqualFold(
+			current.DomainDNSName,
+			identity.Computer.DNSDomain,
+		) || current.DomainSIDPrefix != domainPrefix {
+			return statePath, 0, errors.New(
+				"supporting SID state domain identity does not match current collector",
+			)
+		}
+
+	case errors.Is(err, os.ErrNotExist):
+		current, err = supportingstate.New(
+			identity.Computer.NetBIOSName,
+			identity.Computer.DNSFQDN,
+			identity.Computer.DNSDomain,
+			domainPrefix,
+			nil,
+		)
+		if err != nil {
+			return statePath, 0, err
+		}
+
+	default:
+		return statePath, 0, err
+	}
+
+	merged, err := supportingstate.Merge(statePath, current, domainSIDs)
+	if err != nil {
+		return statePath, 0, err
+	}
+	return statePath, len(merged.RelevantSIDs), nil
 }

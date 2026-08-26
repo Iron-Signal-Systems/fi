@@ -44,6 +44,9 @@ type spoolRunSummary struct {
 	LocalPrincipalRecords     int                    `json:"local_principal_records"`
 	DirectoryPrincipalRecords int                    `json:"directory_principal_records"`
 	SupportingSourceErrors    int                    `json:"supporting_source_errors"`
+	SupportingSIDStatePath    string                 `json:"supporting_sid_state_path,omitempty"`
+	SupportingSIDCount        int                    `json:"supporting_sid_count"`
+	SupportingSIDStateUpdated bool                   `json:"supporting_sid_state_updated"`
 	FileObservations          int                    `json:"file_observations"`
 	CollectionErrors          int                    `json:"collection_errors"`
 	HashErrors                int                    `json:"hash_errors"`
@@ -175,6 +178,12 @@ func writeSpoolRoot(
 			supporting.CollectorIdentity,
 			supporting.ObservedSIDs,
 		)
+		if directorySource.Snapshot != nil {
+			addDirectoryPrincipalSIDs(
+				supporting.ObservedSIDs,
+				*directorySource.Snapshot,
+			)
+		}
 		directoryErr = appendDirectorySource(
 			writer,
 			scopeID,
@@ -205,6 +214,19 @@ func writeSpoolRoot(
 
 	if err := errors.Join(walkErr, directoryErr, closeErr, verifyErr); err != nil {
 		return summary, err
+	}
+
+	statePath, sidCount, err := saveSupportingSIDState(
+		supporting.CollectorIdentity,
+		supporting.ObservedSIDs,
+	)
+	summary.SupportingSIDStatePath = statePath
+	summary.SupportingSIDCount = sidCount
+	if err != nil {
+		return summary, err
+	}
+	if statePath != "" {
+		summary.SupportingSIDStateUpdated = true
 	}
 
 	return summary, nil
