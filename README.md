@@ -37,10 +37,10 @@ may require correlating:
 - NTFS permissions;
 - SMB share permissions;
 - local identities;
-- Active Directory identities and membership;
+- Active Directory identities and direct membership facts;
 - inheritance;
 - effective-access inputs;
-- changes to permissions;
+- permission changes;
 - governed-file activity; and
 - the state of those facts at the time being investigated.
 
@@ -87,7 +87,7 @@ For a governed file, FI is intended to answer questions such as:
 - Where are there gaps that prevent FI from making a definitive conclusion?
 - What classification was later associated with a particular observation?
 
-FI must distinguish between what was directly observed, what can be
+FI distinguishes between what was directly observed, what can be
 deterministically derived, what was classified, and what remains unknown or
 incomplete.
 
@@ -102,8 +102,8 @@ FI is not intended to become a general Windows event collector or SIEM.
 
 Activity collection is file-centered.
 
-FI should preserve Windows activity when it concerns a governed file or
-directory, including where observable:
+FI preserves Windows activity when it concerns a governed file or directory,
+including where observable:
 
 - access and attempted access;
 - successful and denied access;
@@ -115,7 +115,7 @@ directory, including where observable:
 - hard-link activity; and
 - SMB/share activity associated with the governed object.
 
-Where Windows provides the information, FI should preserve source facts such as:
+Where Windows provides the information, FI preserves source facts such as:
 
 - account/SID;
 - process;
@@ -131,9 +131,8 @@ Supporting SMB, logon, or session records are collected only when needed to
 explain activity associated with governed objects. FI does not collect broad
 server activity merely because Windows exposes it.
 
-Windows auditing is not perfect. FI must report coverage and limitations
-explicitly and must never interpret the absence of an event as proof that no
-activity occurred.
+Windows auditing is not perfect. FI reports coverage and limitations explicitly
+and never interprets the absence of an event as proof that no activity occurred.
 
 ---
 
@@ -219,6 +218,10 @@ FI does not:
 The ability to observe and explain a problem remains separate from the authority
 to change the systems involved.
 
+Administrator-run deployment examples may configure Windows audit policy, SACLs,
+service identities, or related prerequisites. Those are deliberate customer
+administrative actions and are not FI runtime behavior.
+
 ---
 
 ## Customer-controlled deployment
@@ -254,7 +257,7 @@ Monitoring is explicitly scope-driven. FI operates only against configured
 **governed roots**. Installing FI on a server does not mean the entire server,
 volume, or share is governed.
 
-The initial Windows collector is intended to preserve:
+The initial Windows collector preserves or is being built to preserve:
 
 - NTFS object and volume identity;
 - exact path representation;
@@ -262,44 +265,94 @@ The initial Windows collector is intended to preserve:
 - content hashes;
 - alternate data streams;
 - reparse information;
-- Windows security descriptors, ACLs, and ACEs;
+- Windows security descriptors, ACLs, SACLs, and ACEs;
 - SMB share exposure and share security;
 - local Windows identities;
 - Active Directory identities and direct membership facts;
-- effective-access inputs;
+- effective-access source inputs;
 - USN journal change signals;
-- governed-file Windows activity; and
-- explicit collection continuity.
+- governed-file Windows activity;
+- source checkpoints and continuity;
+- explicit gap/reconciliation history;
+- durable local spool batches; and
+- major collector operation history.
 
 Other filesystems and operating systems are outside the initial scope.
 
-### Current Windows Security activity validation
+---
 
-FI reads Windows Security activity as an independent source. FI does not
-automatically enable Windows audit policy or add SACLs to governed roots. Those
-are administrator-controlled deployment settings.
+## Current Windows Security activity validation
 
-Current Windows Server 2016 validation uses:
+FI reads the local Windows Security log as an independent activity source. FI does
+not automatically enable Windows audit policy or add SACLs to governed roots.
+Those are administrator-controlled deployment settings.
+
+Current live validation has been performed on:
+
+```text
+Windows Server 2016
+Version 10.0.14393
+```
+
+Later Windows Server versions must be characterized independently before FI
+assumes identical event-generation behavior.
+
+The current FI coverage model requires effective:
 
 - **Audit File System**: Success and Failure;
 - **Audit Handle Manipulation**: Failure;
-- **Audit Policy Change**: Success; and
-- a matching Success/Failure audit ACE on each governed root.
+- **Audit Detailed File Share**: Success and Failure;
+- **Audit Policy Change**: Success;
+- a sufficient change-capable Success/Failure audit ACE on every governed root;
+- a sufficient descendant-file read Success/Failure audit ACE on every governed
+  root; and
+- readable local Security log access.
 
-During validation on Windows Server 2016 build `10.0.14393`, successful
-change-capable file activity produced Event ID `4663`, while a denied file-handle
-request did not produce Event ID `4656` until Handle Manipulation Failure auditing
-was enabled.
+For production, FI recommends Advanced Audit Policy through a dedicated scoped
+GPO or equivalent configuration-management mechanism. The Windows setting
+**Audit: Force audit policy subcategory settings (Windows Vista or later) to
+override audit policy category settings** should be enabled so legacy category
+policy does not override the intended advanced subcategories.
 
-The currently validated FI SACL is intentionally change-capable rather than
-read-complete. Complete governed-file read/access visibility remains Phase 1 work
-and must be validated separately before FI claims that coverage.
+On the validated Windows Server 2016 system:
 
-FI treats observed behavior as platform-specific validation rather than assuming
-every Windows Server version emits the same events under the same settings.
+- successful governed-file activity produced Event ID `4663`;
+- denied file-handle requests produced Event ID `4656` only after Handle
+  Manipulation Failure auditing was enabled;
+- a descendant-file read under the FI read-audit rule produced Event ID `4663`;
+- Detailed File Share auditing produced Event ID `5145`;
+- local UNC access preserved `::1` as the source address;
+- true remote SMB access preserved the remote client IP; and
+- a denied remote NTFS access could produce a successful `5145` share-level
+  access-check record followed independently by a failed `4656` NTFS
+  handle-request record.
 
-See the [Windows auditing example](examples/windows/file-auditing/README.md) for
-the current PowerShell activation and SACL examples.
+A successful `5145` means the SMB/share-level access check represented by that
+event succeeded. It does **not** by itself prove the final NTFS operation
+succeeded.
+
+FI currently selects the following Security event IDs:
+
+- `4656` — handle/access requested;
+- `4663` — an access right was used;
+- `4660` — object deleted;
+- `4664` — hard link created;
+- `4670` — permissions changed;
+- `4907` — auditing settings/SACL changed;
+- `5145` — detailed SMB share access check;
+- `1102` — Security audit log cleared; and
+- `4719` — system audit policy changed.
+
+FI preserves Security records independently from NTFS/USN observations. It does
+not collapse a share-level event, a denied handle request, and a filesystem
+change into one inferred event.
+
+A root SACL does not prove every descendant is covered. Descendants can protect
+their SACL from inheritance, and FI preserves the actual SACL observed on each
+object.
+
+See the [Windows file-auditing example](examples/windows/file-auditing/README.md)
+for the current PowerShell examples and deployment notes.
 
 ---
 
@@ -322,15 +375,28 @@ role-oriented backend views are rebuildable representations of that history.
 The Windows source-side model is:
 
 1. establish an initial governed-root baseline;
-2. use the NTFS USN journal and relevant Windows activity as change/activity
+2. use the NTFS USN journal and relevant Windows activity as independent source
    signals;
 3. freshly observe affected governed objects;
 4. preserve applicable identity, security, share, and governed-file activity
    source facts;
 5. write and verify durable local FI spool batches;
-6. advance source checkpoints only after the applicable local batch is safely
-   written and verified; and
-7. explicitly record continuity gaps, interruptions, or degraded coverage.
+6. advance source checkpoints only after the applicable local durable boundary is
+   satisfied;
+7. explicitly record continuity gaps and degraded coverage;
+8. reconcile current governed-source state after a known continuity gap without
+   pretending the missing history was reconstructed; and
+9. preserve major collector operation lifecycle history.
+
+USN and Windows Security normal checkpoint continuation have been live validated.
+USN and Windows Security continuity-gap detection, durable gap records,
+reconciliation, and re-established forward boundaries have also been live
+validated.
+
+The configured collector uses append-only operation lifecycle journals for major
+boundaries. A durably started operation that has no terminal record after a
+process restart is closed as `Interrupted` with reason `ProcessRestart` before new
+configured work begins.
 
 Phase 1 owns local source collection and local durable queueing.
 
@@ -341,17 +407,76 @@ FI must not silently convert missing coverage into certainty.
 
 ---
 
+## Supporting source freshness
+
+The initial baseline also captures supporting source facts such as:
+
+- local SMB share state and share security;
+- local users, groups, and direct memberships; and
+- relevant current-domain principals and direct membership facts.
+
+Those sources change more slowly than the filesystem but still change over time.
+
+A bounded continuous refresh mechanism for SMB, local identity, and relevant
+Active Directory identity is remaining Phase 1 work. Backend correlation will
+use the resulting versioned source facts; the Windows collector will not compute
+transitive membership or final effective access conclusions.
+
+---
+
+## Local durable spool
+
+Phase 1 writes finalized JSONL batches and manifests locally.
+
+The spool verifies record count, data byte count, and SHA-256 before a batch is
+accepted as the local durable boundary.
+
+Finalized batches remain on the source until Phase 2 transport exists.
+
+FI does not use:
+
+```text
+send succeeded -> delete
+```
+
+as a custody rule.
+
+Phase 2 must establish durable downstream custody and acknowledgement before an
+acknowledged local batch may be retired.
+
+---
+
+## Current Phase 1 focus
+
+The core collector architecture is largely established. Remaining Gate 1 work is
+primarily integration and validation:
+
+- bounded refresh of SMB/local/AD supporting source facts;
+- a documented governed-file activity behavior matrix covering create, modify,
+  read, deny, rename/move, delete, security changes, hard-link activity, and SMB
+  paths;
+- Windows service runtime;
+- gMSA deployment and least-privilege validation;
+- restart/failure/resource-exhaustion campaigns;
+- representative performance and source-impact measurement; and
+- validation on additional supported Windows Server versions.
+
+Gate 1 is not complete until those deployment and validation boundaries are
+proved.
+
+---
+
 ## Source file content and classification
 
 Normal FI record transport does not carry customer source-file content.
 
 Later classification and enrichment may require bounded access to file or stream
 content. That capability belongs to the **Separate Protected Classification
-Stream** and its streaming/read-broker service, not to the normal Phase 1 record
-collector.
+Stream** and its streaming/read-broker service in Phase 4, not to the normal
+Phase 1 record collector.
 
-Source content is processed transiently and is not stored as normal FI source-file
-content in the backend.
+Source content is processed transiently and is not stored as normal FI
+source-file content in the backend.
 
 Classification results become additional records associated with the exact file
 or stream observation that was classified.

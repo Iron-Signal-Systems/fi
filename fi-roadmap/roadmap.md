@@ -14,7 +14,7 @@ investigation.
 
 - FI operates only on explicitly configured governed roots.
 - Authoritative FI records are write-once.
-- Every material FI action and outcome has an immutable journal record.
+- Every material FI action and outcome has immutable journal history.
 - FI distinguishes `Observed`, `Derived`, `Classified`, `Unknown`, and
   `Incomplete`.
 - Customer source-file content never travels through normal FI record transport.
@@ -23,6 +23,29 @@ investigation.
 - Current-state views are rebuildable projections of immutable history.
 - FI collects Windows activity because it concerns governed objects, not to act
   as a general Windows event collector or SIEM.
+
+---
+
+## Current Development Focus
+
+FI is currently focused on **Phase 1 / Gate 1**.
+
+The core Windows/NTFS collector, durable local spool, normal checkpoint
+continuity, explicit USN and Windows Security continuity-gap recovery, and major
+operation lifecycle journaling are implemented and have live validation on the
+current Windows Server 2016 development system.
+
+Remaining Gate 1 work is primarily:
+
+- bounded refresh of SMB, local-identity, and relevant AD source facts;
+- completion of the governed-file activity validation matrix;
+- Windows service runtime;
+- gMSA and least-privilege validation;
+- failure/restart/resource-exhaustion testing;
+- representative performance/source-impact testing; and
+- additional supported Windows Server version characterization.
+
+Gate 1 remains open until those deployment and validation boundaries are proved.
 
 ---
 

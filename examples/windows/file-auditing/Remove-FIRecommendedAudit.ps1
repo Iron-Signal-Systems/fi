@@ -6,19 +6,34 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$RecommendedMask = 0x000D0156
+
+$ChangeMask = 0x000D0156
+$ReadMask = 0x00000001
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object -TypeName Security.Principal.WindowsPrincipal -ArgumentList $identity
 
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'Run this example from an elevated PowerShell window.'
+    throw 'Run this example from an elevated Windows PowerShell window.'
 }
+
+$expectedChangeInheritance =
+    [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+    [Security.AccessControl.InheritanceFlags]::ObjectInherit
+
+$expectedReadInheritance =
+    [Security.AccessControl.InheritanceFlags]::ObjectInherit
+
+$expectedAudit =
+    [Security.AccessControl.AuditFlags]::Success -bor
+    [Security.AccessControl.AuditFlags]::Failure
 
 foreach ($requestedPath in $Path) {
     $resolved = (Resolve-Path -LiteralPath $requestedPath).ProviderPath
     $acl = Get-Acl -LiteralPath $resolved -Audit
-    $removed = 0
+
+    $removedChange = 0
+    $removedRead = 0
 
     foreach ($rule in @($acl.GetAuditRules(
         $true,
@@ -33,46 +48,52 @@ foreach ($requestedPath in $Path) {
             [Security.Principal.SecurityIdentifier]
         ).Value
 
+        if ($sid -ne 'S-1-1-0') {
+            continue
+        }
+
         $mask = [int]$rule.FileSystemRights
-        $exactRights = ($mask -eq $RecommendedMask)
 
-        $exactInheritance =
-            ($rule.InheritanceFlags -eq (
-                [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-                [Security.AccessControl.InheritanceFlags]::ObjectInherit
-            ))
+        $exactChange =
+            $mask -eq $ChangeMask -and
+            $rule.InheritanceFlags -eq $expectedChangeInheritance -and
+            $rule.PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None -and
+            $rule.AuditFlags -eq $expectedAudit
 
-        $exactPropagation =
-            ($rule.PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None)
+        $exactRead =
+            $mask -eq $ReadMask -and
+            $rule.InheritanceFlags -eq $expectedReadInheritance -and
+            $rule.PropagationFlags -eq [Security.AccessControl.PropagationFlags]::InheritOnly -and
+            $rule.AuditFlags -eq $expectedAudit
 
-        $exactAudit =
-            ($rule.AuditFlags -eq (
-                [Security.AccessControl.AuditFlags]::Success -bor
-                [Security.AccessControl.AuditFlags]::Failure
-            ))
-
-        if (
-            $sid -eq 'S-1-1-0' -and
-            $exactRights -and
-            $exactInheritance -and
-            $exactPropagation -and
-            $exactAudit
-        ) {
+        if ($exactChange) {
             if ($PSCmdlet.ShouldProcess(
                 $resolved,
-                'Remove exact FI example audit ACE'
+                'Remove exact FI example change-audit ACE'
             )) {
                 [void]$acl.RemoveAuditRuleSpecific($rule)
-                $removed++
+                $removedChange++
+            }
+            continue
+        }
+
+        if ($exactRead) {
+            if ($PSCmdlet.ShouldProcess(
+                $resolved,
+                'Remove exact FI example read-audit ACE'
+            )) {
+                [void]$acl.RemoveAuditRuleSpecific($rule)
+                $removedRead++
             }
         }
     }
 
-    if ($removed -gt 0) {
+    if (($removedChange + $removedRead) -gt 0) {
         Set-Acl -LiteralPath $resolved -AclObject $acl
     }
 
-    Write-Host "Exact explicit FI example audit rules removed from $resolved : $removed"
+    Write-Host "Exact explicit FI change rules removed from $resolved : $removedChange"
+    Write-Host "Exact explicit FI read rules removed from $resolved   : $removedRead"
 }
 
-Write-Warning 'Global advanced audit-policy settings were NOT disabled. Manage those through GPO or the system policy owner.'
+Write-Warning 'Global advanced audit-policy settings and SCENoApplyLegacyAuditPolicy were NOT changed. Manage those through GPO or the system policy owner.'
