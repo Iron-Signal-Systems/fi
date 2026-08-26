@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 )
 
@@ -25,25 +26,28 @@ type configuredRootAction string
 type configuredRootStatus string
 
 const (
-	configuredActionBaselineAndCatchUp configuredRootAction = "BaselineAndCatchUp"
-	configuredActionUSNCatchUp         configuredRootAction = "USNCatchUp"
+	configuredActionBaselineAndCatchUp             configuredRootAction = "BaselineAndCatchUp"
+	configuredActionGapReconcileBaselineAndCatchUp configuredRootAction = "GapReconcileBaselineAndCatchUp"
+	configuredActionUSNCatchUp                     configuredRootAction = "USNCatchUp"
 
 	configuredStatusComplete configuredRootStatus = "Complete"
 	configuredStatusFailed   configuredRootStatus = "Failed"
 )
 
 type configuredRootSummary struct {
-	GovernedRoot    string                    `json:"governed_root"`
-	ScopeID         string                    `json:"scope_id"`
-	StatePath       string                    `json:"state_path"`
-	CheckpointFound bool                      `json:"checkpoint_found"`
-	Action          configuredRootAction      `json:"action"`
-	Status          configuredRootStatus      `json:"status"`
-	TargetUSN       string                    `json:"target_usn,omitempty"`
-	Baseline        *baselineSpoolSummary     `json:"baseline,omitempty"`
-	USNPasses       []usnSpoolNextSummary     `json:"usn_passes"`
-	FinalCheckpoint *checkpoint.USNCheckpoint `json:"final_checkpoint,omitempty"`
-	Error           string                    `json:"error,omitempty"`
+	GovernedRoot    string                               `json:"governed_root"`
+	ScopeID         string                               `json:"scope_id"`
+	StatePath       string                               `json:"state_path"`
+	CheckpointFound bool                                 `json:"checkpoint_found"`
+	Action          configuredRootAction                 `json:"action"`
+	Status          configuredRootStatus                 `json:"status"`
+	TargetUSN       string                               `json:"target_usn,omitempty"`
+	Gap             *records.USNContinuityGapObservation `json:"continuity_gap,omitempty"`
+	GapSpool        *usnGapSpoolSummary                  `json:"continuity_gap_spool,omitempty"`
+	Baseline        *baselineSpoolSummary                `json:"baseline,omitempty"`
+	USNPasses       []usnSpoolNextSummary                `json:"usn_passes"`
+	FinalCheckpoint *checkpoint.USNCheckpoint            `json:"final_checkpoint,omitempty"`
+	Error           string                               `json:"error,omitempty"`
 }
 
 type configuredRunSummary struct {
@@ -80,7 +84,7 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 		ConfiguredRoots: len(value.GovernedRoots),
 		Complete:        true,
 		Roots:           make([]configuredRootSummary, 0, len(value.GovernedRoots)),
-		Semantics:       "FI processes Windows Security activity and each configured governed root as independent source observations. Missing root checkpoints start safe baselines; continuous root checkpoints catch up USN. Windows Security is anchored before root processing and caught up afterward. Monitoring coverage is reported explicitly and is not inferred from absent events.",
+		Semantics:       "FI processes Windows Security activity and each configured governed root as independent source observations. Missing root checkpoints start safe baselines; continuous root checkpoints catch up USN. A detected USN continuity gap is durably recorded before FI performs a current-state baseline and establishes a new forward-continuity boundary; the baseline does not recreate missing historical changes. Windows Security is anchored before root processing and caught up afterward. Monitoring coverage is reported explicitly and is not inferred from absent events.",
 	}
 
 	var runErr error
@@ -153,43 +157,35 @@ func writeConfiguredRoot(ctx context.Context, governedRoot string) (configuredRo
 	switch checkpointFound {
 	case false:
 		summary.Action = configuredActionBaselineAndCatchUp
-		baseline, err := writeBaselineSpoolRoot(ctx, scopeID, governedRoot)
-		summary.Baseline = &baseline
-		if err != nil {
-			return summary, err
-		}
-		if baseline.PostBaselineAssessment == nil || baseline.Checkpoint == nil {
-			return summary, errors.New("successful baseline did not return checkpoint continuity state")
-		}
-
-		// Catch up only through the journal position observed at the post-baseline
-		// acceptance boundary. FI may create newer USNs while persisting its own
-		// state and spool output; this fixed target prevents a configured run from
-		// chasing its own writes indefinitely.
-		summary.TargetUSN = baseline.PostBaselineAssessment.JournalState.NextUSN
-		passes, finalCheckpoint, err := catchUpConfiguredRoot(
-			ctx,
-			scopeID,
-			governedRoot,
-			summary.TargetUSN,
-		)
-		summary.USNPasses = passes
-		summary.FinalCheckpoint = finalCheckpoint
-		if err != nil {
-			return summary, err
-		}
-		return summary, nil
+		return baselineAndCatchUpConfiguredRoot(ctx, summary)
 
 	case true:
-		summary.Action = configuredActionUSNCatchUp
 		assessment, err := checkpoint.Check(ctx, scopeID, governedRoot, statePath)
 		if err != nil {
 			return summary, err
 		}
-		if assessment.Status != checkpoint.ContinuityContinuous {
-			return summary, fmt.Errorf("existing checkpoint is not continuous: %s", assessment.ReasonCode)
+		if assessment.Status == checkpoint.ContinuityGap {
+			summary.Action = configuredActionGapReconcileBaselineAndCatchUp
+
+			gap, err := newUSNContinuityGapObservation(governedRoot, assessment)
+			if err != nil {
+				return summary, err
+			}
+			if err := records.ValidateUSNContinuityGapObservation(gap); err != nil {
+				return summary, err
+			}
+			summary.Gap = &gap
+
+			gapSpool, err := writeUSNContinuityGap(gap)
+			summary.GapSpool = &gapSpool
+			if err != nil {
+				return summary, err
+			}
+
+			return baselineAndCatchUpConfiguredRoot(ctx, summary)
 		}
 
+		summary.Action = configuredActionUSNCatchUp
 		summary.TargetUSN = assessment.JournalState.NextUSN
 		passes, finalCheckpoint, err := catchUpConfiguredRoot(
 			ctx,
@@ -206,6 +202,38 @@ func writeConfiguredRoot(ctx context.Context, governedRoot string) (configuredRo
 	}
 
 	return summary, errors.New("unreachable configured-root state")
+}
+
+func baselineAndCatchUpConfiguredRoot(
+	ctx context.Context,
+	summary configuredRootSummary,
+) (configuredRootSummary, error) {
+	baseline, err := writeBaselineSpoolRoot(ctx, summary.ScopeID, summary.GovernedRoot)
+	summary.Baseline = &baseline
+	if err != nil {
+		return summary, err
+	}
+	if baseline.PostBaselineAssessment == nil || baseline.Checkpoint == nil {
+		return summary, errors.New("successful baseline did not return checkpoint continuity state")
+	}
+
+	// Catch up only through the journal position observed at the post-baseline
+	// acceptance boundary. FI may create newer USNs while persisting its own
+	// state and spool output; this fixed target prevents a configured run from
+	// chasing its own writes indefinitely.
+	summary.TargetUSN = baseline.PostBaselineAssessment.JournalState.NextUSN
+	passes, finalCheckpoint, err := catchUpConfiguredRoot(
+		ctx,
+		summary.ScopeID,
+		summary.GovernedRoot,
+		summary.TargetUSN,
+	)
+	summary.USNPasses = passes
+	summary.FinalCheckpoint = finalCheckpoint
+	if err != nil {
+		return summary, err
+	}
+	return summary, nil
 }
 
 func catchUpConfiguredRoot(
