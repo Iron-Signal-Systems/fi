@@ -291,6 +291,78 @@ func addDirectoryPrincipalSIDs(
 	}
 }
 
+// loadSupportingSIDState adds every previously relevant current-domain SID to
+// the supplied bounded set. A supporting-source refresh requires this state:
+// refreshing only the SIDs visible in the current token/share/local snapshot
+// could silently forget identities that remain historically relevant.
+func loadSupportingSIDState(
+	identity records.ProcessIdentityObservation,
+	observedSIDs *observedSIDSet,
+) (string, int, error) {
+	if observedSIDs == nil {
+		return "", 0, errors.New("supporting SID state requires observed SID set")
+	}
+	if observedSIDs.overflow {
+		return "", 0, fmt.Errorf(
+			"supporting SID state candidate limit exceeded: %d",
+			maxBaselineObservedSIDs,
+		)
+	}
+
+	statePath, err := supportingstate.DefaultPath()
+	if err != nil {
+		return "", 0, err
+	}
+	current, err := supportingstate.Load(statePath)
+	if err != nil {
+		return statePath, 0, err
+	}
+	if err := validateSupportingSIDStateIdentity(identity, current); err != nil {
+		return statePath, 0, err
+	}
+
+	for _, sid := range current.RelevantSIDs {
+		observedSIDs.add(sid)
+	}
+	if observedSIDs.overflow {
+		return statePath, 0, fmt.Errorf(
+			"supporting SID state candidate limit exceeded: %d",
+			maxBaselineObservedSIDs,
+		)
+	}
+	return statePath, len(current.RelevantSIDs), nil
+}
+
+func validateSupportingSIDStateIdentity(
+	identity records.ProcessIdentityObservation,
+	current supportingstate.State,
+) error {
+	domainPrefix, ok := accountDomainSIDPrefix(identity.Token.User.SID)
+	if !ok ||
+		identity.Token.User.DomainName == "" ||
+		strings.EqualFold(identity.Token.User.DomainName, identity.Computer.NetBIOSName) ||
+		identity.Computer.DNSDomain == "" {
+		return errors.New("current collector token does not identify an AD domain")
+	}
+	if !strings.EqualFold(
+		current.ComputerNetBIOSName,
+		identity.Computer.NetBIOSName,
+	) {
+		return errors.New(
+			"supporting SID state computer identity does not match current collector",
+		)
+	}
+	if !strings.EqualFold(
+		current.DomainDNSName,
+		identity.Computer.DNSDomain,
+	) || current.DomainSIDPrefix != domainPrefix {
+		return errors.New(
+			"supporting SID state domain identity does not match current collector",
+		)
+	}
+	return nil
+}
+
 // saveSupportingSIDState persists the monotonic set of current-domain SIDs that
 // have become relevant to governed history on this host.
 //
@@ -328,21 +400,8 @@ func saveSupportingSIDState(
 	current, err := supportingstate.Load(statePath)
 	switch {
 	case err == nil:
-		if !strings.EqualFold(
-			current.ComputerNetBIOSName,
-			identity.Computer.NetBIOSName,
-		) {
-			return statePath, 0, errors.New(
-				"supporting SID state computer identity does not match current collector",
-			)
-		}
-		if !strings.EqualFold(
-			current.DomainDNSName,
-			identity.Computer.DNSDomain,
-		) || current.DomainSIDPrefix != domainPrefix {
-			return statePath, 0, errors.New(
-				"supporting SID state domain identity does not match current collector",
-			)
+		if err := validateSupportingSIDStateIdentity(identity, current); err != nil {
+			return statePath, 0, err
 		}
 
 	case errors.Is(err, os.ErrNotExist):

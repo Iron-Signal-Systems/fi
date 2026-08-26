@@ -15,14 +15,15 @@ import (
 type OperationKind string
 
 const (
-	OperationActivityRead           OperationKind = "ActivityRead"
-	OperationBaseline               OperationKind = "Baseline"
-	OperationProtectedRead          OperationKind = "ProtectedRead"
-	OperationReconciliation         OperationKind = "Reconciliation"
-	OperationReObservation          OperationKind = "ReObservation"
-	OperationUSNCatchUp             OperationKind = "USNCatchUp"
-	OperationUSNRead                OperationKind = "USNRead"
-	OperationWindowsSecurityCatchUp OperationKind = "WindowsSecurityCatchUp"
+	OperationActivityRead            OperationKind = "ActivityRead"
+	OperationBaseline                OperationKind = "Baseline"
+	OperationProtectedRead           OperationKind = "ProtectedRead"
+	OperationReconciliation          OperationKind = "Reconciliation"
+	OperationReObservation           OperationKind = "ReObservation"
+	OperationSupportingSourceRefresh OperationKind = "SupportingSourceRefresh"
+	OperationUSNCatchUp              OperationKind = "USNCatchUp"
+	OperationUSNRead                 OperationKind = "USNRead"
+	OperationWindowsSecurityCatchUp  OperationKind = "WindowsSecurityCatchUp"
 )
 
 // OperationOutcome records how a bounded FI operation ended.
@@ -90,7 +91,8 @@ func ValidateOperationRecord(value OperationRecord) error {
 func validOperationKind(value OperationKind) bool {
 	switch value {
 	case OperationActivityRead, OperationBaseline, OperationProtectedRead,
-		OperationReconciliation, OperationReObservation, OperationUSNCatchUp,
+		OperationReconciliation, OperationReObservation,
+		OperationSupportingSourceRefresh, OperationUSNCatchUp,
 		OperationUSNRead, OperationWindowsSecurityCatchUp:
 		return true
 	default:
