@@ -289,14 +289,17 @@ FI and Atlas remain read-only intelligence products even when Sentinel is
 present.
 
 Their job is to detect, reconstruct, explain, and verify. They do not gain
-corrective authority merely because a controlled execution platform exists.
+corrective authority merely because a governed access and execution platform
+exists.
 
 The professional remains in the driver's seat.
 
-Sentinel is the governed action product. Its responsibility includes controlling
-access to supported managed platforms, determining whether the authenticated
-professional is authorized to perform the requested governed operation, and
-executing only the specifically authorized action.
+Sentinel is the governed authorization and guided professional-execution product.
+It does not autonomously decide or perform administrative work. The professional
+chooses the action and remains the actor. Sentinel governs whether that
+professional is allowed to perform the requested action, grants only the required
+access, guides the action through the approved path, and records the complete
+material history of what was authorized and what the professional did.
 
 The intended Iron Signal Systems control model is:
 
@@ -311,12 +314,15 @@ DECIDE what should be done
       v
 Sentinel
 GOVERN identity, authority, approval,
-target, and exact permitted operation
+target, and exact permitted action
       |
       v
-Sentinel
-EXECUTE only the governed,
-explicitly authorized operation
+Professional through Sentinel
+PERFORM the governed action
+with guided, controlled access
+      |
+      v
+Target Platform
       |
       v
 FI / Atlas
@@ -327,23 +333,29 @@ In this model:
 
 - FI and Atlas provide context, not authority;
 - the professional decides whether action is appropriate;
-- Sentinel governs access to the managed platform and determines whether the
-  authenticated professional may perform the exact requested operation;
-- Sentinel executes only the operation that passed that governance boundary;
-- unrestricted platform access is not substituted for a governed operation;
+- Sentinel governs access to supported managed platforms;
+- Sentinel determines whether the authenticated professional may perform the
+  exact requested action against the requested target;
+- Sentinel grants only the governed access required for that approved action;
+- the professional performs the action through Sentinel rather than Sentinel
+  autonomously acting on the professional's behalf;
+- Sentinel guides and constrains the professional to the authorized path while
+  preserving professional control;
+- unrestricted platform access is not substituted for a governed action;
 - possession of platform credentials does not itself create user authority;
-- the executed action is attributable and reviewable; and
-- FI or Atlas independently re-observes the environment rather than trusting an
-  executor's claim that the intended state now exists.
+- authorization, access grants, professional actions, outcomes, and material
+  failures are fully attributable and recorded; and
+- FI or Atlas independently re-observes the environment rather than trusting a
+  Sentinel record alone as proof that the intended state now exists.
 
 This creates separation between **knowing**, **deciding**, **governing**,
-**executing**, and **verifying** while keeping governance and execution inside the
-Sentinel product boundary.
+**professional action**, and **verifying** while keeping the professional in
+control of execution.
 
 That separation is intentional.
 
-A detection must never become authority simply because software can automate the
-next step.
+A detection must never become authority, and an authorization must never become
+automatic execution simply because software could perform the next step.
 
 ---
 
@@ -353,8 +365,8 @@ The long-term value of the ISS products is not that one platform attempts to own
 every domain.
 
 The value comes from separately trustworthy products being able to contribute to
-a larger operational picture while Sentinel provides the controlled path for
-authorized action.
+a larger operational picture while Sentinel provides the governed path for
+professional access and action.
 
 ```text
 FI
@@ -371,9 +383,13 @@ Professional Decision
         |
         v
 Sentinel
-Governed Platform Access
-Authorized Operation
-Controlled Execution
+Governed Authorization
+Controlled Platform Access
+Guided Professional Execution
+Complete Action Record
+        |
+        v
+Professional performs the action
         |
         v
 Target Platform
@@ -385,15 +401,17 @@ Independent FI / Atlas Verification
 A professional investigating an incident or planning a change should be able to
 move from a file or identity question into the related infrastructure context,
 or from an infrastructure problem into the affected file and access context,
-without surrendering control of the decision to the software.
+without surrendering control of the decision or action to the software.
 
 Sentinel should provide the governed route into supported platforms rather than
 requiring routine unrestricted administrative access as the normal operating
-model. The professional still chooses the action; Sentinel controls whether that
-action is permitted and how the approved operation reaches the platform.
+model. The professional still chooses and performs the action; Sentinel controls
+whether that action is permitted, what access is granted, how the professional
+reaches the platform, and how the action is recorded.
 
 The goal is better understanding, faster investigation, safer decisions, governed
-platform access, and controlled execution — not autonomous administration.
+platform access, accountable professional action, and independent verification —
+not autonomous administration.
 
 ---
 
