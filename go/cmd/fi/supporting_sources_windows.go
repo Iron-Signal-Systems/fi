@@ -363,6 +363,107 @@ func validateSupportingSIDStateIdentity(
 	return nil
 }
 
+type supportingSIDStateMergeResult struct {
+	Path        string
+	CountBefore int
+	CountAfter  int
+	Updated     bool
+}
+
+// mergeSupportingSIDState persists only newly observed current-domain SIDs.
+// Existing state is not rewritten when the incoming SIDs are already known.
+// This matters for continuous USN collection because FI should not generate a
+// supporting-state write on every otherwise unrelated journal catch-up.
+func mergeSupportingSIDState(
+	identity records.ProcessIdentityObservation,
+	observedSIDs *observedSIDSet,
+) (supportingSIDStateMergeResult, error) {
+	if observedSIDs == nil {
+		return supportingSIDStateMergeResult{},
+			errors.New("supporting SID state requires observed SID set")
+	}
+	if observedSIDs.overflow {
+		return supportingSIDStateMergeResult{}, fmt.Errorf(
+			"supporting SID state candidate limit exceeded: %d",
+			maxBaselineObservedSIDs,
+		)
+	}
+
+	domainPrefix, ok := accountDomainSIDPrefix(identity.Token.User.SID)
+	if !ok ||
+		identity.Token.User.DomainName == "" ||
+		strings.EqualFold(identity.Token.User.DomainName, identity.Computer.NetBIOSName) ||
+		identity.Computer.DNSDomain == "" {
+		return supportingSIDStateMergeResult{}, nil
+	}
+
+	domainSIDs := currentDomainObservedSIDs(identity, observedSIDs.values)
+	if len(domainSIDs) == 0 {
+		return supportingSIDStateMergeResult{}, nil
+	}
+
+	statePath, err := supportingstate.DefaultPath()
+	if err != nil {
+		return supportingSIDStateMergeResult{}, err
+	}
+
+	current, err := supportingstate.Load(statePath)
+	stateExists := err == nil
+	switch {
+	case err == nil:
+		if err := validateSupportingSIDStateIdentity(identity, current); err != nil {
+			return supportingSIDStateMergeResult{Path: statePath}, err
+		}
+
+	case errors.Is(err, os.ErrNotExist):
+		current, err = supportingstate.New(
+			identity.Computer.NetBIOSName,
+			identity.Computer.DNSFQDN,
+			identity.Computer.DNSDomain,
+			domainPrefix,
+			nil,
+		)
+		if err != nil {
+			return supportingSIDStateMergeResult{Path: statePath}, err
+		}
+
+	default:
+		return supportingSIDStateMergeResult{Path: statePath}, err
+	}
+
+	result := supportingSIDStateMergeResult{
+		Path:        statePath,
+		CountBefore: len(current.RelevantSIDs),
+		CountAfter:  len(current.RelevantSIDs),
+	}
+
+	known := make(map[string]struct{}, len(current.RelevantSIDs))
+	for _, sid := range current.RelevantSIDs {
+		known[sid] = struct{}{}
+	}
+
+	hasNewSID := !stateExists
+	if stateExists {
+		for _, sid := range domainSIDs {
+			if _, exists := known[sid]; !exists {
+				hasNewSID = true
+				break
+			}
+		}
+	}
+	if !hasNewSID {
+		return result, nil
+	}
+
+	merged, err := supportingstate.Merge(statePath, current, domainSIDs)
+	if err != nil {
+		return result, err
+	}
+	result.CountAfter = len(merged.RelevantSIDs)
+	result.Updated = true
+	return result, nil
+}
+
 // saveSupportingSIDState persists the monotonic set of current-domain SIDs that
 // have become relevant to governed history on this host.
 //

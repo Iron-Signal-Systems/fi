@@ -18,6 +18,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
 )
 
@@ -51,11 +52,7 @@ type selectedUSNObject struct {
 }
 
 // spooledUSNReadBoundary records the exact bounded journal range and the
-// mechanical scope selection applied before FI writes object records. The raw
-// journal read remains volume-wide, but FI only spools objects whose current
-// object or recorded parent can be proven inside the governed root. If a parent
-// scope check fails unexpectedly, FI conservatively includes that object rather
-// than silently dropping a potentially relevant source change.
+// mechanical scope selection applied before FI writes object records.
 type spooledUSNReadBoundary struct {
 	ObservedAt                 string                 `json:"observed_at"`
 	CollectionMethod           string                 `json:"collection_method"`
@@ -75,9 +72,7 @@ type spooledUSNReadBoundary struct {
 }
 
 // spooledUSNObjectObservation keeps the raw USN facts for one selected NTFS
-// object beside the fresh File-ID observation attempt. ScopeBasis records the
-// mechanical reason the object was retained; FI does not infer what the change
-// means historically.
+// object beside the fresh File-ID observation attempt.
 type spooledUSNObjectObservation struct {
 	FileIdentity  records.NTFSObjectIdentity      `json:"file_identity"`
 	Changes       []records.USNChangeObservation  `json:"changes"`
@@ -91,27 +86,31 @@ type spooledUSNObjectObservation struct {
 }
 
 type usnSpoolNextSummary struct {
-	StatePath               string                          `json:"state_path"`
-	SpoolDir                string                          `json:"spool_dir"`
-	Assessment              checkpoint.ContinuityAssessment `json:"assessment"`
-	StartUSN                string                          `json:"start_usn"`
-	NextUSN                 string                          `json:"next_usn,omitempty"`
-	SourceUSNRecords        int                             `json:"source_usn_records"`
-	DistinctObjects         int                             `json:"distinct_objects"`
-	SelectedUSNRecords      int                             `json:"selected_usn_records"`
-	SelectedObjects         int                             `json:"selected_objects"`
-	IgnoredVolumeUSNRecords int                             `json:"ignored_volume_usn_records"`
-	IgnoredVolumeObjects    int                             `json:"ignored_volume_objects"`
-	ScopeUnresolvedObjects  int                             `json:"scope_unresolved_objects"`
-	SpooledObjects          int                             `json:"spooled_objects"`
-	OutsideScopeObjects     int                             `json:"outside_scope_objects"`
-	UnavailableObjects      int                             `json:"unavailable_objects"`
-	ReobservationErrors     int                             `json:"reobservation_errors"`
-	HashErrors              int                             `json:"hash_errors"`
-	Batches                 []spool.FinalizedBatch          `json:"batches"`
-	VerifiedBatches         int                             `json:"verified_batches"`
-	CheckpointAdvanced      bool                            `json:"checkpoint_advanced"`
-	AdvancedCheckpoint      *checkpoint.USNCheckpoint       `json:"advanced_checkpoint,omitempty"`
+	StatePath                 string                          `json:"state_path"`
+	SpoolDir                  string                          `json:"spool_dir"`
+	Assessment                checkpoint.ContinuityAssessment `json:"assessment"`
+	StartUSN                  string                          `json:"start_usn"`
+	NextUSN                   string                          `json:"next_usn,omitempty"`
+	SourceUSNRecords          int                             `json:"source_usn_records"`
+	DistinctObjects           int                             `json:"distinct_objects"`
+	SelectedUSNRecords        int                             `json:"selected_usn_records"`
+	SelectedObjects           int                             `json:"selected_objects"`
+	IgnoredVolumeUSNRecords   int                             `json:"ignored_volume_usn_records"`
+	IgnoredVolumeObjects      int                             `json:"ignored_volume_objects"`
+	ScopeUnresolvedObjects    int                             `json:"scope_unresolved_objects"`
+	SpooledObjects            int                             `json:"spooled_objects"`
+	OutsideScopeObjects       int                             `json:"outside_scope_objects"`
+	UnavailableObjects        int                             `json:"unavailable_objects"`
+	ReobservationErrors       int                             `json:"reobservation_errors"`
+	HashErrors                int                             `json:"hash_errors"`
+	Batches                   []spool.FinalizedBatch          `json:"batches"`
+	VerifiedBatches           int                             `json:"verified_batches"`
+	SupportingSIDStatePath    string                          `json:"supporting_sid_state_path,omitempty"`
+	SupportingSIDCountBefore  int                             `json:"supporting_sid_count_before"`
+	SupportingSIDCountAfter   int                             `json:"supporting_sid_count_after"`
+	SupportingSIDStateUpdated bool                            `json:"supporting_sid_state_updated"`
+	CheckpointAdvanced        bool                            `json:"checkpoint_advanced"`
+	AdvancedCheckpoint        *checkpoint.USNCheckpoint       `json:"advanced_checkpoint,omitempty"`
 }
 
 func runUSNSpoolNext(governedRoot string) {
@@ -126,7 +125,11 @@ func runUSNSpoolNext(governedRoot string) {
 	writeIndentedJSON(summary)
 }
 
-func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string) (usnSpoolNextSummary, error) {
+func writeUSNSpoolNext(
+	ctx context.Context,
+	scopeID string,
+	governedRoot string,
+) (usnSpoolNextSummary, error) {
 	statePath, err := checkpoint.DefaultPath(scopeID)
 	if err != nil {
 		return usnSpoolNextSummary{}, err
@@ -147,7 +150,12 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 		return summary, fmt.Errorf("%w: %s", ErrUSNContinuityGap, assessment.ReasonCode)
 	}
 
-	result, err := usn.ReadAndReobserveJournaled(ctx, scopeID, governedRoot, assessment.Checkpoint.NextUSN)
+	result, err := usn.ReadAndReobserveJournaled(
+		ctx,
+		scopeID,
+		governedRoot,
+		assessment.Checkpoint.NextUSN,
+	)
 	if err != nil {
 		return summary, err
 	}
@@ -200,10 +208,7 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 	summary.SpoolDir = dir
 
 	// If the bounded journal range contains no governed-root-relevant objects,
-	// there is nothing to hand to the shipper. FI advances over the ignored
-	// volume-wide noise without creating a batch. This prevents FI's own state,
-	// operation, resource, and spool writes from recursively generating more
-	// spool batches on the next pass.
+	// there are no newly observed governed NTFS security SIDs to retain.
 	if len(selected) == 0 {
 		refreshed, advanced, err := advanceUSNAfterScopeDecision(
 			ctx,
@@ -226,10 +231,14 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 	if err != nil {
 		return summary, err
 	}
-	writer, err := spool.NewWriter(dir, spool.DefaultBatchSize, spool.CollectorIdentity{
-		ExecutablePath:   executable.Path,
-		ExecutableSHA256: executable.SHA256,
-	})
+	writer, err := spool.NewWriter(
+		dir,
+		spool.DefaultBatchSize,
+		spool.CollectorIdentity{
+			ExecutablePath:   executable.Path,
+			ExecutableSHA256: executable.SHA256,
+		},
+	)
 	if err != nil {
 		return summary, err
 	}
@@ -280,9 +289,11 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 			NTFS:         reobservation.Observation,
 		}
 
-		if reobservation.Status == usn.ReobservationObserved && reobservation.Observation != nil {
+		if reobservation.Status == usn.ReobservationObserved &&
+			reobservation.Observation != nil {
 			if reobservation.Observation.ContentHashes == nil {
-				return summary, errors.New("USN re-observation missing integrated content hashes")
+				return summary,
+					errors.New("USN re-observation missing integrated content hashes")
 			}
 			hashes := *reobservation.Observation.ContentHashes
 			if err := records.ValidateContentHashObservation(hashes); err != nil {
@@ -292,9 +303,6 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 				summary.HashErrors++
 			}
 
-			// Preserve the established USN spool payload shape without a second
-			// source-file access. The integrated hashes were already collected by
-			// CollectFileReference before the re-observation returned.
 			spooledNTFS := *reobservation.Observation
 			spooledNTFS.ContentHashes = nil
 			record.NTFS = &spooledNTFS
@@ -317,9 +325,23 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 			return summary, err
 		}
 		if !verification.Verified {
-			return summary, errors.New("FI spool verification did not return verified=true")
+			return summary,
+				errors.New("FI spool verification did not return verified=true")
 		}
 		summary.VerifiedBatches++
+	}
+
+	// The source batch is now in durable verified FI custody. Only after that
+	// boundary may FI update the host-level relevant-SID state. If this state
+	// update fails, the USN checkpoint does not advance, so the bounded source
+	// range remains replayable rather than silently losing a newly relevant SID.
+	sidUpdate, err := mergeUSNObservedSIDsIntoSupportingState(selected)
+	summary.SupportingSIDStatePath = sidUpdate.Path
+	summary.SupportingSIDCountBefore = sidUpdate.CountBefore
+	summary.SupportingSIDCountAfter = sidUpdate.CountAfter
+	summary.SupportingSIDStateUpdated = sidUpdate.Updated
+	if err != nil {
+		return summary, err
 	}
 
 	refreshed, advanced, err := advanceUSNAfterScopeDecision(
@@ -339,6 +361,32 @@ func writeUSNSpoolNext(ctx context.Context, scopeID string, governedRoot string)
 	return summary, nil
 }
 
+func mergeUSNObservedSIDsIntoSupportingState(
+	selected []selectedUSNObject,
+) (supportingSIDStateMergeResult, error) {
+	observedSIDs := newObservedSIDSet()
+	for _, selection := range selected {
+		reobservation := selection.Reobservation
+		if reobservation.Status != usn.ReobservationObserved ||
+			reobservation.Observation == nil {
+			continue
+		}
+		addNTFSObservationSIDs(observedSIDs, *reobservation.Observation)
+	}
+	if len(observedSIDs.values) == 0 {
+		return supportingSIDStateMergeResult{}, nil
+	}
+
+	identity, err := process.CurrentIdentity()
+	if err != nil {
+		return supportingSIDStateMergeResult{}, fmt.Errorf(
+			"collector identity for supporting SID state: %w",
+			err,
+		)
+	}
+	return mergeSupportingSIDState(identity, observedSIDs)
+}
+
 func advanceUSNAfterScopeDecision(
 	ctx context.Context,
 	scopeID string,
@@ -347,19 +395,19 @@ func advanceUSNAfterScopeDecision(
 	assessment checkpoint.ContinuityAssessment,
 	batch records.USNReadBatch,
 ) (checkpoint.ContinuityAssessment, checkpoint.USNCheckpoint, error) {
-	// Refresh journal state after FI has written any durable spool output. The
-	// journal may have moved forward because FI's own operation/resource/state
-	// writes also touch the volume. The checkpoint still advances only through
-	// the exact bounded read represented by batch.NextUSN.
 	refreshed, err := checkpoint.Check(ctx, scopeID, governedRoot, statePath)
 	if err != nil {
-		return checkpoint.ContinuityAssessment{}, checkpoint.USNCheckpoint{}, err
+		return checkpoint.ContinuityAssessment{},
+			checkpoint.USNCheckpoint{}, err
 	}
 	if refreshed.Status != checkpoint.ContinuityContinuous {
-		return checkpoint.ContinuityAssessment{}, checkpoint.USNCheckpoint{}, fmt.Errorf("%w: %s", ErrUSNContinuityGap, refreshed.ReasonCode)
+		return checkpoint.ContinuityAssessment{},
+			checkpoint.USNCheckpoint{},
+			fmt.Errorf("%w: %s", ErrUSNContinuityGap, refreshed.ReasonCode)
 	}
 	if err := validateUSNNextBatch(refreshed, batch); err != nil {
-		return checkpoint.ContinuityAssessment{}, checkpoint.USNCheckpoint{}, err
+		return checkpoint.ContinuityAssessment{},
+			checkpoint.USNCheckpoint{}, err
 	}
 	advanced, err := checkpoint.Advance(
 		statePath,
@@ -368,7 +416,8 @@ func advanceUSNAfterScopeDecision(
 		batch.NextUSN,
 	)
 	if err != nil {
-		return checkpoint.ContinuityAssessment{}, checkpoint.USNCheckpoint{}, err
+		return checkpoint.ContinuityAssessment{},
+			checkpoint.USNCheckpoint{}, err
 	}
 	return refreshed, advanced, nil
 }
@@ -384,7 +433,8 @@ func selectUSNObjectForSpool(
 		Changes:       changes,
 	}
 
-	if reobservation.Status == usn.ReobservationObserved && reobservation.Observation != nil {
+	if reobservation.Status == usn.ReobservationObserved &&
+		reobservation.Observation != nil {
 		selection.ScopeBasis = scopeBasisCurrentObjectContained
 		return selection, true
 	}
@@ -425,7 +475,8 @@ func selectUSNObjectForSpool(
 		selection.ScopeBasis = scopeBasisUnresolvedIncluded
 		selection.ScopeDetail = unresolvedDetail
 		if selection.ScopeDetail == "" {
-			selection.ScopeDetail = "object had no USN changes available for recorded-parent scope proof"
+			selection.ScopeDetail =
+				"object had no USN changes available for recorded-parent scope proof"
 		}
 		return selection, true
 	}
@@ -448,7 +499,9 @@ func checkRecordedParentScope(
 	}
 
 	var ntfsErr *ntfs.Error
-	if errors.As(err, &ntfsErr) && ntfsErr.Stage == ntfs.StageOpen && ntfsErr.Op == "OpenFileById" {
+	if errors.As(err, &ntfsErr) &&
+		ntfsErr.Stage == ntfs.StageOpen &&
+		ntfsErr.Op == "OpenFileById" {
 		switch {
 		case errors.Is(err, syscall.ERROR_FILE_NOT_FOUND),
 			errors.Is(err, syscall.ERROR_PATH_NOT_FOUND),
@@ -456,13 +509,23 @@ func checkRecordedParentScope(
 			return parentScopeResult{Status: parentScopeUnavailable}
 		}
 	}
-	return parentScopeResult{Status: parentScopeError, Error: err.Error()}
+	return parentScopeResult{
+		Status: parentScopeError,
+		Error:  err.Error(),
+	}
 }
 
-func groupUSNChanges(changes []records.USNChangeObservation) map[records.NTFSObjectIdentity][]records.USNChangeObservation {
-	grouped := make(map[records.NTFSObjectIdentity][]records.USNChangeObservation)
+func groupUSNChanges(
+	changes []records.USNChangeObservation,
+) map[records.NTFSObjectIdentity][]records.USNChangeObservation {
+	grouped := make(
+		map[records.NTFSObjectIdentity][]records.USNChangeObservation,
+	)
 	for _, change := range changes {
-		grouped[change.FileIdentity] = append(grouped[change.FileIdentity], change)
+		grouped[change.FileIdentity] = append(
+			grouped[change.FileIdentity],
+			change,
+		)
 	}
 	return grouped
 }
