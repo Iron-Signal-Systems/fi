@@ -283,7 +283,7 @@ environment it actually understands.
 
 ---
 
-## FI, Atlas, and Sentinel — Observe, Decide, Act, Verify
+## FI, Atlas, and Sentinel — Observe, Decide, Govern, Act, Verify
 
 FI and Atlas remain read-only intelligence products even when Sentinel is
 present.
@@ -292,6 +292,11 @@ Their job is to detect, reconstruct, explain, and verify. They do not gain
 corrective authority merely because a controlled execution platform exists.
 
 The professional remains in the driver's seat.
+
+Sentinel is the governed action product. Its responsibility includes controlling
+access to supported managed platforms, determining whether the authenticated
+professional is authorized to perform the requested governed operation, and
+executing only the specifically authorized action.
 
 The intended Iron Signal Systems control model is:
 
@@ -304,9 +309,9 @@ Professional
 DECIDE what should be done
       |
       v
-DNP
+Sentinel
 GOVERN identity, authority, approval,
-and the exact permitted operation
+target, and exact permitted operation
       |
       v
 Sentinel
@@ -322,16 +327,18 @@ In this model:
 
 - FI and Atlas provide context, not authority;
 - the professional decides whether action is appropriate;
-- DNP determines whether the authenticated person may perform the exact governed
-  operation;
-- Sentinel provides the controlled execution path to the target platform;
+- Sentinel governs access to the managed platform and determines whether the
+  authenticated professional may perform the exact requested operation;
+- Sentinel executes only the operation that passed that governance boundary;
 - unrestricted platform access is not substituted for a governed operation;
+- possession of platform credentials does not itself create user authority;
 - the executed action is attributable and reviewable; and
 - FI or Atlas independently re-observes the environment rather than trusting an
   executor's claim that the intended state now exists.
 
-This creates separation between **knowing**, **deciding**, **authorizing**,
-**executing**, and **verifying**.
+This creates separation between **knowing**, **deciding**, **governing**,
+**executing**, and **verifying** while keeping governance and execution inside the
+Sentinel product boundary.
 
 That separation is intentional.
 
@@ -346,7 +353,8 @@ The long-term value of the ISS products is not that one platform attempts to own
 every domain.
 
 The value comes from separately trustworthy products being able to contribute to
-a larger operational picture.
+a larger operational picture while Sentinel provides the controlled path for
+authorized action.
 
 ```text
 FI
@@ -362,10 +370,13 @@ Infrastructure / Path / Policy / Dependency
 Professional Decision
         |
         v
-Governed Authorization
+Sentinel
+Governed Platform Access
+Authorized Operation
+Controlled Execution
         |
         v
-Sentinel Execution
+Target Platform
         |
         v
 Independent FI / Atlas Verification
@@ -376,8 +387,13 @@ move from a file or identity question into the related infrastructure context,
 or from an infrastructure problem into the affected file and access context,
 without surrendering control of the decision to the software.
 
-The goal is better understanding, faster investigation, safer decisions, and
-controlled execution — not autonomous administration.
+Sentinel should provide the governed route into supported platforms rather than
+requiring routine unrestricted administrative access as the normal operating
+model. The professional still chooses the action; Sentinel controls whether that
+action is permitted and how the approved operation reaches the platform.
+
+The goal is better understanding, faster investigation, safer decisions, governed
+platform access, and controlled execution — not autonomous administration.
 
 ---
 
@@ -396,8 +412,8 @@ Success means:
 - collection remains bounded and operationally responsible;
 - FI remains read-only toward the customer environment;
 - professionals retain decision authority; and
-- integration with Atlas, Sentinel, or other ISS products increases context or
-  control without weakening the independent boundaries of any product.
+- integration with Atlas or Sentinel increases context or control without
+  weakening the independent boundaries of any product.
 
 FI should reduce the time required to understand a file environment without
 replacing the judgment of the professionals responsible for it.
