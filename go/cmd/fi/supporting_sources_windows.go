@@ -23,7 +23,10 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/supportingstate"
 )
 
-const maxBaselineObservedSIDs = 262144
+const (
+	maxBaselineObservedSIDs = 262144
+	directorySIDBatchSize   = 16384
+)
 
 // supportingSourceContext contains the slower-changing source facts collected
 // alongside a governed-root baseline. It is deliberately separate from NTFS
@@ -39,13 +42,22 @@ type supportingSourceContext struct {
 	ObservedSIDs        *observedSIDSet
 }
 
-// directorySourceResult keeps directory-source success separate from an explicit
-// source error. Directory failure is not allowed to erase otherwise usable
-// baseline source facts.
+// directorySourceResult keeps each bounded directory read as its own source
+// snapshot. FI does not fabricate one synthetic LDAP observation by merging
+// snapshots that may have different source times or directory-server facts.
+//
+// Error can coexist with completed Snapshots. That preserves successfully
+// collected source facts when a later bounded directory read fails.
 type directorySourceResult struct {
-	Snapshot *records.DirectoryPrincipalSnapshot
-	Error    string
+	Snapshots []records.DirectoryPrincipalSnapshot
+	Error     string
 }
+
+type directoryPrincipalCollector func(
+	context.Context,
+	string,
+	[]string,
+) (records.DirectoryPrincipalSnapshot, error)
 
 type observedSIDSet struct {
 	values   map[string]struct{}
@@ -119,46 +131,85 @@ func collectSupportingSourceContext(ctx context.Context) (supportingSourceContex
 // observed from collector identity, SMB security, local identity, and NTFS
 // security. It does not turn the collector into a general AD inventory.
 //
-// The caller may add additional observed SIDs before calling this function. The
-// baseline does that while NTFS observations stream.
+// One LDAP source call remains bounded to directorySIDBatchSize seed SIDs. A
+// larger FI relevant-SID set is processed as multiple independent snapshots so
+// the collector never silently truncates relevant SIDs and never invents one
+// combined source observation from several LDAP reads.
 func collectDirectorySource(
 	ctx context.Context,
 	identity records.ProcessIdentityObservation,
 	observedSIDs *observedSIDSet,
 ) directorySourceResult {
+	return collectDirectorySourceWithCollector(
+		ctx,
+		identity,
+		observedSIDs,
+		directory.CollectCurrentDomainPrincipals,
+	)
+}
+
+func collectDirectorySourceWithCollector(
+	ctx context.Context,
+	identity records.ProcessIdentityObservation,
+	observedSIDs *observedSIDSet,
+	collector directoryPrincipalCollector,
+) directorySourceResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	result := directorySourceResult{
+		Snapshots: []records.DirectoryPrincipalSnapshot{},
+	}
 	if observedSIDs == nil {
-		return directorySourceResult{Error: "DirectoryObservedSIDsUnavailable"}
+		result.Error = "DirectoryObservedSIDsUnavailable"
+		return result
+	}
+	if collector == nil {
+		result.Error = "DirectoryCollectorUnavailable"
+		return result
 	}
 
 	directorySIDs := currentDomainObservedSIDs(identity, observedSIDs.values)
 
 	switch {
 	case observedSIDs.overflow:
-		return directorySourceResult{
-			Error: fmt.Sprintf(
-				"DirectorySIDCandidateLimitExceeded:%d",
-				maxBaselineObservedSIDs,
-			),
-		}
+		result.Error = fmt.Sprintf(
+			"DirectorySIDCandidateLimitExceeded:%d",
+			maxBaselineObservedSIDs,
+		)
+		return result
 	case identity.Computer.DNSDomain == "":
-		return directorySourceResult{Error: "DirectoryDomainDNSNameUnavailable"}
+		result.Error = "DirectoryDomainDNSNameUnavailable"
+		return result
 	case len(directorySIDs) == 0:
-		return directorySourceResult{Error: "DirectoryDomainSIDsUnavailable"}
+		result.Error = "DirectoryDomainSIDsUnavailable"
+		return result
 	}
 
-	snapshot, err := directory.CollectCurrentDomainPrincipals(
-		ctx,
-		identity.Computer.DNSDomain,
-		directorySIDs,
-	)
-	if err != nil {
-		return directorySourceResult{Error: err.Error()}
+	for start := 0; start < len(directorySIDs); start += directorySIDBatchSize {
+		if err := ctx.Err(); err != nil {
+			result.Error = err.Error()
+			return result
+		}
+
+		end := start + directorySIDBatchSize
+		if end > len(directorySIDs) {
+			end = len(directorySIDs)
+		}
+
+		snapshot, err := collector(
+			ctx,
+			identity.Computer.DNSDomain,
+			directorySIDs[start:end],
+		)
+		if err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		result.Snapshots = append(result.Snapshots, snapshot)
 	}
 
-	return directorySourceResult{Snapshot: &snapshot}
+	return result
 }
 
 func addProcessIdentitySIDs(set *observedSIDSet, identity records.ProcessIdentityObservation) {
@@ -269,7 +320,7 @@ func accountDomainSIDPrefix(sid string) (string, bool) {
 	return strings.Join(parts[:7], "-"), true
 }
 
-// addDirectoryPrincipalSIDs retains every domain SID returned by the bounded
+// addDirectoryPrincipalSIDs retains every domain SID returned by one bounded
 // directory lookup. These are still source principals/direct-membership facts;
 // FI does not calculate transitive membership here.
 func addDirectoryPrincipalSIDs(
@@ -314,6 +365,12 @@ func loadSupportingSIDState(
 		return "", 0, err
 	}
 	current, err := supportingstate.Load(statePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return statePath, 0, fmt.Errorf(
+			"supporting SID state is unavailable at %s; complete a durable baseline before supporting-source refresh",
+			statePath,
+		)
+	}
 	if err != nil {
 		return statePath, 0, err
 	}

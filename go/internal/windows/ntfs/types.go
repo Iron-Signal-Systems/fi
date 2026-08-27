@@ -37,8 +37,11 @@ const (
 // regular file FI reopens the same exact NTFS object identity with GENERIC_READ
 // while the original observation handle is still open, reads the unnamed/default
 // $DATA stream once, and calculates MD5, SHA-1, and SHA-256 in that one read.
-// Directories report NotApplicable. Content hash state is independent from the
-// structural NTFS ObservationStatus and carries its own explicit Error state.
+// Directories report NotApplicable. A content-hash source failure carries its
+// own explicit Error state and also makes the enclosing object observation
+// Partial with ContentHashFailed; FI does not report a hash-failed file
+// observation as fully Complete. Context cancellation is operation control flow
+// and is returned as an error rather than converted into a content-source error.
 //
 // CollectionEntryMethod records whether the initial target handle came from a
 // caller path or from OpenFileById. Both entry methods feed the same opened-

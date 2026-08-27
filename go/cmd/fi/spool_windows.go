@@ -149,7 +149,7 @@ func writeSpoolRoot(
 			}
 
 			// These SIDs are used only to select the relevant current-domain
-			// principals for the final baseline directory snapshot.
+			// principals for the final baseline directory snapshots.
 			addNTFSObservationSIDs(supporting.ObservedSIDs, observation)
 
 			// Keep the established FileObservation spool payload shape while
@@ -178,10 +178,10 @@ func writeSpoolRoot(
 			supporting.CollectorIdentity,
 			supporting.ObservedSIDs,
 		)
-		if directorySource.Snapshot != nil {
+		for _, snapshot := range directorySource.Snapshots {
 			addDirectoryPrincipalSIDs(
 				supporting.ObservedSIDs,
-				*directorySource.Snapshot,
+				snapshot,
 			)
 		}
 		directoryErr = appendDirectorySource(
@@ -305,6 +305,10 @@ func appendSupportingSourceStart(
 	return nil
 }
 
+// appendDirectorySource writes every successfully completed bounded directory
+// snapshot, then preserves an explicit source error if a later batch failed.
+// Successful source facts are never thrown away merely because a later LDAP
+// request could not complete.
 func appendDirectorySource(
 	writer *spool.Writer,
 	scopeID string,
@@ -318,6 +322,17 @@ func appendDirectorySource(
 		return errors.New("spool summary is required")
 	}
 
+	for _, snapshot := range source.Snapshots {
+		if err := writer.Append(
+			"DirectoryPrincipalSnapshot",
+			scopeID,
+			snapshot,
+		); err != nil {
+			return err
+		}
+		summary.DirectoryPrincipalRecords++
+	}
+
 	if source.Error != "" {
 		if err := appendSupportingSourceError(
 			writer,
@@ -328,21 +343,11 @@ func appendDirectorySource(
 			return err
 		}
 		summary.SupportingSourceErrors++
-		return nil
 	}
 
-	if source.Snapshot == nil {
+	if len(source.Snapshots) == 0 && source.Error == "" {
 		return errors.New("directory source contains neither snapshot nor explicit error")
 	}
-
-	if err := writer.Append(
-		"DirectoryPrincipalSnapshot",
-		scopeID,
-		*source.Snapshot,
-	); err != nil {
-		return err
-	}
-	summary.DirectoryPrincipalRecords++
 	return nil
 }
 

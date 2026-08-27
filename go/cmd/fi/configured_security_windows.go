@@ -10,11 +10,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/securityevent"
-	"strconv"
 )
 
 const configuredSecurityScopeID = "windows-security-local"
@@ -31,6 +32,7 @@ type configuredSecurityReconciliation struct {
 	GovernedRoot string          `json:"governed_root"`
 	Snapshot     spoolRunSummary `json:"snapshot"`
 }
+
 type configuredSecuritySummary struct {
 	StatePath               string                                           `json:"state_path"`
 	OperationJournal        string                                           `json:"operation_journal"`
@@ -47,6 +49,7 @@ type configuredSecuritySummary struct {
 	ContinuityGapSpool      *windowsSecurityGapSpoolSummary                  `json:"continuity_gap_spool,omitempty"`
 	Reconciliation          []configuredSecurityReconciliation               `json:"reconciliation"`
 	RecoveryCoverageSpool   *windowsSecurityGapSpoolSummary                  `json:"recovery_coverage_spool,omitempty"`
+	ReadWindows             int                                              `json:"read_windows"`
 	SourceMatchingEvents    int                                              `json:"source_matching_events"`
 	SelectedEvents          int                                              `json:"selected_events"`
 	IgnoredEvents           int                                              `json:"ignored_events"`
@@ -59,6 +62,7 @@ type configuredSecuritySummary struct {
 	Error                   string                                           `json:"error,omitempty"`
 	Semantics               string                                           `json:"semantics"`
 }
+
 type configuredSecurityPrepared struct {
 	Summary       configuredSecuritySummary
 	Checkpoint    securityevent.Checkpoint
@@ -72,12 +76,22 @@ func configuredSecurityScopes(roots []string) []securityevent.GovernedScope {
 	}
 	return r
 }
+
 func prepareConfiguredSecurity() (configuredSecurityPrepared, error) {
 	statePath, err := securityevent.DefaultCheckpointPath()
 	if err != nil {
 		return configuredSecurityPrepared{}, err
 	}
-	summary := configuredSecuritySummary{StatePath: statePath, Batches: []spool.FinalizedBatch{}, Reconciliation: []configuredSecurityReconciliation{}, RecoveredOperations: []records.OperationRecord{}, Operations: []records.OperationRecord{}, Semantics: "FI anchors the local Windows Security channel before configured root processing, then reads through a fixed post-root target. Major Security catch-up and reconciliation operations use the append-only FI operation journal. Missing historical Security events remain explicitly incomplete and are never reconstructed from current state."}
+	summary := configuredSecuritySummary{
+		StatePath:           statePath,
+		Batches:             []spool.FinalizedBatch{},
+		Reconciliation:      []configuredSecurityReconciliation{},
+		RecoveredOperations: []records.OperationRecord{},
+		Operations:          []records.OperationRecord{},
+		Semantics: "FI anchors the local Windows Security channel before configured root processing, then reads through a fixed post-root target. " +
+			"Continuous catch-up is divided into bounded EventRecordID windows; each window is durably spooled and verified before its checkpoint boundary advances. " +
+			"Major Security catch-up and reconciliation operations use the append-only FI operation journal. Missing historical Security events remain explicitly incomplete and are never reconstructed from current state.",
+	}
 	journalPath, recovered, err := recoverConfiguredOperations(configuredSecurityScopeID)
 	summary.OperationJournal = journalPath
 	summary.RecoveredOperations = recovered
@@ -119,6 +133,7 @@ func prepareConfiguredSecurity() (configuredSecurityPrepared, error) {
 	prepared.Summary.StartAfterEventRecordID = prepared.Checkpoint.LastEventRecordID
 	return prepared, nil
 }
+
 func finishConfiguredSecurity(ctx context.Context, prepared configuredSecurityPrepared, scopes []securityevent.GovernedScope) (configuredSecuritySummary, error) {
 	summary := prepared.Summary
 	if err := ctx.Err(); err != nil {
@@ -140,15 +155,24 @@ func finishConfiguredSecurity(ctx context.Context, prepared configuredSecurityPr
 	case targetAssessment.Status == securityevent.ContinuityGap:
 		return reconcileConfiguredSecurityGap(ctx, summary, targetAssessment, target, scopes)
 	}
-	opRecord, opErr := runConfiguredOperation(configuredSecurityScopeID, records.OperationWindowsSecurityCatchUp, func() error { return finishConfiguredSecurityContinuous(ctx, &summary, prepared, target, scopes) })
-	summary.Operations = append(summary.Operations, opRecord)
+	opRecord, opErr := runConfiguredOperation(configuredSecurityScopeID, records.OperationWindowsSecurityCatchUp, func() error {
+		return finishConfiguredSecurityContinuous(ctx, &summary, prepared, target, scopes)
+	})
+	summary.Operations = appendConfiguredOperation(summary.Operations, opRecord)
 	if opErr != nil {
 		return summary, opErr
 	}
 	summary.Status = configuredSecurityComplete
 	return summary, nil
 }
-func finishConfiguredSecurityContinuous(ctx context.Context, summary *configuredSecuritySummary, prepared configuredSecurityPrepared, target securityevent.LogState, scopes []securityevent.GovernedScope) error {
+
+func finishConfiguredSecurityContinuous(
+	ctx context.Context,
+	summary *configuredSecuritySummary,
+	prepared configuredSecurityPrepared,
+	target securityevent.LogState,
+	scopes []securityevent.GovernedScope,
+) error {
 	start, err := strconv.ParseUint(prepared.Checkpoint.LastEventRecordID, 10, 64)
 	if err != nil {
 		return err
@@ -157,27 +181,10 @@ func finishConfiguredSecurityContinuous(ctx context.Context, summary *configured
 	if err != nil {
 		return err
 	}
-	events, err := securityevent.ReadSelectedEvents(start, through)
-	if err != nil {
-		return err
+	if start > through {
+		return errors.New("Windows Security continuous catch-up start is ahead of fixed target")
 	}
-	summary.SourceMatchingEvents = len(events)
-	selected := make([]records.WindowsSecurityEventObservation, 0, len(events))
-	for _, event := range events {
-		value, keep := securityevent.SelectEvent(event, scopes)
-		if !keep {
-			summary.IgnoredEvents++
-			continue
-		}
-		if value.ScopeBasis == records.WindowsSecurityScopeUnresolvedFileDeleteIncluded {
-			summary.UnresolvedFileDeletes++
-		}
-		if err := records.ValidateWindowsSecurityEventObservation(value); err != nil {
-			return err
-		}
-		selected = append(selected, value)
-	}
-	summary.SelectedEvents = len(selected)
+
 	coverage, err := securityevent.AssessCoverage(ctx, scopes)
 	if err != nil {
 		return err
@@ -186,6 +193,7 @@ func finishConfiguredSecurityContinuous(ctx context.Context, summary *configured
 		return err
 	}
 	summary.Coverage = &coverage
+
 	spoolDir, err := spool.DefaultDir()
 	if err != nil {
 		return err
@@ -194,50 +202,144 @@ func finishConfiguredSecurityContinuous(ctx context.Context, summary *configured
 	if err != nil {
 		return err
 	}
-	writer, err := spool.NewWriter(spoolDir, spool.DefaultBatchSize, spool.CollectorIdentity{ExecutablePath: executable.Path, ExecutableSHA256: executable.SHA256})
-	if err != nil {
-		return err
-	}
-	closeNeeded := true
-	defer func() {
-		if closeNeeded {
-			_ = writer.Close()
-		}
-	}()
-	if err := writer.Append("WindowsSecurityCoverage", configuredSecurityScopeID, coverage); err != nil {
-		return err
-	}
-	for _, event := range selected {
-		if err := writer.Append("WindowsSecurityEvent", configuredSecurityScopeID, event); err != nil {
+
+	current := prepared.Checkpoint
+	windowStart := start
+	firstWindow := true
+	for firstWindow || windowStart < through {
+		firstWindow = false
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	closeNeeded = false
-	summary.Batches = writer.FinalizedBatches()
-	for _, batch := range summary.Batches {
-		verification, err := spool.VerifyManifest(batch.ManifestPath)
+
+		windowEnd := nextConfiguredSecurityWindowEnd(windowStart, through)
+
+		// Reassess continuity at every accepted window boundary. If the live log
+		// has already lost the next required record range, stop rather than
+		// advancing a checkpoint through missing history. The next configured
+		// run will persist/reconcile the continuity gap through the normal path.
+		liveState, err := securityevent.QueryLogState()
 		if err != nil {
 			return err
 		}
-		if !verification.Verified {
-			return errors.New("Windows Security spool batch verification did not confirm the batch")
+		assessment, err := securityevent.AssessCheckpoint(current, liveState)
+		if err != nil {
+			return err
 		}
-		summary.VerifiedBatches++
+		if assessment.Status == securityevent.ContinuityGap {
+			return fmt.Errorf(
+				"Windows Security continuity changed during bounded catch-up: %s",
+				assessment.ReasonCode,
+			)
+		}
+
+		events, err := securityevent.ReadSelectedEvents(windowStart, windowEnd)
+		if err != nil {
+			return err
+		}
+		summary.SourceMatchingEvents += len(events)
+
+		writer, err := spool.NewWriter(
+			spoolDir,
+			spool.DefaultBatchSize,
+			spool.CollectorIdentity{
+				ExecutablePath:   executable.Path,
+				ExecutableSHA256: executable.SHA256,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		windowErr := writer.Append(
+			"WindowsSecurityCoverage",
+			configuredSecurityScopeID,
+			coverage,
+		)
+		if windowErr == nil {
+			for _, event := range events {
+				value, keep := securityevent.SelectEvent(event, scopes)
+				if !keep {
+					summary.IgnoredEvents++
+					continue
+				}
+				if value.ScopeBasis == records.WindowsSecurityScopeUnresolvedFileDeleteIncluded {
+					summary.UnresolvedFileDeletes++
+				}
+				if err := records.ValidateWindowsSecurityEventObservation(value); err != nil {
+					windowErr = err
+					break
+				}
+				if err := writer.Append(
+					"WindowsSecurityEvent",
+					configuredSecurityScopeID,
+					value,
+				); err != nil {
+					windowErr = err
+					break
+				}
+				summary.SelectedEvents++
+			}
+		}
+
+		closeErr := writer.Close()
+		windowBatches := writer.FinalizedBatches()
+		summary.Batches = append(summary.Batches, windowBatches...)
+		if err := errors.Join(windowErr, closeErr); err != nil {
+			return err
+		}
+
+		verifiedThisWindow := 0
+		for _, batch := range windowBatches {
+			verification, err := spool.VerifyManifest(batch.ManifestPath)
+			if err != nil {
+				return err
+			}
+			if !verification.Verified {
+				return errors.New("Windows Security spool batch verification did not confirm the batch")
+			}
+			verifiedThisWindow++
+			summary.VerifiedBatches++
+		}
+		if verifiedThisWindow != len(windowBatches) {
+			return errors.New("not every Windows Security spool batch in the bounded window verified")
+		}
+		if len(windowBatches) == 0 {
+			return errors.New("Windows Security bounded window produced no durable spool batch")
+		}
+
+		advanced, err := securityevent.AdvanceCheckpoint(
+			summary.StatePath,
+			current.LastEventRecordID,
+			strconv.FormatUint(windowEnd, 10),
+		)
+		if err != nil {
+			return err
+		}
+		current = advanced
+		summary.CheckpointAdvanced = true
+		summary.FinalCheckpoint = &current
+		summary.ReadWindows++
+
+		if windowEnd == through {
+			break
+		}
+		windowStart = windowEnd
 	}
-	if summary.VerifiedBatches != len(summary.Batches) {
-		return errors.New("not every Windows Security spool batch verified")
-	}
-	advanced, err := securityevent.AdvanceCheckpoint(summary.StatePath, prepared.Checkpoint.LastEventRecordID, target.NewestEventRecordID)
-	if err != nil {
-		return err
-	}
-	summary.CheckpointAdvanced = true
-	summary.FinalCheckpoint = &advanced
+
 	return nil
 }
+
+func nextConfiguredSecurityWindowEnd(start, target uint64) uint64 {
+	if start >= target {
+		return target
+	}
+	if target-start <= securityevent.MaxReadRecordIDSpan {
+		return target
+	}
+	return start + securityevent.MaxReadRecordIDSpan
+}
+
 func reconcileConfiguredSecurityGap(ctx context.Context, summary configuredSecuritySummary, gapAssessment securityevent.ContinuityAssessment, target securityevent.LogState, scopes []securityevent.GovernedScope) (configuredSecuritySummary, error) {
 	gap, err := newWindowsSecurityContinuityGapObservation(gapAssessment)
 	if err != nil {
@@ -294,7 +396,7 @@ func reconcileConfiguredSecurityGap(ctx context.Context, summary configuredSecur
 		summary.FinalCheckpoint = &persisted
 		return nil
 	})
-	summary.Operations = append(summary.Operations, opRecord)
+	summary.Operations = appendConfiguredOperation(summary.Operations, opRecord)
 	if opErr != nil {
 		return summary, opErr
 	}

@@ -99,9 +99,15 @@ func validateObservationConsistency(observation Observation) error {
 		return conflict("reparse")
 	}
 
+	contentHashFailure := observation.ContentHashes != nil &&
+		observation.ContentHashes.State == records.ContentHashError
+	if contentHashFailure != has("ContentHashFailed") {
+		return conflict("content_hashes")
+	}
+
 	partialCondition := parentError || streamError || securityReadError || securityParseFailure ||
 		saclReadError || saclParseFailure || reparseReadError || reparseParseFailure ||
-		has("PathConsistencyNotVerified")
+		contentHashFailure || has("PathConsistencyNotVerified")
 
 	switch observation.ObservationStatus {
 	case records.ObservationComplete:

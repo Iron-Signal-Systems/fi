@@ -8,6 +8,7 @@ package ntfs
 
 import (
 	"context"
+	"sort"
 	"syscall"
 	"time"
 
@@ -59,11 +60,51 @@ func collectOpenedTargetWithContentHashes(
 	}
 
 	observation.ContentHashes = &hashes
+	applyContentHashOutcome(&observation, hashes)
 	observation.ObservedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
 	if err := ValidateObservation(observation); err != nil {
 		return Observation{}, &Error{Stage: StageMetadata, Op: "ValidateObservationWithContentHashes", Err: err}
 	}
 	return observation, nil
+}
+
+// applyContentHashOutcome keeps content-hash failure visible at the whole-object
+// observation boundary. The detailed hash record still carries the exact
+// reason, while ContentHashFailed prevents a failed file-content read from being
+// represented as a fully Complete observation.
+func applyContentHashOutcome(
+	observation *Observation,
+	hashes records.ContentHashObservation,
+) {
+	if observation == nil || hashes.State != records.ContentHashError {
+		return
+	}
+
+	detail := hashes.ReasonCode
+	if hashes.Detail != "" {
+		if detail != "" {
+			detail += ": "
+		}
+		detail += hashes.Detail
+	}
+	observation.Warnings = append(
+		observation.Warnings,
+		records.ObservationWarning{
+			Code:   "ContentHashFailed",
+			Detail: detail,
+		},
+	)
+
+	// ReplacedDuringCollection is a stronger path/object state and already
+	// prevents Complete from being claimed. All other statuses become Partial
+	// when the integrated content observation failed.
+	if observation.ObservationStatus != records.ObservationReplacedDuringCollection {
+		observation.ObservationStatus = records.ObservationPartial
+	}
+
+	sort.Slice(observation.Warnings, func(i, j int) bool {
+		return observation.Warnings[i].Code < observation.Warnings[j].Code
+	})
 }
 
 // CollectPathStructural is a diagnostic-only structural collection entry point.

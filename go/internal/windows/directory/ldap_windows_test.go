@@ -15,20 +15,13 @@ func TestFormatWindowsGUID(t *testing.T) {
 	}
 }
 
-func TestPrimaryGroupSID(t *testing.T) {
-	got, err := primaryGroupSID("S-1-5-21-1-2-3-1106", "513")
-	if err != nil {
-		t.Fatal(err)
+func TestPrincipalLDAPAttributesPreservePrimaryGroupIDRaw(t *testing.T) {
+	for _, attr := range principalLDAPAttributes() {
+		if attr == "primaryGroupID" {
+			return
+		}
 	}
-	if want := "S-1-5-21-1-2-3-513"; got != want {
-		t.Fatalf("primary group SID = %q, want %q", got, want)
-	}
-}
-
-func TestPrimaryGroupSIDRejectsNonDomainSID(t *testing.T) {
-	if _, err := primaryGroupSID("S-1-5-32-544", "513"); err == nil {
-		t.Fatal("expected non-domain SID rejection")
-	}
+	t.Fatal("principal LDAP attributes do not include primaryGroupID")
 }
 
 func TestLDAPFilterEscapeValue(t *testing.T) {

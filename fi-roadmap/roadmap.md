@@ -23,6 +23,10 @@ investigation.
 - Current-state views are rebuildable projections of immutable history.
 - FI collects Windows activity because it concerns governed objects, not to act
   as a general Windows event collector or SIEM.
+- Source collectors preserve source facts and may perform deterministic decoding
+  of documented values from the same source. Cross-source correlation,
+  effective-access conclusions, intent, causality, and reconstruction of missing
+  history belong outside the source collector.
 
 ---
 
@@ -31,13 +35,20 @@ investigation.
 FI is currently focused on **Phase 1 / Gate 1**.
 
 The core Windows/NTFS collector, durable local spool, normal checkpoint
-continuity, explicit USN and Windows Security continuity-gap recovery, and major
-operation lifecycle journaling are implemented and have live validation on the
-current Windows Server 2016 development system.
+continuity, explicit USN and Windows Security continuity-gap recovery, major
+operation lifecycle journaling, and an explicit one-shot supporting-source
+refresh operation are implemented.
+
+The supporting-source refresh captures current SMB, local-identity, and relevant
+AD source facts without inventing a collector cadence. Relevant AD SID state is
+retained as bounded FI operational state and directory reads are split into
+bounded source snapshots rather than silently truncating a larger relevant-SID
+set.
 
 Remaining Gate 1 work is primarily:
 
-- bounded refresh of SMB, local-identity, and relevant AD source facts;
+- live/operational validation and later service scheduling of supporting-source
+  refresh;
 - completion of the governed-file activity validation matrix;
 - Windows service runtime;
 - gMSA and least-privilege validation;
@@ -62,6 +73,7 @@ Phase 1 owns:
 - security descriptors and ACLs;
 - share exposure and share security;
 - local and directory identity source facts;
+- bounded refresh of slower-changing SMB/local/AD supporting source facts;
 - USN-driven change detection and re-observation;
 - governed-file access/activity source facts;
 - source checkpoints and continuity assessment;

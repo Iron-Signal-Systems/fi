@@ -63,8 +63,10 @@ func writeSupportingSourceRefresh(
 		Batches:             []spool.FinalizedBatch{},
 		Semantics: "FI refreshes current SMB, local-identity, and bounded AD source facts. " +
 			"Previously relevant domain SIDs remain in FI-owned operational state so " +
-			"historical identities are not silently forgotten. No transitive membership " +
-			"or effective-access conclusion is calculated by this operation.",
+			"historical identities are not silently forgotten. Large relevant-SID sets " +
+			"are read as separate bounded directory snapshots rather than one synthetic " +
+			"LDAP observation. No transitive membership or effective-access conclusion " +
+			"is calculated by this operation.",
 	}
 
 	journalPath, err := operation.DefaultJournalPath(supportingSourceRefreshScopeID)
@@ -167,10 +169,10 @@ func collectSupportingSourceRefresh(
 		supporting.CollectorIdentity,
 		supporting.ObservedSIDs,
 	)
-	if directorySource.Snapshot != nil {
+	for _, snapshot := range directorySource.Snapshots {
 		addDirectoryPrincipalSIDs(
 			supporting.ObservedSIDs,
-			*directorySource.Snapshot,
+			snapshot,
 		)
 	}
 

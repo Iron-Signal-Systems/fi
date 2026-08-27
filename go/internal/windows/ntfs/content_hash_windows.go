@@ -23,6 +23,18 @@ import (
 
 const contentHashBufferSize = 1024 * 1024
 
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
+}
+
 // CollectContentHashes is retained as a focused hash entry point for tests and
 // callers that intentionally need only content fingerprints. Normal FI object
 // collection now hashes before CollectPath/CollectFileReference returns, so the
@@ -117,8 +129,18 @@ func collectContentHashesOpened(
 	sha1Hash := sha1.New()
 	sha256Hash := sha256.New()
 	writer := io.MultiWriter(md5Hash, sha1Hash, sha256Hash)
-	bytesHashed, readErr := io.CopyBuffer(writer, file, make([]byte, contentHashBufferSize))
+	bytesHashed, readErr := io.CopyBuffer(
+		writer,
+		contextReader{ctx: ctx, reader: file},
+		make([]byte, contentHashBufferSize),
+	)
 	if readErr != nil {
+		// Context cancellation is collector control flow, not a source-file hash
+		// failure. Propagate it so the surrounding bounded operation stops rather
+		// than recording ContentReadFailed for an intentional cancellation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return records.ContentHashObservation{}, ctxErr
+		}
 		return contentHashError("ContentReadFailed", readErr), nil
 	}
 	if err := validateContext(ctx); err != nil {

@@ -28,6 +28,11 @@ const (
 	evtLogOldestRecordNumber = 6
 	errorInsufficientBuffer  = syscall.Errno(122)
 	errorNoMoreItems         = syscall.Errno(259)
+
+	// MaxReadRecordIDSpan bounds one Windows Security query by EventRecordID
+	// distance. Configured catch-up advances through repeated verified windows so
+	// a large backlog cannot require one unbounded in-memory event slice.
+	MaxReadRecordIDSpan uint64 = 10000
 )
 
 var (
@@ -111,6 +116,15 @@ func ReadSelectedEvents(startAfterRecordID, throughRecordID uint64) ([]records.W
 	if startAfterRecordID >= throughRecordID {
 		return []records.WindowsSecurityEventObservation{}, nil
 	}
+	span := throughRecordID - startAfterRecordID
+	if span > MaxReadRecordIDSpan {
+		return nil, fmt.Errorf(
+			"Windows Security read range exceeds bounded EventRecordID span: %d > %d",
+			span,
+			MaxReadRecordIDSpan,
+		)
+	}
+
 	channel, err := syscall.UTF16PtrFromString(securityChannel)
 	if err != nil {
 		return nil, err

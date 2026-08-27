@@ -50,12 +50,13 @@ func runBaselineRoot(governedRoot string) {
 // writeBaselineRoot records collector identity, local SMB share state, local
 // principals/direct local-group membership, and the governed NTFS baseline.
 // While those source facts stream, FI gathers the unique SIDs it actually saw.
-// After the NTFS walk completes, those observed current-domain SIDs seed one AD
-// snapshot containing principals plus direct AD membership edges.
+// After the NTFS walk completes, observed current-domain SIDs seed bounded AD
+// source reads containing principals plus direct AD membership edges.
 //
 // The NTFS observations continue to stream and are never retained as one giant
-// in-memory baseline. Only the bounded unique SID set is retained for the later
-// directory lookup.
+// in-memory baseline. Only the bounded unique SID set is retained for later
+// directory lookup. Directory reads remain separate observations rather than
+// being merged into a synthetic snapshot.
 //
 // Process identity is required. SMB, local-identity, and directory collection
 // failures are emitted explicitly and do not discard an otherwise valid NTFS
@@ -136,14 +137,25 @@ func writeBaselineRoot(ctx context.Context, writer io.Writer, governedRoot strin
 		supporting.CollectorIdentity,
 		supporting.ObservedSIDs,
 	)
-	directoryEvent := baselineEvent{Kind: baselineKindDirectoryPrincipals}
-	if directorySource.Error != "" {
-		directoryEvent.Error = directorySource.Error
-	} else {
-		directoryEvent.DirectoryPrincipals = directorySource.Snapshot
+	for index := range directorySource.Snapshots {
+		snapshot := directorySource.Snapshots[index]
+		if err := encoder.Encode(baselineEvent{
+			Kind:                baselineKindDirectoryPrincipals,
+			DirectoryPrincipals: &snapshot,
+		}); err != nil {
+			return fmt.Errorf("encode directory principal snapshot: %w", err)
+		}
 	}
-	if err := encoder.Encode(directoryEvent); err != nil {
-		return fmt.Errorf("encode directory principal snapshot: %w", err)
+	if directorySource.Error != "" {
+		if err := encoder.Encode(baselineEvent{
+			Kind:  baselineKindDirectoryPrincipals,
+			Error: directorySource.Error,
+		}); err != nil {
+			return fmt.Errorf("encode directory principal source error: %w", err)
+		}
+	}
+	if len(directorySource.Snapshots) == 0 && directorySource.Error == "" {
+		return fmt.Errorf("directory source returned neither snapshots nor explicit error")
 	}
 
 	return nil

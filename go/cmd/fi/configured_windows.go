@@ -177,7 +177,7 @@ func writeConfiguredRoot(ctx context.Context, governedRoot string) (configuredRo
 			passes, finalCheckpoint, err = catchUpConfiguredRoot(usn.WithoutInterruptedRecovery(ctx), scopeID, governedRoot, summary.TargetUSN)
 			return err
 		})
-		summary.Operations = append(summary.Operations, opRecord)
+		summary.Operations = appendConfiguredOperation(summary.Operations, opRecord)
 		summary.USNPasses = passes
 		summary.FinalCheckpoint = finalCheckpoint
 		if opErr != nil {
@@ -202,7 +202,7 @@ func baselineAndCatchUpConfiguredRoot(ctx context.Context, summary configuredRoo
 		}
 		return nil
 	})
-	summary.Operations = append(summary.Operations, opRecord)
+	summary.Operations = appendConfiguredOperation(summary.Operations, opRecord)
 	if opErr != nil {
 		return summary, opErr
 	}
@@ -214,7 +214,7 @@ func baselineAndCatchUpConfiguredRoot(ctx context.Context, summary configuredRoo
 		passes, finalCheckpoint, err = catchUpConfiguredRoot(usn.WithoutInterruptedRecovery(ctx), summary.ScopeID, summary.GovernedRoot, summary.TargetUSN)
 		return err
 	})
-	summary.Operations = append(summary.Operations, opRecord)
+	summary.Operations = appendConfiguredOperation(summary.Operations, opRecord)
 	summary.USNPasses = passes
 	summary.FinalCheckpoint = finalCheckpoint
 	if opErr != nil {
@@ -273,6 +273,7 @@ func configuredScopeID(governedRoot string) string {
 	digest := sha256.Sum256([]byte(canonical))
 	return "root-" + hex.EncodeToString(digest[:16])
 }
+
 func compareUSN(left, right string) (int, error) {
 	lv, err := strconv.ParseUint(left, 10, 64)
 	if err != nil {
@@ -291,6 +292,7 @@ func compareUSN(left, right string) (int, error) {
 		return 0, nil
 	}
 }
+
 func fileExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	switch {

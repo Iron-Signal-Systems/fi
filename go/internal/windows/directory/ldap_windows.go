@@ -86,10 +86,11 @@ type domainControllerInfoW struct {
 // Active Directory domain named by domainDNSName using the current Windows
 // process token for LDAP authentication.
 //
-// The collector also follows direct group relationships so the resulting
-// snapshot contains the direct membership edges PostgreSQL will later use for
-// nested membership and effective-access correlation. It never emits a
-// transitive membership conclusion and never calculates file/share access.
+// FI records principal attributes returned by AD and direct group relationships
+// established by a group's member attribute. primaryGroupID is preserved only
+// as PrimaryGroupIDRaw on the principal. The collector does not construct a
+// primary-group SID or emit a derived primary-group membership edge. That
+// relationship belongs to later backend derivation.
 func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, sids []string) (records.DirectoryPrincipalSnapshot, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -193,43 +194,6 @@ func CollectCurrentDomainPrincipals(ctx context.Context, domainDNSName string, s
 			}
 			if err := addDirectoryMembership(membershipByKey, membership); err != nil {
 				return records.DirectoryPrincipalSnapshot{}, err
-			}
-		}
-
-		if principal.PrimaryGroupIDRaw != "" {
-			groupSID, err := primaryGroupSID(principal.SID, principal.PrimaryGroupIDRaw)
-			if err != nil {
-				return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("primary group for %s: %w", principal.SID, err)
-			}
-			if groupSID != principal.SID {
-				if _, ok := principalBySID[groupSID]; !ok {
-					groups, err := searchPrincipalSIDs(ld, namingContext, []string{groupSID})
-					if err != nil {
-						return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("primary group lookup %s: %w", groupSID, err)
-					}
-					if len(groups) != 1 {
-						return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("primary group SID %s for %s was not found in current domain", groupSID, principal.SID)
-					}
-					newPrincipal, err := addDirectoryPrincipal(principalBySID, groups[0])
-					if err != nil {
-						return records.DirectoryPrincipalSnapshot{}, err
-					}
-					if newPrincipal {
-						if len(principalBySID) > maxDirectoryPrincipals {
-							return records.DirectoryPrincipalSnapshot{}, fmt.Errorf("directory principal count exceeds limit %d", maxDirectoryPrincipals)
-						}
-						queue = append(queue, groupSID)
-					}
-				}
-
-				membership := records.DirectoryMembershipObservation{
-					MemberSID: principal.SID,
-					GroupSID:  groupSID,
-					Source:    records.DirectoryMembershipSourcePrimaryGroupID,
-				}
-				if err := addDirectoryMembership(membershipByKey, membership); err != nil {
-					return records.DirectoryPrincipalSnapshot{}, err
-				}
 			}
 		}
 	}
@@ -585,19 +549,6 @@ func addDirectoryMembership(memberships map[string]records.DirectoryMembershipOb
 	key := membership.MemberSID + "\x00" + membership.GroupSID + "\x00" + string(membership.Source)
 	memberships[key] = membership
 	return nil
-}
-
-func primaryGroupSID(principalSID, primaryGroupIDRaw string) (string, error) {
-	parts := strings.Split(principalSID, "-")
-	if len(parts) != 8 || parts[0] != "S" || parts[1] != "1" || parts[2] != "5" || parts[3] != "21" {
-		return "", fmt.Errorf("principal SID %q is not an account-domain SID", principalSID)
-	}
-	rid, err := strconv.ParseUint(primaryGroupIDRaw, 10, 32)
-	if err != nil {
-		return "", fmt.Errorf("invalid primaryGroupID %q: %w", primaryGroupIDRaw, err)
-	}
-	parts[7] = strconv.FormatUint(rid, 10)
-	return strings.Join(parts, "-"), nil
 }
 
 func containsFold(values []string, target string) bool {

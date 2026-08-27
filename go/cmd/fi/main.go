@@ -46,6 +46,7 @@ func main() {
 	}
 
 	runMode := flag.Bool("run", false, "run one configured FI collection cycle")
+	supportingRefreshMode := flag.Bool("supporting-refresh", false, "run one bounded SMB/local/AD supporting-source refresh")
 	configMode := flag.Bool("config", false, "load and show the fixed FI configuration")
 	configFile := flag.Bool("config-file", false, "use the fixed FI configuration with -collect-path")
 	collectPath := flag.Bool("collect-path", false, "show complete NTFS collection")
@@ -80,6 +81,7 @@ func main() {
 	modeCount := 0
 	for _, selected := range []bool{
 		*runMode,
+		*supportingRefreshMode,
 		*configMode,
 		*collectPath,
 		*collectID,
@@ -120,6 +122,19 @@ func main() {
 			os.Exit(2)
 		}
 		runConfiguredCollector()
+		return
+
+	case *supportingRefreshMode:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		summary, err := writeSupportingSourceRefresh(context.Background())
+		writeIndentedJSON(summary)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
 		return
 
 	case *collectPath && *configFile:
@@ -461,6 +476,7 @@ func pathUTF16LEBase64URL(path string) (string, error) {
 func printUsage() {
 	fmt.Println("usage:")
 	fmt.Println(`  fi.exe -run`)
+	fmt.Println(`  fi.exe -supporting-refresh`)
 	fmt.Println(`  fi.exe -config`)
 	fmt.Println(`  fi.exe -collect-path -config-file`)
 	fmt.Println(`  fi.exe -collect-path       <governed-root> <target>`)

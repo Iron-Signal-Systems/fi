@@ -104,15 +104,43 @@ func TestAppendSupportingSourceStartPreservesExplicitErrors(t *testing.T) {
 }
 
 func TestAppendDirectorySourceSnapshotAndError(t *testing.T) {
-	t.Run("snapshot", func(t *testing.T) {
+	t.Run("snapshots", func(t *testing.T) {
 		writer := newSupportingSourceTestWriter(t)
-		snapshot := records.DirectoryPrincipalSnapshot{}
 		var summary spoolRunSummary
 
 		if err := appendDirectorySource(
 			writer,
 			"scope-test",
-			directorySourceResult{Snapshot: &snapshot},
+			directorySourceResult{
+				Snapshots: []records.DirectoryPrincipalSnapshot{{}, {}},
+			},
+			&summary,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		if summary.DirectoryPrincipalRecords != 2 {
+			t.Fatalf("directory records = %d, want 2", summary.DirectoryPrincipalRecords)
+		}
+		if summary.SupportingSourceErrors != 0 {
+			t.Fatalf("supporting source errors = %d, want 0", summary.SupportingSourceErrors)
+		}
+	})
+
+	t.Run("partial-success-before-error", func(t *testing.T) {
+		writer := newSupportingSourceTestWriter(t)
+		var summary spoolRunSummary
+
+		if err := appendDirectorySource(
+			writer,
+			"scope-test",
+			directorySourceResult{
+				Snapshots: []records.DirectoryPrincipalSnapshot{{}},
+				Error:     "DirectoryUnavailable",
+			},
 			&summary,
 		); err != nil {
 			t.Fatal(err)
@@ -124,35 +152,14 @@ func TestAppendDirectorySourceSnapshotAndError(t *testing.T) {
 		if summary.DirectoryPrincipalRecords != 1 {
 			t.Fatalf("directory records = %d, want 1", summary.DirectoryPrincipalRecords)
 		}
-		if summary.SupportingSourceErrors != 0 {
-			t.Fatalf("supporting source errors = %d, want 0", summary.SupportingSourceErrors)
-		}
-	})
-
-	t.Run("error", func(t *testing.T) {
-		writer := newSupportingSourceTestWriter(t)
-		var summary spoolRunSummary
-
-		if err := appendDirectorySource(
-			writer,
-			"scope-test",
-			directorySourceResult{Error: "DirectoryUnavailable"},
-			&summary,
-		); err != nil {
-			t.Fatal(err)
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatal(err)
-		}
-
-		if summary.DirectoryPrincipalRecords != 0 {
-			t.Fatalf("directory records = %d, want 0", summary.DirectoryPrincipalRecords)
-		}
 		if summary.SupportingSourceErrors != 1 {
 			t.Fatalf("supporting source errors = %d, want 1", summary.SupportingSourceErrors)
 		}
 
 		data := readOnlyFinalizedDataFile(t, writer)
+		if !strings.Contains(data, `"record_kind":"DirectoryPrincipalSnapshot"`) {
+			t.Fatal("completed directory source snapshot was not preserved")
+		}
 		if !strings.Contains(data, `"source":"DirectoryPrincipalSnapshot"`) {
 			t.Fatal("directory source error was not preserved")
 		}

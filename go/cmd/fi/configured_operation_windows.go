@@ -8,6 +8,7 @@ package main
 
 import (
 	"errors"
+
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/operation"
 )
@@ -34,6 +35,20 @@ func recoverConfiguredOperations(scopeID string) (string, []records.OperationRec
 	}
 	recovered, err := operation.RecoverInterrupted(path, scopeID)
 	return path, recovered, err
+}
+
+// appendConfiguredOperation appends only a real terminal operation record.
+// Failures before a durable Started entry exists return the zero value from
+// runConfiguredOperation and must not appear in user-visible operation summaries
+// as a phantom operation.
+func appendConfiguredOperation(
+	operations []records.OperationRecord,
+	record records.OperationRecord,
+) []records.OperationRecord {
+	if record.OperationID == "" {
+		return operations
+	}
+	return append(operations, record)
 }
 
 func runConfiguredOperation(scopeID string, kind records.OperationKind, body func() error) (records.OperationRecord, error) {
