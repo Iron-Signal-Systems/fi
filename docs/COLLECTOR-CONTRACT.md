@@ -26,6 +26,17 @@ A source failure or missing historical interval remains explicit. Current-state
 reconciliation can establish current knowledge but cannot rewrite a historical
 coverage gap as complete.
 
+## Source-read side effects
+
+Normal FI collection does not intentionally modify governed source state. A
+source read can still cause operating-system-managed behavior. In particular,
+reading file content can update NTFS `LastAccessTime` where Windows last-access
+updates are enabled.
+
+FI does not write or restore source metadata to hide such a read-side effect.
+That would itself be a governed-source modification and would violate the
+collector boundary.
+
 ## Active Directory primaryGroupID boundary
 
 `primaryGroupID` is collected and preserved as the raw directory attribute

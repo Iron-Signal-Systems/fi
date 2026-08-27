@@ -126,19 +126,38 @@ func writeSupportingSourceRefresh(
 		summary.Status = supportingSourceRefreshComplete
 	}
 
-	record, finishErr := started.Finish(outcome, reasonCode)
+	record, finishErr := finishSupportingSourceRefreshOperation(
+		journalPath,
+		started,
+		outcome,
+		reasonCode,
+	)
 	if finishErr == nil {
-		finishErr = operation.AppendFinished(journalPath, record)
-	}
-	if record.OperationID != "" {
-		summary.Operation = &record
+		summary.Operation = record
 	}
 
-	if finishErr != nil && summary.Error == "" {
-		summary.Error = finishErr.Error()
+	combinedErr := errors.Join(bodyErr, finishErr)
+	if finishErr != nil {
 		summary.Status = supportingSourceRefreshFailed
+		summary.Error = combinedErr.Error()
 	}
-	return summary, errors.Join(bodyErr, finishErr)
+	return summary, combinedErr
+}
+
+func finishSupportingSourceRefreshOperation(
+	journalPath string,
+	started operation.Started,
+	outcome records.OperationOutcome,
+	reasonCode string,
+) (*records.OperationRecord, error) {
+	record, err := started.Finish(outcome, reasonCode)
+	if err != nil {
+		return nil, err
+	}
+	if err := operation.AppendFinished(journalPath, record); err != nil {
+		return nil, err
+	}
+	return &record, nil
 }
 
 func collectSupportingSourceRefresh(

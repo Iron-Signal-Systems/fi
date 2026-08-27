@@ -41,18 +41,18 @@ governed roots. Collection behavior remains defined by FI code.
 | Collection consistency checks | Implemented | Detects object replacement, metadata changes during collection, scope replacement, and incomplete observations. |
 | Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
 | Windows security descriptors and ACLs | Implemented | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are collected. |
-| SMB share state and share security | Implemented baseline source | Records share exposure and share ACL state. Bounded continuous refresh remains. |
-| Local Windows identity | Implemented baseline source | Local users, groups, and direct memberships are collected. Bounded continuous refresh remains. |
-| Active Directory identity | Implemented baseline source; deployment validation remains | Resolves relevant current-domain principals and direct memberships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Production service operation is intended to use the FI gMSA. Bounded refresh remains. |
+| SMB share state and share security | Implemented baseline + one-shot refresh | Records share exposure and share ACL state at baseline and through the explicit bounded supporting-source refresh. Service cadence remains. |
+| Local Windows identity | Implemented baseline + one-shot refresh | Local users, groups, and direct memberships are collected at baseline and through the explicit bounded supporting-source refresh. Service cadence remains. |
+| Active Directory identity | Implemented baseline + bounded one-shot refresh; deployment validation remains | Resolves relevant current-domain principals and direct `member` relationships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Raw `primaryGroupID` is preserved without deriving a membership edge. Production service operation is intended to use the FI gMSA. |
 | Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Additional Windows privilege/bypass inputs remain Phase 1 hardening only where a concrete Gate 1 need is proved. Backend correlation owns nested membership and final effective-access conclusions. |
 | USN journal change detection | Implemented and integrated | Configured runs use persistent checkpoints, bounded USN catch-up, governed-object selection, File-ID re-observation, durable local spooling, verification, and checkpoint advancement. |
 | Windows Security governed-file activity | Implemented foundation and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. The broader activity behavior matrix remains to be completed. |
 | Local durable spool | Implemented | Writes finalized JSONL batches and manifests, verifies count/size/SHA-256, retains accepted local batches, and does not remove them before Phase 2 acknowledgement exists. |
 | Normal-run checkpoint continuity | Implemented and live validated | USN and Windows Security checkpoints resume from the previously accepted boundary without replaying the prior accepted range. |
 | Continuity-gap history and reconciliation | Implemented and live validated | USN and Windows Security gaps are persisted explicitly as incomplete, current state is reconciled, and a new forward boundary is established without pretending missing history was reconstructed. |
-| Operation journal | Implemented and live validated for major configured boundaries | Append-only Started/Finished lifecycle history covers baseline, USN catch-up, Windows Security catch-up, and reconciliation. Orphaned Started operations are recovered as Interrupted/ProcessRestart. |
+| Operation journal | Implemented and live validated for major boundaries | Append-only Started/Finished lifecycle history covers baseline, USN catch-up, Windows Security catch-up, reconciliation, and the explicit SupportingSourceRefresh operation. Orphaned Started operations are recovered as Interrupted/ProcessRestart. |
 | FI runtime resource journal | Implemented foundation / non-blocking | CPU, RAM, and process-I/O history exists for journaled USN operations. Broader coverage is useful for sizing and pilot validation but is not itself a Gate 1 blocker. |
-| Supporting-source refresh | Remaining | SMB share state, local identity, and relevant AD identity/direct membership need bounded refresh after baseline so later history does not rely indefinitely on the initial snapshot. |
+| Supporting-source refresh | Implemented one-shot and live validated; service scheduling remains | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches, retains previously relevant current-domain SIDs, and splits large relevant-SID sets into bounded directory snapshots without truncation. |
 | Windows service runtime | Remaining | FI still needs a simple persistent Windows service runtime around the configured collector. |
 | gMSA least-privilege runtime | Remaining | The deployed service identity must be tested with only the rights/access FI actually requires. |
 | Failure/restart campaign | Partially validated | Checkpoint gaps and operation restart recovery are validated. Broader service, spool/state, source-unavailable, and resource-exhaustion cases remain. |
@@ -162,8 +162,9 @@ share.
 The baseline share snapshot is implemented.
 
 Because share configuration and share security can change without immediately
-causing governed-file activity, Phase 1 still needs a bounded refresh mechanism
-for share state.
+causing governed-file activity, the explicit supporting-source refresh now
+re-observes share state. Persistent service cadence remains deployment/runtime
+work.
 
 ---
 
@@ -181,12 +182,15 @@ Collectors preserve source identity facts. They do not calculate transitive
 membership or final effective access. Backend correlation owns those
 relationships.
 
-Identity state can change without a file operation occurring. Phase 1 therefore
-still needs bounded refresh of local identity and relevant AD principal/direct
-membership source facts.
+Identity state can change without a file operation occurring. The explicit
+supporting-source refresh now re-observes local identity and relevant AD
+principal/direct `member` relationship source facts while retaining previously
+relevant current-domain SIDs in FI-owned operational state.
 
-The refresh mechanism should remain source-driven and bounded. It should not turn
-the Windows collector into an Active Directory inventory product.
+The refresh remains source-driven and bounded. Large relevant-SID sets are split
+into bounded directory snapshots rather than truncated, and the collector does
+not turn into an Active Directory inventory product. Persistent service cadence
+remains deployment/runtime work.
 
 ---
 
@@ -328,24 +332,30 @@ The filesystem and Security sources provide high-frequency signals.
 SMB configuration, local identity, and AD identity/direct membership usually
 change less frequently, but they cannot remain frozen forever at baseline.
 
-Phase 1 still needs a bounded refresh policy for:
+Phase 1 now provides an explicit one-shot `fi.exe -supporting-refresh` operation
+for:
 
 - local SMB shares and share ACLs;
 - local users/groups/direct memberships; and
-- relevant current-domain principals/direct memberships.
+- relevant current-domain principals/direct `member` relationships.
 
-The refresh should:
+The implemented refresh:
 
-- write new source observations rather than mutate older history;
-- remain scoped to information relevant to governed roots and observed SIDs;
-- leave backend correlation responsible for transitive membership and
+- writes new source observations rather than mutating older history;
+- writes and verifies durable local spool batches before reporting success;
+- retains previously relevant current-domain SIDs in FI-owned operational state
+  so historical identities are not silently forgotten;
+- splits large relevant-SID sets into bounded directory snapshots rather than
+  truncating them;
+- preserves raw `primaryGroupID` without deriving a primary-group membership
+  edge;
+- leaves backend correlation responsible for transitive membership and
   effective-access conclusions; and
-- produce an operation lifecycle record when the refresh becomes a material
-  configured collector boundary.
+- records its own append-only operation lifecycle.
 
-The exact cadence is a deployment/runtime policy decision and should not be
-invented in the collector before operational testing establishes a useful
-default.
+The one-shot path has been live validated. Exact persistent cadence remains a
+service/runtime policy decision and should be established through operational
+measurement rather than invented inside the collector.
 
 ---
 
@@ -503,8 +513,8 @@ Live validation has proved:
 - USN-gap `Reconciliation / Complete`; and
 - Windows Security-gap `Reconciliation / Complete`.
 
-A future supporting-source identity/share refresh may add another major operation
-kind if it becomes operationally useful.
+The explicit one-shot `SupportingSourceRefresh` operation maintains its own
+Started/Finished lifecycle journal outside the normal `-run` cycle.
 
 Resource measurements remain separate from the lifecycle journal.
 
@@ -637,7 +647,8 @@ Gate 1 also proves:
 
 At the current development point, the primary remaining work is:
 
-1. supporting-source refresh for SMB/local/AD facts;
+1. service scheduling and broader failure/operational validation of the
+   live-validated supporting-source refresh;
 2. governed-file activity behavior matrix;
 3. Windows service runtime;
 4. gMSA least-privilege validation;

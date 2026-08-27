@@ -47,8 +47,8 @@ set.
 
 Remaining Gate 1 work is primarily:
 
-- live/operational validation and later service scheduling of supporting-source
-  refresh;
+- service scheduling and broader failure/operational validation of the
+  live-validated supporting-source refresh;
 - completion of the governed-file activity validation matrix;
 - Windows service runtime;
 - gMSA and least-privilege validation;

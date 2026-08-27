@@ -16,8 +16,8 @@ access, activity, relationships, history, and later classification.
 
 The file remains the center of that history.
 
-FI does not modify customer files, permissions, identities, shares, systems, or
-infrastructure.
+Normal FI collection does not intentionally modify governed customer files,
+directories, permissions, identities, shares, or customer configuration.
 
 ---
 
@@ -53,8 +53,8 @@ Or with a file:
 > Where has this file been, who could access it, what happened to it, and what
 > changed?
 
-FI preserves the source facts needed to answer those questions without changing
-the systems being examined.
+FI preserves the source facts needed to answer those questions without
+intentionally changing governed source state.
 
 ---
 
@@ -198,7 +198,9 @@ independent copies of the data.
 
 ## Read-only by design
 
-FI is intentionally read-only with respect to the customer environment.
+FI is intentionally non-remediating and read-oriented with respect to the
+customer environment. Normal collector code does not intentionally modify
+governed source state.
 
 FI may observe files, filesystem metadata, security information, identities,
 shares, activity sources, and other configured sources necessary to build its
@@ -217,6 +219,11 @@ FI does not:
 
 The ability to observe and explain a problem remains separate from the authority
 to change the systems involved.
+
+A source read can still cause operating-system-managed side effects. For example,
+reading file content can update NTFS `LastAccessTime` on systems where last-access
+updates are enabled. FI does not write or restore that timestamp to hide the
+source-side effect of the read.
 
 Administrator-run deployment examples may configure Windows audit policy, SACLs,
 service identities, or related prerequisites. Those are deliberate customer
@@ -417,10 +424,15 @@ The initial baseline also captures supporting source facts such as:
 
 Those sources change more slowly than the filesystem but still change over time.
 
-A bounded continuous refresh mechanism for SMB, local identity, and relevant
-Active Directory identity is remaining Phase 1 work. Backend correlation will
-use the resulting versioned source facts; the Windows collector will not compute
-transitive membership or final effective access conclusions.
+FI now provides an explicit one-shot `-supporting-refresh` operation for SMB,
+local identity, and relevant Active Directory source facts. It writes new
+versioned observations into verified local spool batches, retains previously
+relevant current-domain SIDs in FI-owned operational state, and reads large
+relevant-SID sets in bounded directory snapshots rather than truncating them.
+
+The collector does not invent refresh cadence and does not compute transitive
+membership or final effective access conclusions. Persistent service scheduling
+and broader operational/failure validation remain Gate 1 work.
 
 ---
 
@@ -451,7 +463,8 @@ acknowledged local batch may be retired.
 The core collector architecture is largely established. Remaining Gate 1 work is
 primarily integration and validation:
 
-- bounded refresh of SMB/local/AD supporting source facts;
+- service scheduling and broader operational/failure validation of the
+  implemented SMB/local/AD supporting-source refresh;
 - a documented governed-file activity behavior matrix covering create, modify,
   read, deny, rename/move, delete, security changes, hard-link activity, and SMB
   paths;
@@ -522,7 +535,7 @@ The backend preserves and correlates.
 Views present the same underlying information for different operational
 questions.
 
-FI remains read-only toward the systems it observes.
+FI remains non-remediating toward the systems it observes.
 
 ---
 
@@ -531,7 +544,8 @@ FI remains read-only toward the systems it observes.
 - The file is the primary subject of FI.
 - File identity must not depend solely on pathname.
 - FI operates only on explicitly governed roots.
-- FI observes customer systems but does not change them.
+- FI does not intentionally change governed customer state during normal
+  collection.
 - Preserve historical state instead of keeping only current state.
 - Preserve native source information needed for later verification or
   reinterpretation.

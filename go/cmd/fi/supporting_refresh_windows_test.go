@@ -10,10 +10,76 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/operation"
 )
+
+func TestFinishSupportingSourceRefreshOperationPublishesOnlyAfterDurableAppend(t *testing.T) {
+	started, err := operation.Start(
+		supportingSourceRefreshScopeID,
+		records.OperationSupportingSourceRefresh,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Passing a directory path forces AppendFinished to fail on Windows. The
+	// helper must not return an in-memory terminal record that was never made
+	// durable in the lifecycle journal.
+	record, err := finishSupportingSourceRefreshOperation(
+		t.TempDir(),
+		started,
+		records.OperationComplete,
+		"",
+	)
+	if err == nil {
+		t.Fatal("expected terminal journal append failure")
+	}
+	if record != nil {
+		t.Fatalf("undurable terminal record was published: %#v", record)
+	}
+}
+
+func TestFinishSupportingSourceRefreshOperationReturnsDurableRecord(t *testing.T) {
+	started, err := operation.Start(
+		supportingSourceRefreshScopeID,
+		records.OperationSupportingSourceRefresh,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	journalPath := filepath.Join(t.TempDir(), "supporting-refresh-operations.jsonl")
+	record, err := finishSupportingSourceRefreshOperation(
+		journalPath,
+		started,
+		records.OperationComplete,
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record == nil {
+		t.Fatal("durable terminal record was not returned")
+	}
+
+	entries, err := operation.ReadAll(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("journal entries = %d, want 1", len(entries))
+	}
+	if entries[0].Event != operation.JournalFinished {
+		t.Fatalf("journal event = %q, want %q", entries[0].Event, operation.JournalFinished)
+	}
+	if entries[0].OperationID != record.OperationID {
+		t.Fatalf("journal operation_id = %q, want %q", entries[0].OperationID, record.OperationID)
+	}
+}
 
 func TestSupportingSourceRefreshOperationKind(t *testing.T) {
 	value := validOperationRecordForSupportingRefreshTest()
