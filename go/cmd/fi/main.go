@@ -23,6 +23,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/process"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/resourcejournal"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/runtimeowner"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/smb"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
 )
@@ -113,6 +114,34 @@ func main() {
 	if modeCount != 1 {
 		printUsage()
 		os.Exit(2)
+	}
+
+	// Commands that can write FI-owned spool, checkpoint, supporting state, or
+	// operation-journal data must not overlap on one collector host. Read-only
+	// diagnostics remain available while the service/runtime owns collection.
+	switch {
+	case *runMode,
+		*supportingRefreshMode,
+		*baselineSpoolRootMode,
+		*usnCheckpointInitMode,
+		*usnOperationMode,
+		*usnNextMode,
+		*usnSpoolNextMode,
+		*spoolRootMode:
+		ownership, err := runtimeowner.Acquire()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := ownership.Close(); err != nil {
+				fmt.Fprintln(
+					os.Stderr,
+					"WARNING: FI collector runtime ownership close failed:",
+					err,
+				)
+			}
+		}()
 	}
 
 	switch {

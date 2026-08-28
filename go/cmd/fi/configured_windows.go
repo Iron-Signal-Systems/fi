@@ -18,6 +18,7 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
 )
@@ -54,17 +55,18 @@ type configuredRootSummary struct {
 }
 
 type configuredRunSummary struct {
-	ConfigPath                       string                    `json:"config_path"`
-	VersionID                        string                    `json:"version_id"`
-	ConfiguredRoots                  int                       `json:"configured_roots"`
-	CompletedRoots                   int                       `json:"completed_roots"`
-	PartialRoots                     int                       `json:"partial_roots"`
-	FailedRoots                      int                       `json:"failed_roots"`
-	Complete                         bool                      `json:"complete"`
-	MonitoringPrerequisitesSatisfied bool                      `json:"monitoring_prerequisites_satisfied"`
-	WindowsSecurity                  configuredSecuritySummary `json:"windows_security"`
-	Roots                            []configuredRootSummary   `json:"roots"`
-	Semantics                        string                    `json:"semantics"`
+	ConfigPath                       string                           `json:"config_path"`
+	VersionID                        string                           `json:"version_id"`
+	ConfiguredRoots                  int                              `json:"configured_roots"`
+	CompletedRoots                   int                              `json:"completed_roots"`
+	PartialRoots                     int                              `json:"partial_roots"`
+	FailedRoots                      int                              `json:"failed_roots"`
+	Complete                         bool                             `json:"complete"`
+	MonitoringPrerequisitesSatisfied bool                             `json:"monitoring_prerequisites_satisfied"`
+	SpoolRecovery                    spool.InterruptedRecoverySummary `json:"spool_recovery"`
+	WindowsSecurity                  configuredSecuritySummary        `json:"windows_security"`
+	Roots                            []configuredRootSummary          `json:"roots"`
+	Semantics                        string                           `json:"semantics"`
 }
 
 func runConfiguredCollector() {
@@ -81,7 +83,18 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 	if err != nil {
 		return configuredRunSummary{}, err
 	}
-	summary := configuredRunSummary{ConfigPath: configPath, VersionID: value.VersionID, ConfiguredRoots: len(value.GovernedRoots), Complete: true, Roots: make([]configuredRootSummary, 0, len(value.GovernedRoots)), Semantics: "FI processes Windows Security activity and each configured governed root as independent source observations. Major configured operations use append-only Started/Finished lifecycle journals so an unclosed operation is explicitly recovered as Interrupted after process restart. Source facts, continuity gaps, checkpoints, and operation lifecycle records remain separate records with separate meanings."}
+	summary := configuredRunSummary{ConfigPath: configPath, VersionID: value.VersionID, ConfiguredRoots: len(value.GovernedRoots), Complete: true, Roots: make([]configuredRootSummary, 0, len(value.GovernedRoots)), Semantics: "FI processes Windows Security activity and each configured governed root as independent source observations. Major configured operations use append-only Started/Finished lifecycle journals so an unclosed operation is explicitly recovered as Interrupted after process restart. Interrupted FI spool artifacts are preserved separately and are never promoted into accepted batches or used to advance source checkpoints. Source facts, continuity gaps, checkpoints, spool recovery state, and operation lifecycle records remain separate records with separate meanings."}
+	spoolDir, err := spool.DefaultDir()
+	if err != nil {
+		summary.Complete = false
+		return summary, err
+	}
+	spoolRecovery, err := spool.PreserveInterruptedArtifacts(spoolDir)
+	summary.SpoolRecovery = spoolRecovery
+	if err != nil {
+		summary.Complete = false
+		return summary, fmt.Errorf("preserve interrupted spool artifacts: %w", err)
+	}
 	var runErr error
 	securityPrepared, securityPrepareErr := prepareConfiguredSecurity()
 	if securityPrepareErr != nil {

@@ -6,6 +6,7 @@ package spool
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -92,5 +93,138 @@ func TestDurableRenameMovesFile(t *testing.T) {
 	}
 	if string(got) != "durable-rename-test" {
 		t.Fatalf("destination content = %q", string(got))
+	}
+}
+func TestPreserveInterruptedArtifactsMovesOpenData(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "batch-test-open.open")
+	content := []byte("partial-spool-bytes\n")
+	if err := os.WriteFile(source, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := PreserveInterruptedArtifacts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreservedCount != 1 || len(summary.Preserved) != 1 {
+		t.Fatalf(
+			"preserved = %d/%d, want 1/1",
+			summary.PreservedCount,
+			len(summary.Preserved),
+		)
+	}
+	if summary.Preserved[0].Kind != InterruptedOpenData {
+		t.Fatalf("kind = %q", summary.Preserved[0].Kind)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists: %v", err)
+	}
+	got, err := os.ReadFile(summary.Preserved[0].PreservedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("preserved content = %q", string(got))
+	}
+}
+
+func TestPreserveInterruptedArtifactsMovesOrphanFinalizedData(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "batch-test-orphan.jsonl")
+	if err := os.WriteFile(source, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := PreserveInterruptedArtifacts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreservedCount != 1 {
+		t.Fatalf("preserved_count = %d, want 1", summary.PreservedCount)
+	}
+	if summary.Preserved[0].Kind != InterruptedOrphanData {
+		t.Fatalf("kind = %q", summary.Preserved[0].Kind)
+	}
+}
+
+func TestPreserveInterruptedArtifactsMovesOrphanFinalizedManifest(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "batch-test-orphan.manifest.json")
+	if err := os.WriteFile(source, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := PreserveInterruptedArtifacts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreservedCount != 1 {
+		t.Fatalf("preserved_count = %d, want 1", summary.PreservedCount)
+	}
+	if summary.Preserved[0].Kind != InterruptedOrphanManifest {
+		t.Fatalf("kind = %q", summary.Preserved[0].Kind)
+	}
+}
+
+func TestPreserveInterruptedArtifactsLeavesFinalizedPair(t *testing.T) {
+	dir := t.TempDir()
+	dataPath := filepath.Join(dir, "batch-test-final.jsonl")
+	manifestPath := filepath.Join(dir, "batch-test-final.manifest.json")
+	if err := os.WriteFile(dataPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := PreserveInterruptedArtifacts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreservedCount != 0 {
+		t.Fatalf("preserved_count = %d, want 0", summary.PreservedCount)
+	}
+	if _, err := os.Stat(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreserveInterruptedArtifactsMovesOpenManifestBesideFinalizedPair(t *testing.T) {
+	dir := t.TempDir()
+	dataPath := filepath.Join(dir, "batch-test-final.jsonl")
+	manifestPath := filepath.Join(dir, "batch-test-final.manifest.json")
+	openManifestPath := manifestPath + ".open"
+	if err := os.WriteFile(dataPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(openManifestPath, []byte("partial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := PreserveInterruptedArtifacts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreservedCount != 1 {
+		t.Fatalf("preserved_count = %d, want 1", summary.PreservedCount)
+	}
+	if summary.Preserved[0].Kind != InterruptedOpenManifest {
+		t.Fatalf("kind = %q", summary.Preserved[0].Kind)
+	}
+	if _, err := os.Stat(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(openManifestPath); !os.IsNotExist(err) {
+		t.Fatalf("open manifest still exists: %v", err)
 	}
 }
