@@ -47,6 +47,9 @@ func main() {
 	}
 
 	runMode := flag.Bool("run", false, "run one configured FI collection cycle")
+	serviceMode := flag.Bool("service", false, "run FI under the Windows Service Control Manager")
+	serviceCollectionEvery := flag.String("service-collection-every", "", "configured collection interval for -service, for example 1m")
+	serviceSupportingRefreshEvery := flag.String("service-supporting-refresh-every", "", "supporting-source refresh interval for -service, for example 30m")
 	supportingRefreshMode := flag.Bool("supporting-refresh", false, "run one bounded SMB/local/AD supporting-source refresh")
 	configMode := flag.Bool("config", false, "load and show the fixed FI configuration")
 	configFile := flag.Bool("config-file", false, "use the fixed FI configuration with -collect-path")
@@ -82,6 +85,7 @@ func main() {
 	modeCount := 0
 	for _, selected := range []bool{
 		*runMode,
+		*serviceMode,
 		*supportingRefreshMode,
 		*configMode,
 		*collectPath,
@@ -115,12 +119,18 @@ func main() {
 		printUsage()
 		os.Exit(2)
 	}
+	if !*serviceMode &&
+		(*serviceCollectionEvery != "" || *serviceSupportingRefreshEvery != "") {
+		printUsage()
+		os.Exit(2)
+	}
 
 	// Commands that can write FI-owned spool, checkpoint, supporting state, or
 	// operation-journal data must not overlap on one collector host. Read-only
 	// diagnostics remain available while the service/runtime owns collection.
 	switch {
 	case *runMode,
+		*serviceMode,
 		*supportingRefreshMode,
 		*baselineSpoolRootMode,
 		*usnCheckpointInitMode,
@@ -151,6 +161,36 @@ func main() {
 			os.Exit(2)
 		}
 		runConfiguredCollector()
+		return
+
+	case *serviceMode:
+		if flag.NArg() != 0 {
+			printUsage()
+			os.Exit(2)
+		}
+		collectionInterval, err := parseServiceInterval(
+			"service-collection-every",
+			*serviceCollectionEvery,
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(2)
+		}
+		supportingRefreshInterval, err := parseServiceInterval(
+			"service-supporting-refresh-every",
+			*serviceSupportingRefreshEvery,
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(2)
+		}
+		if err := runWindowsService(
+			collectionInterval,
+			supportingRefreshInterval,
+		); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
 		return
 
 	case *supportingRefreshMode:
@@ -505,6 +545,7 @@ func pathUTF16LEBase64URL(path string) (string, error) {
 func printUsage() {
 	fmt.Println("usage:")
 	fmt.Println(`  fi.exe -run`)
+	fmt.Println(`  fi.exe -service -service-collection-every <duration> -service-supporting-refresh-every <duration>`)
 	fmt.Println(`  fi.exe -supporting-refresh`)
 	fmt.Println(`  fi.exe -config`)
 	fmt.Println(`  fi.exe -collect-path -config-file`)

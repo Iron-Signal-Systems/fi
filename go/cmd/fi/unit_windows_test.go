@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCurrentDomainTokenSIDs(t *testing.T) {
@@ -1533,5 +1534,151 @@ func TestConfiguredUSNPassesScopeUnresolvedIsNotPartialByItself(t *testing.T) {
 	passes := []usnSpoolNextSummary{{ScopeUnresolvedObjects: 1}}
 	if configuredUSNPassesPartial(passes) {
 		t.Fatal("explicit scope uncertainty incorrectly became an operational collection failure")
+	}
+}
+func TestParseServiceInterval(t *testing.T) {
+	got, err := parseServiceInterval("test-interval", "2m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 2*time.Minute {
+		t.Fatalf("interval = %s, want 2m", got)
+	}
+
+	for _, value := range []string{"", "0s", "-1s", "not-a-duration"} {
+		if _, err := parseServiceInterval("test-interval", value); err == nil {
+			t.Fatalf("value %q unexpectedly accepted", value)
+		}
+	}
+}
+
+func TestServiceRuntimeLogPathUsesFIStateDir(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("FI_STATE_DIR", stateDir)
+
+	got, err := serviceRuntimeLogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(stateDir, serviceRuntimeLogName)
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
+func TestRunServiceLoopStartsCollectionImmediatelyAndStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	collected := make(chan struct{}, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- runServiceLoop(
+			ctx,
+			time.Hour,
+			time.Hour,
+			func(context.Context) (configuredRunSummary, error) {
+				select {
+				case collected <- struct{}{}:
+				default:
+				}
+				return configuredRunSummary{
+					ConfiguredRoots: 1,
+					CompletedRoots:  1,
+					Complete:        true,
+				}, nil
+			},
+			func(context.Context) (supportingSourceRefreshSummary, error) {
+				return supportingSourceRefreshSummary{
+					Status: supportingSourceRefreshComplete,
+				}, nil
+			},
+			func(serviceRuntimeRecord) error {
+				return nil
+			},
+		)
+	}()
+
+	select {
+	case <-collected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("service loop did not run configured collection immediately")
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("service loop did not stop after context cancellation")
+	}
+}
+
+func TestRunServiceLoopSchedulesSupportingRefreshWithoutOverlap(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	active := 0
+	refreshRan := make(chan struct{}, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- runServiceLoop(
+			ctx,
+			time.Hour,
+			20*time.Millisecond,
+			func(context.Context) (configuredRunSummary, error) {
+				active++
+				if active != 1 {
+					t.Errorf("collector overlap detected: active=%d", active)
+				}
+				time.Sleep(10 * time.Millisecond)
+				active--
+				return configuredRunSummary{
+					ConfiguredRoots: 1,
+					CompletedRoots:  1,
+					Complete:        true,
+				}, nil
+			},
+			func(context.Context) (supportingSourceRefreshSummary, error) {
+				active++
+				if active != 1 {
+					t.Errorf("supporting-refresh overlap detected: active=%d", active)
+				}
+				active--
+				select {
+				case refreshRan <- struct{}{}:
+				default:
+				}
+				return supportingSourceRefreshSummary{
+					Status: supportingSourceRefreshComplete,
+				}, nil
+			},
+			func(serviceRuntimeRecord) error {
+				return nil
+			},
+		)
+	}()
+
+	select {
+	case <-refreshRan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supporting refresh was not scheduled")
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("service loop did not stop")
 	}
 }
