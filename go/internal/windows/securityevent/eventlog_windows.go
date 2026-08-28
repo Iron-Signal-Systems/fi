@@ -29,6 +29,12 @@ const (
 	errorInsufficientBuffer  = syscall.Errno(122)
 	errorNoMoreItems         = syscall.Errno(259)
 
+	// maximumRenderedEventXMLBytes bounds one rendered Security event before FI
+	// allocates the XML buffer returned by EvtRender. The limit is deliberately
+	// generous for one Windows event while preventing an API/source-controlled
+	// size from causing an unbounded allocation.
+	maximumRenderedEventXMLBytes uint32 = 1024 * 1024
+
 	// MaxReadRecordIDSpan bounds one Windows Security query by EventRecordID
 	// distance. Configured catch-up advances through repeated verified windows so
 	// a large backlog cannot require one unbounded in-memory event slice.
@@ -193,10 +199,11 @@ func renderEventXML(handle uintptr) (string, error) {
 			return "", windowsCallError("EvtRender(size)", callErr)
 		}
 	}
-	if used < 2 {
-		return "", errors.New("EvtRender returned empty XML size")
+	bufferUnits, err := renderedEventXMLBufferUnits(used)
+	if err != nil {
+		return "", err
 	}
-	buffer := make([]uint16, (used+1)/2)
+	buffer := make([]uint16, bufferUnits)
 	r1, _, callErr = procEvtRender.Call(
 		0,
 		handle,
@@ -209,7 +216,24 @@ func renderEventXML(handle uintptr) (string, error) {
 	if r1 == 0 {
 		return "", windowsCallError("EvtRender(XML)", callErr)
 	}
+	if used > maximumRenderedEventXMLBytes || used > uint32(len(buffer)*2) {
+		return "", fmt.Errorf("EvtRender returned invalid XML size %d", used)
+	}
 	return strings.TrimSuffix(syscall.UTF16ToString(buffer), "\x00"), nil
+}
+
+func renderedEventXMLBufferUnits(used uint32) (int, error) {
+	if used < 2 {
+		return 0, errors.New("EvtRender returned empty XML size")
+	}
+	if used > maximumRenderedEventXMLBytes {
+		return 0, fmt.Errorf(
+			"EvtRender XML exceeds bounded buffer limit: %d > %d",
+			used,
+			maximumRenderedEventXMLBytes,
+		)
+	}
+	return int((used + 1) / 2), nil
 }
 
 func windowsCallError(operation string, callErr error) error {

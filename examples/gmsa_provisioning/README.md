@@ -47,7 +47,7 @@ Administrator, or other unnecessarily broad rights.
 Testing with excessive privileges can hide real access failures and create a
 misleading picture of what FI can actually observe in a customer environment.
 
-**FI's runtime collector is read-only against the systems it observes. FI is
+**FI's runtime collector is non-remediating and read-oriented. It does not intentionally modify governed source state. FI is
 designed to run under a customer-provisioned, least-privilege service identity
 such as a gMSA. These example administrative scripts exist only to assist with
 that configuration.**

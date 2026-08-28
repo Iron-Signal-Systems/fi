@@ -2,7 +2,7 @@
 
 ## Product
 
-**File Intelligence (FI)** is a read-only, historical file-intelligence platform.
+**File Intelligence (FI)** is a non-remediating, read-oriented historical file-intelligence platform.
 
 FI builds and preserves an understanding of explicitly governed files over time so
 IT professionals can answer difficult operational, security, support, recovery,
@@ -139,9 +139,15 @@ into an automatic infrastructure change.
 
 ---
 
-## Read-Only Product Boundary
+## Non-Remediating Product Boundary
 
-FI is intentionally read-only toward the customer environment.
+FI runtime collection is non-remediating and read-oriented. It does not intentionally
+modify governed source state or customer configuration.
+
+A source read can still cause operating-system-managed behavior. In particular,
+reading file content can update NTFS `LastAccessTime` where Windows last-access
+updates are enabled. FI does not write source metadata back to hide such a
+read-side effect.
 
 FI may observe the information required to build its historical model, but FI
 does not:
@@ -285,7 +291,7 @@ environment it actually understands.
 
 ## FI, Atlas, and Sentinel — Observe, Decide, Govern, Act, Verify
 
-FI and Atlas remain read-only intelligence products even when Sentinel is
+FI and Atlas remain non-remediating intelligence products even when Sentinel is
 present.
 
 Their job is to detect, reconstruct, explain, and verify. They do not gain
@@ -428,7 +434,7 @@ Success means:
 - current conclusions can be traced back to preserved source facts;
 - uncertainty and gaps remain visible;
 - collection remains bounded and operationally responsible;
-- FI remains read-only toward the customer environment;
+- FI runtime remains non-remediating and does not intentionally modify governed source state;
 - professionals retain decision authority; and
 - integration with Atlas or Sentinel increases context or control without
   weakening the independent boundaries of any product.

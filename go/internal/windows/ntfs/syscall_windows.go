@@ -57,6 +57,12 @@ const (
 	// uses one fixed bounded output buffer for FSCTL_GET_REPARSE_POINT.
 	maximumReparseDataBufferSize = 16 * 1024
 
+	// GetFinalPathNameByHandleW reports a required UTF-16 length before FI grows
+	// its buffer. Keep an explicit ceiling so a returned size can never trigger
+	// an unbounded allocation. This remains well above supported Windows path
+	// lengths while keeping the native API boundary deterministic.
+	maximumFinalPathUTF16Units = 64 * 1024
+
 	volumeNameGUID = 0x0001
 )
 
@@ -170,10 +176,25 @@ func finalVolumePath(handle syscall.Handle) ([]uint16, error) {
 			return result, nil
 		}
 
-		buffer = make([]uint16, int(length)+1)
+		nextSize, err := finalPathBufferLength(length)
+		if err != nil {
+			return nil, err
+		}
+		buffer = make([]uint16, nextSize)
 	}
 
 	return nil, fmt.Errorf("final path exceeded retry bound")
+}
+
+func finalPathBufferLength(required uintptr) (int, error) {
+	if required >= uintptr(maximumFinalPathUTF16Units) {
+		return 0, fmt.Errorf(
+			"final path exceeds bounded UTF-16 limit: %d >= %d",
+			required,
+			maximumFinalPathUTF16Units,
+		)
+	}
+	return int(required) + 1, nil
 }
 
 // openPath opens an existing Windows filesystem object for metadata inspection.

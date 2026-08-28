@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
@@ -36,17 +37,15 @@ type WalkVisitFunc func(
 
 // WalkGovernedRoot recursively walks one governed local NTFS directory tree.
 //
-// The governed root itself is collected first. CollectPath owns the definition
-// of a valid governed root, including the requirement that it be a non-reparse
-// NTFS directory.
+// The governed root is established once and its proven context remains open for
+// the walk. Every discovered object still goes through the normal opened-target
+// collector, including per-object final root/target/scope revalidation. Reparse
+// objects are observed but never recursively followed.
 //
 // Directory entries are read in bounded batches. FI does not sort traversal
 // order because traversal order is not authoritative record content.
-//
-// Every discovered object is passed through CollectPath. Reparse objects are
-// observed but never recursively followed. Before ReadDir begins, the opened
-// directory handle must still match the exact directory observation that
-// authorized traversal.
+// Before ReadDir begins, the opened directory handle must still match the exact
+// directory observation that authorized traversal.
 func WalkGovernedRoot(
 	ctx context.Context,
 	scopeID string,
@@ -60,7 +59,25 @@ func WalkGovernedRoot(
 		return err
 	}
 
-	rootObservation, err := CollectPath(ctx, scopeID, governedRoot, governedRoot)
+	rootUnits, err := syscall.UTF16FromString(governedRoot)
+	if err != nil {
+		return &Error{Stage: StageValidatePath, Op: "UTF16FromString(GovernedRoot)", Err: err}
+	}
+	rootPath := rootUnits[:len(rootUnits)-1]
+	if scopeID == "" {
+		return &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
+	}
+	if err := validateLocalAbsolutePath(rootPath); err != nil {
+		return &Error{Stage: StageGovernedRoot, Op: "ValidatePath", Err: err}
+	}
+
+	root, err := openGovernedRoot(scopeID, rootPath)
+	if err != nil {
+		return err
+	}
+	defer syscall.CloseHandle(root.handle)
+
+	rootObservation, err := collectWalkPath(ctx, root, governedRoot)
 	if err != nil {
 		return err
 	}
@@ -68,13 +85,41 @@ func WalkGovernedRoot(
 		return err
 	}
 
-	return walkDirectory(ctx, scopeID, governedRoot, governedRoot, rootObservation, true, visit)
+	return walkDirectory(ctx, root, governedRoot, rootObservation, true, visit)
+}
+
+func collectWalkPath(ctx context.Context, root governedRootContext, path string) (Observation, error) {
+	if err := validateContext(ctx); err != nil {
+		return Observation{}, err
+	}
+	targetUnits, err := syscall.UTF16FromString(path)
+	if err != nil {
+		return Observation{}, &Error{Stage: StageValidatePath, Op: "UTF16FromString(Target)", Err: err}
+	}
+	targetPath := targetUnits[:len(targetUnits)-1]
+	if err := validateLocalAbsolutePath(targetPath); err != nil {
+		return Observation{}, &Error{Stage: StageValidatePath, Op: "ValidatePath", Err: err}
+	}
+
+	targetHandle, err := openPath(nulTerminate(targetPath))
+	if err != nil {
+		return Observation{}, &Error{Stage: StageOpen, Op: "CreateFileW", Err: err}
+	}
+	defer syscall.CloseHandle(targetHandle)
+
+	return collectOpenedTargetWithContentHashes(
+		ctx,
+		root,
+		CollectionEntryPath,
+		targetPath,
+		targetHandle,
+		nil,
+	)
 }
 
 func walkDirectory(
 	ctx context.Context,
-	scopeID string,
-	governedRoot string,
+	rootContext governedRootContext,
 	directoryPath string,
 	expected Observation,
 	root bool,
@@ -104,7 +149,7 @@ func walkDirectory(
 		entries, readErr := directory.ReadDir(walkDirectoryBatchSize)
 		for _, entry := range entries {
 			childPath := filepath.Join(directoryPath, entry.Name())
-			if err := walkObject(ctx, scopeID, governedRoot, childPath, visit); err != nil {
+			if err := walkObject(ctx, rootContext, childPath, visit); err != nil {
 				return err
 			}
 		}
@@ -128,8 +173,7 @@ func walkDirectory(
 
 func walkObject(
 	ctx context.Context,
-	scopeID string,
-	governedRoot string,
+	root governedRootContext,
 	path string,
 	visit WalkVisitFunc,
 ) error {
@@ -137,7 +181,7 @@ func walkObject(
 		return err
 	}
 
-	observation, collectErr := CollectPath(ctx, scopeID, governedRoot, path)
+	observation, collectErr := collectWalkPath(ctx, root, path)
 	if collectErr != nil {
 		return visit(path, Observation{}, collectErr)
 	}
@@ -149,5 +193,5 @@ func walkObject(
 		return nil
 	}
 
-	return walkDirectory(ctx, scopeID, governedRoot, path, observation, false, visit)
+	return walkDirectory(ctx, root, path, observation, false, visit)
 }

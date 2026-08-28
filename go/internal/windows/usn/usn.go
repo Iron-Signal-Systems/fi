@@ -29,8 +29,9 @@ const (
 	fsctlQueryUSNJournal = 0x000900F4
 	fsctlReadUSNJournal  = 0x000900BB
 
-	readBufferSize  = 1024 * 1024
-	usnV2HeaderSize = 60
+	readBufferSize             = 1024 * 1024
+	usnV2HeaderSize            = 60
+	maximumFinalPathUTF16Units = 64 * 1024
 )
 
 var (
@@ -311,9 +312,24 @@ func finalVolumePath(handle syscall.Handle) ([]uint16, error) {
 		if length < uintptr(len(buffer)) {
 			return append([]uint16(nil), buffer[:length]...), nil
 		}
-		buffer = make([]uint16, int(length)+1)
+		nextSize, err := finalPathBufferLength(length)
+		if err != nil {
+			return nil, err
+		}
+		buffer = make([]uint16, nextSize)
 	}
 	return nil, errors.New("final path exceeded retry bound")
+}
+
+func finalPathBufferLength(required uintptr) (int, error) {
+	if required >= uintptr(maximumFinalPathUTF16Units) {
+		return 0, fmt.Errorf(
+			"final path exceeds bounded UTF-16 limit: %d >= %d",
+			required,
+			maximumFinalPathUTF16Units,
+		)
+	}
+	return int(required) + 1, nil
 }
 
 func volumeGUIDFromFinalPath(path []uint16) (string, error) {

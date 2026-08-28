@@ -12,7 +12,7 @@ The release combines:
 - Windows File & Identity Intelligence;
 - governed-root configuration;
 - gMSA identity requirements;
-- deep NTFS/ADS inspection;
+- accepted Windows NTFS/ADS collection;
 - Secure Record Transport;
 - Ingest & Recorder;
 - PostgreSQL FI System of Record;

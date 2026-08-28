@@ -15,7 +15,7 @@ FI should answer questions such as:
 - Does this user have access to this file now?
 - What exact rights do they have?
 - If access changed, when?
-- What ACL, share, identity, or membership change caused the result?
+- What ACL, share, identity, or membership change explains the result?
 - Who made the relevant change where observable?
 
 The goal is to solve ordinary access problems without manually correlating

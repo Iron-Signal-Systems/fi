@@ -61,11 +61,132 @@ func collectOpenedTargetWithContentHashes(
 
 	observation.ContentHashes = &hashes
 	applyContentHashOutcome(&observation, hashes)
+	if err := revalidateObservationAfterContent(ctx, root, targetHandle, &observation); err != nil {
+		return Observation{}, err
+	}
+	sort.Slice(observation.Warnings, func(i, j int) bool {
+		return observation.Warnings[i].Code < observation.Warnings[j].Code
+	})
 	observation.ObservedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
 	if err := ValidateObservation(observation); err != nil {
 		return Observation{}, &Error{Stage: StageMetadata, Op: "ValidateObservationWithContentHashes", Err: err}
 	}
 	return observation, nil
+}
+
+// revalidateObservationAfterContent closes the interval between structural
+// acceptance and completion of content collection. The original target handle
+// remains open for this check. FI re-reads native state, re-proves governed-root
+// scope, and verifies that the accepted handle-derived path still represents the
+// same namespace binding before the whole observation can remain Complete.
+func revalidateObservationAfterContent(
+	ctx context.Context,
+	root governedRootContext,
+	targetHandle syscall.Handle,
+	observation *Observation,
+) error {
+	if observation == nil {
+		return &Error{Stage: StageConsistency, Op: "RevalidateAfterContent", Err: ErrIdentityChanged}
+	}
+	if err := validateContext(ctx); err != nil {
+		return err
+	}
+
+	finalState, err := queryNativeState(targetHandle)
+	if err != nil {
+		return err
+	}
+	_, finalIdentity, err := buildObjectIdentity(finalState.ID.VolumeSerialNumber, finalState.ID.FileID)
+	if err != nil {
+		return &Error{Stage: StageIdentity, Op: "DecodePostContentNTFSFileID", Err: err}
+	}
+	if finalIdentity != observation.ObjectIdentity {
+		return &Error{Stage: StageConsistency, Op: "PostContentIdentity", Err: ErrIdentityChanged}
+	}
+
+	if reparseObservationChanged(observation.Reparse, finalState.AttributeTag) {
+		return &Error{Stage: StageConsistency, Op: "PostContentReparseState", Err: ErrReparseChangedDuringCollection}
+	}
+
+	metadataChanged, err := observationRelevantNativeStateChanged(*observation, finalState)
+	if err != nil {
+		return &Error{Stage: StageMetadata, Op: "PostContentMetadata", Err: err}
+	}
+	if metadataChanged {
+		appendObservationWarningOnce(observation, records.ObservationWarning{Code: "MetadataChangedDuringCollection"})
+		switch observation.ObservationStatus {
+		case records.ObservationComplete:
+			observation.ObservationStatus = records.ObservationChangedDuringCollection
+		case records.ObservationChangedDuringCollection,
+			records.ObservationPartial,
+			records.ObservationReplacedDuringCollection:
+		}
+	}
+
+	finalPath, err := revalidateScopeHandles(
+		root.handle,
+		targetHandle,
+		root.requestedPath,
+		root.finalPath,
+		root.state.ID,
+		finalState.ID,
+	)
+	if err != nil {
+		return &Error{Stage: StageConsistency, Op: "RevalidateGovernedScopeAfterContent", Err: err}
+	}
+	if utf16LEBase64URL(finalPath) != observation.PathBinding.ResolvedPathUTF16LEBase64URL {
+		appendObservationWarningOnce(observation, records.ObservationWarning{
+			Code:   "PathConsistencyNotVerified",
+			Detail: "target handle resolved path changed after structural collection",
+		})
+		if observation.ObservationStatus != records.ObservationReplacedDuringCollection {
+			observation.ObservationStatus = records.ObservationPartial
+		}
+	}
+
+	return validateContext(ctx)
+}
+
+func appendObservationWarningOnce(observation *Observation, warning records.ObservationWarning) {
+	if observation == nil || warning.Code == "" {
+		return
+	}
+	for _, current := range observation.Warnings {
+		if current.Code == warning.Code {
+			return
+		}
+	}
+	observation.Warnings = append(observation.Warnings, warning)
+}
+
+func observationRelevantNativeStateChanged(observation Observation, state nativeState) (bool, error) {
+	metadata, subjectKind, err := metadataFromState(state)
+	if err != nil {
+		return false, err
+	}
+	if subjectKind != observation.SubjectKind {
+		return true, nil
+	}
+
+	return observation.Metadata.LogicalSize != metadata.LogicalSize ||
+		observation.Metadata.AllocatedSize != metadata.AllocatedSize ||
+		observation.Metadata.CreationTime != metadata.CreationTime ||
+		observation.Metadata.LastWriteTime != metadata.LastWriteTime ||
+		observation.Metadata.ChangeTime != metadata.ChangeTime ||
+		observation.Metadata.RawAttributes != metadata.RawAttributes ||
+		observation.Metadata.LinkCount != metadata.LinkCount, nil
+}
+
+func reparseObservationChanged(observation records.ReparseObservation, state fileAttributeTagInfo) bool {
+	present := state.FileAttributes&fileAttributeReparse != 0
+	switch observation.State {
+	case records.ReparseStateNotPresent:
+		return present
+	case records.ReparseStatePresent:
+		return !present || observation.Tag != reparseTagString(state.ReparseTag)
+	default:
+		return true
+	}
 }
 
 // applyContentHashOutcome keeps content-hash failure visible at the whole-object

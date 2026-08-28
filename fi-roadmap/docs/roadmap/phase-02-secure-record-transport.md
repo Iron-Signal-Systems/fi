@@ -7,11 +7,15 @@ reliably, and without ambiguous loss.
 
 Transport sender and receiver mechanics belong to the same product boundary.
 
+Phase 1 creates and verifies the durable local source queue. Phase 2 begins at
+that accepted queue boundary and owns transport custody, acknowledgement,
+retry/resume, and retirement only after backend custody is established.
+
 ## Responsibilities
 
 Phase 2 owns:
 
-- durable source queueing;
+- transport custody of the accepted Phase 1 durable source queue;
 - record/package construction and identity;
 - source identity;
 - signing;

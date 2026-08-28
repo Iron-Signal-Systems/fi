@@ -47,6 +47,11 @@ const (
 	sePrivilegeEnabled          = 0x00000002
 	sePrivilegeRemoved          = 0x00000004
 	sePrivilegeUsedForAccess    = 0x80000000
+
+	// GetTokenInformation returns a required byte count before FI allocates the
+	// result buffer. A normal process token is far smaller than this ceiling; the
+	// explicit limit prevents a returned size from causing an unbounded allocation.
+	maximumTokenInformationBuffer uint32 = 16 * 1024 * 1024
 )
 
 var (
@@ -313,12 +318,16 @@ func tokenInformation(token syscall.Handle, informationClass uint32) ([]byte, er
 		return nil, windowsCallError("GetTokenInformation(size)", callErr)
 	}
 
-	data := make([]byte, required)
+	bufferSize, err := tokenInformationBufferSize(required)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]byte, bufferSize)
 	result, _, callErr = procGetTokenInformation.Call(
 		uintptr(token),
 		uintptr(informationClass),
 		uintptr(unsafe.Pointer(&data[0])),
-		uintptr(required),
+		uintptr(len(data)),
 		uintptr(unsafe.Pointer(&required)),
 	)
 	if result == 0 {
@@ -328,6 +337,20 @@ func tokenInformation(token syscall.Handle, informationClass uint32) ([]byte, er
 		return nil, fmt.Errorf("GetTokenInformation returned invalid size %d", required)
 	}
 	return data[:required], nil
+}
+
+func tokenInformationBufferSize(required uint32) (int, error) {
+	if required == 0 {
+		return 0, fmt.Errorf("GetTokenInformation returned empty required size")
+	}
+	if required > maximumTokenInformationBuffer {
+		return 0, fmt.Errorf(
+			"GetTokenInformation buffer exceeds bounded limit: %d > %d",
+			required,
+			maximumTokenInformationBuffer,
+		)
+	}
+	return int(required), nil
 }
 
 func principalFromSID(sid uintptr) (records.TokenPrincipalObservation, error) {
