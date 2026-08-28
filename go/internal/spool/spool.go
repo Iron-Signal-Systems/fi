@@ -208,7 +208,7 @@ func (w *Writer) finalizeCurrent() error {
 
 	dataName := "batch-" + w.batchID + ".jsonl"
 	dataPath := filepath.Join(w.dir, dataName)
-	if err := os.Rename(w.openPath, dataPath); err != nil {
+	if err := durableRename(w.openPath, dataPath); err != nil {
 		return err
 	}
 
@@ -328,7 +328,7 @@ func writeManifest(path string, value Manifest) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := durableRename(tempPath, path); err != nil {
 		return err
 	}
 	keep = false

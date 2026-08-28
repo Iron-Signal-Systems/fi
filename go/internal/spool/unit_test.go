@@ -72,3 +72,25 @@ func TestVerifyManifestDetectsTamper(t *testing.T) {
 		t.Fatal("tampered batch verified")
 	}
 }
+func TestDurableRenameMovesFile(t *testing.T) {
+	dir := t.TempDir()
+	source := dir + string(os.PathSeparator) + "source.open"
+	destination := dir + string(os.PathSeparator) + "destination.jsonl"
+
+	if err := os.WriteFile(source, []byte("durable-rename-test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := durableRename(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after rename: %v", err)
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "durable-rename-test" {
+		t.Fatalf("destination content = %q", string(got))
+	}
+}

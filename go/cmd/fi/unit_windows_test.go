@@ -1508,3 +1508,30 @@ func TestNewWindowsSecurityContinuityGapObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestConfiguredUSNPassesPartialOnReobservationError(t *testing.T) {
+	passes := []usnSpoolNextSummary{{ReobservationErrors: 1}}
+	if !configuredUSNPassesPartial(passes) {
+		t.Fatal("re-observation error did not make configured USN passes partial")
+	}
+}
+
+func TestConfiguredUSNPassesPartialOnHashError(t *testing.T) {
+	passes := []usnSpoolNextSummary{{HashErrors: 1}}
+	if !configuredUSNPassesPartial(passes) {
+		t.Fatal("content-hash error did not make configured USN passes partial")
+	}
+}
+
+func TestConfiguredUSNPassesUnavailableObjectIsNotPartial(t *testing.T) {
+	passes := []usnSpoolNextSummary{{UnavailableObjects: 1}}
+	if configuredUSNPassesPartial(passes) {
+		t.Fatal("normal object unavailability incorrectly made configured USN passes partial")
+	}
+}
+
+func TestConfiguredUSNPassesScopeUnresolvedIsNotPartialByItself(t *testing.T) {
+	passes := []usnSpoolNextSummary{{ScopeUnresolvedObjects: 1}}
+	if configuredUSNPassesPartial(passes) {
+		t.Fatal("explicit scope uncertainty incorrectly became an operational collection failure")
+	}
+}

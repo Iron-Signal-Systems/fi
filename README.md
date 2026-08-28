@@ -4,8 +4,8 @@
   <img src="docs/images/fi.png" alt="FI — File Intelligence" width="100%">
 </p>
 
-**File Intelligence (FI)** is a read-only system for building a historical
-understanding of explicitly governed files.
+**File Intelligence (FI)** is a non-remediating, read-oriented system for building a
+historical understanding of explicitly governed files.
 
 FI is designed around a simple question:
 
@@ -196,7 +196,7 @@ independent copies of the data.
 
 ---
 
-## Read-only by design
+## Non-remediating by design
 
 FI is intentionally non-remediating and read-oriented with respect to the
 customer environment. Normal collector code does not intentionally modify

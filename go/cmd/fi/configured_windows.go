@@ -30,6 +30,7 @@ const (
 	configuredActionGapReconcileBaselineAndCatchUp configuredRootAction = "GapReconcileBaselineAndCatchUp"
 	configuredActionUSNCatchUp                     configuredRootAction = "USNCatchUp"
 	configuredStatusComplete                       configuredRootStatus = "Complete"
+	configuredStatusPartial                        configuredRootStatus = "Partial"
 	configuredStatusFailed                         configuredRootStatus = "Failed"
 )
 
@@ -57,6 +58,7 @@ type configuredRunSummary struct {
 	VersionID                        string                    `json:"version_id"`
 	ConfiguredRoots                  int                       `json:"configured_roots"`
 	CompletedRoots                   int                       `json:"completed_roots"`
+	PartialRoots                     int                       `json:"partial_roots"`
 	FailedRoots                      int                       `json:"failed_roots"`
 	Complete                         bool                      `json:"complete"`
 	MonitoringPrerequisitesSatisfied bool                      `json:"monitoring_prerequisites_satisfied"`
@@ -103,8 +105,14 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 			summary.Complete = false
 			runErr = errors.Join(runErr, fmt.Errorf("configured root %q: %w", governedRoot, rootErr))
 		} else {
-			rootSummary.Status = configuredStatusComplete
-			summary.CompletedRoots++
+			switch rootSummary.Status {
+			case configuredStatusPartial:
+				summary.PartialRoots++
+				summary.Complete = false
+			default:
+				rootSummary.Status = configuredStatusComplete
+				summary.CompletedRoots++
+			}
 		}
 		summary.Roots = append(summary.Roots, rootSummary)
 	}
@@ -183,6 +191,9 @@ func writeConfiguredRoot(ctx context.Context, governedRoot string) (configuredRo
 		if opErr != nil {
 			return summary, opErr
 		}
+		if configuredUSNPassesPartial(summary.USNPasses) {
+			summary.Status = configuredStatusPartial
+		}
 		return summary, nil
 	}
 	return summary, errors.New("unreachable configured-root state")
@@ -219,6 +230,9 @@ func baselineAndCatchUpConfiguredRoot(ctx context.Context, summary configuredRoo
 	summary.FinalCheckpoint = finalCheckpoint
 	if opErr != nil {
 		return summary, opErr
+	}
+	if configuredUSNPassesPartial(summary.USNPasses) {
+		summary.Status = configuredStatusPartial
 	}
 	return summary, nil
 }
@@ -262,6 +276,19 @@ func catchUpConfiguredRoot(ctx context.Context, scopeID, governedRoot, targetUSN
 			return passes, &current, fmt.Errorf("USN catch-up made no forward progress from %s", previousUSN)
 		}
 	}
+}
+
+// configuredUSNPassesPartial marks an operationally accepted USN catch-up as
+// Partial when FI durably preserved a real collection failure for a selected
+// governed object. Object disappearance and explicit scope uncertainty remain
+// source facts and do not, by themselves, mean the collector operation failed.
+func configuredUSNPassesPartial(passes []usnSpoolNextSummary) bool {
+	for _, pass := range passes {
+		if pass.ReobservationErrors > 0 || pass.HashErrors > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func configuredScopeID(governedRoot string) string {
