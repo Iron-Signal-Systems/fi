@@ -8,10 +8,9 @@ package localidentity
 
 import (
 	"context"
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"os"
 	"testing"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 func TestCollectLocalPrincipals(t *testing.T) {

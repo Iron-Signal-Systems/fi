@@ -4,7 +4,7 @@
 
 //go:build windows
 
-package ntfs
+package test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 )
 
 func TestWalkGovernedRootCollectsNestedTree(t *testing.T) {
@@ -58,11 +59,11 @@ func TestWalkGovernedRootCollectsNestedTree(t *testing.T) {
 	got := make(map[string]records.SubjectKind)
 	foundADS := false
 
-	err := WalkGovernedRoot(
+	err := ntfs.WalkGovernedRoot(
 		context.Background(),
 		"scope-walk-test",
 		root,
-		func(path string, observation Observation, objectErr error) error {
+		func(path string, observation ntfs.Observation, objectErr error) error {
 			if objectErr != nil {
 				t.Errorf("walk %q: %v", path, objectErr)
 				return nil
@@ -108,11 +109,11 @@ func TestWalkGovernedRootPreservesIllFormedUTF16Path(t *testing.T) {
 	createRawUTF16File(t, append(append([]uint16(nil), fullPathUnits...), 0))
 
 	found := false
-	err = WalkGovernedRoot(
+	err = ntfs.WalkGovernedRoot(
 		context.Background(),
 		"scope-wtf8-test",
 		root,
-		func(_ string, observation Observation, objectErr error) error {
+		func(_ string, observation ntfs.Observation, objectErr error) error {
 			if objectErr != nil {
 				return objectErr
 			}
@@ -134,9 +135,9 @@ func TestWalkGovernedRootPreservesIllFormedUTF16Path(t *testing.T) {
 	}
 }
 
-func TestWalkGovernedRootReadsMultipleBatches(t *testing.T) {
+func TestWalkGovernedRootCollectsLargeDirectory(t *testing.T) {
 	root := t.TempDir()
-	const fileCount = walkDirectoryBatchSize*2 + 17
+	const fileCount = 300
 
 	for index := 0; index < fileCount; index++ {
 		name := filepath.Join(root, fmt.Sprintf("file-%04d.txt", index))
@@ -146,11 +147,11 @@ func TestWalkGovernedRootReadsMultipleBatches(t *testing.T) {
 	}
 
 	seenFiles := 0
-	err := WalkGovernedRoot(
+	err := ntfs.WalkGovernedRoot(
 		context.Background(),
-		"scope-batch-test",
+		"scope-large-directory-test",
 		root,
-		func(_ string, observation Observation, objectErr error) error {
+		func(_ string, observation ntfs.Observation, objectErr error) error {
 			if objectErr != nil {
 				return objectErr
 			}
@@ -175,13 +176,13 @@ func TestWalkGovernedRootRejectsFileRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := WalkGovernedRoot(
+	err := ntfs.WalkGovernedRoot(
 		context.Background(),
 		"scope-walk-test",
 		file,
-		func(string, Observation, error) error { return nil },
+		func(string, ntfs.Observation, error) error { return nil },
 	)
-	if !errors.Is(err, ErrGovernedRootNotDirectory) {
+	if !errors.Is(err, ntfs.ErrGovernedRootNotDirectory) {
 		t.Fatalf("error = %v, want ErrGovernedRootNotDirectory", err)
 	}
 }
@@ -200,11 +201,11 @@ func TestWalkGovernedRootSkipsJunctionTarget(t *testing.T) {
 	}
 
 	seenJunction := false
-	err := WalkGovernedRoot(
+	err := ntfs.WalkGovernedRoot(
 		context.Background(),
 		"scope-walk-test",
 		root,
-		func(path string, observation Observation, objectErr error) error {
+		func(path string, observation ntfs.Observation, objectErr error) error {
 			if objectErr != nil {
 				return objectErr
 			}

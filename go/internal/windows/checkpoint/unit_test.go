@@ -7,10 +7,9 @@ package checkpoint
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"testing"
 	"unicode/utf16"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 func TestAssessContinuous(t *testing.T) {

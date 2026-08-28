@@ -7,12 +7,11 @@
 package resourcejournal
 
 import (
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 	"path/filepath"
 	"strconv"
 	"testing"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/records"
-	"github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
 )
 
 func TestAppendExecutableStartWritesRuntimeIdentity(t *testing.T) {

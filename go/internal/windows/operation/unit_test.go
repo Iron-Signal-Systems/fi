@@ -5,10 +5,9 @@
 package operation
 
 import (
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"strings"
 	"testing"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 func TestStartFinishComplete(t *testing.T) {

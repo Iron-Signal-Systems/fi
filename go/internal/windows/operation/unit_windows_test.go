@@ -7,11 +7,10 @@
 package operation
 
 import (
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 func TestAppendStartedAndFinishedRoundTrip(t *testing.T) {

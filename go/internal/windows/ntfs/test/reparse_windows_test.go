@@ -4,7 +4,7 @@
 
 //go:build windows
 
-package ntfs
+package test
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 )
 
 func TestCollectPathDirectorySymlinkReparse(t *testing.T) {
@@ -29,7 +30,7 @@ func TestCollectPathDirectorySymlinkReparse(t *testing.T) {
 		t.Skipf("directory symlink unavailable: %v: %s", err, output)
 	}
 
-	observation, err := CollectPath(context.Background(), "scope-reparse-test", root, link)
+	observation, err := ntfs.CollectPath(context.Background(), "scope-reparse-test", root, link)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +40,7 @@ func TestCollectPathDirectorySymlinkReparse(t *testing.T) {
 		observation,
 		records.SubjectDirectory,
 		records.ReparseDataFormatSymbolicLink,
+		0xA000000C,
 		"0xA000000C",
 		"IO_REPARSE_TAG_SYMLINK",
 		outside,
@@ -61,7 +63,7 @@ func TestCollectPathFileSymlinkReparse(t *testing.T) {
 		t.Skipf("file symlink unavailable: %v: %s", err, output)
 	}
 
-	observation, err := CollectPath(context.Background(), "scope-reparse-test", root, link)
+	observation, err := ntfs.CollectPath(context.Background(), "scope-reparse-test", root, link)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +73,7 @@ func TestCollectPathFileSymlinkReparse(t *testing.T) {
 		observation,
 		records.SubjectFile,
 		records.ReparseDataFormatSymbolicLink,
+		0xA000000C,
 		"0xA000000C",
 		"IO_REPARSE_TAG_SYMLINK",
 		target,
@@ -89,7 +92,7 @@ func TestCollectPathJunctionReparse(t *testing.T) {
 		t.Fatalf("create junction: %v: %s", err, output)
 	}
 
-	observation, err := CollectPath(context.Background(), "scope-reparse-test", root, junction)
+	observation, err := ntfs.CollectPath(context.Background(), "scope-reparse-test", root, junction)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +102,7 @@ func TestCollectPathJunctionReparse(t *testing.T) {
 		observation,
 		records.SubjectDirectory,
 		records.ReparseDataFormatMountPoint,
+		0xA0000003,
 		"0xA0000003",
 		"IO_REPARSE_TAG_MOUNT_POINT",
 		outside,
@@ -110,9 +114,10 @@ func TestCollectPathJunctionReparse(t *testing.T) {
 
 func assertReparseObservation(
 	t *testing.T,
-	observation Observation,
+	observation ntfs.Observation,
 	wantSubject records.SubjectKind,
 	wantDataFormat records.ReparseDataFormat,
+	wantTagValue uint32,
 	wantTag string,
 	wantTagName string,
 	wantTarget string,
@@ -142,8 +147,8 @@ func assertReparseObservation(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) < 8 || reparseTagString(binary.LittleEndian.Uint32(raw[0:4])) != wantTag {
-		t.Fatalf("raw reparse buffer tag mismatch")
+	if len(raw) < 8 || binary.LittleEndian.Uint32(raw[0:4]) != wantTagValue {
+		t.Fatal("raw reparse buffer tag mismatch")
 	}
 
 	substitute, err := decodeUTF16Base64URL(observation.Reparse.SubstituteNameUTF16LEBase64URL)

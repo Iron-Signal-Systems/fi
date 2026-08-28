@@ -9,9 +9,8 @@ package smb
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"testing"
 )
 
 func TestCollectLocalShares(t *testing.T) {
