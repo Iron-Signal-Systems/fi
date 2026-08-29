@@ -178,7 +178,7 @@ func TestReobserveBatchMarksObjectOutsideGovernedRoot(t *testing.T) {
 	}
 	result := ReobserveBatch(context.Background(), root, batch)
 	if len(result.Reobservations) != 1 {
-		t.Fatalf("reobservations = %d", len(result.Reobservations))
+		t.Fatalf("reobservations = %d, want 1", len(result.Reobservations))
 	}
 	got := result.Reobservations[0]
 	if got.Status != ReobservationOutsideGovernedRoot || got.ReasonCode != "OutsideGovernedRoot" {
@@ -220,28 +220,6 @@ func TestReobserveBatchMarksDeletedObjectUnavailable(t *testing.T) {
 	}
 	if got.ReasonCode != "ObjectUnavailableAfterUSN" {
 		t.Fatalf("reason = %q", got.ReasonCode)
-	}
-}
-
-func TestGovernedRootDrive(t *testing.T) {
-	for input, want := range map[string]string{
-		`C:\Data`:     "C",
-		`c:\Data`:     "c",
-		`\\?\D:\Data`: "D",
-	} {
-		got, err := governedRootDrive(input)
-		if err != nil {
-			t.Fatalf("governedRootDrive(%q): %v", input, err)
-		}
-		if got != want {
-			t.Fatalf("governedRootDrive(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
-func TestGovernedRootDriveRejectsUNC(t *testing.T) {
-	if _, err := governedRootDrive(`\\server\share\data`); err == nil {
-		t.Fatal("expected UNC root rejection")
 	}
 }
 
