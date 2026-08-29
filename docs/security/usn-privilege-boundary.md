@@ -541,19 +541,19 @@ It does not own:
 
 ```mermaid
 flowchart LR
-    A[Administrator-controlled FI configuration] --> B[FICollector<br/>gFI-FS01$<br/>Non-admin]
-    A --> C[FIUSNReader<br/>gFI-USN-FS01$<br/>Local Administrator]
+    A["Administrator-controlled FI configuration"] --> B["FICollector<br/>gFI-FS01$<br/>Non-admin"]
+    A --> C["FIUSNReader<br/>gFI-USN-FS01$<br/>Local Administrator"]
 
-    B -->|Authenticated local named pipe| C
-    C -->|Query / Read USN Journal| D[NTFS Volume<br/>\\.\C:]
-    C -->|Bounded raw USN data| B
+    B -->|"Authenticated local named pipe"| C
+    C -->|"Query / Read USN Journal"| D["Local NTFS volume"]
+    C -->|"Bounded raw USN data"| B
 
-    B --> E[USN parsing]
-    B --> F[File-ID re-observation]
-    B --> G[Containment proof]
-    B --> H[Hashing]
-    B --> I[Spool]
-    B --> J[Checkpoint]
+    B --> E["USN parsing"]
+    B --> F["File-ID re-observation"]
+    B --> G["Containment proof"]
+    B --> H["Hashing"]
+    B --> I["Spool"]
+    B --> J["Checkpoint"]
 ```
 
 ---
@@ -606,27 +606,27 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[Domain Administrator creates per-host gMSAs] --> B[gFI-FS01$]
-    A --> C[gFI-USN-FS01$]
+    A["Domain Administrator creates per-host gMSAs"] --> B["gFI-FS01$"]
+    A --> C["gFI-USN-FS01$"]
 
-    D[ISS-FS-01 computer account] -->|Authorized managed-password retrieval| B
-    D -->|Authorized managed-password retrieval| C
+    D["ISS-FS-01 computer account"] -->|"Authorized managed-password retrieval"| B
+    D -->|"Authorized managed-password retrieval"| C
 
-    B --> E[FICollector service]
-    C --> F[FIUSNReader service]
+    B --> E["FICollector service"]
+    C --> F["FIUSNReader service"]
 
-    E -->|Connect locally| G[\\.\pipe\FI-USN]
-    G -->|Pipe DACL check| F
-    F -->|Verify caller SID = gFI-FS01$| H{Authorized client?}
+    E -->|"Connect locally"| G["Local FI-USN named pipe"]
+    G -->|"Pipe DACL check"| F
+    F -->|"Verify caller SID = gFI-FS01$"| H{"Authorized client?"}
 
-    H -->|No| I[Reject]
-    H -->|Yes| J[Accept narrow USN request]
+    H -->|"No"| I["Reject"]
+    H -->|"Yes"| J["Accept narrow USN request"]
 
-    J --> K[Read governed roots from fi.conf]
-    K --> L{Requested volume configured?}
+    J --> K["Read governed roots from fi.conf"]
+    K --> L{"Requested volume configured?"}
 
-    L -->|No| M[Reject: volume not configured]
-    L -->|Yes| N[Perform approved USN operation]
+    L -->|"No"| M["Reject: volume not configured"]
+    L -->|"Yes"| N["Perform approved USN operation"]
 ```
 
 ---
