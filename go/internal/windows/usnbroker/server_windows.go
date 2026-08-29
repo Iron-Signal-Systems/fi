@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
@@ -24,7 +25,7 @@ const (
 	CollectorServiceName = "FICollector"
 	HelperServiceName    = "FIUSNReader"
 
-	pipeAccessDuplex         = 0x00000003
+	pipeAccessDuplex          = 0x00000003
 	fileFlagFirstPipeInstance = 0x00080000
 	pipeRejectRemoteClients   = 0x00000008
 	pipeBufferSize            = 64 * 1024
@@ -284,7 +285,7 @@ func boundedError(err error) string {
 		return message
 	}
 	message = message[:maxErrorBytes]
-	for len(message) > 0 && !strings.HasSuffix(message, string([]byte(message[len(message)-1:]))) {
+	for len(message) > 0 && !utf8.ValidString(message) {
 		message = message[:len(message)-1]
 	}
 	return message
