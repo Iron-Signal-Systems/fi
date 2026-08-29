@@ -21,69 +21,42 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnbroker"
 )
 
 const (
 	CollectionMethod = "WindowsNTFSUSNJournalV0"
 
-	fsctlQueryUSNJournal = 0x000900F4
-	fsctlReadUSNJournal  = 0x000900BB
-
-	readBufferSize             = 1024 * 1024
 	usnV2HeaderSize            = 60
 	maximumFinalPathUTF16Units = 64 * 1024
 )
 
 var (
-	ErrInvalidGovernedRoot  = errors.New("governed root must use a local drive-absolute path")
 	ErrMalformedUSNBuffer   = errors.New("Windows returned a malformed USN journal buffer")
 	ErrUnsupportedUSNRecord = errors.New("unsupported USN record version")
 )
 
 var (
 	kernel32                          = syscall.NewLazyDLL("kernel32.dll")
-	procDeviceIoControl               = kernel32.NewProc("DeviceIoControl")
 	procGetFileInformationByHandleEx  = kernel32.NewProc("GetFileInformationByHandleEx")
 	procGetFinalPathNameByHandleW     = kernel32.NewProc("GetFinalPathNameByHandleW")
 	procGetVolumeInformationByHandleW = kernel32.NewProc("GetVolumeInformationByHandleW")
 )
-
-type journalDataV0 struct {
-	JournalID       uint64
-	FirstUSN        int64
-	NextUSN         int64
-	LowestValidUSN  int64
-	MaxUSN          int64
-	MaximumSize     uint64
-	AllocationDelta uint64
-}
 
 type fileIDInfo struct {
 	VolumeSerialNumber uint64
 	FileID             [16]byte
 }
 
-type readJournalDataV0 struct {
-	StartUSN          int64
-	ReasonMask        uint32
-	ReturnOnlyOnClose uint32
-	Timeout           uint64
-	BytesToWaitFor    uint64
-	JournalID         uint64
-}
-
 var (
 	_ [24 - unsafe.Sizeof(fileIDInfo{})]byte
 	_ [unsafe.Sizeof(fileIDInfo{}) - 24]byte
-	_ [56 - unsafe.Sizeof(journalDataV0{})]byte
-	_ [unsafe.Sizeof(journalDataV0{}) - 56]byte
-	_ [40 - unsafe.Sizeof(readJournalDataV0{})]byte
-	_ [unsafe.Sizeof(readJournalDataV0{}) - 40]byte
 )
 
 // QueryJournal records the current NTFS change-journal state for the volume
-// containing governedRoot. It never creates, resizes, deletes, or otherwise
-// modifies the journal.
+// containing governedRoot. Privileged direct-volume access is isolated in the
+// local FIUSNReader service; this process remains responsible for volume
+// identity and FI record validation.
 func QueryJournal(ctx context.Context, scopeID, governedRoot string) (records.USNJournalState, error) {
 	if err := validateContext(ctx); err != nil {
 		return records.USNJournalState{}, err
@@ -92,25 +65,20 @@ func QueryJournal(ctx context.Context, scopeID, governedRoot string) (records.US
 		return records.USNJournalState{}, errors.New("scope ID is required")
 	}
 
-	volume, err := openVolumeForRoot(governedRoot)
+	identity, err := queryVolumeIdentity(governedRoot)
 	if err != nil {
 		return records.USNJournalState{}, err
 	}
-	defer syscall.CloseHandle(volume.handle)
-
-	journal, err := queryJournalNative(volume.handle)
+	journal, err := usnbroker.Query(ctx, governedRoot)
 	if err != nil {
 		return records.USNJournalState{}, err
-	}
-	if journal.FirstUSN < 0 || journal.NextUSN < 0 || journal.LowestValidUSN < 0 || journal.MaxUSN < 0 {
-		return records.USNJournalState{}, ErrMalformedUSNBuffer
 	}
 
 	state := records.USNJournalState{
 		ObservedAt:       canonicalNow(),
 		CollectionMethod: CollectionMethod,
 		ScopeID:          scopeID,
-		VolumeIdentity:   volume.identity,
+		VolumeIdentity:   identity,
 		JournalID:        strconv.FormatUint(journal.JournalID, 10),
 		FirstUSN:         strconv.FormatUint(uint64(journal.FirstUSN), 10),
 		NextUSN:          strconv.FormatUint(uint64(journal.NextUSN), 10),
@@ -125,10 +93,9 @@ func QueryJournal(ctx context.Context, scopeID, governedRoot string) (records.US
 	return state, nil
 }
 
-// ReadJournal reads one bounded batch beginning at startUSN. The result is
-// volume-wide source data. Governed-root filtering is intentionally deferred to
-// the later File-ID re-observation step, where containment can be proved from an
-// open handle instead of guessed from the USN leaf name.
+// ReadJournal reads one bounded batch beginning at startUSN. FIUSNReader owns
+// only the privileged raw-volume query/read. Parsing and governed-root handling
+// remain here so the privileged service does not become a second collector.
 func ReadJournal(ctx context.Context, scopeID, governedRoot, startUSN string) (records.USNReadBatch, error) {
 	if err := validateContext(ctx); err != nil {
 		return records.USNReadBatch{}, err
@@ -138,21 +105,11 @@ func ReadJournal(ctx context.Context, scopeID, governedRoot, startUSN string) (r
 		return records.USNReadBatch{}, err
 	}
 
-	volume, err := openVolumeForRoot(governedRoot)
+	identity, err := queryVolumeIdentity(governedRoot)
 	if err != nil {
 		return records.USNReadBatch{}, err
 	}
-	defer syscall.CloseHandle(volume.handle)
-
-	journal, err := queryJournalNative(volume.handle)
-	if err != nil {
-		return records.USNReadBatch{}, err
-	}
-	if journal.FirstUSN < 0 || journal.NextUSN < 0 || journal.LowestValidUSN < 0 || journal.MaxUSN < 0 {
-		return records.USNReadBatch{}, ErrMalformedUSNBuffer
-	}
-
-	buffer, err := readJournalNative(volume.handle, start, journal.JournalID)
+	journal, buffer, err := usnbroker.Read(ctx, governedRoot, start)
 	if err != nil {
 		return records.USNReadBatch{}, err
 	}
@@ -165,7 +122,7 @@ func ReadJournal(ctx context.Context, scopeID, governedRoot, startUSN string) (r
 		ObservedAt:       canonicalNow(),
 		CollectionMethod: CollectionMethod,
 		ScopeID:          scopeID,
-		VolumeIdentity:   volume.identity,
+		VolumeIdentity:   identity,
 		JournalID:        strconv.FormatUint(journal.JournalID, 10),
 		StartUSN:         strconv.FormatUint(uint64(start), 10),
 		NextUSN:          strconv.FormatUint(uint64(next), 10),
@@ -175,58 +132,6 @@ func ReadJournal(ctx context.Context, scopeID, governedRoot, startUSN string) (r
 		return records.USNReadBatch{}, err
 	}
 	return batch, nil
-}
-
-type openedVolume struct {
-	handle   syscall.Handle
-	identity records.VolumeIdentity
-}
-
-func openVolumeForRoot(governedRoot string) (openedVolume, error) {
-	drive, err := governedRootDrive(governedRoot)
-	if err != nil {
-		return openedVolume{}, err
-	}
-
-	devicePath := `\\.\` + strings.ToUpper(drive) + `:`
-	deviceUnits, err := syscall.UTF16PtrFromString(devicePath)
-	if err != nil {
-		return openedVolume{}, err
-	}
-	handle, err := syscall.CreateFile(
-		deviceUnits,
-		syscall.GENERIC_READ,
-		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,
-		nil,
-		syscall.OPEN_EXISTING,
-		0,
-		0,
-	)
-	if err != nil {
-		return openedVolume{}, err
-	}
-
-	identity, err := queryVolumeIdentity(governedRoot)
-	if err != nil {
-		syscall.CloseHandle(handle)
-		return openedVolume{}, err
-	}
-	return openedVolume{handle: handle, identity: identity}, nil
-}
-
-func governedRootDrive(path string) (string, error) {
-	switch {
-	case len(path) >= 3 && isASCIILetter(path[0]) && path[1] == ':' && path[2] == '\\':
-		return string(path[0]), nil
-	case len(path) >= 7 && strings.HasPrefix(path, `\\?\`) && isASCIILetter(path[4]) && path[5] == ':' && path[6] == '\\':
-		return string(path[4]), nil
-	default:
-		return "", ErrInvalidGovernedRoot
-	}
-}
-
-func isASCIILetter(value byte) bool {
-	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
 }
 
 func queryVolumeIdentity(governedRoot string) (records.VolumeIdentity, error) {
@@ -348,58 +253,6 @@ func volumeGUIDFromFinalPath(path []uint16) (string, error) {
 		}
 	}
 	return "", errors.New("volume GUID terminator missing")
-}
-
-func queryJournalNative(handle syscall.Handle) (journalDataV0, error) {
-	var journal journalDataV0
-	var returned uint32
-	r1, _, callErr := procDeviceIoControl.Call(
-		uintptr(handle),
-		fsctlQueryUSNJournal,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&journal)),
-		unsafe.Sizeof(journal),
-		uintptr(unsafe.Pointer(&returned)),
-		0,
-	)
-	if r1 == 0 {
-		return journalDataV0{}, callErr
-	}
-	if returned < uint32(unsafe.Sizeof(journal)) {
-		return journalDataV0{}, ErrMalformedUSNBuffer
-	}
-	return journal, nil
-}
-
-func readJournalNative(handle syscall.Handle, startUSN int64, journalID uint64) ([]byte, error) {
-	request := readJournalDataV0{
-		StartUSN:          startUSN,
-		ReasonMask:        0xFFFFFFFF,
-		ReturnOnlyOnClose: 0,
-		Timeout:           0,
-		BytesToWaitFor:    0,
-		JournalID:         journalID,
-	}
-	buffer := make([]byte, readBufferSize)
-	var returned uint32
-	r1, _, callErr := procDeviceIoControl.Call(
-		uintptr(handle),
-		fsctlReadUSNJournal,
-		uintptr(unsafe.Pointer(&request)),
-		unsafe.Sizeof(request),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(len(buffer)),
-		uintptr(unsafe.Pointer(&returned)),
-		0,
-	)
-	if r1 == 0 {
-		return nil, callErr
-	}
-	if returned < 8 || returned > uint32(len(buffer)) {
-		return nil, ErrMalformedUSNBuffer
-	}
-	return append([]byte(nil), buffer[:returned]...), nil
 }
 
 func parseReadBuffer(buffer []byte) (int64, []records.USNChangeObservation, error) {
