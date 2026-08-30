@@ -79,6 +79,14 @@ func CheckContainment(
 		fileReferenceNumber,
 		sequenceNumber,
 	)
+	if errors.Is(err, syscall.ERROR_ACCESS_DENIED) && containmentServer2022() {
+		return containmentCheckServer2022(
+			rootHandle,
+			rootPath,
+			fileReferenceNumber,
+			sequenceNumber,
+		)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, syscall.ERROR_FILE_NOT_FOUND),
