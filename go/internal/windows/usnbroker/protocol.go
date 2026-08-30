@@ -16,8 +16,9 @@ const (
 	ProtocolVersion = 1
 	MaxUSNDataBytes = 1024 * 1024
 
-	operationQuery uint16 = 1
-	operationRead  uint16 = 2
+	operationQuery       uint16 = 1
+	operationRead        uint16 = 2
+	operationContainment uint16 = 3
 
 	requestHeaderSize  = 24
 	responseHeaderSize = 76
@@ -28,6 +29,14 @@ const (
 var (
 	requestMagic  = [4]byte{'F', 'I', 'U', 'Q'}
 	responseMagic = [4]byte{'F', 'I', 'U', 'R'}
+)
+
+type ContainmentResult byte
+
+const (
+	ContainmentContained   ContainmentResult = 1
+	ContainmentOutside     ContainmentResult = 2
+	ContainmentUnavailable ContainmentResult = 3
 )
 
 type Journal struct {
@@ -56,9 +65,11 @@ func (err *remoteError) Error() string {
 }
 
 type request struct {
-	Operation    uint16
-	GovernedRoot string
-	StartUSN     int64
+	Operation           uint16
+	GovernedRoot        string
+	StartUSN            int64
+	FileReferenceNumber uint64
+	SequenceNumber      uint16
 }
 
 type response struct {
@@ -82,23 +93,35 @@ func readRequest(reader io.Reader) (request, error) {
 
 	operation := binary.LittleEndian.Uint16(header[6:8])
 	rootLength := binary.LittleEndian.Uint32(header[8:12])
-	startUSN := int64(binary.LittleEndian.Uint64(header[12:20]))
-	reserved := binary.LittleEndian.Uint32(header[20:24])
-	if reserved != 0 {
-		return request{}, errors.New("FI USN request reserved field is not zero")
-	}
+	payload := binary.LittleEndian.Uint64(header[12:20])
+	auxiliary := binary.LittleEndian.Uint32(header[20:24])
 	if rootLength == 0 || rootLength > maxRootBytes {
 		return request{}, errors.New("invalid FI USN governed-root length")
 	}
-	if startUSN < 0 {
-		return request{}, errors.New("FI USN start USN must not be negative")
-	}
+
+	value := request{Operation: operation}
 	switch operation {
 	case operationQuery:
-		if startUSN != 0 {
-			return request{}, errors.New("FI USN query request has unexpected start USN")
+		if payload != 0 || auxiliary != 0 {
+			return request{}, errors.New("FI USN query request contains unexpected fields")
 		}
 	case operationRead:
+		value.StartUSN = int64(payload)
+		if value.StartUSN < 0 {
+			return request{}, errors.New("FI USN start USN must not be negative")
+		}
+		if auxiliary != 0 {
+			return request{}, errors.New("FI USN read request reserved field is not zero")
+		}
+	case operationContainment:
+		if payload >= 1<<48 {
+			return request{}, errors.New("FI USN containment file reference exceeds 48 bits")
+		}
+		if auxiliary>>16 != 0 {
+			return request{}, errors.New("FI USN containment reserved field is not zero")
+		}
+		value.FileReferenceNumber = payload
+		value.SequenceNumber = uint16(auxiliary)
 	default:
 		return request{}, errors.New("unsupported FI USN operation")
 	}
@@ -110,11 +133,8 @@ func readRequest(reader io.Reader) (request, error) {
 	if !utf8.Valid(rootBytes) {
 		return request{}, errors.New("FI USN governed root is not valid UTF-8")
 	}
-	return request{
-		Operation:    operation,
-		GovernedRoot: string(rootBytes),
-		StartUSN:     startUSN,
-	}, nil
+	value.GovernedRoot = string(rootBytes)
+	return value, nil
 }
 
 func writeRequest(writer io.Writer, value request) error {
@@ -122,15 +142,31 @@ func writeRequest(writer io.Writer, value request) error {
 	if len(rootBytes) == 0 || len(rootBytes) > maxRootBytes || !utf8.Valid(rootBytes) {
 		return errors.New("invalid FI USN governed root")
 	}
-	if value.StartUSN < 0 {
-		return errors.New("FI USN start USN must not be negative")
-	}
+
+	var payload uint64
+	var auxiliary uint32
 	switch value.Operation {
 	case operationQuery:
-		if value.StartUSN != 0 {
-			return errors.New("FI USN query request has unexpected start USN")
+		if value.StartUSN != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
+			return errors.New("FI USN query request contains unexpected fields")
 		}
 	case operationRead:
+		if value.StartUSN < 0 {
+			return errors.New("FI USN start USN must not be negative")
+		}
+		if value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
+			return errors.New("FI USN read request contains unexpected containment fields")
+		}
+		payload = uint64(value.StartUSN)
+	case operationContainment:
+		if value.StartUSN != 0 {
+			return errors.New("FI USN containment request has unexpected start USN")
+		}
+		if value.FileReferenceNumber >= 1<<48 {
+			return errors.New("FI USN containment file reference exceeds 48 bits")
+		}
+		payload = value.FileReferenceNumber
+		auxiliary = uint32(value.SequenceNumber)
 	default:
 		return errors.New("unsupported FI USN operation")
 	}
@@ -140,7 +176,8 @@ func writeRequest(writer io.Writer, value request) error {
 	binary.LittleEndian.PutUint16(header[4:6], ProtocolVersion)
 	binary.LittleEndian.PutUint16(header[6:8], value.Operation)
 	binary.LittleEndian.PutUint32(header[8:12], uint32(len(rootBytes)))
-	binary.LittleEndian.PutUint64(header[12:20], uint64(value.StartUSN))
+	binary.LittleEndian.PutUint64(header[12:20], payload)
+	binary.LittleEndian.PutUint32(header[20:24], auxiliary)
 
 	if err := writeAll(writer, header[:]); err != nil {
 		return err

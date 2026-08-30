@@ -9,6 +9,7 @@ package usn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"syscall"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
@@ -26,6 +27,12 @@ const (
 	ReobservationOutsideGovernedRoot ReobservationStatus = "OutsideGovernedRoot"
 	ReobservationUnavailable         ReobservationStatus = "Unavailable"
 	ReobservationError               ReobservationStatus = "Error"
+
+	// ReobservationReasonContainedObjectAccessDenied identifies the narrow case
+	// where FICollector could not open the object by File ID, but FIUSNReader
+	// independently proved that the exact object identity is currently inside
+	// the configured governed root. Scope is known; collection still failed.
+	ReobservationReasonContainedObjectAccessDenied = "ContainedObjectAccessDenied"
 )
 
 // ChangeReobservation links one distinct NTFS object mentioned by a USN batch
@@ -115,12 +122,41 @@ func ReobserveBatch(
 		}
 
 		status, reason := classifyReobservationError(err)
+		errorText := err.Error()
+		if IsOpenFileByIDAccessDenied(err) {
+			containment, containmentErr := CheckObjectContainment(
+				ctx,
+				governedRoot,
+				candidate.identity,
+			)
+			if containmentErr != nil {
+				errorText = errors.Join(
+					err,
+					fmt.Errorf("FIUSNReader containment: %w", containmentErr),
+				).Error()
+			} else {
+				switch containment {
+				case ContainmentOutside:
+					status = ReobservationOutsideGovernedRoot
+					reason = "OutsideGovernedRoot"
+					errorText = ""
+				case ContainmentUnavailable:
+					status = ReobservationUnavailable
+					reason = "ObjectUnavailableAfterUSN"
+					errorText = ""
+				case ContainmentContained:
+					status = ReobservationError
+					reason = ReobservationReasonContainedObjectAccessDenied
+				}
+			}
+		}
+
 		result.Reobservations = append(result.Reobservations, ChangeReobservation{
 			FileIdentity: candidate.identity,
 			TriggerUSNs:  candidate.triggerUSNs,
 			Status:       status,
 			ReasonCode:   reason,
-			Error:        err.Error(),
+			Error:        errorText,
 		})
 	}
 	return result

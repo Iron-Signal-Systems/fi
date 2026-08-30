@@ -22,6 +22,41 @@ const (
 	connectDelay    = 50 * time.Millisecond
 )
 
+// CheckContainment asks FIUSNReader to determine whether one exact NTFS object
+// identity is currently inside governedRoot. The privileged helper returns only
+// a mechanical containment result; it does not return the resolved path,
+// metadata, security information, or file content.
+func CheckContainment(
+	ctx context.Context,
+	governedRoot string,
+	fileReferenceNumber uint64,
+	sequenceNumber uint16,
+) (ContainmentResult, error) {
+	result, err := roundTrip(ctx, request{
+		Operation:           operationContainment,
+		GovernedRoot:        governedRoot,
+		FileReferenceNumber: fileReferenceNumber,
+		SequenceNumber:      sequenceNumber,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if result.Journal != (Journal{}) {
+		return 0, errors.New("FIUSNReader containment unexpectedly returned journal state")
+	}
+	if len(result.Data) != 1 {
+		return 0, errors.New("FIUSNReader containment returned an invalid result length")
+	}
+
+	value := ContainmentResult(result.Data[0])
+	switch value {
+	case ContainmentContained, ContainmentOutside, ContainmentUnavailable:
+		return value, nil
+	default:
+		return 0, errors.New("FIUSNReader containment returned an invalid result")
+	}
+}
+
 // Query asks the local FIUSNReader service for the current USN journal state
 // of the volume containing governedRoot.
 func Query(ctx context.Context, governedRoot string) (Journal, error) {

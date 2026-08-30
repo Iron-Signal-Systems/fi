@@ -110,6 +110,20 @@ func Wake() {
 	}
 }
 
+func allowedGovernedRoot(governedRoot string) (bool, error) {
+	value, _, err := config.LoadDefault()
+	if err != nil {
+		return false, err
+	}
+	requested := normalizedGovernedRoot(governedRoot)
+	for _, configuredRoot := range value.GovernedRoots {
+		if strings.EqualFold(normalizedGovernedRoot(configuredRoot), requested) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func allowedVolume(governedRoot string) (bool, error) {
 	requestedDrive, err := usnraw.DriveForRoot(governedRoot)
 	if err != nil {
@@ -176,6 +190,31 @@ func authorizeClient(handle windows.Handle, expectedSID *windows.SID) (bool, err
 	return authorized, nil
 }
 
+func brokerContainment(value usnraw.ContainmentResult) (ContainmentResult, error) {
+	switch value {
+	case usnraw.ContainmentContained:
+		return ContainmentContained, nil
+	case usnraw.ContainmentOutside:
+		return ContainmentOutside, nil
+	case usnraw.ContainmentUnavailable:
+		return ContainmentUnavailable, nil
+	default:
+		return 0, errors.New("invalid FIUSNReader containment result")
+	}
+}
+
+func brokerJournal(value usnraw.Journal) Journal {
+	return Journal{
+		JournalID:       value.JournalID,
+		FirstUSN:        value.FirstUSN,
+		NextUSN:         value.NextUSN,
+		LowestValidUSN:  value.LowestValidUSN,
+		MaxUSN:          value.MaxUSN,
+		MaximumSize:     value.MaximumSize,
+		AllocationDelta: value.AllocationDelta,
+	}
+}
+
 func createServerPipe(securityAttributes *windows.SecurityAttributes) (windows.Handle, error) {
 	pipeUnits, err := windows.UTF16PtrFromString(PipePath)
 	if err != nil {
@@ -216,16 +255,16 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 		return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "FICollector service SID is required")
 	}
 
-	allowed, err := allowedVolume(value.GovernedRoot)
-	if err != nil {
-		return writeFailure(stream, err)
-	}
-	if !allowed {
-		return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested volume is not configured for FI")
-	}
-
 	switch value.Operation {
 	case operationQuery:
+		allowed, err := allowedVolume(value.GovernedRoot)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		if !allowed {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested volume is not configured for FI")
+		}
+
 		journal, err := usnraw.Query(value.GovernedRoot)
 		if err != nil {
 			return writeFailure(stream, err)
@@ -233,6 +272,14 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 		return writeResponse(stream, response{Journal: brokerJournal(journal)})
 
 	case operationRead:
+		allowed, err := allowedVolume(value.GovernedRoot)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		if !allowed {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested volume is not configured for FI")
+		}
+
 		journal, data, err := usnraw.Read(value.GovernedRoot, value.StartUSN)
 		if err != nil {
 			return writeFailure(stream, err)
@@ -242,22 +289,42 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 			Data:    data,
 		})
 
+	case operationContainment:
+		allowed, err := allowedGovernedRoot(value.GovernedRoot)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		if !allowed {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested governed root is not configured for FI")
+		}
+
+		containment, err := usnraw.CheckContainment(
+			value.GovernedRoot,
+			value.FileReferenceNumber,
+			value.SequenceNumber,
+		)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		result, err := brokerContainment(containment)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		return writeResponse(stream, response{Data: []byte{byte(result)}})
+
 	default:
 		return writeFailure(stream, errors.New("unsupported FI USN operation"))
 	}
 }
 
-func brokerJournal(value usnraw.Journal) Journal {
-	return Journal{
-		JournalID:       value.JournalID,
-		FirstUSN:        value.FirstUSN,
-		NextUSN:         value.NextUSN,
-		LowestValidUSN:  value.LowestValidUSN,
-		MaxUSN:          value.MaxUSN,
-		MaximumSize:     value.MaximumSize,
-		AllocationDelta: value.AllocationDelta,
+func normalizedGovernedRoot(value string) string {
+	value = strings.TrimRight(value, `\`)
+	if len(value) == 2 && value[1] == ':' {
+		value += `\`
 	}
+	return value
 }
+
 func pipeSecurityAttributes(collectorSID *windows.SID) (*windows.SecurityAttributes, error) {
 	if collectorSID == nil || !collectorSID.IsValid() {
 		return nil, errors.New("valid FICollector service SID is required")

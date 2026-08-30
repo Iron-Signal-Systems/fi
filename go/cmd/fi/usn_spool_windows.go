@@ -25,9 +25,10 @@ import (
 const windowsErrorInvalidParameter syscall.Errno = 87
 
 const (
-	scopeBasisCurrentObjectContained  = "CurrentObjectContained"
-	scopeBasisRecordedParentContained = "RecordedParentContained"
-	scopeBasisUnresolvedIncluded      = "ScopeUnresolvedIncluded"
+	scopeBasisCurrentObjectContained         = "CurrentObjectContained"
+	scopeBasisCurrentObjectContainedByHelper = "CurrentObjectContainedByHelper"
+	scopeBasisRecordedParentContained        = "RecordedParentContained"
+	scopeBasisUnresolvedIncluded             = "ScopeUnresolvedIncluded"
 )
 
 type parentScopeStatus string
@@ -438,6 +439,11 @@ func selectUSNObjectForSpool(
 		selection.ScopeBasis = scopeBasisCurrentObjectContained
 		return selection, true
 	}
+	if reobservation.Status == usn.ReobservationError &&
+		reobservation.ReasonCode == usn.ReobservationReasonContainedObjectAccessDenied {
+		selection.ScopeBasis = scopeBasisCurrentObjectContainedByHelper
+		return selection, true
+	}
 
 	seenParents := make(map[records.NTFSObjectIdentity]struct{})
 	unresolvedDetail := ""
@@ -496,6 +502,26 @@ func checkRecordedParentScope(
 	}
 	if errors.Is(err, ntfs.ErrOutsideGovernedRoot) {
 		return parentScopeResult{Status: parentScopeOutside}
+	}
+	if usn.IsOpenFileByIDAccessDenied(err) {
+		containment, containmentErr := usn.CheckObjectContainment(ctx, governedRoot, parent)
+		if containmentErr != nil {
+			return parentScopeResult{
+				Status: parentScopeError,
+				Error: errors.Join(
+					err,
+					fmt.Errorf("FIUSNReader parent containment: %w", containmentErr),
+				).Error(),
+			}
+		}
+		switch containment {
+		case usn.ContainmentContained:
+			return parentScopeResult{Status: parentScopeContained}
+		case usn.ContainmentOutside:
+			return parentScopeResult{Status: parentScopeOutside}
+		case usn.ContainmentUnavailable:
+			return parentScopeResult{Status: parentScopeUnavailable}
+		}
 	}
 
 	var ntfsErr *ntfs.Error

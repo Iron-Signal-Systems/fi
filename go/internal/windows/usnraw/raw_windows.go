@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	fileReadData         = 0x00000001
 	fsctlQueryUSNJournal = 0x000900F4
 	fsctlReadUSNJournal  = 0x000900BB
 	readBufferSize       = 1024 * 1024
@@ -122,7 +123,7 @@ func openVolumeForRoot(governedRoot string) (syscall.Handle, error) {
 	}
 	return syscall.CreateFile(
 		deviceUnits,
-		syscall.GENERIC_READ,
+		fileReadData,
 		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,
 		nil,
 		syscall.OPEN_EXISTING,
