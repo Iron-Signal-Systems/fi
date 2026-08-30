@@ -3,12 +3,14 @@
 
     Collectors = @(
         @{
-            Host = 'ISS-FS-01'
-            GMSA = 'gFI-FS01'
+            Host          = 'ISS-FS-01'
+            CollectorGMSA = 'gFI-FS01'
+            USNGMSA       = 'gFI-USN-FS01'
         },
         @{
-            Host = 'AdminBox'
-            GMSA = 'gFI-AdminBox'
+            Host          = 'ISS-FS-02'
+            CollectorGMSA = 'gFI-FS02'
+            USNGMSA       = 'gFI-USN-FS02'
         }
     )
 }

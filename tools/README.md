@@ -10,15 +10,16 @@ It was written for **Windows Server 2016 / Windows PowerShell 5.1** behavior.
 
 ```text
 FICollector
-  restricted service account
+  restricted per-host gMSA
   NOT local Administrator
+  service SID: NT SERVICE\FICollector
         |
         | local named pipe
-        | caller must carry NT SERVICE\FICollector SID
+        | DACL + runtime service-SID authentication
         v
 FIUSNReader
-  dedicated privileged service account
-  local Administrator
+  separate per-host gMSA
+  local Administrator on this host only
         |
         v
 NTFS USN Journal
@@ -27,19 +28,39 @@ NTFS USN Journal
 The verification demonstrates:
 
 1. The collector remains non-admin.
-2. Only the helper owns the raw-volume privilege boundary.
-3. The real FICollector can use the helper.
+2. Only the helper owns the raw-volume administrative boundary.
+3. The real `FICollector` service can use the helper.
 4. An ordinary elevated local administrator process is rejected by runtime
-   service-SID authentication.
+   service-SID authentication even though an administrator can reach the pipe.
 5. A remote machine cannot use the helper pipe.
 6. If the helper stops, FI does **not** advance the USN checkpoint.
-7. FICollector remains running and other FI output continues while the helper is down.
-8. When the helper returns, FI catches up changes that occurred during the outage.
+7. `FICollector` remains running and other FI output continues while the helper
+   is down.
+8. When the helper returns, FI catches up changes that occurred during the
+   outage.
 9. Disabling the helper gMSA prevents a fresh helper service logon after the
    already-running helper is stopped.
 10. Re-enabling the gMSA permits recovery and USN catch-up.
-11. FI configuration is not broadly writable/readable through inherited
-   `BUILTIN\Users` permissions.
+11. FI configuration has no broad `BUILTIN\Users` access.
+12. The restricted collector has no direct FI configuration write permission.
+
+The kit does **not** claim that FI configuration ACLs can sandbox
+`FIUSNReader` after that privileged service is compromised. `FIUSNReader` is
+intentionally a local Administrator on the validated Server 2016 design.
+A local Administrator is already inside the Windows administrative trust
+boundary and can take ownership or change ACLs.
+
+The security boundary FI is proving is therefore:
+
+```text
+compromise of non-admin FICollector
+        |
+        v
+does not become local Administrator
+        |
+        v
+only the narrow authenticated FI-USN broker is available
+```
 
 ---
 
@@ -55,7 +76,8 @@ C:\ProgramData\FI\state
 C:\ProgramData\FI\spool
 ```
 
-If exactly one `governed_root` is configured, the scripts use it automatically.
+If exactly one `governed_root` is configured, the scripts use it
+automatically.
 
 If multiple governed roots are configured, pass the root explicitly:
 
@@ -91,9 +113,9 @@ This checks:
 - service identities;
 - helper is local Administrator;
 - collector is not local Administrator;
-- FICollector service SID type is `UNRESTRICTED`;
+- `FICollector` service SID type is `UNRESTRICTED`;
 - local `FI-USN` pipe exists;
-- USN checkpoint exists;
+- USN checkpoint exists; and
 - FI config does not contain broad `BUILTIN\Users` ACL entries.
 
 ---
@@ -114,14 +136,15 @@ Expected:
 [PASS] TEST 02 PASSED.
 ```
 
-This proves FICollector can obtain USN data through FIUSNReader and commit the
-result.
+This proves `FICollector` can obtain USN data through `FIUSNReader` and commit
+the result through the normal collector path.
 
 ---
 
 ## Test 03 — Reject an ordinary elevated administrator
 
-**Run on the FI FILE SERVER from an ordinary elevated administrator PowerShell:**
+**Run on the FI FILE SERVER from an ordinary elevated administrator
+PowerShell:**
 
 ```powershell
 .\03-FileServer-Local-Authorization.ps1
@@ -145,7 +168,14 @@ Error     = FICollector service SID is required
 ```
 
 This is an important distinction: reaching the local pipe is not sufficient to
-obtain privileged USN access.
+obtain privileged USN access. The caller token must contain the enabled,
+non-deny-only:
+
+```text
+NT SERVICE\FICollector
+```
+
+service SID.
 
 ---
 
@@ -204,9 +234,11 @@ Afterward, verify both FI services remain running on the file server.
 
 This test proves an important Windows operational behavior:
 
-- disabling the helper gMSA does **not** revoke an already-running local process token;
-- after FIUSNReader is stopped, a fresh service logon must fail while the gMSA is disabled;
-- re-enabling the gMSA allows the helper to restart;
+- disabling the helper gMSA does **not** revoke an already-running local process
+  token;
+- after `FIUSNReader` is stopped, a fresh service logon must fail while the gMSA
+  is disabled;
+- re-enabling the gMSA allows the helper to restart; and
 - FI then catches up the changes made during the outage.
 
 This test changes Active Directory state and should be done during an approved
@@ -224,6 +256,12 @@ maintenance/test window.
 
 Use the AD gMSA object name **without** the domain prefix and without the
 trailing `$`.
+
+The validated account-management operation is:
+
+```powershell
+Set-ADServiceAccount -Identity "gFI-USN-YOURHOST" -Enabled $false
+```
 
 Expected:
 
@@ -251,7 +289,7 @@ Expected:
 [PASS] TEST 06B PASSED.
 ```
 
-The script records the temporary test information under:
+The script records temporary test information under:
 
 ```text
 C:\ProgramData\FI\state\fi-usn-verification-gmsa-disabled.txt
@@ -264,6 +302,12 @@ C:\ProgramData\FI\state\fi-usn-verification-gmsa-disabled.txt
 ```powershell
 .\06C-DC-Enable-Helper-gMSA.ps1 `
     -HelperGMSA "gFI-USN-YOURHOST"
+```
+
+The validated account-management operation is:
+
+```powershell
+Set-ADServiceAccount -Identity "gFI-USN-YOURHOST" -Enabled $true
 ```
 
 Expected:
@@ -292,7 +336,7 @@ Expected:
 
 ---
 
-## Test 07 — Verify FI config ACL
+## Test 07 — Verify the FI config ACL boundary
 
 **Run on the FI FILE SERVER:**
 
@@ -302,18 +346,18 @@ Expected:
 
 This test is **read-only**. It does not change ACLs.
 
-Expected:
+Expected output includes:
 
 ```text
 [PASS] BUILTIN\Users is absent from FI config ACLs.
-[PASS] <collector account> is read-only on C:\ProgramData\FI\config.
-[PASS] <helper account> is read-only on C:\ProgramData\FI\config.
-[PASS] <collector account> is read-only on fi.conf.
-[PASS] <helper account> is read-only on fi.conf.
+[PASS] FICollector account <account> has only explicit non-write Allow access ...
+[PASS] FIUSNReader account <account> has only explicit non-write Allow access ...
+[PASS] FICollector account <account> is not a local Administrator.
+[PASS] FIUSNReader account <account> is a local Administrator as required ...
 [PASS] TEST 07 PASSED.
 ```
 
-The intended configuration model is:
+The intended ACL shape is:
 
 ```text
 C:\ProgramData\FI\config
@@ -329,7 +373,16 @@ C:\ProgramData\FI\config\fi.conf
     FIUSNReader gMSA        Read
 ```
 
-Neither FI service should have configuration write permission.
+The important distinction is:
+
+- **FICollector** is non-admin and must not have FI configuration write access.
+- **FIUSNReader** has only an explicit read ACE for normal operation, but its
+  local-Administrator membership means it has Windows administrative authority.
+  The config ACL is not claimed as a security boundary against compromise of the
+  helper itself.
+
+`FIUSNReader` runtime code should still remain read-only toward FI configuration
+and must not own checkpoint, spool, or collector-state writes.
 
 ---
 
@@ -339,11 +392,11 @@ A customer administrator should be able to record all of the following:
 
 ```text
 [ ] Collector is not local Administrator
-[ ] Helper is local Administrator
+[ ] Helper is local Administrator on this host only
 [ ] FICollector service SID is enabled
 [ ] Positive USN collection advances checkpoint
 [ ] Test filename appears in USN output
-[ ] Ordinary elevated local admin is rejected
+[ ] Ordinary elevated local admin is rejected by service-SID authentication
 [ ] Remote pipe connection is rejected
 [ ] Helper outage freezes USN checkpoint
 [ ] Collector remains running during helper outage
@@ -351,6 +404,7 @@ A customer administrator should be able to record all of the following:
 [ ] Helper restart advances checkpoint
 [ ] Downtime change appears after catch-up
 [ ] Config ACL has no broad BUILTIN\Users access
+[ ] Collector has no direct FI config write/modify/administrative ACE
 
 Optional:
 [ ] Disabled helper gMSA cannot perform a fresh service logon

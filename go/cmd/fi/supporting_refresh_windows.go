@@ -48,8 +48,8 @@ type supportingSourceRefreshSummary struct {
 }
 
 // writeSupportingSourceRefresh runs one bounded host-level refresh. It does not
-// decide when refreshes should be scheduled; the later service/runtime policy
-// will own cadence.
+// choose its own cadence. The Windows service runtime or an explicit one-shot
+// invocation decides when this operation runs.
 func writeSupportingSourceRefresh(
 	ctx context.Context,
 ) (supportingSourceRefreshSummary, error) {

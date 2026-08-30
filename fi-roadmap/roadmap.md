@@ -34,29 +34,41 @@ investigation.
 
 FI is currently focused on **Phase 1 / Gate 1**.
 
-The core Windows/NTFS collector, durable local spool, normal checkpoint
-continuity, explicit USN and Windows Security continuity-gap recovery, major
-operation lifecycle journaling, and an explicit one-shot supporting-source
-refresh operation are implemented.
+The major Phase 1 architecture is now established:
 
-The supporting-source refresh captures current SMB, local-identity, and relevant
-AD source facts without inventing a collector cadence. Relevant AD SID state is
-retained as bounded FI operational state and directory reads are split into
-bounded source snapshots rather than silently truncating a larger relevant-SID
-set.
+- governed NTFS baseline collection;
+- NTFS identity, metadata, streams, reparse, security, and hashing;
+- durable local spool creation and verification;
+- persistent USN and Windows Security checkpoints;
+- normal checkpoint continuation;
+- explicit USN and Windows Security continuity-gap history and reconciliation;
+- major operation lifecycle journaling;
+- bounded SMB/local/AD supporting-source refresh;
+- a persistent Windows service runtime;
+- service scheduling for configured collection and supporting-source refresh;
+- a non-administrative `FICollector` service identity;
+- a separate privileged `FIUSNReader` helper for the Server 2016 direct-volume
+  USN requirement; and
+- local named-pipe authentication using the enabled
+  `NT SERVICE\FICollector` service SID.
 
-Remaining Gate 1 work is primarily:
+The split-privilege USN design has been live validated on Windows Server 2016 for
+positive collection, rejection of an ordinary elevated administrator client,
+helper outage with frozen USN checkpoint, and restart/catch-up of changes made
+while the helper was unavailable.
 
-- service scheduling and broader failure/operational validation of the
-  live-validated supporting-source refresh;
-- completion of the governed-file activity validation matrix;
-- Windows service runtime;
-- gMSA and least-privilege validation;
-- failure/restart/resource-exhaustion testing;
-- representative performance/source-impact testing; and
-- additional supported Windows Server version characterization.
+Remaining Gate 1 work is primarily **deployment acceptance and validation**, not
+new source architecture:
 
-Gate 1 remains open until those deployment and validation boundaries are proved.
+- reproducible deployment hardening for the two-service/two-gMSA model;
+- service, executable, configuration, state, and spool permission validation;
+- broader service/restart/source-unavailable/resource-exhaustion testing;
+- completion of the governed-file activity behavior matrix;
+- representative performance and source-impact testing;
+- production interval/cadence characterization; and
+- validation/documentation of additional supported Windows Server versions.
+
+Gate 1 remains open until those boundaries are proved.
 
 ---
 
@@ -78,8 +90,9 @@ Phase 1 owns:
 - governed-file access/activity source facts;
 - source checkpoints and continuity assessment;
 - local durable spool creation and verification;
-- explicit gap/reconciliation state; and
-- source-side operation accountability.
+- explicit gap/reconciliation state;
+- source-side operation accountability; and
+- the local Windows runtime required to perform those source-side functions.
 
 Phase 1 does **not** own general Windows telemetry, backend correlation,
 downstream transport acknowledgement, or protected classification content

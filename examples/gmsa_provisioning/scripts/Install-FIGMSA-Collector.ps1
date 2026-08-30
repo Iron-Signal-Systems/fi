@@ -2,8 +2,12 @@
 # Windows Server 2016 / Windows PowerShell 5.1
 #
 # Run this from an elevated PowerShell prompt on each FI collector host.
-# The script finds this computer in config\gmsa.psd1, installs its assigned
-# gMSA locally, and verifies that the computer can retrieve the managed password.
+# The script finds this computer in config\gmsa.psd1, installs both host-specific
+# FI gMSAs locally, and verifies that the computer can retrieve both managed
+# passwords.
+#
+# This script does not register Windows services or grant local Administrator
+# membership. Those are separate deliberate deployment actions.
 
 [CmdletBinding()]
 param(
@@ -42,10 +46,19 @@ if ($matches.Count -gt 1) {
     throw "More than one FI collector entry exists for this computer: $computerName"
 }
 
-$gmsaName = [string]$matches[0].GMSA
+$collectorGMSA = [string]$matches[0].CollectorGMSA
+$usnGMSA = [string]$matches[0].USNGMSA
 
-if ([string]::IsNullOrWhiteSpace($gmsaName)) {
-    throw "Collector '$computerName' does not have a GMSA value."
+if ([string]::IsNullOrWhiteSpace($collectorGMSA)) {
+    throw "Collector '$computerName' does not have a CollectorGMSA value."
+}
+
+if ([string]::IsNullOrWhiteSpace($usnGMSA)) {
+    throw "Collector '$computerName' does not have a USNGMSA value."
+}
+
+if ($collectorGMSA -ieq $usnGMSA) {
+    throw "Collector '$computerName' must use different CollectorGMSA and USNGMSA values."
 }
 
 # Install the AD PowerShell module if this Server 2016 host does not have it.
@@ -62,30 +75,47 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 
 Import-Module ActiveDirectory
 
-$alreadyWorks = $false
+function Install-And-Test-FIGMSA {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
 
-try {
-    $alreadyWorks = Test-ADServiceAccount -Identity $gmsaName -ErrorAction Stop
-}
-catch {
+        [Parameter(Mandatory = $true)]
+        [string]$Role
+    )
+
     $alreadyWorks = $false
+
+    try {
+        $alreadyWorks = Test-ADServiceAccount -Identity $Name -ErrorAction Stop
+    }
+    catch {
+        $alreadyWorks = $false
+    }
+
+    if (-not $alreadyWorks) {
+        Write-Host "Installing $Role gMSA $Name on $computerName..."
+        Install-ADServiceAccount -Identity $Name
+    }
+
+    $works = Test-ADServiceAccount -Identity $Name
+
+    if (-not $works) {
+        throw "gMSA validation failed for $Role account $Name on $computerName."
+    }
+
+    return $true
 }
 
-if (-not $alreadyWorks) {
-    Write-Host "Installing gMSA $gmsaName on $computerName..."
-    Install-ADServiceAccount -Identity $gmsaName
-}
-
-$works = Test-ADServiceAccount -Identity $gmsaName
-
-if (-not $works) {
-    throw "gMSA validation failed for $gmsaName on $computerName."
-}
+$collectorWorks = Install-And-Test-FIGMSA -Name $collectorGMSA -Role "FICollector"
+$usnWorks = Install-And-Test-FIGMSA -Name $usnGMSA -Role "FIUSNReader"
 
 $domain = Get-ADDomain
 
 Write-Host ""
-Write-Host "FI gMSA collector setup complete."
-Write-Host "  Host:    $computerName"
-Write-Host "  Account: $($domain.NetBIOSName)\$gmsaName$"
-Write-Host "  Test:    True"
+Write-Host "FI gMSA collector-host setup complete."
+Write-Host "  Host:              $computerName"
+Write-Host "  FICollector:       $($domain.NetBIOSName)\$collectorGMSA$"
+Write-Host "  Collector test:    $collectorWorks"
+Write-Host "  FIUSNReader:       $($domain.NetBIOSName)\$usnGMSA$"
+Write-Host "  USN helper test:   $usnWorks"

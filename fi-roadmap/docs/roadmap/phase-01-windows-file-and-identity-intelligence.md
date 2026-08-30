@@ -27,6 +27,11 @@ policy, activity/audit policy, and later classification policy.
 The current configuration format intentionally remains small: it identifies the
 governed roots. Collection behavior remains defined by FI code.
 
+The privileged USN helper is authorized at the **volume** level because the NTFS
+USN journal is volume-wide. That does not make the whole volume governed.
+`FICollector` still performs File-ID re-observation and governed-root containment
+before volume-wide USN activity is treated as governed-object activity.
+
 ---
 
 ## Current Implementation Status
@@ -41,21 +46,22 @@ governed roots. Collection behavior remains defined by FI code.
 | Collection consistency checks | Implemented | Detects object replacement, metadata changes during collection, scope replacement, and incomplete observations. |
 | Governed-root recursive walk | Implemented | Walks governed NTFS roots without following reparse-point directories outside the governed namespace. |
 | Windows security descriptors and ACLs | Implemented | Exact owner, DACL, SACL, ACE order, masks, inheritance, and related security state are collected. |
-| SMB share state and share security | Implemented baseline + one-shot refresh | Records share exposure and share ACL state at baseline and through the explicit bounded supporting-source refresh. Service cadence remains. |
-| Local Windows identity | Implemented baseline + one-shot refresh | Local users, groups, and direct memberships are collected at baseline and through the explicit bounded supporting-source refresh. Service cadence remains. |
-| Active Directory identity | Implemented baseline + bounded one-shot refresh; deployment validation remains | Resolves relevant current-domain principals and direct `member` relationships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Raw `primaryGroupID` is preserved without deriving a membership edge. Production service operation is intended to use the FI gMSA. |
-| Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Additional Windows privilege/bypass inputs remain Phase 1 hardening only where a concrete Gate 1 need is proved. Backend correlation owns nested membership and final effective-access conclusions. |
+| SMB share state and share security | Implemented + refresh scheduled | Records share exposure and share ACL state at baseline and through the bounded supporting-source refresh. The service runtime can schedule refreshes; production interval acceptance remains. |
+| Local Windows identity | Implemented + refresh scheduled | Local users, groups, and direct memberships are collected at baseline and through the bounded supporting-source refresh. |
+| Active Directory identity | Implemented foundation + refresh scheduled | Resolves relevant current-domain principals and direct `member` relationships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Raw `primaryGroupID` is preserved without deriving a membership edge. |
+| Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Backend correlation owns nested membership and final effective-access conclusions. |
 | USN journal change detection | Implemented and integrated | Configured runs use persistent checkpoints, bounded USN catch-up, governed-object selection, File-ID re-observation, durable local spooling, verification, and checkpoint advancement. |
-| Windows Security governed-file activity | Implemented foundation and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. The broader activity behavior matrix remains to be completed. |
+| USN privilege isolation | Implemented and live validated on Server 2016 | `FICollector` remains non-admin. `FIUSNReader` is a separate local-Administrator service that performs only raw-volume query/read. Local IPC requires the enabled `NT SERVICE\FICollector` service SID and rejects remote clients. |
+| Windows Security governed-file activity | Implemented foundation and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. The broader behavior matrix remains. |
 | Local durable spool | Implemented | Writes finalized JSONL batches and manifests, verifies count/size/SHA-256, retains accepted local batches, and does not remove them before Phase 2 acknowledgement exists. |
 | Normal-run checkpoint continuity | Implemented and live validated | USN and Windows Security checkpoints resume from the previously accepted boundary without replaying the prior accepted range. |
 | Continuity-gap history and reconciliation | Implemented and live validated | USN and Windows Security gaps are persisted explicitly as incomplete, current state is reconciled, and a new forward boundary is established without pretending missing history was reconstructed. |
-| Operation journal | Implemented and live validated for major boundaries | Append-only Started/Finished lifecycle history covers baseline, USN catch-up, Windows Security catch-up, reconciliation, and the explicit SupportingSourceRefresh operation. Orphaned Started operations are recovered as Interrupted/ProcessRestart. |
+| Operation journal | Implemented and live validated for major boundaries | Append-only Started/Finished lifecycle history covers baseline, USN catch-up, Windows Security catch-up, reconciliation, and SupportingSourceRefresh. Orphaned Started operations are recovered as Interrupted/ProcessRestart. |
 | FI runtime resource journal | Implemented foundation / non-blocking | CPU, RAM, and process-I/O history exists for journaled USN operations. Broader coverage is useful for sizing and pilot validation but is not itself a Gate 1 blocker. |
-| Supporting-source refresh | Implemented one-shot and live validated; service scheduling remains | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches, retains previously relevant current-domain SIDs, and splits large relevant-SID sets into bounded directory snapshots without truncation. |
-| Windows service runtime | Remaining | FI still needs a simple persistent Windows service runtime around the configured collector. |
-| gMSA least-privilege runtime | Remaining | The deployed service identity must be tested with only the rights/access FI actually requires. |
-| Failure/restart campaign | Partially validated | Checkpoint gaps and operation restart recovery are validated. Broader service, spool/state, source-unavailable, and resource-exhaustion cases remain. |
+| Supporting-source refresh | Implemented, live validated, and service scheduled | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches. `-service` can schedule it at an explicit operator-provided interval. Production cadence still requires measurement. |
+| Windows service runtime | Implemented foundation and live validated | The SCM runtime invokes the existing configured collector, prevents overlapping FI-owned write modes through runtime ownership, schedules configured collection and supporting refresh sequentially, and supports stop/shutdown cancellation. Broader failure and boot/restart validation remains. |
+| gMSA runtime | Implemented foundation and live validated | Per host, `FICollector` runs as a non-admin gMSA and `FIUSNReader` uses a separate privileged gMSA. Remaining work is deployment reproducibility and validation of service/binary/config/state/spool rights. |
+| Failure/restart campaign | Partially validated | Checkpoint gaps, operation restart recovery, helper outage, frozen USN checkpoint, collector continuation, helper restart, and USN catch-up are validated. Broader adverse-condition cases remain. |
 | Performance/source impact | Measurement tooling exists; acceptance campaign remains | `-perf-root` and resource measurements exist. Representative workload sizing and impact limits remain Gate 1 work. |
 
 ---
@@ -159,12 +165,11 @@ FI records applicable share identity, name, backing path, security descriptor,
 share ACL, and the relationship between a governed object/root and each exposing
 share.
 
-The baseline share snapshot is implemented.
-
 Because share configuration and share security can change without immediately
-causing governed-file activity, the explicit supporting-source refresh now
-re-observes share state. Persistent service cadence remains deployment/runtime
-work.
+causing governed-file activity, supporting-source refresh re-observes share state.
+
+The Windows service runtime can schedule that refresh. Production cadence remains
+an operational measurement/acceptance decision, not collector logic.
 
 ---
 
@@ -176,21 +181,20 @@ files.
 
 AD identity collection uses Windows DC Locator and trusted LDAPS/636 through the
 collector's current Windows token. In deployed service operation that token is
-intended to be the FI gMSA.
+the restricted per-host `FICollector` gMSA.
 
 Collectors preserve source identity facts. They do not calculate transitive
 membership or final effective access. Backend correlation owns those
 relationships.
 
-Identity state can change without a file operation occurring. The explicit
-supporting-source refresh now re-observes local identity and relevant AD
-principal/direct `member` relationship source facts while retaining previously
-relevant current-domain SIDs in FI-owned operational state.
+Identity state can change without a file operation occurring. Supporting-source
+refresh re-observes local identity and relevant AD principal/direct `member`
+relationship source facts while retaining previously relevant current-domain SIDs
+in FI-owned operational state.
 
 The refresh remains source-driven and bounded. Large relevant-SID sets are split
 into bounded directory snapshots rather than truncated, and the collector does
-not turn into an Active Directory inventory product. Persistent service cadence
-remains deployment/runtime work.
+not turn into an Active Directory inventory product.
 
 ---
 
@@ -287,10 +291,11 @@ behavior matrix that exercises representative:
 - ACL/security change;
 - ownership change;
 - hard-link creation; and
-- local and remote SMB access
+- local and remote SMB access.
 
-and records exactly which source facts Windows supplies for each case on each
-supported Windows Server version.
+For every supported Windows Server version, the matrix should record exactly
+which source facts Windows supplies, what FI preserves, and which facts remain
+unavailable or ambiguous.
 
 This is primarily a validation campaign, not a new activity architecture.
 
@@ -307,7 +312,7 @@ Windows Security provides independent activity facts such as actor, process,
 requested/used access, share context, remote source, and result where Windows
 emitted the applicable event.
 
-The configured `fi.exe -run` path currently:
+The configured collection path:
 
 1. anchors the Windows Security source;
 2. processes each configured governed root;
@@ -321,7 +326,12 @@ The configured `fi.exe -run` path currently:
 9. persists and reconciles known USN/Security continuity gaps; and
 10. journals major configured operation lifecycle boundaries.
 
-Persistent service scheduling remains deployment/runtime work.
+The Windows service runtime invokes this same configured path. It does not create
+a second collection implementation.
+
+The service runtime performs work sequentially rather than overlapping collection
+cycles. The configured interval is measured after a cycle completes, preventing a
+slow run from creating a backlog of concurrent FI collectors.
 
 ---
 
@@ -332,19 +342,17 @@ The filesystem and Security sources provide high-frequency signals.
 SMB configuration, local identity, and AD identity/direct membership usually
 change less frequently, but they cannot remain frozen forever at baseline.
 
-Phase 1 now provides an explicit one-shot `fi.exe -supporting-refresh` operation
-for:
+Phase 1 provides an explicit bounded `fi.exe -supporting-refresh` operation for:
 
 - local SMB shares and share ACLs;
 - local users/groups/direct memberships; and
 - relevant current-domain principals/direct `member` relationships.
 
-The implemented refresh:
+The refresh:
 
 - writes new source observations rather than mutating older history;
 - writes and verifies durable local spool batches before reporting success;
-- retains previously relevant current-domain SIDs in FI-owned operational state
-  so historical identities are not silently forgotten;
+- retains previously relevant current-domain SIDs in FI-owned operational state;
 - splits large relevant-SID sets into bounded directory snapshots rather than
   truncating them;
 - preserves raw `primaryGroupID` without deriving a primary-group membership
@@ -353,9 +361,11 @@ The implemented refresh:
   effective-access conclusions; and
 - records its own append-only operation lifecycle.
 
-The one-shot path has been live validated. Exact persistent cadence remains a
-service/runtime policy decision and should be established through operational
-measurement rather than invented inside the collector.
+The Windows service runtime can schedule this operation using an explicit
+operator-provided interval.
+
+The collector does not choose a "smart" cadence. Production interval acceptance
+should come from representative measurements and operational requirements.
 
 ---
 
@@ -375,11 +385,18 @@ The current spool:
 - records collector executable identity; and
 - verifies the manifest/data pair before the applicable checkpoint is accepted.
 
+Interrupted or incomplete FI spool artifacts are preserved separately and are
+not reconstructed or promoted into accepted batches.
+
 Phase 1 does not delete a local batch merely because a later send attempt may
 occur.
 
 Phase 2 owns authenticated transport, retry behavior, duplicate safety, durable
 downstream acknowledgement, and removal of acknowledged local spool batches.
+
+The ordinary SHA-256 manifest digest is a local corruption/integrity check. It is
+not claimed to provide cryptographic authenticity against an attacker that can
+rewrite both the data and manifest.
 
 ---
 
@@ -420,6 +437,16 @@ Live validation has proved:
    accepted; and
 6. bounded USN catch-up resumes from the new forward boundary.
 
+The split-privilege helper failure path has also been validated:
+
+1. `FIUSNReader` becomes unavailable;
+2. `FICollector` continues other work;
+3. the USN checkpoint remains frozen;
+4. governed changes occur while the helper is unavailable;
+5. the helper returns; and
+6. FI resumes from the old checkpoint and preserves the downtime changes during
+   catch-up.
+
 ### Windows Security continuity
 
 The current Security checkpoint assessment detects:
@@ -428,8 +455,6 @@ The current Security checkpoint assessment detects:
   log; and
 - overwritten records where the next required EventRecordID is older than the
   oldest available record.
-
-Live validation has proved both reason classes.
 
 A `WindowsSecurityContinuityGap` is durably recorded before current-state
 reconciliation and a new fixed forward Security boundary is established.
@@ -469,8 +494,9 @@ historical access analysis:
 - exact Windows rights; and
 - applicable governed-file activity.
 
-Additional Windows privilege/bypass observations may be added where a concrete
-access-analysis requirement demonstrates that they materially change the answer.
+Additional Windows privilege/bypass observations may be added only where a
+concrete access-analysis requirement demonstrates that they materially change the
+answer.
 
 Nested membership, cross-source identity correlation, and effective-access
 conclusions belong to backend correlation.
@@ -489,32 +515,20 @@ Operation journaling distinguishes:
 
 Phase 1 journals major collector boundaries, not every internal function.
 
-The current configured collector journals:
+The configured collector journals:
 
 - baseline;
 - USN catch-up;
-- Windows Security catch-up; and
-- reconciliation.
+- Windows Security catch-up;
+- reconciliation; and
+- SupportingSourceRefresh.
 
 USN catch-up may contain lower-level `USNRead` and `ReObservation` lifecycle
-records produced by the existing USN source implementation.
+records produced by the USN source implementation.
 
 The configured collector performs restart recovery once at the outer scope
 boundary before starting new work. Nested USN work does not re-run restart
 recovery against a currently running parent operation.
-
-Live validation has proved:
-
-- normal Started/Finished lifecycle pairs;
-- recovery of an orphaned Started operation as
-  `Interrupted / ProcessRestart`;
-- no duplicate terminal records after recovery;
-- normal USN catch-up after recovery;
-- USN-gap `Reconciliation / Complete`; and
-- Windows Security-gap `Reconciliation / Complete`.
-
-The explicit one-shot `SupportingSourceRefresh` operation maintains its own
-Started/Finished lifecycle journal outside the normal `-run` cycle.
 
 Resource measurements remain separate from the lifecycle journal.
 
@@ -522,55 +536,126 @@ Resource measurements remain separate from the lifecycle journal.
 
 ## Windows Service and gMSA Runtime
 
-The collector core currently runs interactively through `fi.exe -run`.
+The Phase 1 Windows runtime uses two services and two unique gMSAs per monitored
+host.
 
-Gate 1 still requires a simple Windows service runtime that:
+```text
+FICollector
+    restricted per-host gMSA
+    non-admin
+        |
+        | local named pipe
+        | NT SERVICE\FICollector service SID required
+        v
+FIUSNReader
+    separate per-host gMSA
+    local Administrator on this host only
+        |
+        v
+NTFS raw-volume USN query/read
+```
 
-- invokes the existing configured collector rather than duplicating collector
-  logic;
-- prevents overlapping configured runs;
-- supports graceful service stop;
-- preserves restart-safe journal/checkpoint behavior; and
-- uses an intended gMSA service identity.
+### FICollector
 
-The gMSA must be validated with only the rights/access FI actually needs.
+`FICollector` owns normal FI behavior:
 
-The validation must determine the minimum practical access for:
-
-- Security log reading;
-- USN journal access;
-- governed-root traversal and file reading;
-- security descriptor and SACL reading;
+- configuration/root handling;
+- Windows Security collection;
+- NTFS baseline and re-observation;
+- USN parsing;
+- governed-root containment;
 - hashing;
-- SMB share query;
-- local identity query;
-- LDAPS/AD lookup;
-- FI configuration read;
-- FI state/spool write; and
-- operation/resource journal write.
+- SMB/local/AD source collection;
+- spool writing and verification;
+- continuity decisions;
+- checkpoint advancement; and
+- operation/resource history.
 
-Testing under LocalSystem, Domain Admin, or broad local Administrator rights is
-not a substitute for the least-privilege service test.
+It must remain non-admin.
+
+### FIUSNReader
+
+`FIUSNReader` exists only for the Windows Server 2016 direct-volume USN
+requirement.
+
+It may:
+
+- open the approved local volume;
+- issue `FSCTL_QUERY_USN_JOURNAL`;
+- issue `FSCTL_READ_USN_JOURNAL`; and
+- return one bounded result.
+
+It must not own parsing, File-ID re-observation, containment, hashing,
+configuration writes, checkpoint state, spool custody, supporting-source
+collection, or arbitrary administrative operations.
+
+### IPC authentication
+
+The pipe is local-only and rejects remote clients.
+
+The DACL permits:
+
+- SYSTEM;
+- Builtin Administrators; and
+- the `NT SERVICE\FICollector` service SID.
+
+After a bounded request is read, the helper impersonates the connected client and
+requires the FICollector service SID to be present as an enabled, non-deny-only
+token group before any raw-volume work occurs.
+
+This means an ordinary elevated administrator can be allowed to reach the pipe
+for diagnostic verification and still be denied by runtime service-SID
+authentication.
+
+### Configuration authorization
+
+The helper loads FI's administrator-controlled configuration itself and derives
+the requested **volume** from the supplied governed root.
+
+A request is accepted only when that volume contains at least one configured FI
+governed root.
+
+There is no second helper-maintained volume allowlist.
+
+### Windows administrative trust boundary
+
+On the validated Server 2016 design, the helper gMSA is a local Administrator.
+An explicit read-only ACE on FI configuration describes normal runtime intent,
+but it does not sandbox a compromised local Administrator.
+
+The security property FI relies on is that compromise of the **non-admin
+collector** does not automatically produce a local Administrator token.
+
+The helper's local-Administrator authority remains the Windows administrative
+trust boundary.
 
 ---
 
 ## Failure and Recovery Acceptance
 
-Continuity-gap and operation-restart paths are already live validated.
+Continuity-gap, operation-restart, and helper-outage paths are already live
+validated.
 
 Before Gate 1 closes, representative failure testing should also include:
 
 - service/process termination during a configured operation;
+- machine reboot during representative operation boundaries;
+- helper unavailable when `FICollector` starts;
+- helper starting later and normal recovery;
 - unwritable FI state directory;
 - unwritable spool directory;
+- unwritable service-runtime journal;
 - interrupted/open spool batch handling;
 - corrupted or unverifiable finalized batch/manifest;
 - missing or inaccessible governed root;
 - Security log unavailable/unreadable;
 - AD/DC/LDAPS unavailable;
 - local identity/share source failure;
-- source state changing during collection; and
-- bounded local storage/resource exhaustion.
+- source state changing during collection;
+- bounded local storage/resource exhaustion;
+- collector inability to replace or modify `fi-usn.exe`;
+- collector inability to reconfigure the privileged service; and
+- validation of intended configuration/state/spool/service-object ACLs.
 
 Expected source failures should be explicit `Partial`, `Incomplete`, `Failed`, or
 other source-status facts rather than silently converted into success.
@@ -591,12 +676,31 @@ Gate 1 still needs representative workload measurements for:
 - normal low-churn catch-up;
 - high-churn catch-up;
 - Security activity volume;
+- supporting-source refresh;
 - CPU/RAM/I/O;
-- spool growth; and
-- recovery/reconciliation work.
+- spool growth;
+- service restart/recovery; and
+- gap reconciliation.
 
 Thresholds should be based on repeated representative measurements rather than
 invented before data exists.
+
+---
+
+## Supported Windows Versions
+
+Current direct live characterization is centered on:
+
+```text
+Windows Server 2016
+Version 10.0.14393
+```
+
+Later Windows Server versions must be characterized independently before FI
+claims identical audit, USN, service, or permission behavior.
+
+The old direct-volume privilege probe is an engineering characterization aid, not
+a product runtime component.
 
 ---
 
@@ -639,20 +743,26 @@ Gate 1 also proves:
 - local spool batches remain queued until Phase 2 owns acknowledgement/removal;
 - supporting SMB/local/AD source facts remain sufficiently current for the
   historical model;
-- the deployed service identity has only the privileges/access FI actually
-  requires; and
+- the main collector remains non-administrative;
+- the unavoidable Server 2016 USN administrative capability is isolated to the
+  narrow helper;
+- failure of the helper cannot silently advance USN continuity;
+- deployment/service/config/state/spool permissions match the documented trust
+  model; and
 - source impact remains bounded and measurable.
 
 ### Remaining work before Gate 1 acceptance
 
 At the current development point, the primary remaining work is:
 
-1. service scheduling and broader failure/operational validation of the
-   live-validated supporting-source refresh;
-2. governed-file activity behavior matrix;
-3. Windows service runtime;
-4. gMSA least-privilege validation;
-5. broader failure/recovery campaign;
-6. representative performance/source-impact campaign; and
-7. validation/documentation of supported Windows Server versions and known
-   coverage limits.
+1. correct and validate reproducible two-service/two-gMSA deployment;
+2. validate service, executable, configuration, state, spool, and service-object
+   permissions;
+3. complete the governed-file activity behavior matrix;
+4. complete the broader failure/recovery/resource-exhaustion campaign;
+5. run the representative performance/source-impact campaign;
+6. establish production collection/refresh intervals from measurements; and
+7. validate and document each Windows Server version FI intends to support.
+
+No new Phase 1 source subsystem should be added unless a concrete Gate 1
+requirement demonstrates that an existing source fact is missing.

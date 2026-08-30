@@ -4,8 +4,8 @@
   <img src="docs/images/fi.png" alt="FI — File Intelligence" width="100%">
 </p>
 
-**File Intelligence (FI)** is a non-remediating, read-oriented system for building a
-historical understanding of explicitly governed files.
+**File Intelligence (FI)** is a non-remediating, read-oriented system for
+building a historical understanding of explicitly governed files.
 
 FI is designed around a simple question:
 
@@ -125,7 +125,7 @@ Where Windows provides the information, FI preserves source facts such as:
 - timestamp and source record identity;
 - share used;
 - remote workstation or IP; and
-- session/logon identifiers needed to explain the governed-object activity.
+- session/logon identifiers needed to explain governed-object activity.
 
 Supporting SMB, logon, or session records are collected only when needed to
 explain activity associated with governed objects. FI does not collect broad
@@ -174,8 +174,8 @@ Examples include:
 Examples include:
 
 - What governed files could a compromised identity reach?
-- What did that identity actually interact with where source information supports
-  that conclusion?
+- What did that identity actually interact with where source information
+  supports that conclusion?
 - What permissions changed?
 - What is the difference between observed activity and potential reach?
 - What is the possible blast radius?
@@ -199,8 +199,7 @@ independent copies of the data.
 ## Non-remediating by design
 
 FI is intentionally non-remediating and read-oriented with respect to the
-customer environment. Normal collector code does not intentionally modify
-governed source state.
+customer environment.
 
 FI may observe files, filesystem metadata, security information, identities,
 shares, activity sources, and other configured sources necessary to build its
@@ -208,8 +207,8 @@ historical model.
 
 FI does not:
 
-- modify files;
-- change ACLs;
+- modify governed files;
+- change governed ACLs;
 - grant or revoke access;
 - modify users or groups;
 - change SMB shares;
@@ -226,8 +225,8 @@ updates are enabled. FI does not write or restore that timestamp to hide the
 source-side effect of the read.
 
 Administrator-run deployment examples may configure Windows audit policy, SACLs,
-service identities, or related prerequisites. Those are deliberate customer
-administrative actions and are not FI runtime behavior.
+service identities, services, or related prerequisites. Those are deliberate
+customer administrative actions and are not FI runtime behavior.
 
 ---
 
@@ -247,9 +246,9 @@ or on a dedicated FI appliance located within the customer environment.
 Iron Signal Systems does not require persistent administrative or remote access
 for FI to operate.
 
-Customers may optionally grant Iron Signal Systems controlled access for
-maintenance, upgrades, troubleshooting, or other support services. Any such
-access is customer-authorized and is not required for normal FI operation.
+Customers may optionally grant controlled access for maintenance, upgrades,
+troubleshooting, or other support services. Any such access is
+customer-authorized and is not required for normal FI operation.
 
 FI is intended to remain fully operational in environments where no vendor remote
 access is permitted.
@@ -264,7 +263,7 @@ Monitoring is explicitly scope-driven. FI operates only against configured
 **governed roots**. Installing FI on a server does not mean the entire server,
 volume, or share is governed.
 
-The initial Windows collector preserves or is being built to preserve:
+The Phase 1 Windows collector preserves or is being validated to preserve:
 
 - NTFS object and volume identity;
 - exact path representation;
@@ -288,11 +287,87 @@ Other filesystems and operating systems are outside the initial scope.
 
 ---
 
+## Current Windows runtime
+
+Phase 1 now has a persistent Windows service runtime around the existing
+configured collector.
+
+The runtime does not create a second collection path.
+
+```text
+FICollector
+    restricted per-host gMSA
+    non-admin
+        |
+        | configured collection
+        | Windows Security
+        | NTFS observation
+        | SMB/local/AD
+        | spool/checkpoints
+        |
+        +------ local authenticated pipe ------+
+                                               |
+                                               v
+                                      FIUSNReader
+                                      separate per-host gMSA
+                                      local Administrator
+                                      on that host only
+                                               |
+                                               v
+                                      raw NTFS USN query/read
+```
+
+The service runtime can schedule:
+
+- the configured collector cycle; and
+- the slower supporting-source refresh.
+
+Work is sequential. FI does not intentionally overlap configured collection and
+supporting-source refresh inside the service runtime.
+
+The exact production intervals remain an operational measurement and deployment
+decision.
+
+---
+
+## USN split-privilege boundary
+
+Windows Server 2016 live testing established that FI's current direct-volume USN
+query/read path requires administrative-capable raw-volume access.
+
+FI does **not** run the entire collector as Administrator to obtain that
+capability.
+
+Instead:
+
+- `FICollector` remains non-admin;
+- `FIUSNReader` owns only the narrow privileged raw-volume USN operations;
+- the pipe rejects remote clients;
+- the helper requires the enabled `NT SERVICE\FICollector` service SID;
+- the helper independently loads FI configuration and authorizes only volumes
+  represented by configured governed roots;
+- the helper exposes no arbitrary device/FSCTL interface; and
+- `FICollector` retains parsing, containment, hashing, spool, and checkpoint
+  ownership.
+
+A controlled helper outage has been live validated to freeze the USN checkpoint
+while other collector work continues. After helper recovery, FI resumes from the
+old checkpoint and catches up changes made during the outage.
+
+See:
+
+- [FI USN Architecture Summary](docs/README-USN-SUMMARY.md)
+- [FI NTFS USN Privilege Boundary](docs/security/usn-privilege-boundary.md)
+- [FI USN Split-Privilege Verification Kit](tools/README.md)
+
+---
+
 ## Current Windows Security activity validation
 
-FI reads the local Windows Security log as an independent activity source. FI does
-not automatically enable Windows audit policy or add SACLs to governed roots.
-Those are administrator-controlled deployment settings.
+FI reads the local Windows Security log as an independent activity source.
+
+FI does not automatically enable Windows audit policy or add SACLs to governed
+roots. Those are administrator-controlled deployment settings.
 
 Current live validation has been performed on:
 
@@ -324,8 +399,8 @@ policy does not override the intended advanced subcategories.
 On the validated Windows Server 2016 system:
 
 - successful governed-file activity produced Event ID `4663`;
-- denied file-handle requests produced Event ID `4656` only after Handle
-  Manipulation Failure auditing was enabled;
+- denied file-handle requests produced Event ID `4656` after Handle Manipulation
+  Failure auditing was enabled;
 - a descendant-file read under the FI read-audit rule produced Event ID `4663`;
 - Detailed File Share auditing produced Event ID `5145`;
 - local UNC access preserved `::1` as the source address;
@@ -334,11 +409,10 @@ On the validated Windows Server 2016 system:
   access-check record followed independently by a failed `4656` NTFS
   handle-request record.
 
-A successful `5145` means the SMB/share-level access check represented by that
-event succeeded. It does **not** by itself prove the final NTFS operation
-succeeded.
+A successful `5145` means the SMB/share-level check represented by that event
+succeeded. It does **not** by itself prove the final NTFS operation succeeded.
 
-FI currently selects the following Security event IDs:
+FI currently selects:
 
 - `4656` — handle/access requested;
 - `4663` — an access right was used;
@@ -358,8 +432,8 @@ A root SACL does not prove every descendant is covered. Descendants can protect
 their SACL from inheritance, and FI preserves the actual SACL observed on each
 object.
 
-See the [Windows file-auditing example](examples/windows/file-auditing/README.md)
-for the current PowerShell examples and deployment notes.
+See the
+[Windows file-auditing example](examples/windows/file-auditing/README.md).
 
 ---
 
@@ -396,6 +470,7 @@ The Windows source-side model is:
 9. preserve major collector operation lifecycle history.
 
 USN and Windows Security normal checkpoint continuation have been live validated.
+
 USN and Windows Security continuity-gap detection, durable gap records,
 reconciliation, and re-established forward boundaries have also been live
 validated.
@@ -416,7 +491,7 @@ FI must not silently convert missing coverage into certainty.
 
 ## Supporting source freshness
 
-The initial baseline also captures supporting source facts such as:
+The initial baseline captures supporting source facts such as:
 
 - local SMB share state and share security;
 - local users, groups, and direct memberships; and
@@ -424,15 +499,18 @@ The initial baseline also captures supporting source facts such as:
 
 Those sources change more slowly than the filesystem but still change over time.
 
-FI now provides an explicit one-shot `-supporting-refresh` operation for SMB,
-local identity, and relevant Active Directory source facts. It writes new
-versioned observations into verified local spool batches, retains previously
-relevant current-domain SIDs in FI-owned operational state, and reads large
-relevant-SID sets in bounded directory snapshots rather than truncating them.
+FI provides a bounded `-supporting-refresh` operation for SMB, local identity, and
+relevant Active Directory source facts. It writes new versioned observations into
+verified local spool batches, retains previously relevant current-domain SIDs in
+FI-owned operational state, and reads large relevant-SID sets in bounded
+directory snapshots rather than truncating them.
 
-The collector does not invent refresh cadence and does not compute transitive
-membership or final effective access conclusions. Persistent service scheduling
-and broader operational/failure validation remain Gate 1 work.
+The Windows service runtime can schedule this same operation at an explicit
+operator-provided interval.
+
+The collector does not compute transitive membership or final effective-access
+conclusions. Production refresh cadence should be established from representative
+measurement rather than invented inside the collector.
 
 ---
 
@@ -456,26 +534,35 @@ as a custody rule.
 Phase 2 must establish durable downstream custody and acknowledgement before an
 acknowledged local batch may be retired.
 
+The Phase 1 SHA-256 manifest is a local corruption/integrity check, not a claim of
+cryptographic authenticity against an attacker who can rewrite both data and
+manifest.
+
 ---
 
 ## Current Phase 1 focus
 
-The core collector architecture is largely established. Remaining Gate 1 work is
-primarily integration and validation:
+The core Phase 1 source architecture is largely established.
 
-- service scheduling and broader operational/failure validation of the
-  implemented SMB/local/AD supporting-source refresh;
-- a documented governed-file activity behavior matrix covering create, modify,
+Remaining Gate 1 work is primarily **deployment acceptance and validation**:
+
+- make the two-service/two-gMSA deployment reproducible and reviewable;
+- validate service, executable, configuration, state, and spool permissions;
+- complete the governed-file activity behavior matrix covering create, modify,
   read, deny, rename/move, delete, security changes, hard-link activity, and SMB
   paths;
-- Windows service runtime;
-- gMSA deployment and least-privilege validation;
-- restart/failure/resource-exhaustion campaigns;
-- representative performance and source-impact measurement; and
-- validation on additional supported Windows Server versions.
+- complete broader service/restart/source-unavailable/resource-exhaustion
+  campaigns;
+- measure representative baseline, low-churn, high-churn, Security, refresh, and
+  reconciliation workloads;
+- establish production intervals from measurements; and
+- characterize every Windows Server version FI intends to support.
 
 Gate 1 is not complete until those deployment and validation boundaries are
 proved.
+
+No additional Phase 1 source subsystem should be added unless a concrete Gate 1
+requirement demonstrates that a required source fact is missing.
 
 ---
 
@@ -561,6 +648,7 @@ FI remains non-remediating toward the systems it observes.
 - Add classification only after the underlying file/stream observation exists.
 - Prefer simple collectors that report source facts over collectors that make
   organizational decisions.
+- Keep privileged Windows code narrow and obvious.
 
 ---
 
@@ -584,8 +672,9 @@ boundaries, and phase gates.
 
 FI is currently **pre-alpha** and under active development.
 
-Current code, record structures, schemas, command names, interfaces, and internal
-package layouts may change as the architecture is implemented and validated.
+Current code, record structures, schemas, command names, interfaces, deployment
+scripts, and internal package layouts may change as the architecture is
+implemented and validated.
 
 No production-readiness or compatibility guarantee should be inferred from the
 current repository.
@@ -607,7 +696,8 @@ identity used by John Joseph Wood. It is not represented by this repository as a
 separate corporation, LLC, or other legal entity.**
 
 Copyright ownership and licensing for FI are held and granted by
-**John Joseph Wood** unless a future written agreement expressly states otherwise.
+**John Joseph Wood** unless a future written agreement expressly states
+otherwise.
 
 ---
 

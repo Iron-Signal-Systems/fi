@@ -1,12 +1,16 @@
 # FI gMSA - Domain Controller setup
 # Windows Server 2016 / Windows PowerShell 5.1
 #
-# Run this once from an elevated PowerShell prompt on a domain controller.
+# Run this from an elevated PowerShell prompt on a domain controller.
 # It:
 #   1. Loads config\gmsa.psd1
 #   2. Creates the KDS root key only if the forest does not already have one
-#   3. Creates/updates one gMSA per configured FI collector host
-#   4. Allows only that collector computer to retrieve that gMSA password
+#   3. Creates/updates two unique gMSAs per configured FI host
+#   4. Allows only that host computer to retrieve either managed password
+#
+# Per host:
+#   CollectorGMSA -> FICollector, restricted/non-admin
+#   USNGMSA       -> FIUSNReader, privileged on that host only
 
 [CmdletBinding()]
 param(
@@ -22,7 +26,10 @@ function Get-FIServiceAccount {
     )
 
     try {
-        return Get-ADServiceAccount -Identity $Name -Properties DNSHostName,PrincipalsAllowedToRetrieveManagedPassword -ErrorAction Stop
+        return Get-ADServiceAccount `
+            -Identity $Name `
+            -Properties DNSHostName,PrincipalsAllowedToRetrieveManagedPassword `
+            -ErrorAction Stop
     }
     catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
         return $null
@@ -42,43 +49,57 @@ if (-not $settings.Collectors -or @($settings.Collectors).Count -eq 0) {
     throw "No Collectors are defined in $configPath."
 }
 
-# Validate the template before changing AD.
+# Validate the complete template before changing AD.
 $seenHosts = @{}
 $seenGMSAs = @{}
 $validated = @()
 
 foreach ($collector in @($settings.Collectors)) {
     $hostName = [string]$collector.Host
-    $gmsaName = [string]$collector.GMSA
+    $collectorGMSA = [string]$collector.CollectorGMSA
+    $usnGMSA = [string]$collector.USNGMSA
 
     if ([string]::IsNullOrWhiteSpace($hostName)) {
         throw "A collector entry is missing Host."
     }
 
-    if ([string]::IsNullOrWhiteSpace($gmsaName)) {
-        throw "Collector '$hostName' is missing GMSA."
+    if ([string]::IsNullOrWhiteSpace($collectorGMSA)) {
+        throw "Collector '$hostName' is missing CollectorGMSA."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($usnGMSA)) {
+        throw "Collector '$hostName' is missing USNGMSA."
+    }
+
+    if ($collectorGMSA -ieq $usnGMSA) {
+        throw "Collector '$hostName' must use different CollectorGMSA and USNGMSA values."
     }
 
     $hostKey = $hostName.ToLowerInvariant()
-    $gmsaKey = $gmsaName.ToLowerInvariant()
 
     if ($seenHosts.ContainsKey($hostKey)) {
         throw "Duplicate collector host '$hostName'."
     }
 
-    if ($seenGMSAs.ContainsKey($gmsaKey)) {
-        throw "Duplicate gMSA '$gmsaName'."
-    }
-
     $seenHosts[$hostKey] = $true
-    $seenGMSAs[$gmsaKey] = $true
+
+    foreach ($gmsaName in @($collectorGMSA, $usnGMSA)) {
+        $gmsaKey = $gmsaName.ToLowerInvariant()
+
+        if ($seenGMSAs.ContainsKey($gmsaKey)) {
+            throw "Duplicate gMSA '$gmsaName'. Each FI gMSA must be unique to one host and one function."
+        }
+
+        $seenGMSAs[$gmsaKey] = $true
+    }
 
     $computer = Get-ADComputer -Identity $hostName -ErrorAction Stop
 
     $validated += [pscustomobject]@{
-        HostName = $hostName
-        GMSAName = $gmsaName
-        Computer = $computer
+        HostName      = $hostName
+        CollectorGMSA = $collectorGMSA
+        USNGMSA       = $usnGMSA
+        Computer      = $computer
     }
 }
 
@@ -109,23 +130,28 @@ else {
 }
 
 foreach ($item in $validated) {
-    $dnsHostName = '{0}.{1}' -f $item.GMSAName, $domain.DNSRoot
-    $existing = Get-FIServiceAccount -Name $item.GMSAName
+    foreach ($account in @(
+        [pscustomobject]@{ Name = $item.CollectorGMSA; Role = 'FICollector' },
+        [pscustomobject]@{ Name = $item.USNGMSA;       Role = 'FIUSNReader' }
+    )) {
+        $dnsHostName = '{0}.{1}' -f $account.Name, $domain.DNSRoot
+        $existing = Get-FIServiceAccount -Name $account.Name
 
-    if ($null -eq $existing) {
-        Write-Host "Creating gMSA $($item.GMSAName) for $($item.HostName)..."
+        if ($null -eq $existing) {
+            Write-Host "Creating $($account.Role) gMSA $($account.Name) for $($item.HostName)..."
 
-        New-ADServiceAccount `
-            -Name $item.GMSAName `
-            -DNSHostName $dnsHostName `
-            -PrincipalsAllowedToRetrieveManagedPassword $item.Computer
-    }
-    else {
-        Write-Host "Updating gMSA $($item.GMSAName) for $($item.HostName)..."
+            New-ADServiceAccount `
+                -Name $account.Name `
+                -DNSHostName $dnsHostName `
+                -PrincipalsAllowedToRetrieveManagedPassword $item.Computer
+        }
+        else {
+            Write-Host "Updating $($account.Role) gMSA $($account.Name) for $($item.HostName)..."
 
-        Set-ADServiceAccount `
-            -Identity $item.GMSAName `
-            -PrincipalsAllowedToRetrieveManagedPassword $item.Computer
+            Set-ADServiceAccount `
+                -Identity $account.Name `
+                -PrincipalsAllowedToRetrieveManagedPassword $item.Computer
+        }
     }
 }
 
@@ -134,5 +160,6 @@ Write-Host "FI gMSA domain setup complete."
 Write-Host ""
 
 foreach ($item in $validated) {
-    Write-Host ("  {0,-20} -> {1}\{2}$" -f $item.HostName, $domain.NetBIOSName, $item.GMSAName)
+    Write-Host ("  {0,-20} FICollector  -> {1}\{2}$" -f $item.HostName, $domain.NetBIOSName, $item.CollectorGMSA)
+    Write-Host ("  {0,-20} FIUSNReader  -> {1}\{2}$" -f "", $domain.NetBIOSName, $item.USNGMSA)
 }
