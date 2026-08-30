@@ -1,81 +1,139 @@
-# FI USN Split-Privilege Verification Kit
+# FI Windows Split-Privilege Verification Kit
 
-This kit is intended for a **customer Windows administrator** to verify FI's
-USN split-privilege security and recovery behavior without needing to understand
-the Go implementation.
+This is the operator runbook for FI's Windows split-privilege verification
+scripts.
 
-It was written for **Windows Server 2016 / Windows PowerShell 5.1** behavior.
-
-## What is being verified
+The goal is that a Windows administrator can answer:
 
 ```text
-FICollector
-  restricted per-host gMSA
-  NOT local Administrator
-  service SID: NT SERVICE\FICollector
-        |
-        | local named pipe
-        | DACL + runtime service-SID authentication
-        v
-FIUSNReader
-  separate per-host gMSA
-  local Administrator on this host only
-        |
-        v
-NTFS USN Journal
+What do I run?
+Where do I run it?
+Which release-specific script applies?
+What result should I expect?
 ```
 
-The verification demonstrates:
+without reading the Go implementation.
 
-1. The collector remains non-admin.
-2. Both Windows services are configured as managed accounts when gMSAs are used.
-3. Only the helper owns the raw-volume administrative boundary.
-4. The real `FICollector` service can use the helper.
-5. An ordinary elevated local administrator process is rejected by runtime
-   service-SID authentication even though an administrator can reach the pipe.
-6. A remote machine cannot use the helper pipe.
-7. If the helper stops, FI does **not** advance the USN checkpoint.
-8. `FICollector` remains running and other FI output continues while the helper
-   is down.
-9. When the helper returns, FI catches up changes that occurred during the
-   outage.
-10. Disabling the helper gMSA prevents a fresh helper service logon after the
-    already-running helper is stopped.
-11. Re-enabling the gMSA permits recovery and USN catch-up.
-12. FI configuration has no broad `BUILTIN\Users` access.
-13. The restricted collector has no direct FI configuration write permission.
-14. FI state and spool trees are fully traversable by the validating
-    administrator and contain no `BUILTIN\Users` ACL entries.
-15. The collector has the required Modify access to FI state/spool without
-    ACL-administration rights.
-16. `FIUSNReader` has no FI-specific state/spool ACE because checkpoint and
-    durable spool ownership remain with `FICollector`.
+## Validated Windows Server releases
 
-The kit does **not** claim that FI ACLs can sandbox `FIUSNReader` after that
-privileged service is compromised. `FIUSNReader` is intentionally a local
-Administrator on the validated Server 2016 design. A local Administrator is
-already inside the Windows administrative trust boundary and can take ownership
-or change ACLs.
-
-The security boundary FI is proving is therefore:
+The current Phase 1 acceptance baseline is green on:
 
 ```text
-compromise of non-admin FICollector
-        |
-        v
-does not become local Administrator
-        |
-        v
-only the narrow authenticated FI-USN broker is available
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
 ```
+
+See `docs\WINDOWS-SERVER-VALIDATION.md` for version-specific findings.
+
+A later Windows Server release must be characterized independently.
 
 ---
 
-## Before testing
+# 1. Common-script rule
 
-Open **elevated Windows PowerShell** where the instructions say to do so.
+Common verification scripts live in:
 
-The scripts automatically read:
+```text
+tools\scripts
+```
+
+Release-specific scripts live under:
+
+```text
+tools\scripts\2019
+tools\scripts\2022
+```
+
+Use this rule:
+
+> **Run the common script unless the README for your Windows Server release says
+> to use a release-specific script for that test number.**
+
+Do not copy a 2022-specific workaround into another release just because that
+release is newer.
+
+---
+
+# 2. Current script routing
+
+| Test | Server 2016 | Server 2019 | Server 2022 |
+|---|---|---|---|
+| 01 Baseline | common 01 | common 01 | common 01 |
+| 02 Positive USN | common 02 | common 02 | common 02 |
+| 03 Local authorization | common 03 | common 03 | common 03 |
+| 04 Helper failure / catch-up | common 04 | common 04 | common 04 |
+| 05 Remote pipe rejection | common 05 | common 05 | common 05 |
+| 06A-06D gMSA recovery | common 06 | common 06 | common 06 |
+| 07 Config/state/spool ACL | common 07 | common 07 | `2022\07-...` |
+| 08 Collector service-token boundary | common 08 | common 08 | `2022\08-...` |
+
+Windows Server 2019 also has an engineering raw-volume characterization script:
+
+```text
+tools\scripts\2019\01-USN-Access-Characterization.ps1
+```
+
+That is not a replacement for customer Test 01.
+
+Windows Server 2022 has raw-volume characterization source under:
+
+```text
+go\cmd\usnprobe\2022
+```
+
+The release READMEs explain those engineering-only items.
+
+---
+
+# 3. Before testing
+
+## 3.1 Identify the operating system
+
+Run on the FI file server:
+
+```powershell
+Get-CimInstance Win32_OperatingSystem |
+    Select-Object Caption,Version,BuildNumber
+```
+
+Validated builds:
+
+```text
+2016 -> 14393
+2019 -> 17763
+2022 -> 20348
+```
+
+If the release/build is different, do not silently assume the closest existing
+release procedure applies.
+
+## 3.2 Read the release README
+
+Server 2019:
+
+```text
+tools\scripts\2019\README.md
+```
+
+Server 2022:
+
+```text
+tools\scripts\2022\README.md
+```
+
+Server 2016 uses the common numbered kit.
+
+## 3.3 PowerShell
+
+Run scripts from elevated Windows PowerShell where instructed.
+
+The current kit has been exercised in the validated Windows PowerShell 5.1
+environments.
+
+## 3.4 FI paths
+
+The scripts use deployed FI paths such as:
 
 ```text
 C:\ProgramData\FI\config\fi.conf
@@ -83,18 +141,22 @@ C:\ProgramData\FI\state
 C:\ProgramData\FI\spool
 ```
 
-If exactly one `governed_root` is configured, the scripts use it automatically.
-If multiple governed roots are configured, pass the root explicitly where the
-script supports `-GovernedRoot`.
+If exactly one `governed_root` is configured, scripts that support automatic root
+selection use it.
 
-The activity tests create uniquely named temporary files inside the governed
-root and remove them after successful validation.
+If multiple governed roots exist, provide the intended root when the script
+supports `-GovernedRoot`.
 
----
+## 3.5 Temporary objects
 
-## Administrator-run data ACL hardening
+Activity tests create uniquely named temporary files.
 
-The verification kit itself does not silently repair ACLs.
+Successful tests remove their own temporary objects unless the individual script
+states otherwise.
+
+## 3.6 Administrator-run data ACL hardening
+
+The verification kit itself does not silently repair FI ACLs.
 
 For deployment-time hardening of FI-owned state and spool directories, use:
 
@@ -113,20 +175,69 @@ See:
 tools\deployment\README.md
 ```
 
-The important implementation rule is that populated directories are normalized
-**before** inherited access is removed. Existing children must never be assumed
-to receive later parent grants automatically.
+Populated directories are normalized **before** inherited access is removed.
+Existing children must never be assumed to receive later parent grants
+automatically.
 
 ---
 
-# Recommended customer test sequence
+# 4. What the numbered kit proves
 
-## Test 01 — Baseline
+The numbered kit verifies the deployed split-privilege boundary:
 
-**Run on the FI FILE SERVER:**
+```text
+FICollector
+    restricted per-host gMSA
+    non-admin
+        |
+        | local named pipe
+        | DACL + NT SERVICE\FICollector runtime authorization
+        v
+FIUSNReader
+    separate per-host gMSA
+    local Administrator on this host only
+        |
+        +-- bounded USN query/read
+        |
+        +-- bounded mechanical containment when required
+```
+
+It proves operational behavior, not merely static configuration.
+
+The kit does **not** claim that FI ACLs can sandbox `FIUSNReader` after that
+privileged service is compromised. `FIUSNReader` runs inside the local Windows
+administrative trust boundary on the currently validated design.
+
+The boundary being proved is:
+
+```text
+compromise of non-admin FICollector
+        |
+        v
+does not automatically become local Administrator
+        |
+        v
+only the narrow authenticated FI-USN broker is available
+```
+
+---
+
+# 5. Recommended sequence
+
+Run the tests in this order.
+
+Do not skip ahead after a failure and then treat later PASS results as proof that
+the failed boundary is acceptable.
+
+---
+
+## Test 01 — File-server baseline
+
+**Run on the FI FILE SERVER in elevated Windows PowerShell.**
+
+From `tools\scripts`:
 
 ```powershell
-cd <where-you-extracted-the-kit>\scripts
 .\01-FileServer-Baseline.ps1
 ```
 
@@ -138,22 +249,23 @@ Expected final result:
 
 This checks:
 
-- both services are running;
+- both FI services;
 - service identities;
-- both gMSA services are configured as managed accounts;
-- helper is local Administrator;
-- collector is not local Administrator;
-- `FICollector` service SID type is `UNRESTRICTED`;
-- local `FI-USN` pipe exists;
-- USN checkpoint exists; and
-- FI config ACL inspection completes without access failures or broad
-  `BUILTIN\Users` entries.
+- managed-account settings;
+- helper local-Administrator membership;
+- collector non-admin status;
+- `FICollector` service SID;
+- local FI-USN pipe presence;
+- USN checkpoint presence; and
+- basic FI configuration ACL inspection.
+
+Stop here if the baseline fails.
 
 ---
 
 ## Test 02 — Positive USN collection
 
-**Run on the FI FILE SERVER:**
+**Run on the FI FILE SERVER.**
 
 ```powershell
 .\02-FileServer-Positive-USN.ps1
@@ -162,20 +274,20 @@ This checks:
 Expected:
 
 ```text
-[PASS] USN checkpoint advanced ...
-[PASS] The test file appeared in FI USN spool output.
-[PASS] TEST 02 PASSED.
+USN checkpoint advances
+test file appears in FI spool output
+TEST 02 PASSED
 ```
 
-This proves `FICollector` can obtain USN data through `FIUSNReader` and commit
-the result through the normal collector path.
+This proves the real collector can obtain USN data through the real helper and
+commit the result through the normal FI path.
 
 ---
 
-## Test 03 — Reject an ordinary elevated administrator
+## Test 03 — Local runtime authorization
 
 **Run on the FI FILE SERVER from an ordinary elevated administrator
-PowerShell:**
+PowerShell.**
 
 ```powershell
 .\03-FileServer-Local-Authorization.ps1
@@ -184,22 +296,23 @@ PowerShell:**
 Expected:
 
 ```text
-[PASS] Local administrator process connected to the pipe.
-[PASS] Ordinary local administrator was rejected by runtime service-SID authorization.
-[PASS] Both FI services remained running.
-[PASS] TEST 03 PASSED.
+local administrator can reach the pipe DACL
+broker rejects the request
+ErrorCode = 5
+FICollector service SID is required
+both FI services remain running
+TEST 03 PASSED
 ```
 
-The helper response must correspond to:
+The important boundary is:
 
 ```text
-Status    = failure
-ErrorCode = 5 (Access Denied)
-Error     = FICollector service SID is required
+Builtin Administrators in pipe DACL
+        !=
+authorized FI-USN broker client
 ```
 
-Reaching the local pipe is not sufficient. The caller token must contain the
-enabled, non-deny-only:
+The runtime token must contain the enabled, non-deny-only:
 
 ```text
 NT SERVICE\FICollector
@@ -209,40 +322,50 @@ service SID.
 
 ---
 
-## Test 04 — Helper failure, frozen checkpoint, and catch-up
+## Test 04 — Helper failure and catch-up
 
 **CONTROLLED OUTAGE**
 
-This deliberately stops `FIUSNReader` for roughly 35 seconds.
-
-**Run on the FI FILE SERVER:**
+**Run on the FI FILE SERVER.**
 
 ```powershell
 .\04-FileServer-Failure-Recovery.ps1 -ConfirmDisruptive
 ```
 
-Expected:
+The corrected Test 04 does **not** assume a fixed 35-second sleep is enough.
+
+It:
+
+1. records the accepted USN checkpoint;
+2. records the latest configured-collection runtime boundary;
+3. stops `FIUSNReader`;
+4. confirms `FICollector` remains running;
+5. creates a governed test change;
+6. waits until `FICollector` actually executes a new configured collection cycle
+   while the helper is unavailable;
+7. confirms the USN checkpoint did not advance;
+8. confirms helper unavailability was recorded explicitly;
+9. confirms FI spool activity continued;
+10. restarts `FIUSNReader`;
+11. waits for the checkpoint to advance; and
+12. confirms the outage change appears in catch-up output.
+
+Expected final result:
 
 ```text
-[PASS] FIUSNReader stopped.
-[PASS] FICollector remained running.
-[PASS] USN checkpoint did not advance while helper was down.
-[PASS] FI spool continued receiving output while helper was unavailable.
-[PASS] FIUSNReader restarted.
-[PASS] USN checkpoint advanced after helper recovery ...
-[PASS] The change created during helper outage appeared in catch-up output.
 [PASS] TEST 04 PASSED.
 ```
 
-The key invariant is:
+Key invariant:
 
-> FI must never advance its USN checkpoint when the privileged USN read fails.
+> **A failed or unavailable FIUSNReader must not advance accepted USN
+> continuity.**
 
 ---
 
-## Test 05 — Reject remote pipe use
+## Test 05 — Remote pipe rejection
 
-**Run from a SEPARATE ADMIN BOX, not on the FI file server:**
+**Run from a SEPARATE ADMIN BOX, not the FI file server.**
 
 ```powershell
 .\05-AdminBox-Remote-Pipe.ps1 -FileServer "YOUR-FILE-SERVER"
@@ -254,26 +377,23 @@ Expected:
 [PASS] Remote pipe connection was rejected.
 ```
 
-The exact Windows error text may vary. The connection itself must not succeed.
+The exact Windows error wording may differ. The connection itself must not
+succeed.
 
 ---
 
-# Optional Test 06 — gMSA disable / restart / recovery
+# 6. Optional Test 06 — gMSA disable / fresh logon / recovery
 
-This test proves:
+Test 06 changes Active Directory state.
 
-- disabling the helper gMSA does not revoke an already-running local token;
-- after `FIUSNReader` is stopped, a fresh service logon fails while the gMSA is
-  disabled;
-- re-enabling the gMSA allows the helper to restart; and
-- FI catches up the changes made during the outage.
+Run it only in an approved maintenance/test window.
 
-This test changes Active Directory state and should be done during an approved
-maintenance/test window.
+The sequence is split because the AD operation and file-server behavior occur on
+different systems.
 
-## 06A — Disable helper gMSA
+## 06A — Disable the helper gMSA
 
-**Run on a DOMAIN CONTROLLER or AD admin system:**
+**Run on a DOMAIN CONTROLLER or AD administration system.**
 
 ```powershell
 .\06A-DC-Disable-Helper-gMSA.ps1 `
@@ -281,101 +401,113 @@ maintenance/test window.
     -ConfirmDisruptive
 ```
 
-Use the AD gMSA object name without the domain prefix and trailing `$`.
+Use the AD service-account object name without the domain prefix and trailing
+`$`.
 
-The validated operation is:
+## 06B — Prove a fresh helper service logon is blocked
 
-```powershell
-Set-ADServiceAccount -Identity "gFI-USN-YOURHOST" -Enabled $false
-```
-
-## 06B — Prove fresh helper logon is blocked
-
-**Run on the FI FILE SERVER:**
+**Run on the FI FILE SERVER.**
 
 ```powershell
 .\06B-FileServer-Verify-Disabled-gMSA.ps1 -ConfirmDisruptive
 ```
 
-## 06C — Re-enable helper gMSA
+## 06C — Re-enable the helper gMSA
 
-**Run on the DOMAIN CONTROLLER / AD admin system:**
+**Run on the DOMAIN CONTROLLER or AD administration system.**
 
 ```powershell
 .\06C-DC-Enable-Helper-gMSA.ps1 `
     -HelperGMSA "gFI-USN-YOURHOST"
 ```
 
-The validated operation is:
+## 06D — Prove service recovery and USN catch-up
 
-```powershell
-Set-ADServiceAccount -Identity "gFI-USN-YOURHOST" -Enabled $true
-```
-
-## 06D — Prove recovery and catch-up
-
-**Run on the FI FILE SERVER:**
+**Run on the FI FILE SERVER.**
 
 ```powershell
 .\06D-FileServer-Verify-gMSA-Recovery.ps1
 ```
 
+Expected final state:
+
+```text
+FIUSNReader starts again
+USN catch-up resumes from the prior accepted checkpoint
+downtime change appears
+```
+
 ---
 
-## Test 07 — Verify config, state, and spool ACL boundaries
+# 7. Test 07 — Config / state / spool ACL boundary
 
-**Run on the FI FILE SERVER:**
+This test is read-only.
+
+It must not be used as an ACL repair script.
+
+## Server 2016
 
 ```powershell
 .\07-FileServer-Config-ACL.ps1
 ```
 
-This test is **read-only**. It does not change ACLs.
+## Server 2019
 
-It verifies:
+```powershell
+.\07-FileServer-Config-ACL.ps1
+```
 
-- config directory/file inspection completes without access failures;
-- config contains no broad `BUILTIN\Users` access;
-- FICollector and FIUSNReader have only explicit non-write config ACEs;
-- state and spool roots grant:
-  - SYSTEM FullControl;
-  - Administrators FullControl;
-  - FICollector Modify without ChangePermissions/TakeOwnership;
-- FIUSNReader has no direct state/spool ACE;
-- every state/spool child can be inspected;
-- no state/spool child contains `BUILTIN\Users`;
-- FICollector remains non-admin;
-- FIUSNReader remains local Administrator;
-- both services are configured as managed accounts; and
-- FICollector service SID type remains `UNRESTRICTED`.
+## Server 2022
 
-Expected final result:
+Use the release-specific script:
+
+```powershell
+.\2022\07-FileServer-Config-ACL.ps1
+```
+
+Do **not** replace the common Test 07 with the Server 2022 version.
+
+Expected properties include:
+
+- complete config inspection;
+- no broad `BUILTIN\Users` config access;
+- no direct collector config write/ACL-administration permission;
+- complete state and spool inspection;
+- no broad `BUILTIN\Users` state/spool entries;
+- collector Modify without ACL-administration rights;
+- no FI-specific helper state/spool ACE;
+- collector remains non-admin;
+- helper remains in the intended local administrative boundary;
+- managed-account settings remain correct; and
+- collector service SID remains enabled.
+
+For the common Test 07, expected final result is:
 
 ```text
 [PASS] TEST 07 PASSED.
 ```
 
-### Why Test 07 inspects icacls output, not only `$LASTEXITCODE`
+### Why Test 07 inspects `icacls` output, not only `$LASTEXITCODE`
 
-Windows Server 2016 validation showed that:
+Windows validation established that:
 
 ```text
 icacls <path> /T /C
 ```
 
-can report individual:
+can report an individual:
 
 ```text
 Access is denied.
 ```
 
-failures while still leaving `$LASTEXITCODE` at `0`.
+while still leaving `$LASTEXITCODE` at `0`.
 
-Therefore a clean process exit code alone is **not** accepted as proof that the
-ACL tree was inspected successfully. Test 07 fails when it sees either an access
-denial or a nonzero `Failed processing` summary.
+A clean process exit code alone is therefore not accepted as proof that the ACL
+tree was inspected successfully. Test 07 also checks command output for access
+failures and the `Failed processing` summary.
 
-The intended root ACL shape is:
+The intended state/spool root shape is:
 
 ```text
 C:\ProgramData\FI\state
@@ -389,18 +521,161 @@ C:\ProgramData\FI\spool
     FICollector gMSA        Modify
 ```
 
-`FIUSNReader` runtime code should remain read-only toward FI configuration and
-must not own checkpoint, spool, or collector-state writes.
+`FIUSNReader` does not own checkpoint, spool, or collector-state writes.
 
 ---
 
-# What counts as a successful verification
+# 8. Test 08 — Collector exact service-token boundary
 
-A customer administrator should be able to record all of the following:
+This verifies more than account identity.
+
+It proves an ordinary process using the collector account is not equivalent to
+the real Windows `FICollector` service token.
+
+## Server 2016
+
+```powershell
+.\08-FileServer-Collector-Boundary.ps1
+```
+
+## Server 2019
+
+```powershell
+.\08-FileServer-Collector-Boundary.ps1
+```
+
+## Server 2022
+
+Use:
+
+```powershell
+.\2022\08-FileServer-Collector-Boundary.ps1
+```
+
+The boundary is:
 
 ```text
-[ ] Collector is not local Administrator
-[ ] Helper is local Administrator on this host only
+account identity alone
+        !=
+NT SERVICE\FICollector service token
+```
+
+Expected result:
+
+```text
+real FICollector service token accepted
+ordinary same-account process not treated as the service
+TEST 08 PASS
+```
+
+---
+
+# 9. Release-specific engineering characterization
+
+The numbered customer verification kit and engineering characterization are
+different.
+
+The numbered kit verifies a deployed accepted design.
+
+Characterization answers:
+
+```text
+Why does this Windows release require that design?
+Did this release change Windows behavior?
+```
+
+## Windows Server 2019
+
+See:
+
+```text
+tools\scripts\2019\README.md
+tools\scripts\2019\01-USN-Access-Characterization.ps1
+go\cmd\usnprobe\2019
+```
+
+## Windows Server 2022
+
+See:
+
+```text
+tools\scripts\2022\README.md
+go\cmd\usnprobe\2022
+```
+
+Do not run engineering characterization against a production file server merely
+because the customer verification kit passed.
+
+---
+
+# 10. Windows Security Event Log
+
+The Security Event Log is a separate FI source.
+
+A passing USN test does not prove Security-log readability or audit-policy/SACL
+coverage.
+
+During deployment acceptance, verify:
+
+- the restricted collector can read the local Security log through the approved
+  Windows rights/group model;
+- the FI Security checkpoint advances after accepted collection; and
+- required Advanced Audit Policy and SACL configuration are present where
+  governed-file activity is expected.
+
+FI runtime does not silently enable audit policy or add governed-root SACLs.
+
+---
+
+# 11. Record the result
+
+Use:
+
+```text
+docs\VERIFICATION-RECORD.md
+```
+
+Record:
+
+- Windows Server release;
+- exact build;
+- FI version/build or commit;
+- service identities;
+- governed root;
+- each numbered test;
+- release-specific characterization if performed;
+- Security source acceptance;
+- protected-object acceptance where applicable; and
+- any exception.
+
+Keep console output with the deployment/change record when required.
+
+---
+
+# 12. What counts as a green numbered verification
+
+```text
+[ ] Collector is non-admin
+[ ] Helper owns the narrow privileged Windows boundary
+[ ] Managed-account settings are correct
+[ ] Collector service SID is enabled
+[ ] Positive USN collection advances checkpoint
+[ ] Test filename appears in spool
+[ ] Ordinary elevated local admin is rejected by runtime authorization
+[ ] Remote broker access is rejected
+[ ] Helper outage freezes accepted USN continuity
+[ ] Collector remains running during helper outage
+[ ] Helper recovery catches up the outage change
+[ ] Config ACL boundary passes
+[ ] State/spool ACL boundary passes
+[ ] Collector exact service-token boundary passes
+```
+
+The full deployment record should also preserve these specific properties:
+
+```text
+[ ] FICollector is not local Administrator
+[ ] FIUSNReader is local Administrator on this host only
 [ ] FICollector managed-account setting is TRUE
 [ ] FIUSNReader managed-account setting is TRUE
 [ ] FICollector service SID is enabled
@@ -413,18 +688,22 @@ A customer administrator should be able to record all of the following:
 [ ] Other FI spool activity continues
 [ ] Helper restart advances checkpoint
 [ ] Downtime change appears after catch-up
-[ ] Config ACL inspection is complete and has no broad BUILTIN\Users access
-[ ] Collector has no direct FI config write/modify/administrative ACE
-[ ] State tree is fully traversable and has no BUILTIN\Users ACL entries
-[ ] Spool tree is fully traversable and has no BUILTIN\Users ACL entries
+[ ] Config inspection is complete with no broad BUILTIN\Users access
+[ ] Collector has no direct FI config write/modify/ACL-administration ACE
+[ ] State tree is fully traversable with no broad BUILTIN\Users entries
+[ ] Spool tree is fully traversable with no broad BUILTIN\Users entries
 [ ] Collector has Modify on FI state/spool without ACL-administration rights
-[ ] Helper has no direct FI state/spool ACE
+[ ] Helper has no FI-specific state/spool ACE
+[ ] Collector exact service-token boundary passes
+```
 
 Optional:
-[ ] Disabled helper gMSA cannot perform a fresh service logon
+
+```text
+[ ] Disabled helper gMSA cannot obtain a fresh service logon
 [ ] Re-enabled helper gMSA restores service
 [ ] gMSA-downtime change appears after catch-up
 ```
 
-Keep the console output with the installation/change record if the organization
-requires operational validation records.
+For Server 2022, also follow its release README for the protected-system-object
+containment behavior required by that release's accepted design.

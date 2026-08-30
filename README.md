@@ -315,6 +315,7 @@ FICollector
                                                |
                                                v
                                       raw NTFS USN query/read
+                                      bounded File-ID containment
 ```
 
 The service runtime can schedule:
@@ -332,8 +333,20 @@ decision.
 
 ## USN split-privilege boundary
 
-Windows Server 2016 live testing established that FI's current direct-volume USN
-query/read path requires administrative-capable raw-volume access.
+The current split-privilege design has been live validated on:
+
+```text
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
+```
+
+2019 and 2022 characterization explicitly established that a restricted helper
+remains unable to perform the required raw-volume USN query/read even when
+`SeManageVolumePrivilege` is enabled in-process. The narrow helper therefore
+remains inside the local Windows administrative boundary. `FILE_READ_DATA` is
+the least tested successful raw-volume access used by the production query/read
+path.
 
 FI does **not** run the entire collector as Administrator to obtain that
 capability.
@@ -341,14 +354,24 @@ capability.
 Instead:
 
 - `FICollector` remains non-admin;
-- `FIUSNReader` owns only the narrow privileged raw-volume USN operations;
+- `FIUSNReader` owns only the narrow privileged USN operations and a bounded
+  mechanical File-ID containment check used when the collector receives Access
+  Denied during current-object re-observation;
 - the pipe rejects remote clients;
 - the helper requires the enabled `NT SERVICE\FICollector` service SID;
 - the helper independently loads FI configuration and authorizes only volumes
   represented by configured governed roots;
 - the helper exposes no arbitrary device/FSCTL interface; and
-- `FICollector` retains parsing, containment, hashing, spool, and checkpoint
-  ownership.
+- `FICollector` retains parsing, governed-root policy, normal re-observation,
+  hashing, spool, and checkpoint ownership.
+
+Windows Server 2022 build `20348` exposed one additional protected-object
+behavior: some protected system objects deny the helper's normal zero-access
+`OpenFileById` containment open. Only on build `20348`, and only after that
+normal open returns Access Denied, FI temporarily enables `SeBackupPrivilege`,
+retries the same zero-access open, resolves mechanical containment, and restores
+the previous privilege state. That fallback is not enabled for 2016, 2019, or an
+untested future Windows Server release.
 
 A controlled helper outage has been live validated to freeze the USN checkpoint
 while other collector work continues. After helper recovery, FI resumes from the
@@ -358,6 +381,7 @@ See:
 
 - [FI USN Architecture Summary](docs/README-USN-SUMMARY.md)
 - [FI NTFS USN Privilege Boundary](docs/security/usn-privilege-boundary.md)
+- [FI Windows Server Validation](docs/WINDOWS-SERVER-VALIDATION.md)
 - [FI USN Split-Privilege Verification Kit](tools/README.md)
 
 ---
@@ -369,15 +393,19 @@ FI reads the local Windows Security log as an independent activity source.
 FI does not automatically enable Windows audit policy or add SACLs to governed
 roots. Those are administrator-controlled deployment settings.
 
-Current live validation has been performed on:
+The Security Event Log collection/checkpoint path has been live validated across
+the current Windows Server acceptance set:
 
 ```text
-Windows Server 2016
-Version 10.0.14393
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
 ```
 
-Later Windows Server versions must be characterized independently before FI
-assumes identical event-generation behavior.
+Detailed audit-event generation still depends on Windows release, effective
+Advanced Audit Policy, SACL coverage, and the access path. Later Windows Server
+versions must still be characterized independently before FI assumes identical
+event-generation behavior.
 
 The current FI coverage model requires effective:
 
@@ -396,7 +424,8 @@ GPO or equivalent configuration-management mechanism. The Windows setting
 override audit policy category settings** should be enabled so legacy category
 policy does not override the intended advanced subcategories.
 
-On the validated Windows Server 2016 system:
+The detailed event-generation examples below were established during the
+Windows Server 2016 activity characterization:
 
 - successful governed-file activity produced Event ID `4663`;
 - denied file-handle requests produced Event ID `4656` after Handle Manipulation
@@ -556,7 +585,11 @@ Remaining Gate 1 work is primarily **deployment acceptance and validation**:
 - measure representative baseline, low-churn, high-churn, Security, refresh, and
   reconciliation workloads;
 - establish production intervals from measurements; and
-- characterize every Windows Server version FI intends to support.
+- characterize every additional Windows Server version FI intends to support.
+
+Windows Server 2016, 2019, and 2022 are currently characterized and green for
+the split-privilege acceptance baseline. Later releases remain independent
+characterization work.
 
 Gate 1 is not complete until those deployment and validation boundaries are
 proved.

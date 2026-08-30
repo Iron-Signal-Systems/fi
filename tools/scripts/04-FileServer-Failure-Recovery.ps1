@@ -9,8 +9,8 @@ Write-Host ""
 Write-Host "FI USN Verification - Test 04: Helper Failure and Catch-Up"
 Write-Host "Run on the FILE SERVER in elevated Windows PowerShell."
 Write-Host ""
-Write-Host "WARNING: This test stops FIUSNReader for about 35 seconds."
-Write-Host "FICollector must remain running."
+Write-Host "WARNING: This test stops FIUSNReader until FICollector executes"
+Write-Host "one configured collection cycle. FICollector must remain running."
 Write-Host ""
 
 if (-not $ConfirmDisruptive) {
@@ -26,16 +26,22 @@ if (-not $GovernedRoot) {
     $GovernedRoot = $Roots[0]
 }
 
+$RuntimePath = "C:\ProgramData\FI\state\service-runtime.jsonl"
 $CheckpointPath = Get-FiCheckpointPath -GovernedRoot $GovernedRoot
 $Before = Get-FiCheckpoint -CheckpointPath $CheckpointPath
 $BeforeUSN = [UInt64]$Before.next_usn
-$BeforeUpdated = $Before.updated_at
+
+$BeforeRuntime = Get-FiLatestConfiguredCollection -RuntimePath $RuntimePath
+if (-not $BeforeRuntime) {
+    throw "No ConfiguredCollection runtime record exists before the helper outage."
+}
+$BeforeRuntimeObserved = [string]$BeforeRuntime.observed_at
 
 $FileName = "fi-usn-helper-down-$([Guid]::NewGuid().ToString('N')).txt"
 $TestPath = Join-Path $GovernedRoot $FileName
 
-$SpoolBefore = Get-ChildItem "C:\ProgramData\FI\spool" -File |
-    Sort-Object LastWriteTime -Descending |
+$SpoolBefore = Get-ChildItem "C:\ProgramData\FI\spool" -Filter "*.jsonl" -File |
+    Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
 
 $SpoolBeforeTime = $null
@@ -44,71 +50,109 @@ if ($SpoolBefore) {
 }
 
 Write-FiInfo "Checkpoint before outage: $BeforeUSN"
+Write-FiInfo "Last configured collection before outage: $BeforeRuntimeObserved"
 Write-FiInfo "Stopping FIUSNReader."
 
-Stop-Service FIUSNReader -ErrorAction Stop
+try {
+    Stop-Service FIUSNReader -ErrorAction Stop
 
-if (Test-FiServiceRunning -Name "FIUSNReader") {
-    Write-FiFail "FIUSNReader did not stop."
-    exit 1
+    if (Test-FiServiceRunning -Name "FIUSNReader") {
+        Write-FiFail "FIUSNReader did not stop."
+        exit 1
+    }
+    Write-FiPass "FIUSNReader stopped."
+
+    if (-not (Test-FiServiceRunning -Name "FICollector")) {
+        Write-FiFail "FICollector stopped unexpectedly."
+        exit 1
+    }
+    Write-FiPass "FICollector remained running."
+
+    "FI helper outage verification $(Get-Date -Format o)" |
+        Set-Content -LiteralPath $TestPath
+
+    Write-FiInfo "Created test change while helper was down: $TestPath"
+    Write-FiInfo "Waiting for FICollector to execute a configured collection cycle while FIUSNReader is down."
+
+    $OutageRuntime = $null
+    $Deadline = (Get-Date).AddSeconds(90)
+
+    do {
+        Start-Sleep -Seconds 2
+
+        $CurrentRuntime = Get-FiLatestConfiguredCollection -RuntimePath $RuntimePath
+
+        if (
+            $CurrentRuntime -and
+            [string]$CurrentRuntime.observed_at -ne $BeforeRuntimeObserved
+        ) {
+            $OutageRuntime = $CurrentRuntime
+            break
+        }
+    } while ((Get-Date) -lt $Deadline)
+
+    if (-not $OutageRuntime) {
+        Write-FiFail "FICollector did not execute a configured collection cycle during the helper outage."
+        exit 1
+    }
+
+    Write-FiPass "FICollector executed a configured collection cycle while FIUSNReader was down."
+    Write-FiInfo "Outage collection observed_at: $($OutageRuntime.observed_at)"
+    Write-FiInfo "Outage collection outcome: $($OutageRuntime.outcome)"
+
+    $During = Get-FiCheckpoint -CheckpointPath $CheckpointPath
+    $DuringUSN = [UInt64]$During.next_usn
+
+    if ($DuringUSN -ne $BeforeUSN) {
+        Write-FiFail "USN checkpoint advanced while FIUSNReader was down."
+        exit 1
+    }
+    Write-FiPass "USN checkpoint did not advance while helper was down."
+
+    if (
+        $OutageRuntime.outcome -ne "Complete" -and
+        $OutageRuntime.error -match 'FIUSNReader pipe unavailable'
+    ) {
+        Write-FiPass "FI reported FIUSNReader unavailability explicitly."
+        Write-FiInfo "Outage collection error: $($OutageRuntime.error)"
+    }
+    else {
+        Write-FiFail "Outage collection did not report the expected FIUSNReader unavailability."
+        exit 1
+    }
+
+    $RecentSpoolBeforeRecovery = Get-ChildItem "C:\ProgramData\FI\spool" -Filter "*.jsonl" -File |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+
+    if (
+        $RecentSpoolBeforeRecovery -and
+        (
+            -not $SpoolBeforeTime -or
+            $RecentSpoolBeforeRecovery.LastWriteTimeUtc -gt $SpoolBeforeTime
+        )
+    ) {
+        Write-FiPass "FI spool continued receiving output while helper was unavailable."
+    }
+    else {
+        Write-FiFail "No newer FI spool output was observed during the collection cycle with FIUSNReader unavailable."
+        exit 1
+    }
 }
-Write-FiPass "FIUSNReader stopped."
+finally {
+    if (-not (Test-FiServiceRunning -Name "FIUSNReader")) {
+        Write-FiInfo "Restarting FIUSNReader."
+        Start-Service FIUSNReader -ErrorAction Stop
+    }
 
-if (-not (Test-FiServiceRunning -Name "FICollector")) {
-    Write-FiFail "FICollector stopped unexpectedly."
-    exit 1
-}
-Write-FiPass "FICollector remained running."
+    if (-not (Test-FiServiceRunning -Name "FIUSNReader")) {
+        throw "FIUSNReader did not restart."
+    }
 
-"FI helper outage verification $(Get-Date -Format o)" |
-    Set-Content -LiteralPath $TestPath
-
-Write-FiInfo "Created test change while helper was down: $TestPath"
-
-$Stable = Wait-FiCheckpointStable -CheckpointPath $CheckpointPath -ExpectedUSN $BeforeUSN -Seconds 35
-
-if (-not $Stable) {
-    Write-FiFail "USN checkpoint advanced while FIUSNReader was down."
-    Start-Service FIUSNReader -ErrorAction SilentlyContinue
-    exit 1
-}
-Write-FiPass "USN checkpoint did not advance while helper was down."
-
-$Runtime = Get-FiLatestConfiguredCollection
-if ($Runtime -and $Runtime.error -match 'FIUSNReader pipe unavailable') {
-    Write-FiPass "FI reported FIUSNReader unavailability explicitly."
-} else {
-    Write-FiInfo "Latest collection did not contain the expected pipe-unavailable text; review service-runtime.jsonl if needed."
+    Write-FiPass "FIUSNReader is running."
 }
 
-$RecentSpoolBeforeRecovery = Get-ChildItem "C:\ProgramData\FI\spool" -File |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
-if (
-    $RecentSpoolBeforeRecovery -and
-    (
-        -not $SpoolBeforeTime -or
-        $RecentSpoolBeforeRecovery.LastWriteTimeUtc -gt $SpoolBeforeTime
-    )
-) {
-    Write-FiPass "FI spool continued receiving output while helper was unavailable."
-} else {
-    Write-FiFail "No newer FI spool output was observed while helper was unavailable."
-    Start-Service FIUSNReader -ErrorAction SilentlyContinue
-    exit 1
-}
-
-Write-FiInfo "Restarting FIUSNReader."
-Start-Service FIUSNReader -ErrorAction Stop
-
-if (-not (Test-FiServiceRunning -Name "FIUSNReader")) {
-    Write-FiFail "FIUSNReader did not restart."
-    exit 1
-}
-Write-FiPass "FIUSNReader restarted."
-
-$After = Wait-FiCheckpointAdvance -CheckpointPath $CheckpointPath -BeforeUSN $BeforeUSN -TimeoutSeconds 75
+$After = Wait-FiCheckpointAdvance -CheckpointPath $CheckpointPath -BeforeUSN $BeforeUSN -TimeoutSeconds 90
 
 if (-not $After) {
     Write-FiFail "USN checkpoint did not advance after helper recovery."
@@ -116,7 +160,7 @@ if (-not $After) {
 }
 Write-FiPass "USN checkpoint advanced after helper recovery: $BeforeUSN -> $($After.next_usn)."
 
-$Matches = @(Wait-FiSpoolFilename -FileName $FileName -NewestFiles 80 -TimeoutSeconds 75)
+$Matches = @(Wait-FiSpoolFilename -FileName $FileName -NewestFiles 80 -TimeoutSeconds 90)
 if ($Matches.Count -eq 0) {
     Write-FiFail "The file changed during helper outage was not found in catch-up spool output."
     exit 1
