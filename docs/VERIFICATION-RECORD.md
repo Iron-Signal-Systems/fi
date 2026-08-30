@@ -20,12 +20,14 @@ FI version/build: ______________________________________
 | 04 Helper failure and catch-up | PASS / FAIL | |
 | 05 Remote pipe rejection | PASS / FAIL | |
 | 06A-06D gMSA disable/recovery (optional) | PASS / FAIL / NOT RUN | |
-| 07 Config ACL boundary | PASS / FAIL | |
+| 07 Config / state / spool ACL boundary | PASS / FAIL | |
 
 ## Required security properties
 
 - [ ] FICollector service account is not local Administrator.
 - [ ] FIUSNReader service account is local Administrator on this host only.
+- [ ] FICollector managed-account setting is `TRUE`.
+- [ ] FIUSNReader managed-account setting is `TRUE`.
 - [ ] FICollector service SID type is UNRESTRICTED.
 - [ ] Ordinary elevated local administrator pipe requests are denied unless the
       caller token also carries the enabled `NT SERVICE\FICollector` service SID.
@@ -33,8 +35,16 @@ FI version/build: ______________________________________
 - [ ] USN checkpoint does not advance when FIUSNReader is unavailable.
 - [ ] FICollector remains operational when FIUSNReader is unavailable.
 - [ ] USN catch-up recovers changes made while FIUSNReader was unavailable.
+- [ ] FI config ACL inspection completes without inaccessible objects.
 - [ ] FI config has no broad `BUILTIN\Users` access.
 - [ ] FICollector has no direct write/modify/administrative FI config permission.
+- [ ] FI state ACL traversal completes without inaccessible objects.
+- [ ] FI spool ACL traversal completes without inaccessible objects.
+- [ ] FI state/spool contain no `BUILTIN\Users` ACL entries.
+- [ ] FICollector has required Modify access to FI state/spool without
+      ChangePermissions or TakeOwnership rights.
+- [ ] FIUSNReader has no direct FI state/spool ACE; checkpoint and durable spool
+      ownership remain with FICollector.
 - [ ] FIUSNReader has only an explicit read entry for FI config; its effective
       local-Administrator authority is treated as the Windows administrative
       trust boundary, not as a config-ACL sandbox.

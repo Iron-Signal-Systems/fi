@@ -119,6 +119,55 @@ function Get-FiCheckpoint {
     return Get-Content -LiteralPath $CheckpointPath -Raw | ConvertFrom-Json
 }
 
+function Get-FiIcaclsAudit {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+
+        [switch]$Recurse
+    )
+
+    $Arguments = @($Path)
+
+    if ($Recurse) {
+        $Arguments += "/T"
+        $Arguments += "/C"
+    }
+
+    $Output = @(
+        & icacls.exe @Arguments 2>&1 |
+            ForEach-Object { $_.ToString() }
+    )
+
+    $ExitCode = $LASTEXITCODE
+
+    $AccessDenied = @(
+        $Output |
+            Select-String -SimpleMatch "Access is denied"
+    )
+
+    $FailureSummaries = @(
+        $Output |
+            Select-String -Pattern 'Failed processing\s+[1-9][0-9]*\s+files?'
+    )
+
+    $HasProblems = (
+        $ExitCode -ne 0 -or
+        $AccessDenied.Count -gt 0 -or
+        $FailureSummaries.Count -gt 0
+    )
+
+    return [PSCustomObject]@{
+        Path = $Path
+        Recurse = [bool]$Recurse
+        ExitCode = $ExitCode
+        Output = $Output
+        AccessDenied = $AccessDenied
+        FailureSummaries = $FailureSummaries
+        HasProblems = $HasProblems
+    }
+}
+
 function Get-FiLatestConfiguredCollection {
     param(
         [string]$RuntimePath = "C:\ProgramData\FI\state\service-runtime.jsonl"
@@ -137,6 +186,53 @@ function Get-FiLatestConfiguredCollection {
     }
 
     return $Last.Line | ConvertFrom-Json
+}
+
+function Find-FiSpoolFilename {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FileName,
+
+        [string]$SpoolPath = "C:\ProgramData\FI\spool",
+
+        [int]$NewestFiles = 40
+    )
+
+    $Encoded = ConvertTo-FiUTF16LEBase64Url -Value $FileName
+
+    $Matches = Get-ChildItem -LiteralPath $SpoolPath -Filter "*.jsonl" -File |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First $NewestFiles |
+        Select-String -Pattern $Encoded -SimpleMatch
+
+    return $Matches
+}
+
+function Wait-FiSpoolFilename {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FileName,
+
+        [string]$SpoolPath = "C:\ProgramData\FI\spool",
+
+        [int]$NewestFiles = 60,
+
+        [int]$TimeoutSeconds = 60
+    )
+
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+    do {
+        $Matches = @(Find-FiSpoolFilename -FileName $FileName -SpoolPath $SpoolPath -NewestFiles $NewestFiles)
+
+        if ($Matches.Count -gt 0) {
+            return $Matches
+        }
+
+        Start-Sleep -Seconds 2
+    } while ((Get-Date) -lt $Deadline)
+
+    return @()
 }
 
 function Wait-FiCheckpointAdvance {
@@ -181,54 +277,6 @@ function Wait-FiCheckpointStable {
 
     $Current = Get-FiCheckpoint -CheckpointPath $CheckpointPath
     return ([UInt64]$Current.next_usn -eq $ExpectedUSN)
-}
-
-function Find-FiSpoolFilename {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$FileName,
-
-        [string]$SpoolPath = "C:\ProgramData\FI\spool",
-
-        [int]$NewestFiles = 40
-    )
-
-    $Encoded = ConvertTo-FiUTF16LEBase64Url -Value $FileName
-
-    $Matches = Get-ChildItem -LiteralPath $SpoolPath -Filter "*.jsonl" -File |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First $NewestFiles |
-        Select-String -Pattern $Encoded -SimpleMatch
-
-    return $Matches
-}
-
-
-function Wait-FiSpoolFilename {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$FileName,
-
-        [string]$SpoolPath = "C:\ProgramData\FI\spool",
-
-        [int]$NewestFiles = 60,
-
-        [int]$TimeoutSeconds = 60
-    )
-
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-
-    do {
-        $Matches = @(Find-FiSpoolFilename -FileName $FileName -SpoolPath $SpoolPath -NewestFiles $NewestFiles)
-
-        if ($Matches.Count -gt 0) {
-            return $Matches
-        }
-
-        Start-Sleep -Seconds 2
-    } while ((Get-Date) -lt $Deadline)
-
-    return @()
 }
 
 function Test-FiServiceRunning {

@@ -21,14 +21,16 @@ $Helper = Get-FiServiceInfo -Name $HelperService
 
 if ($Collector.State -eq "Running") {
     Write-FiPass "$CollectorService is running."
-} else {
+}
+else {
     Write-FiFail "$CollectorService is not running."
     $Failures++
 }
 
 if ($Helper.State -eq "Running") {
     Write-FiPass "$HelperService is running."
-} else {
+}
+else {
     Write-FiFail "$HelperService is not running."
     $Failures++
 }
@@ -40,7 +42,8 @@ $AdminOutput = (net localgroup Administrators) -join "`n"
 
 if ($AdminOutput -match [Regex]::Escape($Helper.StartName)) {
     Write-FiPass "$HelperService account is a local Administrator."
-} else {
+}
+else {
     Write-FiFail "$HelperService account is NOT a local Administrator."
     $Failures++
 }
@@ -48,21 +51,42 @@ if ($AdminOutput -match [Regex]::Escape($Helper.StartName)) {
 if ($AdminOutput -match [Regex]::Escape($Collector.StartName)) {
     Write-FiFail "$CollectorService account is a local Administrator. It should be restricted."
     $Failures++
-} else {
+}
+else {
     Write-FiPass "$CollectorService account is not a local Administrator."
+}
+
+$CollectorManaged = (sc.exe qmanagedaccount $CollectorService) -join "`n"
+if ($CollectorManaged -match 'ACCOUNT MANAGED\s*:\s*TRUE') {
+    Write-FiPass "$CollectorService is configured as a managed account."
+}
+else {
+    Write-FiFail "$CollectorService is not configured as a managed account."
+    $Failures++
+}
+
+$HelperManaged = (sc.exe qmanagedaccount $HelperService) -join "`n"
+if ($HelperManaged -match 'ACCOUNT MANAGED\s*:\s*TRUE') {
+    Write-FiPass "$HelperService is configured as a managed account."
+}
+else {
+    Write-FiFail "$HelperService is not configured as a managed account."
+    $Failures++
 }
 
 $SidType = (sc.exe qsidtype $CollectorService) -join "`n"
 if ($SidType -match 'SERVICE_SID_TYPE:\s+UNRESTRICTED') {
     Write-FiPass "$CollectorService service SID type is UNRESTRICTED."
-} else {
+}
+else {
     Write-FiFail "$CollectorService service SID type is not UNRESTRICTED."
     $Failures++
 }
 
 if (Test-Path "\\.\pipe\FI-USN") {
     Write-FiPass "Local FI-USN named pipe exists."
-} else {
+}
+else {
     Write-FiFail "Local FI-USN named pipe does not exist."
     $Failures++
 }
@@ -73,7 +97,8 @@ if (-not $GovernedRoot) {
     if ($Roots.Count -ne 1) {
         Write-FiFail "More than one governed root is configured. Re-run with -GovernedRoot <path>."
         $Failures++
-    } else {
+    }
+    else {
         $GovernedRoot = $Roots[0]
     }
 }
@@ -98,14 +123,31 @@ if ($GovernedRoot) {
 
 Write-Host ""
 Write-Host "Config ACL:"
-icacls $ConfigDir
-icacls $ConfigPath
 
-$ConfigAclText = ((icacls $ConfigDir) + (icacls $ConfigPath)) -join "`n"
+$ConfigDirAudit = Get-FiIcaclsAudit -Path $ConfigDir
+$ConfigFileAudit = Get-FiIcaclsAudit -Path $ConfigPath
+
+$ConfigDirAudit.Output | ForEach-Object { Write-Host $_ }
+$ConfigFileAudit.Output | ForEach-Object { Write-Host $_ }
+
+if ($ConfigDirAudit.HasProblems -or $ConfigFileAudit.HasProblems) {
+    Write-FiFail "FI config ACL inspection did not complete cleanly."
+    $Failures++
+}
+else {
+    Write-FiPass "FI config ACL inspection completed without access or traversal failures."
+}
+
+$ConfigAclText = @(
+    $ConfigDirAudit.Output
+    $ConfigFileAudit.Output
+) -join "`n"
+
 if ($ConfigAclText -match 'BUILTIN\\Users') {
     Write-FiFail "BUILTIN\Users is present in FI config ACLs."
     $Failures++
-} else {
+}
+else {
     Write-FiPass "FI config ACLs do not grant BUILTIN\Users access."
 }
 
