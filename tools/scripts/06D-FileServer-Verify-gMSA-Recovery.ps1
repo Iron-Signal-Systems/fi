@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 param()
 
 . "$PSScriptRoot\Common.ps1"
@@ -14,9 +18,28 @@ if (-not (Test-Path -LiteralPath $Marker)) {
 }
 
 $Values = @{}
+
 foreach ($Line in Get-Content -LiteralPath $Marker) {
-    if ($Line -match '^([^=]+)=(.*)$') {
-        $Values[$Matches[1]] = $Matches[2]
+    $MarkerMatch = [regex]::Match(
+        $Line,
+        '^([^=]+)=(.*)$'
+    )
+
+    if ($MarkerMatch.Success) {
+        $Values[$MarkerMatch.Groups[1].Value] = $MarkerMatch.Groups[2].Value
+    }
+}
+
+$RequiredKeys = @(
+    "checkpoint_path"
+    "before_usn"
+    "test_path"
+    "file_name"
+)
+
+foreach ($Key in $RequiredKeys) {
+    if (-not $Values.ContainsKey($Key) -or [string]::IsNullOrWhiteSpace($Values[$Key])) {
+        throw "Verification marker is missing required value: $Key"
     }
 }
 
@@ -39,7 +62,10 @@ if (-not (Test-FiServiceRunning -Name "FICollector")) {
 }
 Write-FiPass "FICollector remained running."
 
-$After = Wait-FiCheckpointAdvance -CheckpointPath $CheckpointPath -BeforeUSN $BeforeUSN -TimeoutSeconds 90
+$After = Wait-FiCheckpointAdvance `
+    -CheckpointPath $CheckpointPath `
+    -BeforeUSN $BeforeUSN `
+    -TimeoutSeconds 90
 
 if (-not $After) {
     Write-FiFail "USN checkpoint did not advance after helper gMSA recovery."
@@ -48,20 +74,33 @@ if (-not $After) {
 
 Write-FiPass "USN checkpoint advanced after recovery: $BeforeUSN -> $($After.next_usn)."
 
-$Matches = @(Wait-FiSpoolFilename -FileName $FileName -NewestFiles 100 -TimeoutSeconds 90)
+$SpoolMatches = @(
+    Wait-FiSpoolFilename `
+        -FileName $FileName `
+        -NewestFiles 100 `
+        -TimeoutSeconds 90
+)
 
-if ($Matches.Count -eq 0) {
+if ($SpoolMatches.Count -eq 0) {
     Write-FiFail "The file changed while helper gMSA was disabled was not found in catch-up output."
     exit 1
 }
 
 Write-FiPass "The gMSA-downtime change appeared in FI catch-up output."
-$Matches |
+
+$SpoolMatches |
     Select-Object Path,LineNumber |
     Format-Table -AutoSize
 
-Remove-Item -LiteralPath $TestPath -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
+Remove-Item `
+    -LiteralPath $TestPath `
+    -Force `
+    -ErrorAction SilentlyContinue
+
+Remove-Item `
+    -LiteralPath $Marker `
+    -Force `
+    -ErrorAction SilentlyContinue
 
 Write-FiPass "TEST 06D PASSED."
 exit 0

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 param()
 
 . "$PSScriptRoot\Common.ps1"
@@ -23,7 +27,40 @@ $ConfigDangerousMask = `
     [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor `
     [System.Security.AccessControl.FileSystemRights]::TakeOwnership
 
-function Test-FIExplicitReadOnlyEntry {
+function Test-FIAllowedIdentitySet {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Target,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$AllowedAccounts,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    $Acl = Get-Acl -LiteralPath $Target
+
+    $Unexpected = @(
+        $Acl.Access |
+            Where-Object {
+                -not ($AllowedAccounts -icontains $_.IdentityReference.Value) -or
+                $_.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow
+            }
+    )
+
+    if ($Unexpected.Count -gt 0) {
+        Write-FiFail "$Label has unexpected ACL entries on $Target."
+        $Unexpected |
+            Format-Table IdentityReference,FileSystemRights,AccessControlType,IsInherited -AutoSize
+        return $false
+    }
+
+    Write-FiPass "$Label contains only the intended ACL principals on $Target."
+    return $true
+}
+
+function Test-FIConfigDirectoryReadOnlyEntry {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Target,
@@ -61,7 +98,7 @@ function Test-FIExplicitReadOnlyEntry {
     return $true
 }
 
-function Test-FIFullControlEntry {
+function Test-FIConfigFileReadOnlyEntry {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Target,
@@ -82,49 +119,31 @@ function Test-FIFullControlEntry {
             }
     )
 
-    foreach ($Rule in $Rules) {
-        if (($Rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
-            [System.Security.AccessControl.FileSystemRights]::FullControl) {
-            Write-FiPass "$Role has FullControl on $Target."
-            return $true
-        }
-    }
-
-    Write-FiFail "$Role does not have FullControl on $Target."
-    return $false
-}
-
-
-function Test-FIAllowedIdentitySet {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Target,
-
-        [Parameter(Mandatory = $true)]
-        [string[]]$AllowedAccounts,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Label
-    )
-
-    $Acl = Get-Acl -LiteralPath $Target
-
-    $Unexpected = @(
-        $Acl.Access |
-            Where-Object {
-                -not ($AllowedAccounts -icontains $_.IdentityReference.Value) -or
-                $_.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow
-            }
-    )
-
-    if ($Unexpected.Count -gt 0) {
-        Write-FiFail "$Label has unexpected ACL entries on $Target."
-        $Unexpected |
-            Format-Table IdentityReference,FileSystemRights,AccessControlType,IsInherited -AutoSize
+    if ($Rules.Count -eq 0) {
+        Write-FiFail "$Role account $Account has no effective Allow ACL entry on $Target."
         return $false
     }
 
-    Write-FiPass "$Label contains only the intended ACL principals on $Target."
+    foreach ($Rule in $Rules) {
+        if (($Rule.FileSystemRights -band $ConfigDangerousMask) -ne 0) {
+            Write-FiFail "$Role account $Account has effective write/modify/administrative Allow access on $Target."
+            return $false
+        }
+    }
+
+    $Inherited = @($Rules | Where-Object { $_.IsInherited })
+    $Explicit = @($Rules | Where-Object { -not $_.IsInherited })
+
+    if ($Explicit.Count -gt 0 -and $Inherited.Count -gt 0) {
+        Write-FiPass "$Role account $Account has non-write Allow access on $Target through explicit and inherited ACEs."
+    }
+    elseif ($Explicit.Count -gt 0) {
+        Write-FiPass "$Role account $Account has explicit non-write Allow access on $Target."
+    }
+    else {
+        Write-FiPass "$Role account $Account has inherited non-write Allow access on $Target from the hardened config directory."
+    }
+
     return $true
 }
 
@@ -173,6 +192,39 @@ function Test-FICollectorDataEntry {
 
     Write-FiPass "FICollector account $Account has Modify without ACL-administration rights on $Target."
     return $true
+}
+
+function Test-FIFullControlEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Target,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Account,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Role
+    )
+
+    $Acl = Get-Acl -LiteralPath $Target
+    $Rules = @(
+        $Acl.Access |
+            Where-Object {
+                $_.IdentityReference.Value -ieq $Account -and
+                $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow
+            }
+    )
+
+    foreach ($Rule in $Rules) {
+        if (($Rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
+            [System.Security.AccessControl.FileSystemRights]::FullControl) {
+            Write-FiPass "$Role has FullControl on $Target."
+            return $true
+        }
+    }
+
+    Write-FiFail "$Role does not have FullControl on $Target."
+    return $false
 }
 
 function Test-FINoDirectAccountEntry {
@@ -283,26 +335,46 @@ $ConfigAllowedAccounts = @(
     $Helper.StartName
 )
 
-foreach ($Target in @($ConfigDir, $ConfigFile)) {
-    if (-not (Test-FIAllowedIdentitySet `
-        -Target $Target `
-        -AllowedAccounts $ConfigAllowedAccounts `
-        -Label "FI config")) {
-        $Failures++
-    }
-    if (-not (Test-FIExplicitReadOnlyEntry `
-        -Target $Target `
-        -Account $Collector.StartName `
-        -Role "FICollector")) {
-        $Failures++
-    }
+if (-not (Test-FIAllowedIdentitySet `
+    -Target $ConfigDir `
+    -AllowedAccounts $ConfigAllowedAccounts `
+    -Label "FI config")) {
+    $Failures++
+}
 
-    if (-not (Test-FIExplicitReadOnlyEntry `
-        -Target $Target `
-        -Account $Helper.StartName `
-        -Role "FIUSNReader")) {
-        $Failures++
-    }
+if (-not (Test-FIConfigDirectoryReadOnlyEntry `
+    -Target $ConfigDir `
+    -Account $Collector.StartName `
+    -Role "FICollector")) {
+    $Failures++
+}
+
+if (-not (Test-FIConfigDirectoryReadOnlyEntry `
+    -Target $ConfigDir `
+    -Account $Helper.StartName `
+    -Role "FIUSNReader")) {
+    $Failures++
+}
+
+if (-not (Test-FIAllowedIdentitySet `
+    -Target $ConfigFile `
+    -AllowedAccounts $ConfigAllowedAccounts `
+    -Label "FI config")) {
+    $Failures++
+}
+
+if (-not (Test-FIConfigFileReadOnlyEntry `
+    -Target $ConfigFile `
+    -Account $Collector.StartName `
+    -Role "FICollector")) {
+    $Failures++
+}
+
+if (-not (Test-FIConfigFileReadOnlyEntry `
+    -Target $ConfigFile `
+    -Account $Helper.StartName `
+    -Role "FIUSNReader")) {
+    $Failures++
 }
 
 Write-Host ""
@@ -373,7 +445,7 @@ else {
 }
 
 if ($AdminOutput -match [Regex]::Escape($Helper.StartName)) {
-    Write-FiPass "FIUSNReader account $($Helper.StartName) is a local Administrator as required by the validated Server 2016 USN design."
+    Write-FiPass "FIUSNReader account $($Helper.StartName) is a local Administrator as required by the validated Windows Server USN design."
 }
 else {
     Write-FiFail "FIUSNReader account $($Helper.StartName) is not a local Administrator."
@@ -409,15 +481,16 @@ else {
 
 Write-Host ""
 Write-Host "NOTE:"
-Write-Host "  FIUSNReader is intentionally a local Administrator on this host."
-Write-Host "  Its explicit FI config ACE is read-only, but local Administrator membership"
-Write-Host "  means the config ACL is not a security boundary against compromise of the"
-Write-Host "  helper itself. FIUSNReader has no direct FI state/spool ACE because normal"
-Write-Host "  checkpoint and durable spool ownership remains with FICollector."
+Write-Host "  FI config is hardened at the directory boundary. Child config files may"
+Write-Host "  inherit the intended non-write ACEs from that directory; duplicate explicit"
+Write-Host "  ACEs on each child are not required. Test 07 validates the effective child"
+Write-Host "  permissions and the allowed principal set instead."
 Write-Host ""
-Write-Host "  Recursive ACL verification treats per-file Access Denied output as failure."
-Write-Host "  Windows Server 2016 icacls /T /C can return exit code 0 even when individual"
-Write-Host "  child ACL inspections fail, so the process exit code alone is not accepted."
+Write-Host "  FIUSNReader is intentionally a local Administrator on this host."
+Write-Host "  Its FI config access is read-only, but local Administrator membership means"
+Write-Host "  the config ACL is not a security boundary against compromise of the helper."
+Write-Host "  FIUSNReader has no direct FI state/spool ACE because normal checkpoint and"
+Write-Host "  durable spool ownership remains with FICollector."
 Write-Host ""
 
 if ($Failures -eq 0) {

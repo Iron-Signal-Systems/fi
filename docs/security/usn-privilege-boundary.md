@@ -12,7 +12,8 @@ It covers:
 - how the local broker authenticates the real FICollector service;
 - how configured-volume authorization works;
 - how protected-object containment is handled;
-- the Windows Server 2022-specific scoped `SeBackupPrivilege` fallback;
+- the independently gated Windows Server 2022 and Server 2025 scoped
+  `SeBackupPrivilege` fallback;
 - failure semantics; and
 - the deployment properties that must remain true.
 
@@ -29,6 +30,7 @@ The current validated Windows Server releases are:
 Windows Server 2016    10.0.14393
 Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
 Release-specific results are recorded in:
@@ -118,7 +120,7 @@ Direct-volume USN access uses a device path such as:
 The current validated design requires the narrow helper to run inside the local
 Windows administrative boundary.
 
-2019 and 2022 characterization explicitly established:
+2019, 2022, and Server 2025 build `26100` characterization established:
 
 ```text
 Non-admin                         FAIL
@@ -462,12 +464,13 @@ The privileged package exposes fixed query/read behavior rather than a generic
 
 ---
 
-# 13. Windows Server 2022 protected-object difference
+# 13. Windows Server 2022 and 2025 protected-object difference
 
 Windows Server 2022 build `20348` exposed an additional protected-object
-behavior.
+behavior. Windows Server 2025 build `26100` was then characterized independently
+and reproduced the same bounded behavior.
 
-For some protected system ETL objects, the helper could:
+For the characterized protected system ETL objects, the helper could:
 
 ```text
 open governed root                         PASS
@@ -477,21 +480,26 @@ OpenFileById target with desired access 0 FAIL / Access Denied
 
 This localized the problem to target File-ID open, not root-path comparison.
 
-The same call succeeded while `SeBackupPrivilege` was enabled and failed again
-after the privilege was restored to its previous disabled state.
+On both independently characterized builds, the same zero-access call succeeded
+while `SeBackupPrivilege` was enabled and failed again after the privilege was
+restored to its previous disabled state.
+
+The Server 2025 characterization also established that explicit
+`SeManageVolumePrivilege` on a non-admin helper was insufficient for the raw-USN
+query/read path; the local-Administrator helper remained the required production
+boundary.
 
 ---
 
-# 14. Server 2022 scoped SeBackup fallback
+# 14. Release/build-scoped SeBackup fallback
 
-The production fallback is release-specific.
+The production fallback is release/build-specific.
 
-It applies only when:
+It is eligible only for the independently characterized builds:
 
 ```text
-Windows major = 10
-Windows minor = 0
-Windows build = 20348
+Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
 and only after the normal zero-access target `OpenFileById` has already returned
@@ -505,19 +513,29 @@ normal zero-access OpenFileById
         |
         +-- Access Denied
                |
-               +-- not build 20348
-               |      -> existing error behavior
-               |
                +-- build 20348
-                      |
-                      +-- open process token
-                      +-- enable SeBackupPrivilege
-                      +-- retry same zero-access OpenFileById
-                      +-- resolve final path internally
-                      +-- determine Contained / Outside
-                      +-- restore exact previous privilege state
-                      +-- close privilege token
+               |      -> Server 2022 scoped retry
+               |
+               +-- build 26100
+               |      -> Server 2025 scoped retry
+               |
+               +-- other build
+                      -> existing error behavior
+
+scoped retry
+        |
+        +-- open process token
+        +-- enable SeBackupPrivilege
+        +-- retry same zero-access OpenFileById
+        +-- resolve final path internally
+        +-- determine Contained / Outside
+        +-- restore exact previous privilege state
+        +-- close privilege token
 ```
+
+The Server 2025 wrapper delegates to the proven bounded Server 2022 retry
+mechanics because independent characterization established the same required
+operation and privilege behavior. The release/build gate remains separate.
 
 Important boundaries:
 
@@ -526,10 +544,10 @@ Important boundaries:
 - no broader target-object desired access is requested;
 - raw USN Query/Read behavior is unchanged;
 - broker protocol is unchanged;
-- no target path is returned to the collector; and
-- 2016/2019 do not enter the 20348-specific fallback.
-
-If privilege restoration fails, the operation fails closed.
+- no target path is returned to the collector;
+- 2016/2019 do not enter either scoped fallback;
+- an adjacent or future Server 2025 build is not treated as `26100`; and
+- privilege restoration failure fails the operation closed.
 
 ---
 
@@ -555,11 +573,14 @@ Instead:
 2022 / build 20348
     release-specific scoped fallback
 
-future release
+2025 / build 26100
+    independently gated release-specific scoped fallback
+
+other / future build
     characterize first
 ```
 
-This preserves already-proven behavior and keeps release-specific Windows
+This preserves already-proven behavior and keeps release/build-specific Windows
 differences visible.
 
 ---
@@ -861,8 +882,10 @@ Deployment verification must prove at least:
 - helper recovery catches up from the prior checkpoint;
 - config/state/spool ACL boundaries;
 - collector inability to replace/reconfigure the helper through its normal token;
-- exact service-token boundary; and
-- release-specific behavior where the Windows release actually differs.
+- exact service-token boundary;
+- controlled service restart continuity where included in release acceptance;
+- cold reboot/startup continuity where included in release acceptance; and
+- release/build-specific behavior where Windows actually differs.
 
 See:
 
@@ -998,14 +1021,16 @@ FIUSNReader
         +-- bounded mechanical File-ID containment when required
 ```
 
-Windows Server 2019 and 2022 characterization established `FILE_READ_DATA` as
-the least tested successful raw-volume access for the production USN query/read
-path and showed that `SeManageVolumePrivilege` alone is insufficient.
+Windows Server 2019, 2022, and independently characterized Server 2025 build
+`26100` established `FILE_READ_DATA` as the least tested successful raw-volume
+access for the production USN query/read path and showed that
+`SeManageVolumePrivilege` alone is insufficient.
 
-Windows Server 2022 build `20348` additionally requires the release-specific
-scoped `SeBackupPrivilege` retry for the tested protected-object containment
-case. That behavior is not copied to 2016, 2019, or future releases without
-characterization.
+Windows Server 2022 build `20348` and Windows Server 2025 build `26100`
+independently require the release/build-specific scoped `SeBackupPrivilege`
+retry for the tested protected-object containment case. That behavior is not
+copied to 2016, 2019, an adjacent Server 2025 build, or another future release
+without characterization.
 
 The privileged helper is not an ACL sandbox from Windows administrators. It is a
 deliberately small privileged process inside the operating system's

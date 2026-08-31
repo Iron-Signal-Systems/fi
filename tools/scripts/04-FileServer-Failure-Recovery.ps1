@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 param(
     [string]$GovernedRoot = "",
     [switch]$ConfirmDisruptive
@@ -160,14 +164,14 @@ if (-not $After) {
 }
 Write-FiPass "USN checkpoint advanced after helper recovery: $BeforeUSN -> $($After.next_usn)."
 
-$Matches = @(Wait-FiSpoolFilename -FileName $FileName -NewestFiles 80 -TimeoutSeconds 90)
-if ($Matches.Count -eq 0) {
+$SpoolMatches = @(Wait-FiSpoolFilename -FileName $FileName -NewestFiles 80 -TimeoutSeconds 90)
+if ($SpoolMatches.Count -eq 0) {
     Write-FiFail "The file changed during helper outage was not found in catch-up spool output."
     exit 1
 }
 
 Write-FiPass "The change created during helper outage appeared in catch-up output."
-$Matches |
+$SpoolMatches |
     Select-Object Path,LineNumber |
     Format-Table -AutoSize
 

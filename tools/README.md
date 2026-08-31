@@ -22,6 +22,7 @@ The current Phase 1 acceptance baseline is green on:
 Windows Server 2016    10.0.14393
 Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
 See `docs\WINDOWS-SERVER-VALIDATION.md` for version-specific findings.
@@ -43,6 +44,7 @@ Release-specific scripts live under:
 ```text
 tools\scripts\2019
 tools\scripts\2022
+tools\scripts\2025
 ```
 
 Use this rule:
@@ -50,23 +52,23 @@ Use this rule:
 > **Run the common script unless the README for your Windows Server release says
 > to use a release-specific script for that test number.**
 
-Do not copy a 2022-specific workaround into another release just because that
-release is newer.
+Do not copy a release/build-specific workaround into another release or build
+just because it is newer.
 
 ---
 
 # 2. Current script routing
 
-| Test | Server 2016 | Server 2019 | Server 2022 |
-|---|---|---|---|
-| 01 Baseline | common 01 | common 01 | common 01 |
-| 02 Positive USN | common 02 | common 02 | common 02 |
-| 03 Local authorization | common 03 | common 03 | common 03 |
-| 04 Helper failure / catch-up | common 04 | common 04 | common 04 |
-| 05 Remote pipe rejection | common 05 | common 05 | common 05 |
-| 06A-06D gMSA recovery | common 06 | common 06 | common 06 |
-| 07 Config/state/spool ACL | common 07 | common 07 | `2022\07-...` |
-| 08 Collector service-token boundary | common 08 | common 08 | `2022\08-...` |
+| Test | Server 2016 | Server 2019 | Server 2022 | Server 2025 build 26100 |
+|---|---|---|---|---|
+| 01 Baseline | common 01 | common 01 | common 01 | common 01 |
+| 02 Positive USN | common 02 | common 02 | common 02 | common 02 |
+| 03 Local authorization | common 03 | common 03 | common 03 | common 03 |
+| 04 Helper failure / catch-up | common 04 | common 04 | common 04 | common 04 |
+| 05 Remote pipe rejection | common 05 | common 05 | common 05 | common 05 |
+| 06A-06D gMSA recovery | common 06 | common 06 | common 06 | common 06 |
+| 07 Config/state/spool ACL | common 07 | common 07 | `2022\07-...` | common 07 |
+| 08 Collector service-token boundary | common 08 | common 08 | `2022\08-...` | common 08 |
 
 Windows Server 2019 also has an engineering raw-volume characterization script:
 
@@ -82,7 +84,19 @@ Windows Server 2022 has raw-volume characterization source under:
 go\cmd\usnprobe\2022
 ```
 
-The release READMEs explain those engineering-only items.
+Windows Server 2025 build `26100` also has a separate release-specific
+characterization and production-acceptance sequence under:
+
+```text
+tools\scripts\2025
+```
+
+Those `2025\01-...` through `2025\07-...` scripts are **not replacements** for
+common customer Tests 01 through 08. They record independent release/build
+characterization, production installation/containment acceptance, controlled
+service restart acceptance, and cold reboot/startup acceptance.
+
+The release READMEs explain those engineering and release-acceptance items.
 
 ---
 
@@ -103,6 +117,7 @@ Validated builds:
 2016 -> 14393
 2019 -> 17763
 2022 -> 20348
+2025 -> 26100
 ```
 
 If the release/build is different, do not silently assume the closest existing
@@ -120,6 +135,12 @@ Server 2022:
 
 ```text
 tools\scripts\2022\README.md
+```
+
+Server 2025 build `26100`:
+
+```text
+tools\scripts\2025\README.md
 ```
 
 Server 2016 uses the common numbered kit.
@@ -467,6 +488,18 @@ Use the release-specific script:
 
 Do **not** replace the common Test 07 with the Server 2022 version.
 
+## Server 2025 build 26100
+
+Use the common Test 07:
+
+```powershell
+.\07-FileServer-Config-ACL.ps1
+```
+
+The current common test accepts inherited non-write config-file ACEs from the
+hardened config directory while still validating the effective allowed
+principal set and state/spool custody boundary.
+
 Expected properties include:
 
 - complete config inspection;
@@ -552,6 +585,19 @@ Use:
 .\2022\08-FileServer-Collector-Boundary.ps1
 ```
 
+## Server 2025 build 26100
+
+Use the common Test 08:
+
+```powershell
+.\08-FileServer-Collector-Boundary.ps1
+```
+
+The accepted common test waits for the actual short-lived probe result, fails on
+any probe-reported failed check, restores the exact production service path,
+waits for the helper pipe, and requires a fresh normal
+`ConfiguredCollection = Complete` after restoration.
+
 The boundary is:
 
 ```text
@@ -601,6 +647,29 @@ See:
 ```text
 tools\scripts\2022\README.md
 go\cmd\usnprobe\2022
+```
+
+## Windows Server 2025 build 26100
+
+See:
+
+```text
+tools\scripts\2025\README.md
+go\cmd\usnprobe\2025
+go\cmd\containmentprobe\2025
+go\cmd\containmentclientprobe\2025
+```
+
+The Server 2025 release-specific sequence records:
+
+```text
+01 raw-USN non-admin / privilege characterization
+02 local-Administrator raw-USN characterization
+03 protected containment characterization
+04 production pair installation/startup acceptance
+05 production protected containment acceptance
+06 controlled service restart continuity acceptance
+07 cold reboot/startup continuity acceptance
 ```
 
 Do not run engineering characterization against a production file server merely
@@ -707,3 +776,8 @@ Optional:
 
 For Server 2022, also follow its release README for the protected-system-object
 containment behavior required by that release's accepted design.
+
+For Server 2025 build `26100`, also retain the release-specific characterization
+and final restart/reboot acceptance results described in
+`tools\scripts\2025\README.md`. Do not apply the build-26100 fallback to an
+adjacent or future Server 2025 build without independent characterization.

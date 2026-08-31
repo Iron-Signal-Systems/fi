@@ -16,9 +16,11 @@ The current Phase 1 split-privilege design has been validated on:
 Windows Server 2016    10.0.14393
 Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
-Later Windows Server versions are characterized independently.
+Later Windows Server releases and uncharacterized builds are characterized
+independently.
 
 See `docs/WINDOWS-SERVER-VALIDATION.md` for release-specific findings.
 
@@ -91,7 +93,8 @@ organizational conclusion.
 
 ## Raw-volume access
 
-2019 and 2022 characterization established:
+2019, 2022, and independently characterized Server 2025 build `26100`
+established:
 
 ```text
 Non-admin                         FAIL
@@ -106,25 +109,34 @@ Production raw-volume query/read therefore uses `FILE_READ_DATA` rather than
 FI does not enable `SeManageVolumePrivilege` as a production substitute for the
 helper's local-Administrator service-token boundary.
 
-## Server 2022 protected-object containment
+## Protected-object containment on Server 2022 and Server 2025
 
-Windows Server 2022 build `20348` exposed a protected-object difference.
+Windows Server 2022 build `20348` exposed a protected-object difference for some
+protected system ETL objects. Server 2025 build `26100` independently reproduced
+the same bounded behavior.
 
-For some protected system ETL objects, the helper's normal zero-access
-`OpenFileById` can return Access Denied.
+For those characterized builds, the helper's normal zero-access `OpenFileById`
+can return Access Denied. Only after that normal attempt fails, FI enters the
+release/build-specific path:
 
-Only on build `20348`, and only after that normal zero-access open returns Access
-Denied, FI temporarily enables `SeBackupPrivilege`, retries the same zero-access
-open, determines mechanical containment, and restores the exact previous
-privilege state.
+```text
+20348 -> Server 2022 scoped retry
+26100 -> Server 2025 scoped retry
+other build -> no automatic fallback
+```
+
+The scoped retry temporarily enables `SeBackupPrivilege`, retries the exact same
+zero-access File-ID open, determines mechanical containment, and restores the
+exact previous privilege state before returning.
 
 This fallback:
 
 - is not enabled for 2016;
 - is not enabled for 2019;
-- is not automatically enabled for 2025 or another future release;
+- is not assumed for an adjacent or future Server 2025 build;
 - does not use `SeRestorePrivilege`;
-- does not request broader target-object access; and
+- does not request broader target-object access;
+- fails closed if exact privilege restoration fails; and
 - does not move path, metadata, ACL, hash, or content collection into the helper.
 
 ## FICollector remains the collector

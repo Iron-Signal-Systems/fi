@@ -13,12 +13,15 @@ behave identically.
 | Windows Server 2016 | 10.0.14393 | Green |
 | Windows Server 2019 | 10.0.17763 | Green |
 | Windows Server 2022 | 10.0.20348 | Green |
+| Windows Server 2025 | 10.0.26100 | Green |
 
-A later Windows Server release must be characterized independently before FI
-assumes that its raw-volume, service-token, Security Event Log, File-ID, or
-protected-object behavior is identical.
+A later Windows Server release or an uncharacterized build must be characterized
+independently before FI assumes that its raw-volume, service-token, Security
+Event Log, File-ID, or protected-object behavior is identical.
 
-Windows Server 2025 is not implicitly treated as Server 2022.
+Windows Server 2025 build `26100` was characterized independently. FI does not
+treat an adjacent or future Server 2025 build as equivalent merely because the
+release name is the same.
 
 ---
 
@@ -113,6 +116,28 @@ FILE_READ_DATA                    least tested successful raw-volume access
 ```
 
 No raw-USN architecture change was required for Server 2022.
+
+### Windows Server 2025
+
+Server 2025 build `26100` independently reproduced the same raw-volume matrix:
+
+```text
+Non-admin                         FAIL
+Non-admin + SeManageVolume        FAIL
+Local Administrator               PASS
+FILE_READ_DATA                    least tested successful raw-volume access
+```
+
+The non-admin baseline could open some reduced-access volume handles, but USN
+query/read did not become usable. Explicit `SeManageVolumePrivilege` on the
+non-admin helper token did not make the required direct-volume USN operation
+usable.
+
+The local-Administrator helper succeeded. Production raw-volume query/read
+therefore remains `FILE_READ_DATA` through the narrow local-Administrator
+`FIUSNReader` boundary.
+
+No undocumented Windows-internal explanation is assumed from this result.
 
 ---
 
@@ -223,8 +248,105 @@ normal zero-access OpenFileById
 
 If privilege restoration fails, the helper fails the operation.
 
-The 2022 behavior is not automatically enabled for 2016, 2019, or a later
-Windows Server release.
+The 2022 behavior is not automatically enabled for 2016, 2019, or an
+uncharacterized Windows Server release/build.
+
+### Windows Server 2025 protected system objects
+
+Server 2025 build `26100` was characterized independently against a protected ETL
+object under:
+
+```text
+C:\Windows\System32\LogFiles\WMI\RtBackup
+```
+
+The observed sequence was:
+
+```text
+normal zero-access OpenFileById        FAIL / Access Denied
+SeBackupPrivilege initially disabled
+enable SeBackupPrivilege               PASS
+same zero-access OpenFileById          PASS
+restore exact prior privilege state    PASS
+same zero-access OpenFileById          FAIL / Access Denied
+```
+
+The tested target was outside the configured governed root and the mechanical
+containment result was `Outside`.
+
+The Server 2025 characterization therefore justified the same bounded
+`SeBackupPrivilege` retry mechanics used for Server 2022, but only behind an
+independent exact-build gate for:
+
+```text
+10.0.26100
+```
+
+The Server 2025 wrapper delegates to the already-proven bounded retry mechanics
+because the independently observed behavior was identical. This does not turn
+the fallback into generic Windows behavior.
+
+The production rules remain:
+
+- normal zero-access `OpenFileById` is always attempted first;
+- only Access Denied enters the release/build-specific fallback;
+- `SeBackupPrivilege` is enabled only for the retry;
+- the exact same zero-access File-ID open is retried;
+- no `SeRestorePrivilege` is enabled;
+- no broader target-object access is requested;
+- the exact prior privilege state is restored before return;
+- restoration failure fails the operation closed;
+- the broker protocol is unchanged; and
+- no target path or expanded target data is returned to `FICollector`.
+
+Adjacent or future Server 2025 builds are not automatically eligible for the
+build-26100 fallback.
+
+### Server 2025 production acceptance
+
+The production pair was accepted on Windows Server 2025 Standard Evaluation,
+version/build `10.0.26100`.
+
+The accepted production service configuration was:
+
+```text
+FICollector
+    account: ISS\gFI-FS25$
+    non-admin
+    managed account: TRUE
+    service SID: UNRESTRICTED
+    PathName:
+      "C:\Program Files\FI\fi.exe" -service
+      -service-collection-every 1m
+      -service-supporting-refresh-every 30m
+
+FIUSNReader
+    account: ISS\gFI-USN-FS25$
+    local Administrator
+    managed account: TRUE
+    PathName:
+      "C:\Program Files\FI\fi-usn.exe"
+```
+
+Production acceptance established:
+
+- first configured collection completed through the normal service startup path;
+- protected containment returned the correct bounded result through the
+  production broker;
+- common Tests 01 through 08 passed;
+- a disabled helper gMSA could not obtain a fresh service logon;
+- re-enabling the helper gMSA restored service and catch-up;
+- helper outage froze the accepted USN checkpoint and catch-up recovered the
+  exact outage change;
+- the real `FICollector` service token could write its own state/spool but could
+  not write config, replace/delete FI binaries, or obtain helper
+  `CHANGE_CONFIG`, `WRITE_DAC`, or `WRITE_OWNER`;
+- controlled stop/start of both production services preserved checkpoint
+  continuity and caught up the exact stopped-service change; and
+- a cold host reboot auto-started both gMSA services, recreated the local broker,
+  preserved the exact production service configuration, advanced USN continuity,
+  produced a fresh `ConfiguredCollection` result of `Complete`, and caught up
+  the exact pre-reboot change.
 
 ---
 
@@ -238,7 +360,7 @@ The collector does not require local Administrator membership for that source.
 The operational model uses local `Event Log Readers` membership where required.
 
 The Security Event Log collection/checkpoint path has been validated across the
-current 2016, 2019, and 2022 acceptance work.
+current 2016, 2019, 2022, and 2025 acceptance work.
 
 Detailed audit event generation still depends on Advanced Audit Policy, SACL
 coverage, access path, and Windows behavior.
@@ -258,6 +380,7 @@ Release-specific deviations live under:
 ```text
 tools\scripts\2019
 tools\scripts\2022
+tools\scripts\2025
 ```
 
 The rule is:
@@ -296,6 +419,29 @@ tools\scripts\2022\README.md
 
 Server 2022 uses the common sequence except where the release README routes to a
 2022-specific test.
+
+### Windows Server 2025
+
+```text
+go\cmd\usnprobe\2025\main_windows_2025.go
+go\cmd\containmentprobe\2025\
+go\cmd\containmentclientprobe\2025\
+go\internal\windows\usnraw\containment_server2025_windows.go
+go\internal\windows\usnraw\containment_server2025_windows_test.go
+tools\scripts\2025\01-USN-Access-Characterization.ps1
+tools\scripts\2025\02-USN-Local-Administrator-Characterization.ps1
+tools\scripts\2025\03-Protected-Containment-Characterization.ps1
+tools\scripts\2025\04-Install-Production-Pair.ps1
+tools\scripts\2025\05-Production-Protected-Containment-Acceptance.ps1
+tools\scripts\2025\06-Service-Restart-Acceptance.ps1
+tools\scripts\2025\07-Cold-Reboot-Acceptance.ps1
+tools\scripts\2025\README.md
+```
+
+The Server 2025 directory contains engineering characterization and final
+release-specific production acceptance. It does not replace the common customer
+Tests 01 through 08; those common tests were also run and passed on build
+`26100`.
 
 ---
 

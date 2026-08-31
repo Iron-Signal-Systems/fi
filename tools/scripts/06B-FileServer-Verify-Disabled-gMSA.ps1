@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 param(
     [string]$GovernedRoot = "",
     [switch]$ConfirmDisruptive
@@ -28,7 +32,8 @@ $Before = Get-FiCheckpoint -CheckpointPath $CheckpointPath
 
 if (Test-FiServiceRunning -Name "FIUSNReader") {
     Write-FiPass "Already-running FIUSNReader remained running after AD account disable."
-} else {
+}
+else {
     Write-FiInfo "FIUSNReader was already stopped before this test."
 }
 
@@ -69,12 +74,16 @@ $TestPath = Join-Path $GovernedRoot $FileName
     Set-Content -LiteralPath $TestPath
 
 $Marker = "C:\ProgramData\FI\state\fi-usn-verification-gmsa-disabled.txt"
+
 @(
     "checkpoint_path=$CheckpointPath"
     "before_usn=$($Before.next_usn)"
     "test_path=$TestPath"
     "file_name=$FileName"
-) | Set-Content -LiteralPath $Marker -Encoding ASCII
+) |
+    Set-Content `
+        -LiteralPath $Marker `
+        -Encoding ASCII
 
 Write-FiPass "Created a governed-root change while helper cannot start."
 Write-FiInfo "Recovery marker written to: $Marker"

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 # FI USN customer verification common functions.
 # Windows PowerShell 5.1 / Windows Server 2016 compatible.
 
@@ -30,8 +34,14 @@ function Get-FiConfiguredRoots {
     $Roots = @()
 
     foreach ($Line in Get-Content -LiteralPath $ConfigPath) {
-        if ($Line -match '^\s*governed_root\s*:\s*(.+?)\s*$') {
-            $Value = $Matches[1].Trim()
+        $RootMatch = [regex]::Match(
+            $Line,
+            '^\s*governed_root\s*:\s*(.+?)\s*$'
+        )
+
+        if ($RootMatch.Success) {
+            $Value = $RootMatch.Groups[1].Value.Trim()
+
             if ($Value) {
                 $Roots += $Value
             }
@@ -76,7 +86,7 @@ function Get-FiCheckpointPath {
         [string]$StatePath = "C:\ProgramData\FI\state"
     )
 
-    $Matches = @()
+    $CheckpointMatches = @()
 
     foreach ($File in Get-ChildItem -LiteralPath $StatePath -Filter "root-*-usn.json" -File -ErrorAction Stop) {
         try {
@@ -91,7 +101,7 @@ function Get-FiCheckpointPath {
             $RequestedPath = [Text.Encoding]::Unicode.GetString($Bytes)
 
             if ($RequestedPath.TrimEnd('\') -ieq $GovernedRoot.TrimEnd('\')) {
-                $Matches += $File.FullName
+                $CheckpointMatches += $File.FullName
             }
         }
         catch {
@@ -99,15 +109,15 @@ function Get-FiCheckpointPath {
         }
     }
 
-    if ($Matches.Count -eq 0) {
+    if ($CheckpointMatches.Count -eq 0) {
         throw "No USN checkpoint found for governed root: $GovernedRoot"
     }
 
-    if ($Matches.Count -gt 1) {
+    if ($CheckpointMatches.Count -gt 1) {
         throw "More than one USN checkpoint matched governed root: $GovernedRoot"
     }
 
-    return $Matches[0]
+    return $CheckpointMatches[0]
 }
 
 function Get-FiCheckpoint {
@@ -200,12 +210,12 @@ function Find-FiSpoolFilename {
 
     $Encoded = ConvertTo-FiUTF16LEBase64Url -Value $FileName
 
-    $Matches = Get-ChildItem -LiteralPath $SpoolPath -Filter "*.jsonl" -File |
+    $SpoolMatches = Get-ChildItem -LiteralPath $SpoolPath -Filter "*.jsonl" -File |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First $NewestFiles |
         Select-String -Pattern $Encoded -SimpleMatch
 
-    return $Matches
+    return $SpoolMatches
 }
 
 function Wait-FiSpoolFilename {
@@ -223,10 +233,15 @@ function Wait-FiSpoolFilename {
     $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
     do {
-        $Matches = @(Find-FiSpoolFilename -FileName $FileName -SpoolPath $SpoolPath -NewestFiles $NewestFiles)
+        $SpoolMatches = @(
+            Find-FiSpoolFilename `
+                -FileName $FileName `
+                -SpoolPath $SpoolPath `
+                -NewestFiles $NewestFiles
+        )
 
-        if ($Matches.Count -gt 0) {
-            return $Matches
+        if ($SpoolMatches.Count -gt 0) {
+            return $SpoolMatches
         }
 
         Start-Sleep -Seconds 2

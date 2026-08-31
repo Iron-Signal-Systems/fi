@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 param(
     [string]$GovernedRoot = ""
 )
@@ -40,15 +44,15 @@ if (-not $After) {
 
 Write-FiPass "USN checkpoint advanced from $BeforeUSN to $($After.next_usn)."
 
-$Matches = @(Wait-FiSpoolFilename -FileName $FileName -TimeoutSeconds 60)
+$SpoolMatches = @(Wait-FiSpoolFilename -FileName $FileName -TimeoutSeconds 60)
 
-if ($Matches.Count -eq 0) {
+if ($SpoolMatches.Count -eq 0) {
     Write-FiFail "The test filename was not found in FI spool output within 60 seconds."
     exit 1
 }
 
 Write-FiPass "The test file appeared in FI USN spool output."
-$Matches |
+$SpoolMatches |
     Select-Object Path,LineNumber |
     Format-Table -AutoSize
 

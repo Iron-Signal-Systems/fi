@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Joseph Wood. All rights reserved.
+# Use of this script is governed by the File Intelligence (FI)
+# Source Review License, Version 1.0, found in the repository root LICENSE file.
+
 param(
     [Parameter(Mandatory=$true)]
     [string]$HelperGMSA,
@@ -23,6 +27,11 @@ Import-Module ActiveDirectory
 
 $Before = Get-ADServiceAccount -Identity $HelperGMSA -Properties Enabled
 Write-Host "[INFO] Before: $($Before.Name) Enabled=$($Before.Enabled)"
+
+if ($Before.Enabled -ne $true) {
+    Write-Host "[FAIL] $($Before.Name) was not enabled before Test 06A. No change made."
+    exit 1
+}
 
 Set-ADServiceAccount -Identity $HelperGMSA -Enabled $false
 
