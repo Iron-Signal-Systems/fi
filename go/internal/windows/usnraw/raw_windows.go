@@ -8,6 +8,8 @@ package usnraw
 
 import (
 	"errors"
+	"fmt"
+	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -21,13 +23,15 @@ const (
 )
 
 var (
-	ErrInvalidGovernedRoot = errors.New("governed root must use a local drive-absolute path")
-	ErrMalformedUSNBuffer  = errors.New("Windows returned a malformed USN journal buffer")
+	ErrInvalidGovernedRoot           = errors.New("governed root must use a local drive-absolute path")
+	ErrMalformedUSNBuffer            = errors.New("Windows returned a malformed USN journal buffer")
+	ErrUnsupportedGovernedRootVolume = errors.New("governed root resolves to an unsupported volume mount point")
 )
 
 var (
-	kernel32            = syscall.NewLazyDLL("kernel32.dll")
-	procDeviceIoControl = kernel32.NewProc("DeviceIoControl")
+	kernel32               = syscall.NewLazyDLL("kernel32.dll")
+	procDeviceIoControl    = kernel32.NewProc("DeviceIoControl")
+	procGetVolumePathNameW = kernel32.NewProc("GetVolumePathNameW")
 )
 
 type Journal struct {
@@ -110,12 +114,29 @@ func isASCIILetter(value byte) bool {
 	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
 }
 
+func isDriveRootMountPoint(drive, mountPoint string) bool {
+	if len(drive) != 1 || !isASCIILetter(drive[0]) {
+		return false
+	}
+
+	driveRoot := strings.ToUpper(drive) + `:\`
+	return strings.EqualFold(mountPoint, driveRoot) ||
+		strings.EqualFold(mountPoint, `\\?\`+driveRoot)
+}
+
 func openVolumeForRoot(governedRoot string) (syscall.Handle, error) {
 	drive, err := DriveForRoot(governedRoot)
 	if err != nil {
 		return syscall.InvalidHandle, err
 	}
+	if err := validateGovernedRootVolume(governedRoot, drive); err != nil {
+		return syscall.InvalidHandle, err
+	}
 
+	// Keep the already-characterized Phase 1 raw-volume open unchanged for
+	// supported roots. The guard above prevents a drive-prefixed path from
+	// silently selecting this drive's journal when the governed root actually
+	// resolves through a mounted volume or cross-volume junction.
 	devicePath := `\\.\` + drive + `:`
 	deviceUnits, err := syscall.UTF16PtrFromString(devicePath)
 	if err != nil {
@@ -185,4 +206,48 @@ func readJournalNative(handle syscall.Handle, startUSN int64, journalID uint64) 
 		return nil, ErrMalformedUSNBuffer
 	}
 	return append([]byte(nil), buffer[:returned]...), nil
+}
+
+func validateGovernedRootVolume(governedRoot, drive string) error {
+	mountPoint, err := volumeMountPointForRoot(governedRoot)
+	if err != nil {
+		return err
+	}
+	if isDriveRootMountPoint(drive, mountPoint) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: governed root %q resolves to volume mount point %q",
+		ErrUnsupportedGovernedRootVolume,
+		governedRoot,
+		mountPoint,
+	)
+}
+
+func volumeMountPointForRoot(governedRoot string) (string, error) {
+	rootUnits, err := syscall.UTF16FromString(governedRoot)
+	if err != nil {
+		return "", err
+	}
+
+	// Microsoft documents that a buffer at least as large as the supplied full
+	// path is sufficient. The returned mount point is a root/prefix of the
+	// resolved volume path and therefore cannot require a longer buffer here.
+	mountPointUnits := make([]uint16, len(rootUnits))
+	r1, _, callErr := procGetVolumePathNameW.Call(
+		uintptr(unsafe.Pointer(&rootUnits[0])),
+		uintptr(unsafe.Pointer(&mountPointUnits[0])),
+		uintptr(len(mountPointUnits)),
+	)
+	runtime.KeepAlive(rootUnits)
+	if r1 == 0 {
+		return "", fmt.Errorf("GetVolumePathNameW(%q): %w", governedRoot, callErr)
+	}
+
+	mountPoint := syscall.UTF16ToString(mountPointUnits)
+	if mountPoint == "" {
+		return "", fmt.Errorf("GetVolumePathNameW(%q) returned an empty mount point", governedRoot)
+	}
+	return mountPoint, nil
 }

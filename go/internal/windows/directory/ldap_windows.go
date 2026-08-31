@@ -279,7 +279,7 @@ func discoverDomainController(domainDNSName string) (string, error) {
 		return "", fmt.Errorf("domain DNS name: %w", err)
 	}
 
-	var infoPointer uintptr
+	var infoPointer *domainControllerInfoW
 	flags := uintptr(dsDirectoryServiceRequired | dsIsDNSName | dsReturnDNSName)
 	status, _, _ := procDsGetDcNameW.Call(
 		0,
@@ -293,12 +293,12 @@ func discoverDomainController(domainDNSName string) (string, error) {
 	if status != 0 {
 		return "", fmt.Errorf("DsGetDcNameW(%s): Windows error %d", domainDNSName, status)
 	}
-	if infoPointer == 0 {
+	if infoPointer == nil {
 		return "", fmt.Errorf("DsGetDcNameW(%s): returned no domain controller", domainDNSName)
 	}
-	defer procNetApiBufferFree.Call(infoPointer)
+	defer procNetApiBufferFree.Call(uintptr(unsafe.Pointer(infoPointer)))
 
-	info := (*domainControllerInfoW)(unsafe.Pointer(infoPointer))
+	info := infoPointer
 	name, err := utf16PointerString(info.DomainControllerName)
 	if err != nil {
 		return "", fmt.Errorf("DsGetDcNameW(%s) domain controller name: %w", domainDNSName, err)
@@ -627,6 +627,20 @@ func firstLDAPStringValue(ld, entry uintptr, attr string) (string, error) {
 	return values[0], nil
 }
 
+// ldapPointerFromProcReturn converts a pointer-valued wldap32 return exposed
+// through syscall.LazyProc.Call's uintptr return slot.
+//
+// The returned memory is owned by Windows/LDAP, not by the Go heap. Callers
+// consume it only while the corresponding LDAP allocation remains valid and
+// release it through the matching LDAP free routine. Keep this unavoidable FFI
+// conversion centralized instead of retaining native pointers as uintptr values
+// throughout the collector.
+func ldapPointerFromProcReturn(value uintptr) unsafe.Pointer {
+	if value == 0 {
+		return nil
+	}
+	return *(*unsafe.Pointer)(unsafe.Pointer(&value))
+}
 func ldapStringValues(ld, entry uintptr, attr string) ([]string, error) {
 	attrPtr, err := syscall.UTF16PtrFromString(attr)
 	if err != nil {
@@ -643,7 +657,7 @@ func ldapStringValues(ld, entry uintptr, attr string) ([]string, error) {
 	if count > 1<<20 {
 		return nil, fmt.Errorf("LDAP attribute %s returned unreasonable value count %d", attr, count)
 	}
-	pointers := unsafe.Slice((**uint16)(unsafe.Pointer(values)), int(count))
+	pointers := unsafe.Slice((**uint16)(ldapPointerFromProcReturn(values)), int(count))
 	result := make([]string, 0, len(pointers))
 	for _, ptr := range pointers {
 		if ptr == nil {
@@ -674,7 +688,7 @@ func ldapBinaryValues(ld, entry uintptr, attr string) ([][]byte, error) {
 	if count > 1<<20 {
 		return nil, fmt.Errorf("LDAP binary attribute %s returned unreasonable value count %d", attr, count)
 	}
-	pointers := unsafe.Slice((**berval)(unsafe.Pointer(values)), int(count))
+	pointers := unsafe.Slice((**berval)(ldapPointerFromProcReturn(values)), int(count))
 	result := make([][]byte, 0, len(pointers))
 	for _, value := range pointers {
 		if value == nil {
@@ -712,7 +726,7 @@ func ldapError(operation string, code uintptr) error {
 	textPtr, _, _ := procLDAPErr2StringW.Call(code)
 	text := ""
 	if textPtr != 0 {
-		if parsed, err := utf16PointerString((*uint16)(unsafe.Pointer(textPtr))); err == nil {
+		if parsed, err := utf16PointerString((*uint16)(ldapPointerFromProcReturn(textPtr))); err == nil {
 			text = parsed
 		}
 	}

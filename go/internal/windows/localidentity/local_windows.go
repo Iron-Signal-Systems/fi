@@ -58,7 +58,7 @@ type userInfo23 struct {
 	FullName *uint16
 	Comment  *uint16
 	Flags    uint32
-	SID      uintptr
+	SID      unsafe.Pointer
 }
 
 type localGroupInfo1 struct {
@@ -67,7 +67,7 @@ type localGroupInfo1 struct {
 }
 
 type localGroupMembersInfo2 struct {
-	SID           uintptr
+	SID           unsafe.Pointer
 	SIDUsage      uint32
 	DomainAndName *uint16
 }
@@ -117,7 +117,7 @@ func collectUsers(ctx context.Context) ([]records.LocalUserObservation, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var buffer uintptr
+		var buffer unsafe.Pointer
 		var entriesRead, totalEntries uint32
 		status, _, _ := procNetUserEnum.Call(
 			0, netUserInfoLevel0, 0,
@@ -126,43 +126,43 @@ func collectUsers(ctx context.Context) ([]records.LocalUserObservation, error) {
 			uintptr(unsafe.Pointer(&resume)),
 		)
 		if status != netAPISuccess && status != netAPIErrorMoreData {
-			if buffer != 0 {
-				procNetApiBufferFree.Call(buffer)
+			if buffer != nil {
+				procNetApiBufferFree.Call(uintptr(buffer))
 			}
 			return nil, fmt.Errorf("NetUserEnum(level 0): status %d", status)
 		}
 		if int(entriesRead) > maxLocalUsers-len(users) {
-			if buffer != 0 {
-				procNetApiBufferFree.Call(buffer)
+			if buffer != nil {
+				procNetApiBufferFree.Call(uintptr(buffer))
 			}
 			return nil, fmt.Errorf("local user count exceeds limit %d", maxLocalUsers)
 		}
-		if entriesRead > 0 && buffer == 0 {
+		if entriesRead > 0 && buffer == nil {
 			return nil, fmt.Errorf("NetUserEnum returned entries with nil buffer")
 		}
 		if entriesRead > 0 {
-			items := unsafe.Slice((*userInfo0)(unsafe.Pointer(buffer)), int(entriesRead))
+			items := unsafe.Slice((*userInfo0)(buffer), int(entriesRead))
 			for _, item := range items {
 				name, _, err := utf16PointerValue(item.Name)
 				if err != nil || name == "" {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return nil, fmt.Errorf("local user name: %w", err)
 				}
 				user, err := getUser(name)
 				if err != nil {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return nil, err
 				}
 				users = append(users, user)
 			}
 		}
-		if buffer != 0 {
-			procNetApiBufferFree.Call(buffer)
-			buffer = 0
+		if buffer != nil {
+			procNetApiBufferFree.Call(uintptr(buffer))
+			buffer = nil
 		}
 		if status == netAPISuccess {
 			break
@@ -176,17 +176,17 @@ func getUser(name string) (records.LocalUserObservation, error) {
 	if err != nil {
 		return records.LocalUserObservation{}, err
 	}
-	var buffer uintptr
+	var buffer unsafe.Pointer
 	status, _, _ := procNetUserGetInfo.Call(0, uintptr(unsafe.Pointer(namePtr)), netUserInfoLevel23, uintptr(unsafe.Pointer(&buffer)))
 	runtime.KeepAlive(namePtr)
 	if status != netAPISuccess {
 		return records.LocalUserObservation{}, fmt.Errorf("NetUserGetInfo(%q, level 23): status %d", name, status)
 	}
-	if buffer == 0 {
+	if buffer == nil {
 		return records.LocalUserObservation{}, fmt.Errorf("NetUserGetInfo(%q) returned nil buffer", name)
 	}
-	defer procNetApiBufferFree.Call(buffer)
-	info := (*userInfo23)(unsafe.Pointer(buffer))
+	defer procNetApiBufferFree.Call(uintptr(buffer))
+	info := (*userInfo23)(buffer)
 
 	sid, rawSID, err := copySID(info.SID)
 	if err != nil {
@@ -223,48 +223,48 @@ func collectGroupsAndMemberships(ctx context.Context, computerName string) ([]re
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		var buffer uintptr
+		var buffer unsafe.Pointer
 		var entriesRead, totalEntries uint32
 		status, _, _ := procNetLocalGroupEnum.Call(
 			0, netLocalGroupInfoLevel1, uintptr(unsafe.Pointer(&buffer)), netAPIMaxPreferredLength,
 			uintptr(unsafe.Pointer(&entriesRead)), uintptr(unsafe.Pointer(&totalEntries)), uintptr(unsafe.Pointer(&resume)),
 		)
 		if status != netAPISuccess && status != netAPIErrorMoreData {
-			if buffer != 0 {
-				procNetApiBufferFree.Call(buffer)
+			if buffer != nil {
+				procNetApiBufferFree.Call(uintptr(buffer))
 			}
 			return nil, nil, fmt.Errorf("NetLocalGroupEnum(level 1): status %d", status)
 		}
 		if int(entriesRead) > maxLocalGroups-len(groups) {
-			if buffer != 0 {
-				procNetApiBufferFree.Call(buffer)
+			if buffer != nil {
+				procNetApiBufferFree.Call(uintptr(buffer))
 			}
 			return nil, nil, fmt.Errorf("local group count exceeds limit %d", maxLocalGroups)
 		}
-		if entriesRead > 0 && buffer == 0 {
+		if entriesRead > 0 && buffer == nil {
 			return nil, nil, fmt.Errorf("NetLocalGroupEnum returned entries with nil buffer")
 		}
 		if entriesRead > 0 {
-			items := unsafe.Slice((*localGroupInfo1)(unsafe.Pointer(buffer)), int(entriesRead))
+			items := unsafe.Slice((*localGroupInfo1)(buffer), int(entriesRead))
 			for _, item := range items {
 				name, nameRaw, err := utf16PointerValue(item.Name)
 				if err != nil || name == "" {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return nil, nil, fmt.Errorf("local group name invalid")
 				}
 				comment, commentRaw, err := utf16PointerValue(item.Comment)
 				if err != nil {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return nil, nil, err
 				}
 				sid, rawSID, accountDomain, err := lookupLocalGroupSID(computerName, name)
 				if err != nil {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return nil, nil, err
 				}
@@ -277,15 +277,15 @@ func collectGroupsAndMemberships(ctx context.Context, computerName string) ([]re
 				groups = append(groups, group)
 				memberships = append(memberships, edges...)
 				if len(memberships) > maxLocalMemberships {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return nil, nil, fmt.Errorf("local membership count exceeds limit %d", maxLocalMemberships)
 				}
 			}
 		}
-		if buffer != 0 {
-			procNetApiBufferFree.Call(buffer)
+		if buffer != nil {
+			procNetApiBufferFree.Call(uintptr(buffer))
 		}
 		if status == netAPISuccess {
 			break
@@ -304,7 +304,7 @@ func collectGroupMembers(ctx context.Context, groupName, groupSID string, existi
 			}
 			return edges, records.LocalMembershipError, "LocalGroupMembershipReadInterrupted", err.Error()
 		}
-		var buffer uintptr
+		var buffer unsafe.Pointer
 		var entriesRead, totalEntries uint32
 		groupPtr, err := syscall.UTF16PtrFromString(groupName)
 		if err != nil {
@@ -317,8 +317,8 @@ func collectGroupMembers(ctx context.Context, groupName, groupSID string, existi
 		)
 		runtime.KeepAlive(groupPtr)
 		if status != netAPISuccess && status != netAPIErrorMoreData {
-			if buffer != 0 {
-				procNetApiBufferFree.Call(buffer)
+			if buffer != nil {
+				procNetApiBufferFree.Call(uintptr(buffer))
 			}
 			state := records.LocalMembershipError
 			if len(edges) > 0 {
@@ -327,8 +327,8 @@ func collectGroupMembers(ctx context.Context, groupName, groupSID string, existi
 			return edges, state, "LocalGroupMembershipReadFailed", fmt.Sprintf("NetLocalGroupGetMembers(%q): status %d", groupName, status)
 		}
 		if existingCount+len(edges)+int(entriesRead) > maxLocalMemberships {
-			if buffer != 0 {
-				procNetApiBufferFree.Call(buffer)
+			if buffer != nil {
+				procNetApiBufferFree.Call(uintptr(buffer))
 			}
 			state := records.LocalMembershipError
 			if len(edges) > 0 {
@@ -336,23 +336,23 @@ func collectGroupMembers(ctx context.Context, groupName, groupSID string, existi
 			}
 			return edges, state, "LocalGroupMembershipLimitExceeded", fmt.Sprintf("membership limit %d", maxLocalMemberships)
 		}
-		if entriesRead > 0 && buffer == 0 {
+		if entriesRead > 0 && buffer == nil {
 			return edges, records.LocalMembershipError, "LocalGroupMembershipReadFailed", "entries returned with nil buffer"
 		}
 		if entriesRead > 0 {
-			items := unsafe.Slice((*localGroupMembersInfo2)(unsafe.Pointer(buffer)), int(entriesRead))
+			items := unsafe.Slice((*localGroupMembersInfo2)(buffer), int(entriesRead))
 			for _, item := range items {
 				memberSID, rawSID, err := copySID(item.SID)
 				if err != nil {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return edges, records.LocalMembershipPartial, "LocalGroupMemberSIDInvalid", err.Error()
 				}
 				name, nameRaw, err := utf16PointerValue(item.DomainAndName)
 				if err != nil {
-					if buffer != 0 {
-						procNetApiBufferFree.Call(buffer)
+					if buffer != nil {
+						procNetApiBufferFree.Call(uintptr(buffer))
 					}
 					return edges, records.LocalMembershipPartial, "LocalGroupMemberNameInvalid", err.Error()
 				}
@@ -363,8 +363,8 @@ func collectGroupMembers(ctx context.Context, groupName, groupSID string, existi
 				})
 			}
 		}
-		if buffer != 0 {
-			procNetApiBufferFree.Call(buffer)
+		if buffer != nil {
+			procNetApiBufferFree.Call(uintptr(buffer))
 		}
 		if status == netAPISuccess {
 			return edges, records.LocalMembershipComplete, "", ""
@@ -427,20 +427,20 @@ func lookupAccount(account string) (string, []byte, string, error) {
 	return sid, append([]byte(nil), sidBuffer[:sidSize]...), domain, nil
 }
 
-func copySID(ptr uintptr) (string, []byte, error) {
-	if ptr == 0 {
+func copySID(ptr unsafe.Pointer) (string, []byte, error) {
+	if ptr == nil {
 		return "", nil, fmt.Errorf("nil SID")
 	}
-	valid, _, _ := procIsValidSid.Call(ptr)
+	valid, _, _ := procIsValidSid.Call(uintptr(ptr))
 	if valid == 0 {
 		return "", nil, fmt.Errorf("invalid SID")
 	}
-	length, _, _ := procGetLengthSid.Call(ptr)
+	length, _, _ := procGetLengthSid.Call(uintptr(ptr))
 	if length == 0 || length > maxSIDBytes {
 		return "", nil, fmt.Errorf("SID length %d outside bounds", length)
 	}
 	raw := make([]byte, int(length))
-	copy(raw, unsafe.Slice((*byte)(unsafe.Pointer(ptr)), int(length)))
+	copy(raw, unsafe.Slice((*byte)(ptr), int(length)))
 	sid, err := sidBytesToString(raw)
 	if err != nil {
 		return "", nil, err

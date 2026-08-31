@@ -41,7 +41,7 @@ type shareInfo502 struct {
 	Path               *uint16
 	Password           *uint16
 	Reserved           uint32
-	SecurityDescriptor uintptr
+	SecurityDescriptor unsafe.Pointer
 }
 
 type netAPIStatusError struct {
@@ -77,7 +77,7 @@ func CollectLocalShares(ctx context.Context) (records.SMBShareSnapshot, error) {
 			return records.SMBShareSnapshot{}, err
 		}
 
-		var buffer uintptr
+		var buffer unsafe.Pointer
 		var entriesRead uint32
 		var totalEntries uint32
 		status, _, _ := procNetShareEnum.Call(
@@ -93,9 +93,9 @@ func CollectLocalShares(ctx context.Context) (records.SMBShareSnapshot, error) {
 
 		var page []records.SMBShareObservation
 		var pageErr error
-		if buffer != 0 {
+		if buffer != nil {
 			page, pageErr = convertSharePage(buffer, entriesRead)
-			freeStatus, _, _ := procNetApiBufferFree.Call(buffer)
+			freeStatus, _, _ := procNetApiBufferFree.Call(uintptr(buffer))
 			if pageErr == nil && uint32(freeStatus) != netAPISuccess {
 				pageErr = &netAPIStatusError{Operation: "NetApiBufferFree", Status: uint32(freeStatus)}
 			}
@@ -133,14 +133,14 @@ complete:
 	return snapshot, nil
 }
 
-func convertSharePage(buffer uintptr, entriesRead uint32) ([]records.SMBShareObservation, error) {
+func convertSharePage(buffer unsafe.Pointer, entriesRead uint32) ([]records.SMBShareObservation, error) {
 	if entriesRead == 0 {
 		return []records.SMBShareObservation{}, nil
 	}
-	if buffer == 0 {
+	if buffer == nil {
 		return nil, fmt.Errorf("NetShareEnum returned entries without a buffer")
 	}
-	entries := unsafe.Slice((*shareInfo502)(unsafe.Pointer(buffer)), int(entriesRead))
+	entries := unsafe.Slice((*shareInfo502)(buffer), int(entriesRead))
 	shares := make([]records.SMBShareObservation, 0, entriesRead)
 	for index := range entries {
 		share, err := convertShare(entries[index])
@@ -188,15 +188,15 @@ func convertShare(native shareInfo502) (records.SMBShareObservation, error) {
 	}, nil
 }
 
-func shareSecurityObservation(pointer uintptr) records.SecurityObservation {
-	if pointer == 0 {
+func shareSecurityObservation(pointer unsafe.Pointer) records.SecurityObservation {
+	if pointer == nil {
 		return records.SecurityObservationError("ShareSecurityDescriptorNotReturned")
 	}
-	valid, _, _ := procIsValidSecurityDescriptor.Call(pointer)
+	valid, _, _ := procIsValidSecurityDescriptor.Call(uintptr(pointer))
 	if valid == 0 {
 		return records.SecurityObservationError("ShareSecurityDescriptorInvalid")
 	}
-	length, _, _ := procGetSecurityDescriptorLength.Call(pointer)
+	length, _, _ := procGetSecurityDescriptorLength.Call(uintptr(pointer))
 	if length == 0 {
 		return records.SecurityObservationError("ShareSecurityDescriptorLengthInvalid")
 	}
@@ -204,7 +204,7 @@ func shareSecurityObservation(pointer uintptr) records.SecurityObservation {
 		return records.SecurityObservationError("ShareSecurityDescriptorTooLarge")
 	}
 
-	raw := append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(pointer)), int(length))...)
+	raw := append([]byte(nil), unsafe.Slice((*byte)(pointer), int(length))...)
 	parsed, err := records.ParseSecurityDescriptor(raw)
 	if err != nil {
 		return records.RawSecurityObservation(raw, "ShareSecurityDescriptorParseFailed")

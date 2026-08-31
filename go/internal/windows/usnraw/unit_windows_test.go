@@ -29,3 +29,45 @@ func TestDriveForRootRejectsUNC(t *testing.T) {
 		t.Fatal("expected UNC root rejection")
 	}
 }
+
+func TestIsDriveRootMountPoint(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		drive      string
+		mountPoint string
+		want       bool
+	}{
+		{name: "drive-root", drive: "C", mountPoint: `C:\`, want: true},
+		{name: "drive-root-lowercase", drive: "c", mountPoint: `c:\`, want: true},
+		{name: "extended-drive-root", drive: "D", mountPoint: `\\?\D:\`, want: true},
+		{name: "directory-mounted-volume", drive: "C", mountPoint: `C:\County\MountedData\`, want: false},
+		{name: "different-drive", drive: "C", mountPoint: `D:\`, want: false},
+		{name: "different-extended-drive", drive: "C", mountPoint: `\\?\D:\`, want: false},
+		{name: "invalid-drive", drive: "CC", mountPoint: `C:\`, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := isDriveRootMountPoint(test.drive, test.mountPoint)
+			if got != test.want {
+				t.Fatalf(
+					"isDriveRootMountPoint(%q, %q) = %v, want %v",
+					test.drive,
+					test.mountPoint,
+					got,
+					test.want,
+				)
+			}
+		})
+	}
+}
+
+func TestValidateGovernedRootVolumeAcceptsOrdinaryDriveRoot(t *testing.T) {
+	root := t.TempDir()
+
+	drive, err := DriveForRoot(root)
+	if err != nil {
+		t.Fatalf("DriveForRoot(%q): %v", root, err)
+	}
+	if err := validateGovernedRootVolume(root, drive); err != nil {
+		t.Fatalf("validateGovernedRootVolume(%q, %q): %v", root, drive, err)
+	}
+}
