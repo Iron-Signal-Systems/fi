@@ -81,7 +81,7 @@ func TestValidateDirectoryPrincipalSnapshot(t *testing.T) {
 	}
 }
 
-func TestValidateDirectoryPrincipalSnapshotAllowsDiscoveredGroupAndDirectMembership(t *testing.T) {
+func TestValidateDirectoryPrincipalSnapshotDirectMembershipSourceContract(t *testing.T) {
 	disabled := false
 	userGUID := []byte{0x78, 0x56, 0x34, 0x12, 0xbc, 0x9a, 0xf0, 0xde, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
 	groupGUID := []byte{0x79, 0x56, 0x34, 0x12, 0xbc, 0x9a, 0xf0, 0xde, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
@@ -120,7 +120,7 @@ func TestValidateDirectoryPrincipalSnapshotAllowsDiscoveredGroupAndDirectMembers
 			{
 				MemberSID: "S-1-5-21-1-2-3-1106",
 				GroupSID:  "S-1-5-21-1-2-3-513",
-				Source:    DirectoryMembershipSourcePrimaryGroupID,
+				Source:    DirectoryMembershipSourceGroupMember,
 			},
 		},
 		NotFoundSIDs: []string{},
@@ -128,6 +128,11 @@ func TestValidateDirectoryPrincipalSnapshotAllowsDiscoveredGroupAndDirectMembers
 
 	if err := ValidateDirectoryPrincipalSnapshot(snapshot); err != nil {
 		t.Fatalf("ValidateDirectoryPrincipalSnapshot: %v", err)
+	}
+
+	snapshot.Memberships[0].Source = DirectoryMembershipSource("PrimaryGroupID")
+	if err := ValidateDirectoryPrincipalSnapshot(snapshot); err == nil {
+		t.Fatal("PrimaryGroupID membership source accepted")
 	}
 }
 

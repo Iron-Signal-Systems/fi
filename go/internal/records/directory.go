@@ -19,10 +19,7 @@ const DirectoryPrincipalCollectionMethod = "WindowsLDAPCurrentToken"
 // relationship; transitive/nested membership is derived later by PostgreSQL.
 type DirectoryMembershipSource string
 
-const (
-	DirectoryMembershipSourceGroupMember    DirectoryMembershipSource = "GroupMemberAttribute"
-	DirectoryMembershipSourcePrimaryGroupID DirectoryMembershipSource = "PrimaryGroupID"
-)
+const DirectoryMembershipSourceGroupMember DirectoryMembershipSource = "GroupMemberAttribute"
 
 // DirectoryPrincipalSnapshot records Active Directory principals and the
 // direct membership relationships discovered from the requested SID set.
@@ -67,8 +64,9 @@ type DirectoryPrincipalObservation struct {
 // DirectoryMembershipObservation records one direct membership edge.
 //
 // GroupMemberAttribute means the directory group directly listed MemberSID in
-// its member attribute. PrimaryGroupID means the principal's primaryGroupID
-// directly identified GroupSID. Neither value means transitive membership.
+// its member attribute. FI does not emit a membership edge from primaryGroupID;
+// that raw directory attribute remains on the principal for later backend
+// derivation. Memberships never represent transitive membership.
 type DirectoryMembershipObservation struct {
 	MemberSID string                    `json:"member_sid"`
 	GroupSID  string                    `json:"group_sid"`
@@ -199,7 +197,7 @@ func ValidateDirectoryPrincipalSnapshot(snapshot DirectoryPrincipalSnapshot) err
 			return &ValidationError{Code: "Conflict", Field: field + ".group_sid"}
 		}
 		switch membership.Source {
-		case DirectoryMembershipSourceGroupMember, DirectoryMembershipSourcePrimaryGroupID:
+		case DirectoryMembershipSourceGroupMember:
 		default:
 			return &ValidationError{Code: "UnsupportedValue", Field: field + ".source"}
 		}
