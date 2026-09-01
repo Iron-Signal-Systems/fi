@@ -25,11 +25,18 @@ import (
 const (
 	ldapSSLPort            = 636
 	ldapVersion3           = 3
+	ldapOptTimeLimit       = 0x04
 	ldapOptProtocolVersion = 0x11
 	ldapAuthNegotiate      = 0x0486
 	ldapScopeBase          = 0
 	ldapScopeSubtree       = 2
 	ldapSuccess            = 0
+
+	// These are native-call failure-containment ceilings. They are not FI
+	// collection cadence or performance-tuning recommendations.
+	ldapConnectTimeoutSeconds = 15
+	ldapBindTimeoutSeconds    = 30
+	ldapSearchTimeoutSeconds  = 30
 
 	dsDirectoryServiceRequired = 0x00000010
 	dsIsDNSName                = 0x00020000
@@ -49,7 +56,7 @@ var (
 	procLDAPSetOptionW     = wldap32.NewProc("ldap_set_optionW")
 	procLDAPBindSW         = wldap32.NewProc("ldap_bind_sW")
 	procLDAPUnbind         = wldap32.NewProc("ldap_unbind")
-	procLDAPSearchSW       = wldap32.NewProc("ldap_search_sW")
+	procLDAPSearchSTW      = wldap32.NewProc("ldap_search_stW")
 	procLDAPFirstEntry     = wldap32.NewProc("ldap_first_entry")
 	procLDAPNextEntry      = wldap32.NewProc("ldap_next_entry")
 	procLDAPGetValuesW     = wldap32.NewProc("ldap_get_valuesW")
@@ -68,6 +75,13 @@ var (
 type berval struct {
 	Len uint32
 	Val *byte
+}
+
+// ldapTimeval mirrors WinLDAP's LDAP_TIMEVAL / l_timeval structure.
+// Windows LONG is 32 bits on the supported amd64 and arm64 targets.
+type ldapTimeval struct {
+	Seconds      int32
+	Microseconds int32
 }
 
 type domainControllerInfoW struct {
@@ -257,9 +271,30 @@ func openLDAP(domainDNSName string) (uintptr, error) {
 		return 0, ldapError("ldap_set_optionW(LDAPv3)", code)
 	}
 
+	// Microsoft WinLDAP otherwise permits each synchronous bind-response
+	// roundtrip to wait up to its 120-second default. Bound the Negotiate bind
+	// explicitly so FI service shutdown and supporting-source refresh do not
+	// inherit that default.
+	bindTimeout := uint32(ldapBindTimeoutSeconds)
+	code, _, _ = procLDAPSetOptionW.Call(
+		ld,
+		ldapOptTimeLimit,
+		uintptr(unsafe.Pointer(&bindTimeout)),
+	)
+	if code != ldapSuccess {
+		procLDAPUnbind.Call(ld)
+		return 0, ldapError("ldap_set_optionW(LDAP_OPT_TIMELIMIT)", code)
+	}
+
 	// Connect explicitly so TLS/certificate failures are reported separately
-	// from authentication failures.
-	code, _, _ = procLDAPConnect.Call(ld, 0)
+	// from authentication failures. A non-NULL LDAP_TIMEVAL bounds the native
+	// connection attempt rather than relying on the WinLDAP default.
+	connectTimeout := ldapTimeval{Seconds: ldapConnectTimeoutSeconds}
+	code, _, _ = procLDAPConnect.Call(
+		ld,
+		uintptr(unsafe.Pointer(&connectTimeout)),
+	)
+	runtime.KeepAlive(connectTimeout)
 	if code != ldapSuccess {
 		procLDAPUnbind.Call(ld)
 		return 0, ldapError("ldap_connect(LDAPS "+dcDNSName+")", code)
@@ -597,24 +632,35 @@ func ldapSearch(ld uintptr, base string, scope uintptr, filter string, attrs []s
 		attrPointers[i] = ptr
 	}
 
+	// Context cancellation is checked between directory operations. This local
+	// WinLDAP timeout bounds a search that is already executing inside the
+	// synchronous native call.
+	timeout := ldapTimeval{Seconds: ldapSearchTimeoutSeconds}
 	var result uintptr
-	code, _, _ := procLDAPSearchSW.Call(
+	code, _, _ := procLDAPSearchSTW.Call(
 		ld,
 		uintptr(unsafe.Pointer(basePtr)),
 		scope,
 		uintptr(unsafe.Pointer(filterPtr)),
 		uintptr(unsafe.Pointer(&attrPointers[0])),
 		0,
+		uintptr(unsafe.Pointer(&timeout)),
 		uintptr(unsafe.Pointer(&result)),
 	)
 	runtime.KeepAlive(basePtr)
 	runtime.KeepAlive(filterPtr)
 	runtime.KeepAlive(attrPointers)
+	runtime.KeepAlive(timeout)
 	if code != ldapSuccess {
-		return 0, ldapError("ldap_search_sW", code)
+		// WinLDAP can return an allocated result chain together with an error.
+		// FI does not consume partial LDAP search results, so free it here.
+		if result != 0 {
+			procLDAPMsgFree.Call(result)
+		}
+		return 0, ldapError("ldap_search_stW", code)
 	}
 	if result == 0 {
-		return 0, fmt.Errorf("ldap_search_sW returned no result message")
+		return 0, fmt.Errorf("ldap_search_stW returned no result message")
 	}
 	return result, nil
 }

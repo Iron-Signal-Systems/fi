@@ -8,6 +8,7 @@ package directory
 
 import (
 	"testing"
+	"unsafe"
 )
 
 func TestFormatWindowsGUID(t *testing.T) {
@@ -26,6 +27,23 @@ func TestPrincipalLDAPAttributesPreservePrimaryGroupIDRaw(t *testing.T) {
 	t.Fatal("principal LDAP attributes do not include primaryGroupID")
 }
 
+func TestLDAPNativeTimeoutConfiguration(t *testing.T) {
+	if got := unsafe.Sizeof(ldapTimeval{}); got != 8 {
+		t.Fatalf("ldapTimeval size = %d, want 8", got)
+	}
+	if ldapOptTimeLimit != 0x04 {
+		t.Fatalf("ldapOptTimeLimit = %#x, want 0x04", ldapOptTimeLimit)
+	}
+	if ldapConnectTimeoutSeconds <= 0 {
+		t.Fatalf("ldapConnectTimeoutSeconds = %d, want positive", ldapConnectTimeoutSeconds)
+	}
+	if ldapBindTimeoutSeconds <= 0 {
+		t.Fatalf("ldapBindTimeoutSeconds = %d, want positive", ldapBindTimeoutSeconds)
+	}
+	if ldapSearchTimeoutSeconds <= 0 {
+		t.Fatalf("ldapSearchTimeoutSeconds = %d, want positive", ldapSearchTimeoutSeconds)
+	}
+}
 func TestLDAPFilterEscapeValue(t *testing.T) {
 	got := ldapFilterEscapeValue("CN=Smith (Ops)*\\Test\x00,DC=iss,DC=local")
 	want := "CN=Smith \\28Ops\\29\\2a\\5cTest\\00,DC=iss,DC=local"
