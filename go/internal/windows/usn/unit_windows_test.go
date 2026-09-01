@@ -223,6 +223,75 @@ func TestReobserveBatchMarksDeletedObjectUnavailable(t *testing.T) {
 	}
 }
 
+func TestReobserveBatchDoesNotObserveReplacementAtDeletedPath(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "recreated.txt")
+
+	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	original, err := ntfs.CollectPath(
+		context.Background(),
+		"scope-test",
+		root,
+		target,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := ntfs.CollectPath(
+		context.Background(),
+		"scope-test",
+		root,
+		target,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ObjectIdentity == original.ObjectIdentity {
+		t.Fatal("recreated pathname unexpectedly retained the deleted object's NTFS identity")
+	}
+
+	batch := records.USNReadBatch{
+		ScopeID: "scope-test",
+		Records: []records.USNChangeObservation{
+			{FileIdentity: original.ObjectIdentity, USN: "100"},
+		},
+	}
+
+	result := ReobserveBatch(context.Background(), root, batch)
+	if len(result.Reobservations) != 1 {
+		t.Fatalf("reobservations = %d, want 1", len(result.Reobservations))
+	}
+
+	got := result.Reobservations[0]
+	if got.Status != ReobservationUnavailable {
+		t.Fatalf(
+			"status = %q, reason = %q, error = %q",
+			got.Status,
+			got.ReasonCode,
+			got.Error,
+		)
+	}
+	if got.ReasonCode != "ObjectUnavailableAfterUSN" {
+		t.Fatalf("reason = %q", got.ReasonCode)
+	}
+	if got.Observation != nil {
+		t.Fatalf(
+			"stale USN identity unexpectedly observed recreated pathname object: %+v",
+			got.Observation,
+		)
+	}
+}
 func TestIdentityFromReference(t *testing.T) {
 	reference := uint64(144588) | uint64(8)<<48
 	identity := identityFromReference(reference)

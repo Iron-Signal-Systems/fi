@@ -576,6 +576,293 @@ func openBenchmarkHandle(b *testing.B, path string) syscall.Handle {
 	return handle
 }
 
+func TestCollectOpenedTargetWithContentHashesMarksPathReplacement(t *testing.T) {
+	rootPath := t.TempDir()
+	targetPath := filepath.Join(rootPath, "target.txt")
+	movedPath := filepath.Join(rootPath, "original-moved.txt")
+
+	const originalContent = "original-content"
+	const replacementContent = "replacement-content"
+	const originalSHA256 = "09757dab1d4c65e1bee3b4a452d1e8e45e1b28a2ff76de694be6b0c97e7e7d49"
+
+	if err := os.WriteFile(targetPath, []byte(originalContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rootUnits := testPathUnits(t, rootPath)
+	targetUnits := testPathUnits(t, targetPath)
+
+	root, err := openGovernedRoot("consistency-path-replacement", rootUnits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(root.handle)
+
+	targetHandle, err := openPath(nulTerminate(targetUnits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(targetHandle)
+
+	originalState, err := queryNativeState(targetHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, originalIdentity, err := buildObjectIdentity(
+		originalState.ID.VolumeSerialNumber,
+		originalState.ID.FileID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// This recreates the exact namespace state FI can encounter if the path is
+	// replaced immediately after CreateFileW returned the original handle.
+	if err := os.Rename(targetPath, movedPath); err != nil {
+		t.Skipf("environment would not rename open NTFS file: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte(replacementContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	observation, err := collectOpenedTargetWithContentHashes(
+		context.Background(),
+		root,
+		CollectionEntryPath,
+		targetUnits,
+		targetHandle,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if observation.ObservationStatus != records.ObservationReplacedDuringCollection {
+		t.Fatalf(
+			"status = %q, want %q",
+			observation.ObservationStatus,
+			records.ObservationReplacedDuringCollection,
+		)
+	}
+	if observation.ObjectIdentity != originalIdentity {
+		t.Fatalf(
+			"observed identity = %+v, want original %+v",
+			observation.ObjectIdentity,
+			originalIdentity,
+		)
+	}
+
+	foundReplacementWarning := false
+	for _, warning := range observation.Warnings {
+		if warning.Code == "PathNowReferencesDifferentObject" {
+			foundReplacementWarning = true
+			break
+		}
+	}
+	if !foundReplacementWarning {
+		t.Fatal("replacement observation omitted PathNowReferencesDifferentObject")
+	}
+
+	if observation.ContentHashes == nil {
+		t.Fatal("replacement observation omitted integrated content hashes")
+	}
+	if observation.ContentHashes.State != records.ContentHashPresent {
+		t.Fatalf("hash state = %q", observation.ContentHashes.State)
+	}
+	if observation.ContentHashes.SHA256 != originalSHA256 {
+		t.Fatalf(
+			"sha256 = %q, want original-object hash %q",
+			observation.ContentHashes.SHA256,
+			originalSHA256,
+		)
+	}
+
+	replacement, err := CollectPath(
+		context.Background(),
+		"consistency-path-replacement",
+		rootPath,
+		targetPath,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ObjectIdentity == originalIdentity {
+		t.Fatal("replacement pathname unexpectedly has the original NTFS identity")
+	}
+	if replacement.ContentHashes == nil ||
+		replacement.ContentHashes.State != records.ContentHashPresent ||
+		replacement.ContentHashes.SHA256 == originalSHA256 {
+		t.Fatalf("replacement content observation = %+v", replacement.ContentHashes)
+	}
+}
+
+func TestRevalidateObservationAfterContentDowngradesMetadataChange(t *testing.T) {
+	rootPath := t.TempDir()
+	targetPath := filepath.Join(rootPath, "target.txt")
+
+	if err := os.WriteFile(targetPath, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rootUnits := testPathUnits(t, rootPath)
+	targetUnits := testPathUnits(t, targetPath)
+
+	root, err := openGovernedRoot("consistency-post-content", rootUnits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(root.handle)
+
+	targetHandle, err := openPath(nulTerminate(targetUnits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(targetHandle)
+
+	initialState, err := queryNativeState(targetHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, objectIdentity, err := buildObjectIdentity(
+		initialState.ID.VolumeSerialNumber,
+		initialState.ID.FileID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, subjectKind, err := metadataFromState(initialState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialPath, err := finalVolumePath(targetHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	observation := Observation{
+		ObjectIdentity: objectIdentity,
+		Metadata:       metadata,
+		SubjectKind:    subjectKind,
+		Reparse:        reparseObservationNotPresent(),
+		PathBinding: records.PathBinding{
+			ResolvedPathUTF16LEBase64URL: utf16LEBase64URL(initialPath),
+		},
+		ObservationStatus: records.ObservationComplete,
+		Warnings:          []records.ObservationWarning{},
+	}
+
+	// A size-changing write is deliberately used so the consistency signal does
+	// not depend on filesystem timestamp granularity.
+	if err := os.WriteFile(
+		targetPath,
+		[]byte("after-content-change-with-different-size"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := revalidateObservationAfterContent(
+		context.Background(),
+		root,
+		targetHandle,
+		&observation,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if observation.ObservationStatus != records.ObservationChangedDuringCollection {
+		t.Fatalf(
+			"status = %q, want %q",
+			observation.ObservationStatus,
+			records.ObservationChangedDuringCollection,
+		)
+	}
+
+	found := false
+	for _, warning := range observation.Warnings {
+		if warning.Code == "MetadataChangedDuringCollection" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("post-content mutation omitted MetadataChangedDuringCollection")
+	}
+}
+
+func TestRevalidateScopeHandlesRejectsTargetMovedOutsideRoot(t *testing.T) {
+	parent := t.TempDir()
+	rootPath := filepath.Join(parent, "governed")
+	outsidePath := filepath.Join(parent, "outside")
+
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outsidePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	targetPath := filepath.Join(rootPath, "target.txt")
+	movedTargetPath := filepath.Join(outsidePath, "target.txt")
+	if err := os.WriteFile(targetPath, []byte("scope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rootUnits := testPathUnits(t, rootPath)
+	targetUnits := testPathUnits(t, targetPath)
+
+	rootHandle, err := openPath(nulTerminate(rootUnits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(rootHandle)
+
+	targetHandle, err := openPath(nulTerminate(targetUnits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(targetHandle)
+
+	rootState, err := queryNativeState(rootHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetState, err := queryNativeState(targetHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootFinalPath, err := finalVolumePath(rootHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := revalidateScopeHandles(
+		rootHandle,
+		targetHandle,
+		rootUnits,
+		rootFinalPath,
+		rootState.ID,
+		targetState.ID,
+	); err != nil {
+		t.Fatalf("baseline revalidation failed: %v", err)
+	}
+
+	if err := os.Rename(targetPath, movedTargetPath); err != nil {
+		t.Skipf("environment would not move open NTFS file: %v", err)
+	}
+
+	_, err = revalidateScopeHandles(
+		rootHandle,
+		targetHandle,
+		rootUnits,
+		rootFinalPath,
+		rootState.ID,
+		targetState.ID,
+	)
+	if !errors.Is(err, ErrOutsideGovernedRoot) {
+		t.Fatalf("error = %v, want ErrOutsideGovernedRoot", err)
+	}
+}
 func TestObservationRelevantNativeStateChangedIgnoresLastAccessTime(t *testing.T) {
 	state := nativeState{}
 	metadata, subjectKind, err := metadataFromState(state)
