@@ -135,8 +135,11 @@ func Assess(
 	}
 }
 
-// ValidateAdvance verifies a future durable-handoff caller may move a
-// checkpoint from expectedCurrentUSN to newNextUSN. It performs no I/O.
+// ValidateAdvance verifies that a caller may move a checkpoint from
+// expectedCurrentUSN to newNextUSN without crossing a continuity boundary or
+// moving backward/beyond the observed journal. It performs no I/O and does not
+// decide whether the bounded source range is safe to retire; that is the
+// caller's durability/processing responsibility.
 func ValidateAdvance(
 	assessment ContinuityAssessment,
 	expectedCurrentUSN string,

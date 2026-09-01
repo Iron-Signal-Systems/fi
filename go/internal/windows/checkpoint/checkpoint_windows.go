@@ -111,10 +111,17 @@ func Check(
 	return Assess(value, root, journal)
 }
 
-// Advance persists a new checkpoint only after a caller has independently
-// established that records through newNextUSN were safely handed off. FI's
-// current CLI does not call Advance; transport/recorder work will own that
-// commit point later.
+// Advance persists a new checkpoint after its caller has independently
+// established that the bounded source range through newNextUSN is safe to
+// retire. Advance validates the requested movement and rechecks the persisted
+// checkpoint for conflicts, but it does not itself verify spool custody,
+// supporting state, or source continuity.
+//
+// The current FI USN spool path owns that commit boundary: selected records are
+// finalized and manifest-verified before supporting SID state is updated, then
+// continuity is rechecked immediately before Advance. A range with no selected
+// governed-root-relevant objects is advanced only after its scope decision and
+// the same continuity recheck.
 func Advance(
 	statePath string,
 	assessment ContinuityAssessment,

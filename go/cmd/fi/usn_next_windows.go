@@ -19,10 +19,10 @@ import (
 
 var ErrUSNContinuityGap = errors.New("USN continuity gap")
 
-// usnNextOutput is operational glue only. It does not reconcile history and it
-// does not advance the checkpoint. The future shipper owns the durable handoff
-// boundary and can advance only after the USN facts and fresh NTFS observations
-// have been accepted downstream.
+// usnNextOutput is diagnostic/read-only operational glue. It reads and
+// re-observes one bounded journal range and reports the proposed next boundary,
+// but it never persists that boundary. Production USN checkpoint advancement is
+// owned by the spool path after the bounded range has been safely accounted for.
 type usnNextOutput struct {
 	StatePath          string                            `json:"state_path"`
 	Assessment         checkpoint.ContinuityAssessment   `json:"assessment"`
