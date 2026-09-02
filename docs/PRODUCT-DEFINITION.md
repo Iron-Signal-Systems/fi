@@ -139,6 +139,45 @@ into an automatic infrastructure change.
 
 ---
 
+## User Experience and Operational Transparency
+
+FI presents the same underlying truth at the level appropriate to the person
+asking the question.
+
+User-facing FI experiences should answer questions in the language of the
+environment: files, identities, access, changes, impact, history, and time. A user
+should not need to understand FI collectors, record types, Windows event IDs, USN
+mechanics, correlation stages, database tables, or internal storage in order to
+understand the environment FI is describing.
+
+That abstraction must not create a second or simplified truth. User-facing
+answers remain traceable to the same authoritative FI history, and users with
+appropriate access must be able to drill into the relationships and source facts
+supporting an answer. `Observed`, `Derived`, `Classified`, `Unknown`, and
+`Incomplete` remain distinct at every presentation depth.
+
+Administrative and diagnostic interfaces have a different responsibility. A
+professional operating FI locally, validating deployment, or troubleshooting its
+runtime is working at the engineering boundary and is expected to understand the
+technical mechanisms involved. Those interfaces should expose the precise
+service, identity, privilege, source, checkpoint, spool, continuity, operating-
+system status, and error information required to operate and verify FI.
+
+Administrative interfaces must not replace technically meaningful information
+with a vague friendly status when the underlying information is available.
+
+The governing principle is:
+
+> **Same truth, different level of abstraction.**
+
+The product UX explains the customer's environment. Administrative interfaces
+explain FI's operation. Both are views over the same underlying truth.
+
+See [Administrative Interfaces](ADMINISTRATIVE-INTERFACES.md) for the
+administrative and diagnostic interface contract.
+
+---
+
 ## Non-Remediating Product Boundary
 
 FI runtime collection is non-remediating and read-oriented. It does not intentionally

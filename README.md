@@ -686,6 +686,10 @@ FI remains non-remediating toward the systems it observes.
 - Prefer simple collectors that report source facts over collectors that make
   organizational decisions.
 - Keep privileged Windows code narrow and obvious.
+- Present the same FI truth at the appropriate depth: user-facing experiences
+  answer environmental questions without requiring knowledge of FI internals,
+  while administrative interfaces expose the technical detail required to
+  operate and verify FI.
 
 ---
 

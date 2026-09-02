@@ -8,6 +8,48 @@ different roles, permissions, workflows, and required depth.
 There is one authoritative FI history. User experiences are authorized
 projections of that history.
 
+## UX Abstraction Boundary
+
+FI user-facing experiences present the environment at the level appropriate to
+the person asking the question. Ordinary product use should begin with files,
+identities, access, changes, impact, history, and time rather than FI's internal
+record types or source mechanics.
+
+A help-desk or operational user should not need to understand Windows event IDs,
+USN journal mechanics, FI collection stages, database tables, or correlation
+implementation to answer a supported environmental question.
+
+Abstraction does not permit FI to simplify uncertainty into certainty. Every
+presentation depth must preserve the distinction between:
+
+```text
+Observed
+Derived
+Classified
+Unknown
+Incomplete
+```
+
+Appropriately authorized users must be able to drill from a higher-level answer
+into the relationships and source facts that support it. Different roles may stop
+at different depths, but FI does not maintain separate versions of the truth for
+different users.
+
+Administrative and local diagnostic interfaces are outside this UX abstraction
+boundary. They expose the technical detail required to operate and verify FI as
+defined in `docs/ADMINISTRATIVE-INTERFACES.md`.
+
+### Gate 5 UX acceptance
+
+Representative help-desk, administrative, security, disaster-recovery, and
+forensic questions must be answerable at an appropriate level of abstraction
+from the same underlying FI history without requiring ordinary users to
+understand FI implementation details.
+
+The same representative answers must remain traceable to their applicable source
+facts, relationships, coverage state, and uncertainty when a user with sufficient
+authorization drills deeper.
+
 ## Help Desk / User Support
 
 FI should answer questions such as:
@@ -128,6 +170,7 @@ Gate 5 proves the same FI history can support representative:
 - operational/security abnormal-change analysis;
 - DR last-known-good and recovery comparison;
 - management/compliance/audit questions;
-- deep forensic incident reconstruction.
+- deep forensic incident reconstruction; and
+- role-appropriate UX abstraction with drill-down to the same underlying truth.
 
 Gate 5 is the primary customer-value gate for FI.
