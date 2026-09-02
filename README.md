@@ -339,11 +339,12 @@ The current split-privilege design has been live validated on:
 Windows Server 2016    10.0.14393
 Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
-2019 and 2022 characterization explicitly established that a restricted helper
-remains unable to perform the required raw-volume USN query/read even when
-`SeManageVolumePrivilege` is enabled in-process. The narrow helper therefore
+2019, 2022, and 2025 characterization explicitly established that a restricted
+helper remains unable to perform the required raw-volume USN query/read even
+when `SeManageVolumePrivilege` is enabled in-process. The narrow helper therefore
 remains inside the local Windows administrative boundary. `FILE_READ_DATA` is
 the least tested successful raw-volume access used by the production query/read
 path.
@@ -367,11 +368,13 @@ Instead:
 
 Windows Server 2022 build `20348` exposed one additional protected-object
 behavior: some protected system objects deny the helper's normal zero-access
-`OpenFileById` containment open. Only on build `20348`, and only after that
-normal open returns Access Denied, FI temporarily enables `SeBackupPrivilege`,
-retries the same zero-access open, resolves mechanical containment, and restores
-the previous privilege state. That fallback is not enabled for 2016, 2019, or an
-untested future Windows Server release.
+`OpenFileById` containment open. Windows Server 2025 build `26100` was
+independently characterized and reproduced the same bounded behavior. Only on
+those exact builds, and only after the normal open returns Access Denied, FI
+temporarily enables `SeBackupPrivilege`, retries the same zero-access open,
+resolves mechanical containment, and restores the previous privilege state. The
+fallback is not enabled for 2016, 2019, or an uncharacterized future or adjacent
+Windows Server build.
 
 A controlled helper outage has been live validated to freeze the USN checkpoint
 while other collector work continues. After helper recovery, FI resumes from the
@@ -400,6 +403,7 @@ the current Windows Server acceptance set:
 Windows Server 2016    10.0.14393
 Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
 Detailed audit-event generation still depends on Windows release, effective
@@ -587,9 +591,9 @@ Remaining Gate 1 work is primarily **deployment acceptance and validation**:
 - establish production intervals from measurements; and
 - characterize every additional Windows Server version FI intends to support.
 
-Windows Server 2016, 2019, and 2022 are currently characterized and green for
-the split-privilege acceptance baseline. Later releases remain independent
-characterization work.
+Windows Server 2016, 2019, 2022, and 2025 are currently characterized and green
+for the split-privilege acceptance baseline. Additional releases remain
+independent characterization work.
 
 Gate 1 is not complete until those deployment and validation boundaries are
 proved.
@@ -711,6 +715,20 @@ implemented and validated.
 
 No production-readiness or compatibility guarantee should be inferred from the
 current repository.
+
+---
+
+## Engineering standard
+
+FI adopts the Iron Signal Systems Engineering Standards `2026.09`, as recorded in
+[`ENGINEERING-STANDARD`](ENGINEERING-STANDARD).
+
+The adopted standards release corresponds to engineering-standards commit
+`0eef381f678a71aa24e48ff7bfab0ee23da92e67`.
+
+Later Engineering Standards releases do not automatically apply to FI. Adoption
+of a newer standards version requires deliberate review and an update to FI's
+standards reference.
 
 ---
 
