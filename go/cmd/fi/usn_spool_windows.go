@@ -27,6 +27,7 @@ const windowsErrorInvalidParameter syscall.Errno = 87
 const (
 	scopeBasisCurrentObjectContained         = "CurrentObjectContained"
 	scopeBasisCurrentObjectContainedByHelper = "CurrentObjectContainedByHelper"
+	scopeBasisRecordedAncestorContained      = "RecordedAncestorContained"
 	scopeBasisRecordedParentContained        = "RecordedParentContained"
 	scopeBasisUnresolvedIncluded             = "ScopeUnresolvedIncluded"
 )
@@ -50,6 +51,14 @@ type selectedUSNObject struct {
 	Changes       []records.USNChangeObservation
 	ScopeBasis    string
 	ScopeDetail   string
+}
+
+type usnScopeSelection struct {
+	Selected                []selectedUSNObject
+	SelectedUSNRecords      int
+	IgnoredVolumeObjects    int
+	IgnoredVolumeUSNRecords int
+	ScopeUnresolvedObjects  int
 }
 
 // spooledUSNReadBoundary records the exact bounded journal range and the
@@ -180,27 +189,18 @@ func writeUSNSpoolNext(
 		return value
 	}
 
-	selected := make([]selectedUSNObject, 0, len(result.Result.Reobservations))
-	for _, reobservation := range result.Result.Reobservations {
-		objectChanges := changes[reobservation.FileIdentity]
-		selection, keep := selectUSNObjectForSpool(
-			reobservation,
-			objectChanges,
-			assessment.CurrentGovernedRoot.ObjectIdentity,
-			checker,
-		)
-		if !keep {
-			summary.IgnoredVolumeObjects++
-			summary.IgnoredVolumeUSNRecords += len(objectChanges)
-			continue
-		}
-		selected = append(selected, selection)
-		summary.SelectedObjects++
-		summary.SelectedUSNRecords += len(objectChanges)
-		if selection.ScopeBasis == scopeBasisUnresolvedIncluded {
-			summary.ScopeUnresolvedObjects++
-		}
-	}
+	scopeSelection := selectUSNObjectsForSpool(
+		result.Result.Reobservations,
+		changes,
+		assessment.CurrentGovernedRoot.ObjectIdentity,
+		checker,
+	)
+	selected := scopeSelection.Selected
+	summary.SelectedObjects = len(selected)
+	summary.SelectedUSNRecords = scopeSelection.SelectedUSNRecords
+	summary.IgnoredVolumeObjects = scopeSelection.IgnoredVolumeObjects
+	summary.IgnoredVolumeUSNRecords = scopeSelection.IgnoredVolumeUSNRecords
+	summary.ScopeUnresolvedObjects = scopeSelection.ScopeUnresolvedObjects
 
 	dir, err := spool.DefaultDir()
 	if err != nil {
@@ -362,6 +362,151 @@ func writeUSNSpoolNext(
 	return summary, nil
 }
 
+func scopeBasisProvesGovernedRootContainment(scopeBasis string) bool {
+	switch scopeBasis {
+	case scopeBasisCurrentObjectContained,
+		scopeBasisCurrentObjectContainedByHelper,
+		scopeBasisRecordedParentContained,
+		scopeBasisRecordedAncestorContained:
+		return true
+	default:
+		return false
+	}
+}
+
+func selectUSNObjectForRecordedAncestor(
+	reobservation usn.ChangeReobservation,
+	changes []records.USNChangeObservation,
+	reobservations map[records.NTFSObjectIdentity]usn.ChangeReobservation,
+	provenContained map[records.NTFSObjectIdentity]struct{},
+) (selectedUSNObject, bool) {
+	if reobservation.Status != usn.ReobservationUnavailable {
+		return selectedUSNObject{}, false
+	}
+
+	selection := selectedUSNObject{
+		Reobservation: reobservation,
+		Changes:       changes,
+	}
+	seenParents := make(map[records.NTFSObjectIdentity]struct{})
+	for _, change := range changes {
+		parent := change.ParentIdentity
+		if _, exists := seenParents[parent]; exists {
+			continue
+		}
+		seenParents[parent] = struct{}{}
+
+		parentReobservation, exists := reobservations[parent]
+		if !exists || parentReobservation.Status != usn.ReobservationUnavailable {
+			continue
+		}
+		if _, exists := provenContained[parent]; !exists {
+			continue
+		}
+
+		selection.ScopeBasis = scopeBasisRecordedAncestorContained
+		selection.ScopeDetail = fmt.Sprintf(
+			"recorded unavailable parent identity %s/%s has proven governed-root scope within the same USN batch",
+			parent.FileReferenceNumber,
+			parent.SequenceNumber,
+		)
+		return selection, true
+	}
+
+	return selectedUSNObject{}, false
+}
+
+// selectUSNObjectsForSpool first applies the existing current-object and
+// immediate-parent scope rules. It then performs a bounded fixed-point pass for
+// unavailable objects whose exact recorded parent identity is also unavailable
+// in this same USN batch and has already received positive governed-root scope.
+// This preserves create/delete activity for short-lived nested objects without
+// trusting a pathname, treating an unavailable parent as proof by itself, or
+// propagating scope through outside/unresolved objects.
+func selectUSNObjectsForSpool(
+	reobservations []usn.ChangeReobservation,
+	changes map[records.NTFSObjectIdentity][]records.USNChangeObservation,
+	governedRootIdentity records.NTFSObjectIdentity,
+	checkParent func(records.NTFSObjectIdentity) parentScopeResult,
+) usnScopeSelection {
+	result := usnScopeSelection{
+		Selected: make([]selectedUSNObject, 0, len(reobservations)),
+	}
+	selections := make([]selectedUSNObject, len(reobservations))
+	selected := make([]bool, len(reobservations))
+	provenContained := make(map[records.NTFSObjectIdentity]struct{}, len(reobservations))
+	reobservationsByIdentity := make(
+		map[records.NTFSObjectIdentity]usn.ChangeReobservation,
+		len(reobservations),
+	)
+
+	for _, reobservation := range reobservations {
+		reobservationsByIdentity[reobservation.FileIdentity] = reobservation
+	}
+
+	for index, reobservation := range reobservations {
+		objectChanges := changes[reobservation.FileIdentity]
+		selection, keep := selectUSNObjectForSpool(
+			reobservation,
+			objectChanges,
+			governedRootIdentity,
+			checkParent,
+		)
+		if !keep {
+			continue
+		}
+		selections[index] = selection
+		selected[index] = true
+		if scopeBasisProvesGovernedRootContainment(selection.ScopeBasis) {
+			provenContained[reobservation.FileIdentity] = struct{}{}
+		}
+	}
+
+	for {
+		progress := false
+		for index, reobservation := range reobservations {
+			if selected[index] {
+				continue
+			}
+
+			selection, keep := selectUSNObjectForRecordedAncestor(
+				reobservation,
+				changes[reobservation.FileIdentity],
+				reobservationsByIdentity,
+				provenContained,
+			)
+			if !keep {
+				continue
+			}
+
+			selections[index] = selection
+			selected[index] = true
+			provenContained[reobservation.FileIdentity] = struct{}{}
+			progress = true
+		}
+		if !progress {
+			break
+		}
+	}
+
+	for index, reobservation := range reobservations {
+		objectChanges := changes[reobservation.FileIdentity]
+		if !selected[index] {
+			result.IgnoredVolumeObjects++
+			result.IgnoredVolumeUSNRecords += len(objectChanges)
+			continue
+		}
+
+		selection := selections[index]
+		result.Selected = append(result.Selected, selection)
+		result.SelectedUSNRecords += len(objectChanges)
+		if selection.ScopeBasis == scopeBasisUnresolvedIncluded {
+			result.ScopeUnresolvedObjects++
+		}
+	}
+
+	return result
+}
 func mergeUSNObservedSIDsIntoSupportingState(
 	selected []selectedUSNObject,
 ) (supportingSIDStateMergeResult, error) {

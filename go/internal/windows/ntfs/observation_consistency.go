@@ -4,7 +4,11 @@
 
 package ntfs
 
-import "github.com/Iron-Signal-Systems/fi/go/internal/records"
+import (
+	"strconv"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+)
 
 const parentBindingUnavailableReason = "ParentBindingUnavailable"
 
@@ -99,6 +103,12 @@ func validateObservationConsistency(observation Observation) error {
 		return conflict("reparse")
 	}
 
+	if observation.ContentHashes != nil && observation.ContentPrefix != nil {
+		if err := validateContentObservationConsistency(observation); err != nil {
+			return err
+		}
+	}
+
 	contentHashFailure := observation.ContentHashes != nil &&
 		observation.ContentHashes.State == records.ContentHashError
 	if contentHashFailure != has("ContentHashFailed") {
@@ -131,4 +141,61 @@ func validateObservationConsistency(observation Observation) error {
 	}
 
 	return nil
+}
+
+func validateContentObservationConsistency(observation Observation) error {
+	conflict := func(field string) error {
+		return &records.ValidationError{Code: "Conflict", Field: field}
+	}
+
+	hashes := *observation.ContentHashes
+	prefix := *observation.ContentPrefix
+
+	if observation.SubjectKind == records.SubjectDirectory || observation.Reparse.State == records.ReparseStatePresent {
+		if hashes.State != records.ContentHashNotApplicable || prefix.State != records.ContentPrefixNotApplicable {
+			return conflict("content_observation")
+		}
+		return nil
+	}
+
+	if observation.SubjectKind != records.SubjectFile || observation.Reparse.State != records.ReparseStateNotPresent {
+		return conflict("content_observation")
+	}
+
+	switch hashes.State {
+	case records.ContentHashNotApplicable:
+		return conflict("content_hashes")
+
+	case records.ContentHashError:
+		if prefix.State != records.ContentPrefixError ||
+			prefix.ReasonCode != hashes.ReasonCode ||
+			prefix.Detail != hashes.Detail {
+			return conflict("content_observation")
+		}
+		return nil
+
+	case records.ContentHashPresent:
+		if prefix.State != records.ContentPrefixPresent {
+			return conflict("content_prefix")
+		}
+		bytesHashed, err := strconv.ParseUint(hashes.BytesHashed, 10, 64)
+		if err != nil {
+			return conflict("content_hashes.bytes_hashed")
+		}
+		bytesObserved, err := strconv.ParseUint(prefix.BytesObserved, 10, 64)
+		if err != nil {
+			return conflict("content_prefix.bytes_observed")
+		}
+		expected := bytesHashed
+		if expected > records.ContentPrefixMaxBytes {
+			expected = records.ContentPrefixMaxBytes
+		}
+		if bytesObserved != expected {
+			return conflict("content_observation")
+		}
+		return nil
+
+	default:
+		return conflict("content_hashes.state")
+	}
 }

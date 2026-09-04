@@ -78,21 +78,36 @@ From `go\`:
 go test ./internal/windows/ntfs -run '^$' -bench '^Benchmark' -benchmem -count 3
 ```
 
-## Gate 1 performance campaign still required
+## Gate 1 performance campaign status
 
-Before Gate 1 acceptance, measure representative:
+The Server 2016 Candidate #4 campaign has completed the first bounded Gate 1
+performance/source-impact campaign:
+
+- Test 13 â€” repeated real `-perf-root` baseline measurements;
+- Test 14 â€” bounded churn characterization;
+- Test 15 â€” bounded spool-pressure characterization; and
+- Test 16 â€” immutable operation/resource-journal summary.
+
+These results establish bounded, measurable behavior for the tested Server 2016
+acceptance workloads. They are not production sizing guidance and do not establish
+production collection or supporting-source refresh intervals.
+
+Before production cadence is accepted, continue repeated representative
+measurement of:
 
 - initial baseline;
 - normal low-churn configured runs;
 - high-churn USN catch-up;
 - Security activity volume;
+- supporting-source refresh;
 - gap reconciliation;
 - CPU/RAM/I/O;
 - spool growth; and
 - recovery after interruption.
 
-Run repeated comparable workloads. Record the environment, FI executable hash,
-governed-root size/object count, and source workload.
+Record the environment, exact FI executable hash, governed-root size/object
+count, and source workload.
 
-Do not optimize against one machine or one run. Compare like workloads on like
-environments before defining thresholds.
+Production cadence remains `NOT_EVALUATED`. Do not optimize against one machine
+or one run. Compare like workloads on like environments before defining
+thresholds or production defaults.

@@ -134,7 +134,7 @@ func collectOpenedTarget(
 	}
 
 	var sacl records.SACLObservation
-	rawSACL, saclErr := querySACLDescriptor(targetHandle)
+	rawSACL, saclErr := querySACLDescriptor(ctx, root, targetHandle)
 	if saclErr != nil {
 		reasonCode := saclQueryReasonCode(saclErr)
 		sacl = records.SACLObservationError(reasonCode)

@@ -16,9 +16,12 @@ const (
 	ProtocolVersion = 1
 	MaxUSNDataBytes = 1024 * 1024
 
+	MaxSACLDescriptorBytes = 128 * 1024
+
 	operationQuery       uint16 = 1
 	operationRead        uint16 = 2
 	operationContainment uint16 = 3
+	operationSACL        uint16 = 4
 
 	requestHeaderSize  = 24
 	responseHeaderSize = 76
@@ -113,12 +116,12 @@ func readRequest(reader io.Reader) (request, error) {
 		if auxiliary != 0 {
 			return request{}, errors.New("FI USN read request reserved field is not zero")
 		}
-	case operationContainment:
+	case operationContainment, operationSACL:
 		if payload >= 1<<48 {
-			return request{}, errors.New("FI USN containment file reference exceeds 48 bits")
+			return request{}, errors.New("FI privileged object request file reference exceeds 48 bits")
 		}
 		if auxiliary>>16 != 0 {
-			return request{}, errors.New("FI USN containment reserved field is not zero")
+			return request{}, errors.New("FI privileged object request reserved field is not zero")
 		}
 		value.FileReferenceNumber = payload
 		value.SequenceNumber = uint16(auxiliary)
@@ -158,12 +161,12 @@ func writeRequest(writer io.Writer, value request) error {
 			return errors.New("FI USN read request contains unexpected containment fields")
 		}
 		payload = uint64(value.StartUSN)
-	case operationContainment:
+	case operationContainment, operationSACL:
 		if value.StartUSN != 0 {
-			return errors.New("FI USN containment request has unexpected start USN")
+			return errors.New("FI privileged object request has unexpected start USN")
 		}
 		if value.FileReferenceNumber >= 1<<48 {
-			return errors.New("FI USN containment file reference exceeds 48 bits")
+			return errors.New("FI privileged object request file reference exceeds 48 bits")
 		}
 		payload = value.FileReferenceNumber
 		auxiliary = uint32(value.SequenceNumber)

@@ -1,19 +1,37 @@
 # FI Windows Server Validation
 
-This document records the Windows Server releases currently characterized and
-accepted for the FI Phase 1 Windows File & Identity Intelligence runtime.
+This document records Windows Server release/build characterization for the FI
+Phase 1 Windows File & Identity Intelligence runtime and separately tracks exact
+Candidate #4 Gate 1 acceptance.
 
 It records tested FI behavior. It does not assume later Windows Server releases
 behave identically.
 
-## Current validated releases
+## Current characterized releases
 
-| Windows Server | Version / build | FI status |
+| Windows Server | Version / build | Split-privilege characterization |
 |---|---:|---|
 | Windows Server 2016 | 10.0.14393 | Green |
 | Windows Server 2019 | 10.0.17763 | Green |
 | Windows Server 2022 | 10.0.20348 | Green |
 | Windows Server 2025 | 10.0.26100 | Green |
+
+These rows preserve the established Windows behavior, raw-volume, service-token,
+File-ID, Security Event Log, and release-specific protected-object findings.
+
+## Candidate #4 Gate 1 acceptance
+
+| Windows Server | Version / build | Candidate #4 status |
+|---|---:|---|
+| Windows Server 2016 | 10.0.14393 | COMPLETE |
+| Windows Server 2019 | 10.0.17763 | PENDING |
+| Windows Server 2022 | 10.0.20348 | PENDING |
+| Windows Server 2025 | 10.0.26100 | PENDING |
+
+Candidate #4 includes the current four-operation broker and live `ReadSACL` path.
+Earlier release/build characterization and earlier accepted production pairs
+remain valid for the design and behavior they tested, but do not substitute for
+exact Candidate #4 Gate 1 acceptance.
 
 A later Windows Server release or an uncharacterized build must be characterized
 independently before FI assumes that its raw-volume, service-token, Security
@@ -62,12 +80,24 @@ FIUSNReader
 source boundary:
 
 - query the USN Journal for a configured volume;
-- read one bounded USN Journal buffer from a configured volume; and
+- read one bounded USN Journal buffer from a configured volume;
 - perform one bounded mechanical File-ID containment check when the collector
-  cannot re-open an object because Windows returned Access Denied.
+  cannot re-open an object because Windows returned Access Denied; and
+- read the bounded raw SACL security descriptor for one exact authorized NTFS
+  object identity when the restricted collector cannot perform that read.
 
-The containment operation does not return target file paths, metadata, ACLs,
-hashes, content, or organizational conclusions.
+For `CheckContainment`, the helper does not return target file paths, metadata,
+ACLs, hashes, content, or organizational conclusions.
+
+`ReadSACL` is a separate exact-object operation. Its response is rejected when
+empty or larger than 128 KiB. The helper enables `SeSecurityPrivilege` only
+around the privileged SACL read, restores the exact prior privilege state, and
+returns the raw bounded descriptor to `FICollector`, which owns descriptor
+parsing and record construction.
+
+Live Candidate #4 acceptance of this four-operation broker, including `ReadSACL`,
+is currently complete on Windows Server 2016 build `14393`. Equivalent
+Candidate #4 acceptance on Server 2019, 2022, and 2025 remains pending.
 
 ---
 
@@ -445,7 +475,11 @@ Tests 01 through 08; those common tests were also run and passed on build
 
 ---
 
-## Acceptance properties shared by the current releases
+## Shared split-privilege properties across characterized releases
+
+The properties below were established by the earlier characterization and
+release-specific acceptance work. They do not by themselves establish Candidate
+#4 Gate 1 acceptance on every release.
 
 The validated split-privilege design preserves these properties:
 

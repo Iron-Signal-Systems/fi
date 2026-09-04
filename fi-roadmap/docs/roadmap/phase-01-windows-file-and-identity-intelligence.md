@@ -51,7 +51,7 @@ before volume-wide USN activity is treated as governed-object activity.
 | Active Directory identity | Implemented foundation + refresh scheduled | Resolves relevant current-domain principals and direct `member` relationships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Raw `primaryGroupID` is preserved without deriving a membership edge. |
 | Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Backend correlation owns nested membership and final effective-access conclusions. |
 | USN journal change detection | Implemented and integrated | Configured runs use persistent checkpoints, bounded USN catch-up, governed-object selection, File-ID re-observation, durable local spooling, verification, and checkpoint advancement. |
-| USN privilege isolation | Implemented and live validated on Server 2016 | `FICollector` remains non-admin. `FIUSNReader` is a separate local-Administrator service that performs only raw-volume query/read. Local IPC requires the enabled `NT SERVICE\FICollector` service SID and rejects remote clients. |
+| USN privilege isolation | Implemented; Candidate #4 live accepted on Server 2016 | `FICollector` remains non-admin. `FIUSNReader` is a separate local-Administrator service exposing only bounded USN query/read, mechanical containment, and exact-object SACL-read operations. Local IPC requires the enabled `NT SERVICE\FICollector` service SID and rejects remote clients. Exact Candidate #4 acceptance on Server 2019/2022/2025 remains pending. |
 | Windows Security governed-file activity | Implemented foundation and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. The broader behavior matrix remains. |
 | Local durable spool | Implemented | Writes finalized JSONL batches and manifests, verifies count/size/SHA-256, retains accepted local batches, and does not remove them before Phase 2 acknowledgement exists. |
 | Normal-run checkpoint continuity | Implemented and live validated | USN and Windows Security checkpoints resume from the previously accepted boundary without replaying the prior accepted range. |
@@ -62,7 +62,7 @@ before volume-wide USN activity is treated as governed-object activity.
 | Windows service runtime | Implemented foundation and live validated | The SCM runtime invokes the existing configured collector, prevents overlapping FI-owned write modes through runtime ownership, schedules configured collection and supporting refresh sequentially, and supports stop/shutdown cancellation. Broader failure and boot/restart validation remains. |
 | gMSA runtime | Implemented foundation and live validated | Per host, `FICollector` runs as a non-admin gMSA and `FIUSNReader` uses a separate privileged gMSA. Remaining work is deployment reproducibility and validation of service/binary/config/state/spool rights. |
 | Failure/restart campaign | Partially validated | Checkpoint gaps, operation restart recovery, helper outage, frozen USN checkpoint, collector continuation, helper restart, and USN catch-up are validated. Broader adverse-condition cases remain. |
-| Performance/source impact | Measurement tooling exists; acceptance campaign remains | `-perf-root` and resource measurements exist. Representative workload sizing and impact limits remain Gate 1 work. |
+| Performance/source impact | Server 2016 Candidate #4 campaign complete; production sizing remains | Tests 13 through 16 provide bounded baseline, churn, spool-pressure, and operation/resource characterization on Server 2016. Repeated representative measurements are still required before production cadence or general sizing limits are declared. |
 
 ---
 
@@ -575,19 +575,24 @@ It must remain non-admin.
 
 ### FIUSNReader
 
-`FIUSNReader` exists only for the Windows Server 2016 direct-volume USN
-requirement.
+`FIUSNReader` is the narrow privileged Windows source helper. Candidate #4
+exposes exactly four bounded logical operations:
 
-It may:
+- `QueryJournal` for an approved configured volume;
+- `ReadJournal` for one bounded USN Journal read;
+- `CheckContainment` for one exact NTFS object identity when the restricted
+  collector cannot resolve current containment directly; and
+- `ReadSACL` for one exact authorized NTFS object identity when the restricted
+  collector cannot perform the required SACL read.
 
-- open the approved local volume;
-- issue `FSCTL_QUERY_USN_JOURNAL`;
-- issue `FSCTL_READ_USN_JOURNAL`; and
-- return one bounded result.
+It must not own USN parsing, governed-root collection policy, normal File-ID
+re-observation, descriptor parsing, record construction, hashing, configuration
+writes, checkpoint state, spool custody, supporting-source collection, or
+arbitrary administrative operations.
 
-It must not own parsing, File-ID re-observation, containment, hashing,
-configuration writes, checkpoint state, spool custody, supporting-source
-collection, or arbitrary administrative operations.
+Candidate #4 live acceptance of this four-operation helper is complete on Server
+2016 build `14393`. Equivalent Candidate #4 acceptance remains pending on Server
+2019 `17763`, Server 2022 `20348`, and Server 2025 `26100`.
 
 ### IPC authentication
 
@@ -609,13 +614,16 @@ authentication.
 
 ### Configuration authorization
 
-The helper loads FI's administrator-controlled configuration itself and derives
-the requested **volume** from the supplied governed root.
+The helper loads FI's administrator-controlled configuration itself.
 
-A request is accepted only when that volume contains at least one configured FI
-governed root.
+For `QueryJournal` and `ReadJournal`, the supplied governed root authorizes the
+corresponding configured volume.
 
-There is no second helper-maintained volume allowlist.
+For `CheckContainment` and `ReadSACL`, the request carries the exact governed
+root plus NTFS file-reference number and sequence number. The helper independently
+validates the configured root before performing the bounded object operation.
+
+There is no second helper-maintained allowlist.
 
 ### Windows administrative trust boundary
 
@@ -633,44 +641,59 @@ trust boundary.
 
 ## Failure and Recovery Acceptance
 
-Continuity-gap, operation-restart, and helper-outage paths are already live
+Continuity-gap, operation-restart, helper-outage, and catch-up paths are live
 validated.
 
-Before Gate 1 closes, representative failure testing should also include:
+The Server 2016 Candidate #4 closure campaign additionally includes:
 
-- service/process termination during a configured operation;
-- machine reboot during representative operation boundaries;
-- helper unavailable when `FICollector` starts;
-- helper starting later and normal recovery;
-- unwritable FI state directory;
-- unwritable spool directory;
+- Test 12A collector restart/recovery;
+- Test 12B bounded lab spool-write denial;
+- Test 12C bounded lab governed-root unavailability/recovery;
+- Test 12D bounded passive dependency observation around an externally controlled
+  AD/LDAPS fault;
+- bounded churn and spool-pressure campaigns;
+- deployment/service/config/state/spool/service-token boundary validation; and
+- confirmation that the non-admin collector cannot replace or reconfigure the
+  privileged helper through its normal service token.
+
+The original unsafe 12D validation harness is retired. The current 12D
+implementation is a bounded passive observer and does not itself create the
+dependency outage.
+
+These results do not claim that every possible Windows or infrastructure failure
+has been exhausted. Additional hardening and pilot work can still exercise, for
+example:
+
+- machine reboot during additional operation boundaries;
 - unwritable service-runtime journal;
 - interrupted/open spool batch handling;
 - corrupted or unverifiable finalized batch/manifest;
-- missing or inaccessible governed root;
-- Security log unavailable/unreadable;
-- AD/DC/LDAPS unavailable;
-- local identity/share source failure;
-- source state changing during collection;
-- bounded local storage/resource exhaustion;
-- collector inability to replace or modify `fi-usn.exe`;
-- collector inability to reconfigure the privileged service; and
-- validation of intended configuration/state/spool/service-object ACLs.
+- Security-log unavailability;
+- local identity/share-source failure; and
+- additional source-state changes during collection.
 
-Expected source failures should be explicit `Partial`, `Incomplete`, `Failed`, or
-other source-status facts rather than silently converted into success.
+Expected source failures remain explicit `Partial`, `Incomplete`, `Failed`, or
+other source-status facts rather than being silently converted into success.
 
 ---
 
 ## Performance and Source Impact
 
-FI already has:
+FI has:
 
 - `-perf-root` measurement of the real NTFS walk/collection path;
-- focused NTFS benchmarks; and
-- process resource-journal support around journaled USN operations.
+- focused NTFS benchmarks;
+- process resource-journal support around journaled USN operations; and
+- the bounded Gate 1 Tests 13 through 16 for baseline, churn, spool pressure, and
+  operation/resource characterization.
 
-Gate 1 still needs representative workload measurements for:
+The Server 2016 Candidate #4 campaign has completed an initial bounded
+performance/source-impact acceptance campaign. Those results prove the tested
+workloads remained bounded and measurable; they do not establish general
+production sizing or production cadence.
+
+Before FI declares production defaults, repeated representative measurements
+should cover:
 
 - initial baseline;
 - normal low-churn catch-up;
@@ -682,25 +705,38 @@ Gate 1 still needs representative workload measurements for:
 - service restart/recovery; and
 - gap reconciliation.
 
-Thresholds should be based on repeated representative measurements rather than
-invented before data exists.
+Production cadence remains `NOT_EVALUATED`. Thresholds and intervals should be
+based on repeated representative measurements rather than invented from one
+machine or one run.
 
 ---
 
 ## Supported Windows Versions
 
-Current direct live characterization is centered on:
+The current exact characterized Windows Server build set is:
 
 ```text
-Windows Server 2016
-Version 10.0.14393
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
 ```
 
-Later Windows Server versions must be characterized independently before FI
-claims identical audit, USN, service, or permission behavior.
+Exact Candidate #4 Gate 1 acceptance is tracked separately:
 
-The old direct-volume privilege probe is an engineering characterization aid, not
-a product runtime component.
+```text
+Windows Server 2016    10.0.14393    COMPLETE
+Windows Server 2019    10.0.17763    PENDING
+Windows Server 2022    10.0.20348    PENDING
+Windows Server 2025    10.0.26100    PENDING
+```
+
+An adjacent build or later Windows Server release must be characterized
+independently before FI claims identical audit, USN, service, permission,
+protected-object, or SACL-broker behavior.
+
+The old direct-volume privilege probes remain engineering characterization aids,
+not product runtime components.
 
 ---
 
@@ -744,8 +780,8 @@ Gate 1 also proves:
 - supporting SMB/local/AD source facts remain sufficiently current for the
   historical model;
 - the main collector remains non-administrative;
-- the unavoidable Server 2016 USN administrative capability is isolated to the
-  narrow helper;
+- privileged Windows source operations are isolated to the narrow
+  `FIUSNReader` helper while `FICollector` remains non-administrative;
 - failure of the helper cannot silently advance USN continuity;
 - deployment/service/config/state/spool permissions match the documented trust
   model; and
@@ -753,16 +789,24 @@ Gate 1 also proves:
 
 ### Remaining work before Gate 1 acceptance
 
-At the current development point, the primary remaining work is:
+Windows Server 2016 build `14393` has completed the exact Candidate #4 Gate 1
+campaign.
 
-1. correct and validate reproducible two-service/two-gMSA deployment;
-2. validate service, executable, configuration, state, spool, and service-object
-   permissions;
-3. complete the governed-file activity behavior matrix;
-4. complete the broader failure/recovery/resource-exhaustion campaign;
-5. run the representative performance/source-impact campaign;
-6. establish production collection/refresh intervals from measurements; and
-7. validate and document each Windows Server version FI intends to support.
+Gate 1 remains open overall for:
+
+1. exact Candidate #4 acceptance on Windows Server 2019 build `17763`;
+2. exact Candidate #4 acceptance on Windows Server 2022 build `20348`;
+3. exact Candidate #4 acceptance on Windows Server 2025 build `26100`;
+4. repeated representative performance/source-impact measurement where needed
+   across the intended supported deployment set;
+5. production collection/supporting-refresh cadence selection from accumulated
+   measurements; and
+6. final review of `docs/GATE-1-RESULT-RECORD.md` across the intended exact
+   release/build set.
+
+The `1m` collection / `30m` supporting-source cadence used by the Gate 1 test
+deployment is an acceptance configuration, not a production default. Production
+cadence remains `NOT_EVALUATED`.
 
 No new Phase 1 source subsystem should be added unless a concrete Gate 1
 requirement demonstrates that an existing source fact is missing.

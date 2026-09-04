@@ -215,7 +215,7 @@ It does not directly open raw NTFS volumes for USN query/read.
 For the current validated design, that helper identity is local Administrator on
 its assigned host.
 
-The helper exposes three logical operations:
+The helper exposes four logical operations:
 
 ```text
 QueryJournal(governedRoot)
@@ -230,7 +230,22 @@ CheckContainment(
     fileReferenceNumber,
     sequenceNumber
 )
+
+ReadSACL(
+    governedRoot,
+    fileReferenceNumber,
+    sequenceNumber
+)
 ```
+
+`ReadSACL` is a narrow privileged read operation for the exact NTFS object
+identity authorized by the configured governed root. The helper returns only
+the bounded raw SACL security descriptor required by the collector; FICollector
+owns descriptor parsing and record construction.
+
+The broker rejects a zero-length response and any SACL descriptor larger than
+128 KiB. `SeSecurityPrivilege` is enabled only around the privileged SACL read
+and the helper restores the token privilege state afterward.
 
 The helper is not a second collector.
 
@@ -274,12 +289,13 @@ Outside
 Unavailable
 ```
 
-No target path crosses the broker boundary.
+For `CheckContainment`, no target path crosses the broker boundary.
 
-No target metadata crosses the broker boundary.
+For `CheckContainment`, no target metadata crosses the broker boundary.
 
-No ACL, hash, stream, content, owner, or classification crosses the broker
-boundary.
+For `CheckContainment`, no ACL, hash, stream, content, owner, or classification
+crosses the broker boundary. `ReadSACL` is a separate operation with its own
+exact-object authorization and bounded raw-descriptor response.
 
 The helper does not decide what the organization should do with the result.
 
@@ -1019,6 +1035,8 @@ FIUSNReader
         +-- approved bounded NTFS USN query/read
         |
         +-- bounded mechanical File-ID containment when required
+        |
+        +-- bounded exact-object SACL read when required
 ```
 
 Windows Server 2019, 2022, and independently characterized Server 2025 build
@@ -1031,6 +1049,13 @@ independently require the release/build-specific scoped `SeBackupPrivilege`
 retry for the tested protected-object containment case. That behavior is not
 copied to 2016, 2019, an adjacent Server 2025 build, or another future release
 without characterization.
+
+Those earlier release/build findings remain characterization of the underlying
+Windows privilege and protected-object behavior. Exact Candidate #4 Gate 1
+acceptance, including the four-operation broker and live `ReadSACL` path, is
+currently complete on Windows Server 2016 build `14393`. Equivalent Candidate #4
+acceptance on Windows Server 2019 `17763`, Server 2022 `20348`, and Server 2025
+`26100` remains pending and must not be inferred from the earlier characterization.
 
 The privileged helper is not an ACL sandbox from Windows administrators. It is a
 deliberately small privileged process inside the operating system's

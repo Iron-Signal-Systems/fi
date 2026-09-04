@@ -148,6 +148,20 @@ func containmentOpenFileByID(
 	fileReferenceNumber uint64,
 	sequenceNumber uint16,
 ) (syscall.Handle, error) {
+	return containmentOpenFileByIDAccess(
+		volumeHint,
+		fileReferenceNumber,
+		sequenceNumber,
+		0,
+	)
+}
+
+func containmentOpenFileByIDAccess(
+	volumeHint syscall.Handle,
+	fileReferenceNumber uint64,
+	sequenceNumber uint16,
+	desiredAccess uint32,
+) (syscall.Handle, error) {
 	fileID := fileReferenceNumber | uint64(sequenceNumber)<<48
 	descriptor := containmentFileIDDescriptor{
 		Size: uint32(unsafe.Sizeof(containmentFileIDDescriptor{})),
@@ -158,7 +172,7 @@ func containmentOpenFileByID(
 	r1, _, callErr := procContainmentOpenFileByID.Call(
 		uintptr(volumeHint),
 		uintptr(unsafe.Pointer(&descriptor)),
-		0,
+		uintptr(desiredAccess),
 		uintptr(syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE),
 		0,
 		uintptr(syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT),

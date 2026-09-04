@@ -312,6 +312,28 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 		}
 		return writeResponse(stream, response{Data: []byte{byte(result)}})
 
+	case operationSACL:
+		allowed, err := allowedGovernedRoot(value.GovernedRoot)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		if !allowed {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested governed root is not configured for FI")
+		}
+
+		data, err := usnraw.ReadSACL(
+			value.GovernedRoot,
+			value.FileReferenceNumber,
+			value.SequenceNumber,
+		)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		if len(data) == 0 || len(data) > MaxSACLDescriptorBytes {
+			return writeFailure(stream, errors.New("FIUSNReader SACL result exceeded the bounded descriptor contract"))
+		}
+		return writeResponse(stream, response{Data: data})
+
 	default:
 		return writeFailure(stream, errors.New("unsupported FI USN operation"))
 	}

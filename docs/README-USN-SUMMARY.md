@@ -10,7 +10,8 @@ object belongs to a configured governed root.
 
 ## Validated Windows Server releases
 
-The current Phase 1 split-privilege design has been validated on:
+The split-privilege Windows behavior underlying the Phase 1 design has been
+characterized on:
 
 ```text
 Windows Server 2016    10.0.14393
@@ -18,6 +19,19 @@ Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
 Windows Server 2025    10.0.26100
 ```
+
+Exact Candidate #4 Gate 1 acceptance is tracked separately:
+
+```text
+Windows Server 2016    10.0.14393    COMPLETE
+Windows Server 2019    10.0.17763    PENDING
+Windows Server 2022    10.0.20348    PENDING
+Windows Server 2025    10.0.26100    PENDING
+```
+
+The four-operation broker, including live `ReadSACL`, is currently accepted
+only on Server 2016 build `14393`. Earlier 2019/2022/2025 characterization
+does not by itself establish Candidate #4 acceptance.
 
 Later Windows Server releases and uncharacterized builds are characterized
 independently.
@@ -73,12 +87,23 @@ CheckContainment(
     fileReferenceNumber,
     sequenceNumber
 )
+
+ReadSACL(
+    governedRoot,
+    fileReferenceNumber,
+    sequenceNumber
+)
 ```
 
 `QueryJournal` and `ReadJournal` perform the narrow direct-volume USN work.
 
 `CheckContainment` exists for the narrow case where the non-admin collector
 cannot re-open a changed object by File ID because Windows returned Access Denied.
+
+`ReadSACL` performs a separately authorized exact-object privileged SACL read.
+The helper returns only the bounded raw SACL security descriptor. FICollector
+parses the descriptor and constructs the resulting FI record. Responses are
+rejected when empty or larger than 128 KiB.
 
 The containment operation returns only:
 
@@ -88,8 +113,10 @@ Outside
 Unavailable
 ```
 
-It does not return the target path, metadata, ACL, hash, content, or an
-organizational conclusion.
+`CheckContainment` does not return the target path, metadata, ACL, hash,
+content, or an organizational conclusion. `ReadSACL` is a separate broker
+operation with its own exact-object authorization and bounded descriptor
+response.
 
 ## Raw-volume access
 
@@ -154,8 +181,9 @@ This fallback:
 - Windows Security collection; and
 - SMB/local/AD supporting sources.
 
-The helper performs a mechanical containment check only when Windows access
-prevents the restricted collector from resolving that fact directly.
+The helper performs only the narrow privileged operations defined above.
+`FICollector` retains USN parsing, collection policy, descriptor parsing,
+record construction, hashing, persistence, continuity, and checkpoint ownership.
 
 ## Configuration is the source of truth
 

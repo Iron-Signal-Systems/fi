@@ -20,7 +20,12 @@ const (
 
 	connectAttempts = 20
 	connectDelay    = 50 * time.Millisecond
+
+	windowsErrorNotAllAssigned   = 1300
+	windowsErrorPrivilegeNotHeld = 1314
 )
+
+var ErrSACLPrivilegeUnavailable = errors.New("FIUSNReader SeSecurityPrivilege unavailable")
 
 // CheckContainment asks FIUSNReader to determine whether one exact NTFS object
 // identity is currently inside governedRoot. The privileged helper returns only
@@ -94,6 +99,37 @@ func Read(ctx context.Context, governedRoot string, startUSN int64) (Journal, []
 		return Journal{}, nil, errors.New("FIUSNReader returned an invalid USN buffer length")
 	}
 	return result.Journal, result.Data, nil
+}
+
+// ReadSACL asks FIUSNReader for the bounded raw SACL descriptor of one exact
+// NTFS object identity inside governedRoot. Parsing remains in FICollector.
+func ReadSACL(
+	ctx context.Context,
+	governedRoot string,
+	fileReferenceNumber uint64,
+	sequenceNumber uint16,
+) ([]byte, error) {
+	result, err := roundTrip(ctx, request{
+		Operation:           operationSACL,
+		GovernedRoot:        governedRoot,
+		FileReferenceNumber: fileReferenceNumber,
+		SequenceNumber:      sequenceNumber,
+	})
+	if err != nil {
+		var remote *remoteError
+		if errors.As(err, &remote) &&
+			(remote.Code == windowsErrorNotAllAssigned || remote.Code == windowsErrorPrivilegeNotHeld) {
+			return nil, fmt.Errorf("%w: %v", ErrSACLPrivilegeUnavailable, err)
+		}
+		return nil, err
+	}
+	if result.Journal != (Journal{}) {
+		return nil, errors.New("FIUSNReader SACL read unexpectedly returned journal state")
+	}
+	if len(result.Data) == 0 || len(result.Data) > MaxSACLDescriptorBytes {
+		return nil, errors.New("FIUSNReader returned an invalid SACL descriptor length")
+	}
+	return result.Data, nil
 }
 
 func connect(ctx context.Context) (windows.Handle, error) {

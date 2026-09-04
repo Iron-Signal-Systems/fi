@@ -1061,33 +1061,66 @@ func TestDirectorySecurityDescriptorOpenByID(t *testing.T) {
 // Server 2016 regression: with SeSecurityPrivilege available, FI must be able
 // to collect a directory SACL through the production OpenFileById path.
 func TestDirectorySACLDescriptorOpenByID(t *testing.T) {
-	if err := ensureSeSecurityPrivilege(); err != nil {
-		t.Skipf("SeSecurityPrivilege unavailable: %v", err)
-	}
-
 	path := t.TempDir()
+	rootUnits, err := syscall.UTF16FromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := openGovernedRoot(
+		"sacl-broker-directory-test",
+		rootUnits[:len(rootUnits)-1],
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(root.handle)
 
-	units, err := syscall.UTF16FromString(path)
+	identity, err := securityObjectIdentity(root.handle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle, err := openPath(units)
+	wantFileReferenceNumber, err := strconv.ParseUint(identity.FileReferenceNumber, 10, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.CloseHandle(handle)
-
-	raw, err := querySACLDescriptor(handle)
+	wantSequenceNumber, err := strconv.ParseUint(identity.SequenceNumber, 10, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	observation, err := records.ParseSACLDescriptor(raw)
+	wantRaw := []byte{1, 2, 3, 4}
+	reader := func(
+		ctx context.Context,
+		governedRoot string,
+		fileReferenceNumber uint64,
+		sequenceNumber uint16,
+	) ([]byte, error) {
+		if ctx == nil {
+			t.Fatal("broker SACL reader received a nil context")
+		}
+		if governedRoot != path {
+			t.Fatalf("governed root = %q, want %q", governedRoot, path)
+		}
+		if fileReferenceNumber != wantFileReferenceNumber {
+			t.Fatalf("file reference = %d, want %d", fileReferenceNumber, wantFileReferenceNumber)
+		}
+		if sequenceNumber != uint16(wantSequenceNumber) {
+			t.Fatalf("sequence = %d, want %d", sequenceNumber, uint16(wantSequenceNumber))
+		}
+		return append([]byte(nil), wantRaw...), nil
+	}
+
+	raw, err := querySACLDescriptorWithReader(
+		context.Background(),
+		root,
+		root.handle,
+		reader,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := records.ValidateSACLObservation(observation); err != nil {
-		t.Fatal(err)
+	if !bytes.Equal(raw, wantRaw) {
+		t.Fatalf("raw SACL = %v, want %v", raw, wantRaw)
 	}
 }
 
@@ -1462,37 +1495,56 @@ func nativeTestSID(authority uint64, subAuthorities ...uint32) []byte {
 	return sid
 }
 
-func TestSecurityNativeSACLQuery(t *testing.T) {
-	path := t.TempDir() + `\sacl.txt`
+func TestSecuritySACLBrokerReadFailure(t *testing.T) {
+	rootPath := t.TempDir()
+	path := filepath.Join(rootPath, "sacl.txt")
 	if err := os.WriteFile(path, []byte("fi"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	units, err := syscall.UTF16FromString(path)
+	rootUnits, err := syscall.UTF16FromString(rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle, err := openPath(units)
+	root, err := openGovernedRoot(
+		"sacl-broker-failure-test",
+		rootUnits[:len(rootUnits)-1],
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(root.handle)
+
+	targetUnits, err := syscall.UTF16FromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := openPath(targetUnits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer syscall.CloseHandle(handle)
 
-	raw, err := querySACLDescriptor(handle)
-	if err != nil {
-		if code := saclQueryReasonCode(err); code == saclPrivilegeUnavailable {
-			t.Logf("SACL query correctly reported unavailable privilege: %v", err)
-			return
-		}
-		t.Fatal(err)
+	reader := func(
+		context.Context,
+		string,
+		uint64,
+		uint16,
+	) ([]byte, error) {
+		return nil, syscall.ERROR_ACCESS_DENIED
 	}
 
-	observation, err := records.ParseSACLDescriptor(raw)
-	if err != nil {
-		t.Fatal(err)
+	_, err = querySACLDescriptorWithReader(
+		context.Background(),
+		root,
+		handle,
+		reader,
+	)
+	if err == nil {
+		t.Fatal("expected broker SACL read failure")
 	}
-	if err := records.ValidateSACLObservation(observation); err != nil {
-		t.Fatal(err)
+	if got := saclQueryReasonCode(err); got != saclDescriptorReadFailed {
+		t.Fatalf("reason code = %q, want %q", got, saclDescriptorReadFailed)
 	}
 }
 

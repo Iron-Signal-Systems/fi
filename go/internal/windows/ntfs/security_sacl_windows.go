@@ -7,39 +7,26 @@
 package ntfs
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"strconv"
 	"syscall"
-	"unsafe"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnbroker"
 )
 
 const (
-	accessSystemSecurity     = 0x01000000
-	saclSecurityInformation  = 0x00000008
-	tokenAdjustPrivileges    = 0x00000020
-	tokenQuery               = 0x00000008
-	sePrivilegeEnabled       = 0x00000002
-	errorNotAllAssigned      = syscall.Errno(1300)
-	seSecurityPrivilegeName  = "SeSecurityPrivilege"
 	saclPrivilegeUnavailable = "SACLPrivilegeUnavailable"
 	saclDescriptorReadFailed = "SACLDescriptorReadFailed"
 )
 
-type luid struct {
-	LowPart  uint32
-	HighPart int32
-}
-
-type luidAndAttributes struct {
-	LUID       luid
-	Attributes uint32
-}
-
-type tokenPrivileges struct {
-	PrivilegeCount uint32
-	Privileges     [1]luidAndAttributes
-}
+type saclDescriptorReader func(
+	context.Context,
+	string,
+	uint64,
+	uint16,
+) ([]byte, error)
 
 type saclQueryError struct {
 	ReasonCode string
@@ -54,23 +41,29 @@ func (e *saclQueryError) Unwrap() error {
 	return e.Err
 }
 
-var (
-	procGetCurrentProcess        = kernel32.NewProc("GetCurrentProcess")
-	procOpenProcessToken         = securityAdvapi32.NewProc("OpenProcessToken")
-	procLookupPrivilegeValueW    = securityAdvapi32.NewProc("LookupPrivilegeValueW")
-	procAdjustTokenPrivileges    = securityAdvapi32.NewProc("AdjustTokenPrivileges")
-	seSecurityPrivilegeOnce      sync.Once
-	seSecurityPrivilegeEnableErr error
-)
+// querySACLDescriptor asks the privileged FIUSNReader boundary to retrieve the
+// raw SACL for the exact object identity derived from the already-proven FI
+// handle. FICollector remains responsible for parsing and recording the returned
+// descriptor and never receives SeSecurityPrivilege itself.
+func querySACLDescriptor(
+	ctx context.Context,
+	root governedRootContext,
+	handle syscall.Handle,
+) ([]byte, error) {
+	return querySACLDescriptorWithReader(ctx, root, handle, usnbroker.ReadSACL)
+}
 
-// querySACLDescriptor retrieves the system ACL from the exact NTFS object
-// identity derived from the already-proven FI handle. FI enables
-// SeSecurityPrivilege once for the process if the process token contains it,
-// then reopens that same object by ID with ACCESS_SYSTEM_SECURITY. No pathname
-// lookup is performed.
-func querySACLDescriptor(handle syscall.Handle) ([]byte, error) {
-	if err := ensureSeSecurityPrivilege(); err != nil {
-		return nil, &saclQueryError{ReasonCode: saclPrivilegeUnavailable, Err: err}
+func querySACLDescriptorWithReader(
+	ctx context.Context,
+	root governedRootContext,
+	handle syscall.Handle,
+	readSACL saclDescriptorReader,
+) ([]byte, error) {
+	if readSACL == nil {
+		return nil, &saclQueryError{
+			ReasonCode: saclDescriptorReadFailed,
+			Err:        errors.New("SACL broker reader is required"),
+		}
 	}
 
 	identity, err := securityObjectIdentity(handle)
@@ -78,20 +71,39 @@ func querySACLDescriptor(handle syscall.Handle) ([]byte, error) {
 		return nil, &saclQueryError{ReasonCode: saclDescriptorReadFailed, Err: err}
 	}
 
-	securityHandle, err := openFileByObjectIdentityAccess(handle, identity, accessSystemSecurity)
+	fileReferenceNumber, err := strconv.ParseUint(identity.FileReferenceNumber, 10, 64)
 	if err != nil {
 		return nil, &saclQueryError{
 			ReasonCode: saclDescriptorReadFailed,
-			Err:        fmt.Errorf("OpenFileById(ACCESS_SYSTEM_SECURITY): %w", err),
+			Err:        fmt.Errorf("parse NTFS file reference number: %w", err),
 		}
 	}
-	defer syscall.CloseHandle(securityHandle)
-
-	raw, err := getSACLDescriptor(securityHandle)
+	sequenceNumber, err := strconv.ParseUint(identity.SequenceNumber, 10, 16)
 	if err != nil {
-		return nil, &saclQueryError{ReasonCode: saclDescriptorReadFailed, Err: err}
+		return nil, &saclQueryError{
+			ReasonCode: saclDescriptorReadFailed,
+			Err:        fmt.Errorf("parse NTFS sequence number: %w", err),
+		}
+	}
+
+	governedRoot := syscall.UTF16ToString(root.requestedPath)
+	raw, err := readSACL(
+		ctx,
+		governedRoot,
+		fileReferenceNumber,
+		uint16(sequenceNumber),
+	)
+	if err != nil {
+		return nil, &saclQueryError{ReasonCode: saclBrokerReasonCode(err), Err: err}
 	}
 	return raw, nil
+}
+
+func saclBrokerReasonCode(err error) string {
+	if errors.Is(err, usnbroker.ErrSACLPrivilegeUnavailable) {
+		return saclPrivilegeUnavailable
+	}
+	return saclDescriptorReadFailed
 }
 
 func saclQueryReasonCode(err error) string {
@@ -100,106 +112,4 @@ func saclQueryReasonCode(err error) string {
 		return queryErr.ReasonCode
 	}
 	return saclDescriptorReadFailed
-}
-
-func ensureSeSecurityPrivilege() error {
-	seSecurityPrivilegeOnce.Do(func() {
-		seSecurityPrivilegeEnableErr = enableSeSecurityPrivilege()
-	})
-	return seSecurityPrivilegeEnableErr
-}
-
-// enableSeSecurityPrivilege enables the privilege on the process token and
-// intentionally leaves it enabled for the lifetime of the collector process.
-// This is done once rather than toggled around each file so concurrent
-// collection cannot race process-wide token state.
-func enableSeSecurityPrivilege() error {
-	process, _, _ := procGetCurrentProcess.Call()
-
-	var token syscall.Handle
-	result, _, callErr := procOpenProcessToken.Call(
-		process,
-		uintptr(tokenAdjustPrivileges|tokenQuery),
-		uintptr(unsafe.Pointer(&token)),
-	)
-	if result == 0 {
-		return windowsCallError("OpenProcessToken(SeSecurityPrivilege)", callErr)
-	}
-	defer syscall.CloseHandle(token)
-
-	name, err := syscall.UTF16PtrFromString(seSecurityPrivilegeName)
-	if err != nil {
-		return fmt.Errorf("UTF16PtrFromString(%s): %w", seSecurityPrivilegeName, err)
-	}
-
-	var privilegeLUID luid
-	result, _, callErr = procLookupPrivilegeValueW.Call(
-		0,
-		uintptr(unsafe.Pointer(name)),
-		uintptr(unsafe.Pointer(&privilegeLUID)),
-	)
-	if result == 0 {
-		return windowsCallError("LookupPrivilegeValueW(SeSecurityPrivilege)", callErr)
-	}
-
-	privileges := tokenPrivileges{
-		PrivilegeCount: 1,
-		Privileges: [1]luidAndAttributes{{
-			LUID:       privilegeLUID,
-			Attributes: sePrivilegeEnabled,
-		}},
-	}
-
-	result, _, callErr = procAdjustTokenPrivileges.Call(
-		uintptr(token),
-		0,
-		uintptr(unsafe.Pointer(&privileges)),
-		0,
-		0,
-		0,
-	)
-	if result == 0 {
-		return windowsCallError("AdjustTokenPrivileges(SeSecurityPrivilege)", callErr)
-	}
-	if errno, ok := callErr.(syscall.Errno); ok && errno == errorNotAllAssigned {
-		return fmt.Errorf("SeSecurityPrivilege is not assigned to the process token")
-	}
-	return nil
-}
-
-func getSACLDescriptor(handle syscall.Handle) ([]byte, error) {
-	requested := uintptr(saclSecurityInformation)
-	var needed uint32
-	result, _, callErr := procGetKernelObjectSecurity.Call(
-		uintptr(handle),
-		requested,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&needed)),
-	)
-	if result != 0 && needed == 0 {
-		return nil, fmt.Errorf("GetKernelObjectSecurity(SACL) returned an empty descriptor")
-	}
-	if needed == 0 {
-		return nil, windowsCallError("GetKernelObjectSecurity(SACL,size)", callErr)
-	}
-	if needed > maximumSecurityDescriptorBuffer {
-		return nil, fmt.Errorf("SACL security descriptor exceeds bounded buffer limit: %d", needed)
-	}
-
-	buffer := make([]byte, needed)
-	result, _, callErr = procGetKernelObjectSecurity.Call(
-		uintptr(handle),
-		requested,
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(len(buffer)),
-		uintptr(unsafe.Pointer(&needed)),
-	)
-	if result == 0 {
-		return nil, windowsCallError("GetKernelObjectSecurity(SACL)", callErr)
-	}
-	if needed == 0 || int(needed) > len(buffer) {
-		return nil, fmt.Errorf("GetKernelObjectSecurity(SACL) returned invalid length %d", needed)
-	}
-	return append([]byte(nil), buffer[:needed]...), nil
 }

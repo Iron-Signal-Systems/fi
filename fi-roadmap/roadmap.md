@@ -37,38 +37,52 @@ FI is currently focused on **Phase 1 / Gate 1**.
 The major Phase 1 architecture is now established:
 
 - governed NTFS baseline collection;
-- NTFS identity, metadata, streams, reparse, security, and hashing;
+- NTFS identity, metadata, streams, reparse, security, hashing, and bounded
+  content-prefix observation;
 - durable local spool creation and verification;
 - persistent USN and Windows Security checkpoints;
 - normal checkpoint continuation;
 - explicit USN and Windows Security continuity-gap history and reconciliation;
+- historical containment based on bounded NTFS object identity rather than
+  stale-path trust;
 - major operation lifecycle journaling;
 - bounded SMB/local/AD supporting-source refresh;
 - a persistent Windows service runtime;
 - service scheduling for configured collection and supporting-source refresh;
 - a non-administrative `FICollector` service identity;
-- a separate privileged `FIUSNReader` helper for the Server 2016 direct-volume
-  USN requirement; and
+- a separate privileged `FIUSNReader` helper exposing only bounded
+  `QueryJournal`, `ReadJournal`, `CheckContainment`, and `ReadSACL` operations;
+  and
 - local named-pipe authentication using the enabled
   `NT SERVICE\FICollector` service SID.
 
-The split-privilege USN design has been live validated on Windows Server 2016 for
-positive collection, rejection of an ordinary elevated administrator client,
-helper outage with frozen USN checkpoint, and restart/catch-up of changes made
-while the helper was unavailable.
+Windows Server 2016 build `14393` has completed exact Candidate #4 Gate 1
+acceptance, including the current four-operation broker and live `ReadSACL`
+path.
 
-Remaining Gate 1 work is primarily **deployment acceptance and validation**, not
-new source architecture:
+The underlying split-privilege Windows behavior is also characterized on Server
+2019 `17763`, Server 2022 `20348`, and Server 2025 `26100`, but those earlier
+findings do not substitute for exact Candidate #4 acceptance.
 
-- reproducible deployment hardening for the two-service/two-gMSA model;
-- service, executable, configuration, state, and spool permission validation;
-- broader service/restart/source-unavailable/resource-exhaustion testing;
-- completion of the governed-file activity behavior matrix;
-- representative performance and source-impact testing;
-- production interval/cadence characterization; and
-- validation/documentation of additional supported Windows Server versions.
+Current Candidate #4 status:
 
-Gate 1 remains open until those boundaries are proved.
+```text
+Server 2016 / 14393    COMPLETE
+Server 2019 / 17763    PENDING
+Server 2022 / 20348    PENDING
+Server 2025 / 26100    PENDING
+```
+
+Remaining Gate 1 work is primarily **cross-version acceptance and production
+characterization**, not new source architecture:
+
+- exact Candidate #4 acceptance on Server 2019, 2022, and 2025;
+- repeated representative performance/source-impact measurement where needed;
+- production interval/cadence characterization from accumulated measurements;
+  and
+- final Gate 1 result-record review across the intended exact release/build set.
+
+Gate 1 remains open overall until those boundaries are proved.
 
 ---
 

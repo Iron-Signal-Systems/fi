@@ -316,6 +316,7 @@ FICollector
                                                v
                                       raw NTFS USN query/read
                                       bounded File-ID containment
+                                      bounded exact-object SACL read
 ```
 
 The service runtime can schedule:
@@ -333,7 +334,7 @@ decision.
 
 ## USN split-privilege boundary
 
-The current split-privilege design has been live validated on:
+The underlying split-privilege Windows behavior has been characterized on:
 
 ```text
 Windows Server 2016    10.0.14393
@@ -342,40 +343,51 @@ Windows Server 2022    10.0.20348
 Windows Server 2025    10.0.26100
 ```
 
+Exact Candidate #4 Gate 1 acceptance is tracked separately:
+
+```text
+Windows Server 2016    10.0.14393    COMPLETE
+Windows Server 2019    10.0.17763    PENDING
+Windows Server 2022    10.0.20348    PENDING
+Windows Server 2025    10.0.26100    PENDING
+```
+
 2019, 2022, and 2025 characterization explicitly established that a restricted
 helper remains unable to perform the required raw-volume USN query/read even
 when `SeManageVolumePrivilege` is enabled in-process. The narrow helper therefore
 remains inside the local Windows administrative boundary. `FILE_READ_DATA` is
 the least tested successful raw-volume access used by the production query/read
-path.
-
+path on those characterized releases.
 FI does **not** run the entire collector as Administrator to obtain that
 capability.
 
 Instead:
 
 - `FICollector` remains non-admin;
-- `FIUSNReader` owns only the narrow privileged USN operations and a bounded
-  mechanical File-ID containment check used when the collector receives Access
-  Denied during current-object re-observation;
+- `FIUSNReader` exposes only four bounded privileged operations:
+  `QueryJournal`, `ReadJournal`, `CheckContainment`, and `ReadSACL`;
+- `CheckContainment` is the narrow mechanical File-ID containment path used when
+  the collector receives Access Denied during current-object re-observation;
+- `ReadSACL` performs a separately authorized exact-object SACL read and returns
+  only the bounded raw descriptor for collector-side parsing;
 - the pipe rejects remote clients;
 - the helper requires the enabled `NT SERVICE\FICollector` service SID;
-- the helper independently loads FI configuration and authorizes only volumes
-  represented by configured governed roots;
+- the helper independently loads FI configuration and authorizes requests from
+  configured governed roots;
 - the helper exposes no arbitrary device/FSCTL interface; and
 - `FICollector` retains parsing, governed-root policy, normal re-observation,
-  hashing, spool, and checkpoint ownership.
+  descriptor parsing, record construction, hashing, spool, and checkpoint
+  ownership.
 
 Windows Server 2022 build `20348` exposed one additional protected-object
 behavior: some protected system objects deny the helper's normal zero-access
 `OpenFileById` containment open. Windows Server 2025 build `26100` was
 independently characterized and reproduced the same bounded behavior. Only on
-those exact builds, and only after the normal open returns Access Denied, FI
-temporarily enables `SeBackupPrivilege`, retries the same zero-access open,
-resolves mechanical containment, and restores the previous privilege state. The
-fallback is not enabled for 2016, 2019, or an uncharacterized future or adjacent
-Windows Server build.
-
+those exact characterized builds, and only after the normal open returns Access
+Denied, FI temporarily enables `SeBackupPrivilege`, retries the same zero-access
+open, resolves mechanical containment, and restores the previous privilege state.
+The fallback is not enabled for 2016, 2019, or an uncharacterized future or
+adjacent Windows Server build.
 A controlled helper outage has been live validated to freeze the USN checkpoint
 while other collector work continues. After helper recovery, FI resumes from the
 old checkpoint and catches up changes made during the outage.
@@ -577,26 +589,55 @@ manifest.
 
 The core Phase 1 source architecture is largely established.
 
-Remaining Gate 1 work is primarily **deployment acceptance and validation**:
+Windows Server 2016 build `14393` has completed the exact Candidate #4 Gate 1
+campaign. That campaign includes:
 
-- make the two-service/two-gMSA deployment reproducible and reviewable;
-- validate service, executable, configuration, state, and spool permissions;
-- complete the governed-file activity behavior matrix covering create, modify,
-  read, deny, rename/move, delete, security changes, hard-link activity, and SMB
-  paths;
-- complete broader service/restart/source-unavailable/resource-exhaustion
-  campaigns;
-- measure representative baseline, low-churn, high-churn, Security, refresh, and
-  reconciliation workloads;
-- establish production intervals from measurements; and
-- characterize every additional Windows Server version FI intends to support.
+- reproducible two-service/two-gMSA deployment and exact deployment acceptance;
+- service, executable, configuration, state, spool, and service-token boundary
+  validation;
+- local and true remote-SMB governed-file activity coverage;
+- collector restart, spool-write-denial, governed-root-unavailable, and bounded
+  dependency-observation exercises;
+- bounded performance, churn, spool-pressure, and operation/resource
+  characterization;
+- historical containment without stale-path trust;
+- content-prefix / magic-byte durable custody; and
+- the four-operation `FIUSNReader` broker, including live exact-object
+  `ReadSACL`, while `FICollector` remains non-administrative.
 
-Windows Server 2016, 2019, 2022, and 2025 are currently characterized and green
-for the split-privilege acceptance baseline. Additional releases remain
-independent characterization work.
+The underlying Windows split-privilege behavior is characterized and green for
+the split-privilege acceptance baseline on:
+```text
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
+```
 
-Gate 1 is not complete until those deployment and validation boundaries are
-proved.
+Exact Candidate #4 Gate 1 acceptance is:
+
+```text
+Windows Server 2016    10.0.14393    COMPLETE
+Windows Server 2019    10.0.17763    PENDING
+Windows Server 2022    10.0.20348    PENDING
+Windows Server 2025    10.0.26100    PENDING
+```
+
+Remaining Gate 1 work is therefore primarily:
+
+- exact Candidate #4 acceptance on Server 2019, 2022, and 2025;
+- repeated representative performance/source-impact measurement across the
+  intended supported deployment set where needed;
+- production collection/supporting-refresh cadence selection from accumulated
+  measurements; and
+- final review of the Gate 1 result record across the intended release/build set.
+
+The Gate 1 test deployment uses `1m` collection and `30m` supporting-source
+refresh only as an acceptance configuration. Production cadence remains
+`NOT_EVALUATED`.
+
+Gate 1 remains open overall until those remaining cross-version and production
+acceptance boundaries are resolved.
 
 No additional Phase 1 source subsystem should be added unless a concrete Gate 1
 requirement demonstrates that a required source fact is missing.

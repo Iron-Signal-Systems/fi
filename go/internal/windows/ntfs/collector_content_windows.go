@@ -18,8 +18,10 @@ import (
 // collectOpenedTargetWithContentHashes completes one FI object observation
 // before the public collection call returns. The original target handle remains
 // open while FI reopens the exact same NTFS object identity with GENERIC_READ
-// for the one-pass content hash. The spool layer therefore never needs to go
-// back to the source object to add hashes.
+// for the one-pass content read. That single read calculates hashes and retains
+// at most the first 16 bytes of the unnamed/default $DATA stream. The spool
+// layer therefore never needs to go back to the source object to add either
+// content fact.
 func collectOpenedTargetWithContentHashes(
 	ctx context.Context,
 	root governedRootContext,
@@ -40,11 +42,14 @@ func collectOpenedTargetWithContentHashes(
 		return Observation{}, err
 	}
 
-	var hashes records.ContentHashObservation
+	var content contentReadObservation
 	if observation.Reparse.State == records.ReparseStatePresent {
-		hashes = records.ContentHashObservation{State: records.ContentHashNotApplicable}
+		content = contentReadObservation{
+			Hashes: records.ContentHashObservation{State: records.ContentHashNotApplicable},
+			Prefix: records.ContentPrefixObservation{State: records.ContentPrefixNotApplicable},
+		}
 	} else {
-		hashes, err = collectContentHashesOpened(
+		content, err = collectContentOpened(
 			ctx,
 			root,
 			targetHandle,
@@ -55,12 +60,16 @@ func collectOpenedTargetWithContentHashes(
 			return Observation{}, err
 		}
 	}
-	if err := records.ValidateContentHashObservation(hashes); err != nil {
+	if err := records.ValidateContentHashObservation(content.Hashes); err != nil {
+		return Observation{}, err
+	}
+	if err := records.ValidateContentPrefixObservation(content.Prefix); err != nil {
 		return Observation{}, err
 	}
 
-	observation.ContentHashes = &hashes
-	applyContentHashOutcome(&observation, hashes)
+	observation.ContentHashes = &content.Hashes
+	observation.ContentPrefix = &content.Prefix
+	applyContentHashOutcome(&observation, content.Hashes)
 	if err := revalidateObservationAfterContent(ctx, root, targetHandle, &observation); err != nil {
 		return Observation{}, err
 	}
@@ -189,10 +198,10 @@ func reparseObservationChanged(observation records.ReparseObservation, state fil
 	}
 }
 
-// applyContentHashOutcome keeps content-hash failure visible at the whole-object
-// observation boundary. The detailed hash record still carries the exact
-// reason, while ContentHashFailed prevents a failed file-content read from being
-// represented as a fully Complete observation.
+// applyContentHashOutcome keeps content-read failure visible at the whole-object
+// observation boundary. The detailed hash and prefix records carry the same
+// source-read reason, while ContentHashFailed prevents a failed file-content
+// read from being represented as a fully Complete observation.
 func applyContentHashOutcome(
 	observation *Observation,
 	hashes records.ContentHashObservation,
@@ -231,7 +240,7 @@ func applyContentHashOutcome(
 // CollectPathStructural is a diagnostic-only structural collection entry point.
 // It preserves the original minimal NTFS observation behavior and does not read
 // file content. Production full observations use CollectPath, which includes
-// integrated content hashes before returning.
+// integrated content hashes and the bounded content prefix before returning.
 func CollectPathStructural(
 	ctx context.Context,
 	scopeID string,
