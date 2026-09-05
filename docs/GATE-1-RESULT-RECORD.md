@@ -6,6 +6,8 @@ Overall Gate 1 status: **OPEN**
 
 Windows Server 2016 Candidate #4 status: **COMPLETE**
 
+Windows Server 2019 Candidate #4 status: **COMPLETE**
+
 This record tracks exact Candidate #4 Gate 1 acceptance separately from earlier
 Windows release/build characterization.
 
@@ -58,7 +60,7 @@ acceptance artifacts.
 | Windows Server | Version / build | Windows behavior characterized | Candidate #4 |
 |---|---:|---|---|
 | Windows Server 2016 | 10.0.14393 | YES | COMPLETE |
-| Windows Server 2019 | 10.0.17763 | YES | PENDING |
+| Windows Server 2019 | 10.0.17763 | YES | COMPLETE |
 | Windows Server 2022 | 10.0.20348 | YES | PENDING |
 | Windows Server 2025 | 10.0.26100 | YES | PENDING |
 
@@ -98,6 +100,81 @@ procedures; it does not erase the earlier Windows characterization record.
 During Candidate #4 deployment verification, common Tests 01, 07, and 08 were
 also re-run successfully.
 
+## Windows Server 2019 Candidate #4 campaign
+
+Test host:
+
+```text
+ISS-FS-19
+Windows Server 2019
+10.0.17763
+```
+
+The exact Candidate #4 collector/helper hashes matched the artifacts identified
+above throughout the acceptance campaign.
+
+Accepted Server 2019 results include:
+
+- reproducible exact-build-gated two-service/two-gMSA deployment;
+- exact deployment/service/gMSA/binary/config/state/spool ACL acceptance;
+- actual `FICollector` service-token boundary validation under
+  `ISS\gFI-FS19$`;
+- a corrected local governed-file activity matrix with denied-read and
+  denied-write Windows Security records preserved into FI spool custody;
+- live current-state SACL observation through the four-operation broker;
+- true remote SMB workload and server-side 5145/event/spool correlation;
+- collector restart and USN catch-up;
+- controlled helper outage with frozen checkpoint and exact catch-up;
+- bounded baseline and operation/resource observation; and
+- bounded passive AD-LDAPS Before/During/After dependency observation with
+  verified restoration.
+
+The earlier Server 2019 activity run `3971b61b7ffa` is deliberately retained as
+failed history. The accepted corrected run is `9d7d39184f9a`.
+
+Key accepted report hashes:
+
+```text
+Deployment
+8828B98C008653BA7ACC25F4F63F3D7A037CE5629AB4A248615A1EC083EEF0B0
+
+Readiness
+C14A27779C18364C4EDED5F828ABE619D657043BE6F98C25B845FB03FDED0A51
+
+Accepted 10A activity
+A51380644A8525DA213712854F4CC81BE156C52202E1CDD981C90C65BDC204C6
+
+10C remote SMB
+09A903B93599088645920D17C27F5397AF4D861D5AA6FE6E01CD453D22E2D54E
+
+Test 08 collector-token boundary
+FEB775269E572BD4F25EBBDC50F262A3FD4670C376994175718C81B2CD9DC111
+
+Helper outage / catch-up
+FE3FA4515942AF697196E0D05C499338BEEF8E989440084DD665A0A7FF75BCF5
+
+12D Before
+F308CA4A2717FE9CE184B1A07BB147BD83BE1C55866754AB6772D57FD5B5AE0F
+
+12D During
+983A525DDA1B9515A088DBB5E1640561D73562024514E756887A8558794660B6
+
+12D After
+9314FF98F0AF2AE801F9DFFAC8863C115CB1BDCCDD5D9C23EBA02C981A782013
+```
+
+Detailed Server 2019 verification is recorded in:
+
+```text
+docs/GATE-1-SERVER-2019-CANDIDATE-4.md
+```
+
+The Server 2019 sweep intentionally did not repeat every candidate-wide
+stress/lab-fault campaign already established on Server 2016. Exact Server 2019
+acceptance required the Windows-build-sensitive deployment, service-token,
+activity/Security/SMB, broker/ReadSACL, restart/catch-up, helper-outage, bounded
+dependency, baseline, and resource boundaries to be proven on build `17763`.
+
 ## Test 12D dependency observation
 
 The original Test 12D implementation is **RETIRED** because its validation
@@ -108,7 +185,7 @@ The Gate 1 requirement itself is not retired.
 The replacement 12D implementation is a bounded passive observer. It does not
 stop, restart, disable, enable, or reconfigure the dependency being observed.
 
-Accepted replacement payload SHA-256:
+Accepted replacement canonical LF payload SHA-256:
 
 ```text
 EA92830748A0F474F2EF107E1BF95B10475FE9E42DA5A43AF4DF4A7D4FC69F27
@@ -118,7 +195,7 @@ The controlled Server 2016 exercise used an externally controlled outbound
 TCP/636 AD-LDAPS fault with an independently armed SYSTEM rollback before the
 fault was introduced.
 
-Observed records:
+Server 2016 observed records:
 
 ```text
 Before report SHA-256:
@@ -131,7 +208,7 @@ After report SHA-256:
 58940662CDB2B82241F079C766FEBBD72A9AB22F4E8431ABCDA9B1D278DCE856
 ```
 
-The dependency outage began at:
+The Server 2016 dependency outage began at:
 
 ```text
 2026-09-04T14:30:33.0683073Z
@@ -147,11 +224,40 @@ Outcome: Complete
 The TCP/636 fault was removed and independently verified absent before the
 rollback task was removed.
 
-The retained runtime window contained a successful supporting-source refresh from
-before the outage. Therefore this exercise does **not** claim that an AD
-supporting refresh itself failed and recovered during the outage. It proves the
-bounded 12D observer requirement and continued configured governed collection
+The retained Server 2016 runtime window contained a successful supporting-source
+refresh from before the outage. Therefore that exercise does **not** claim that
+an AD supporting refresh itself failed and recovered during the outage. It proves
+the bounded 12D observer requirement and continued configured governed collection
 during the controlled dependency transport fault.
+
+The Server 2019 campaign repeated the bounded AD-LDAPS transport-fault observation
+on build `17763`. The staged Windows script used CRLF line endings, while the
+repository-canonical payload uses LF. Identity was proven by normalization:
+
+```text
+GitHub main / canonical LF Git blob:
+08723bc8be60dd6e95710a977d84cd4222cb1ae6
+
+Canonical LF SHA-256:
+EA92830748A0F474F2EF107E1BF95B10475FE9E42DA5A43AF4DF4A7D4FC69F27
+
+Raw staged CRLF SHA-256:
+85F267F036D3B6CF3ADC69DF13BE1BE07E827BF285494071766F2E8E952AB19E
+
+LF-normalized staged SHA-256:
+EA92830748A0F474F2EF107E1BF95B10475FE9E42DA5A43AF4DF4A7D4FC69F27
+```
+
+The Server 2019 controlled TCP/636 block existed from
+`2026-09-04T22:34:53.9243535Z` through
+`2026-09-04T22:35:56.4196523Z`. A fresh configured collection completed during
+the outage at `2026-09-04T22:35:52.864270700Z` with outcome `Complete`.
+TCP/636 then recovered on the first bounded restoration check, and a fresh
+post-restoration collection completed at `2026-09-04T22:36:53.550327700Z`.
+
+The Server 2019 outage did not span a scheduled supporting-source refresh, so the
+accepted claim remains limited to continued configured governed collection during
+a real LDAPS transport outage and verified dependency restoration.
 
 ## Four-operation privileged broker
 
@@ -164,7 +270,8 @@ CheckContainment
 ReadSACL
 ```
 
-The Server 2016 campaign live-validated the current `ReadSACL` path.
+The Server 2016 and Server 2019 campaigns live-validated the current `ReadSACL`
+path.
 
 The SACL operation:
 
@@ -178,8 +285,8 @@ The SACL operation:
 - leaves descriptor parsing and FI record construction in the non-admin
   `FICollector`.
 
-Equivalent live Candidate #4 SACL acceptance remains pending on Server 2019,
-2022, and 2025.
+Equivalent live Candidate #4 SACL acceptance remains pending on Server 2022 and
+2025.
 
 ## Historical containment
 
@@ -242,6 +349,10 @@ Notable Server 2016 campaign facts include:
 The bounded Test 16 partial sample was operation/source-stage level and is not
 interpreted as proof of governed-object collection failure.
 
+Server 2019 exact acceptance included bounded baseline and operation/resource
+observation on build `17763`; the full candidate-wide churn/spool-pressure stress
+campaign was not repeated as a Server-2019-specific closure requirement.
+
 Production cadence remains:
 
 ```text
@@ -259,8 +370,8 @@ Those values are acceptance configuration, not production defaults.
 
 ## Local source verification
 
-Immediately before documentation reconciliation, the Candidate #4 source tree
-passed:
+Immediately before the original Candidate #4 documentation reconciliation, the
+Candidate #4 source tree passed:
 
 ```text
 Candidate #4 changed/new Go files gofmt clean    PASS
@@ -280,16 +391,17 @@ left untouched because it is not part of the Candidate #4 delta.
 
 Windows Server 2016 Candidate #4 acceptance is complete.
 
+Windows Server 2019 Candidate #4 acceptance is complete.
+
 Gate 1 remains open overall for:
 
-1. exact Candidate #4 acceptance on Windows Server 2019 build `17763`;
-2. exact Candidate #4 acceptance on Windows Server 2022 build `20348`;
-3. exact Candidate #4 acceptance on Windows Server 2025 build `26100`;
-4. repeated representative performance/source-impact measurement where needed
+1. exact Candidate #4 acceptance on Windows Server 2022 build `20348`;
+2. exact Candidate #4 acceptance on Windows Server 2025 build `26100`;
+3. repeated representative performance/source-impact measurement where needed
    across the intended supported deployment set;
-5. production collection/supporting-refresh cadence selection from accumulated
+4. production collection/supporting-refresh cadence selection from accumulated
    measurements; and
-6. final review of this result record across the intended exact release/build
+5. final review of this result record across the intended exact release/build
    set.
 
 No prior characterization result may be substituted for exact current-candidate
