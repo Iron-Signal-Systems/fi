@@ -108,6 +108,7 @@ $RepoHead = ''
 $RepoStatus = @()
 $StartedUTC = [DateTime]::UtcNow
 $TranscriptStarted = $false
+$script:ArtifactsSaved = $false
 
 function Write-Section {
     param([string]$Text)
@@ -667,7 +668,7 @@ function Invoke-ProductionContainmentCheck {
         if ($LASTEXITCODE -ne 0) {
             throw "fsutil file queryfileid failed for $($Target.FullName): $FileIDOutput"
         }
-        $Match = [regex]::Match($FileIDOutput,'0x([0-9A-Fa-f]{16}|[0-9A-Fa-f]{32})')
+        $Match = [regex]::Match($FileIDOutput,'0x([0-9A-Fa-f]{32}|[0-9A-Fa-f]{16})')
         if (-not $Match.Success) {
             throw "Could not parse NTFS file ID for $($Target.FullName): $FileIDOutput"
         }
@@ -1528,6 +1529,7 @@ try {
         if (-not [bool]$Final.PipePresent) { throw 'FI-USN pipe is missing in final state.' }
 
         Save-RemoteResultFiles -PSSession $Session -RemoteResultDirectory $script:RemoteResults
+        $script:ArtifactsSaved = $true
         'exact hashes/config/service identities/PathName unchanged; services Running; pipe present; raw artifacts saved'
     }
 
@@ -1552,7 +1554,10 @@ catch {
 finally {
     if ($null -ne $Session) {
         try {
-            if (Get-Variable -Name RemoteResults -Scope Script -ErrorAction SilentlyContinue) {
+            if (
+                -not $script:ArtifactsSaved -and
+                (Get-Variable -Name RemoteResults -Scope Script -ErrorAction SilentlyContinue)
+            ) {
                 Save-RemoteResultFiles -PSSession $Session -RemoteResultDirectory $script:RemoteResults
             }
         }

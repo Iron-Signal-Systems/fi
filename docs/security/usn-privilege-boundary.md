@@ -1051,12 +1051,13 @@ copied to 2016, 2019, an adjacent Server 2025 build, or another future release
 without characterization.
 
 Those earlier release/build findings remain characterization of the underlying
-Windows privilege and protected-object behavior. Exact Gate 1
-acceptance, including the four-operation broker and live `ReadSACL` path, is
-complete on Windows Server 2016 build `14393` and Windows Server 2019 build
-`17763`. Equivalent Gate 1 acceptance on Windows Server 2022 build `20348` and
-Windows Server 2025 build `26100` remains pending and must not be inferred from
-the earlier characterization.
+Windows privilege and protected-object behavior. Exact Gate 1 acceptance,
+including the four-operation broker and live `ReadSACL` path, is complete on
+Windows Server 2016 build `14393`, Windows Server 2019 build `17763`, Windows
+Server 2022 build `20348`, and Windows Server 2025 build `26100`.
+
+That exact acceptance does not generalize release/build-specific Windows behavior
+to an adjacent or future build without independent characterization.
 
 The privileged helper is not an ACL sandbox from Windows administrators. It is a
 deliberately small privileged process inside the operating system's

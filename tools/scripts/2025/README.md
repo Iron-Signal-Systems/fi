@@ -135,7 +135,7 @@ program/data boundaries, configures the exact service identities and paths, wait
 for the real helper pipe, starts the collector, and requires the first real
 configured collection to complete.
 
-Reviewed Server 2025 candidate hashes used during acceptance:
+Earlier Server 2025 characterization candidate hashes:
 
 ```text
 FICollector
@@ -144,6 +144,32 @@ CE58D165636F132ABC60902D242D9262BE1A422C18107B937629C98D255E1926
 FIUSNReader
 22F90B3976D2B69FB5FD8DC4B137B1DAA08767A72AAED92A6E0D0FE462810217
 ```
+
+Those hashes are retained as Server 2025 characterization history. They are
+not the final exact-current-pair Gate 1 artifacts.
+
+Exact-current-pair Gate 1 acceptance on 2026-09-05 used:
+
+```text
+FICollector
+6D641A73D0CE116BA09C16885371164BF580D36631DD6F031090B2EE5DC86C13
+
+FIUSNReader
+A71A769F25E9CCB0C9ACAF8CAFBE6C751AEB8F3884FC5EBD1BF7723B3BBF2263
+```
+
+Unified validator:
+
+```text
+Run ID: 21d7a076a00d
+Mode: Full
+Result: PASS
+```
+
+The exact-current-pair run also re-established the production service-token
+boundary, build-26100 protected containment, local Security/FI correlation,
+collector restart/catch-up, helper-outage checkpoint freeze/catch-up, true
+remote SMB correlation, prerequisite restoration, and final exact state.
 
 ### 05 — Production protected containment acceptance
 

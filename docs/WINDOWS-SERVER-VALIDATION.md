@@ -25,8 +25,8 @@ File-ID, Security Event Log, and release-specific protected-object findings.
 |---|---:|---|
 | Windows Server 2016 | 10.0.14393 | COMPLETE |
 | Windows Server 2019 | 10.0.17763 | COMPLETE |
-| Windows Server 2022 | 10.0.20348 | PENDING |
-| Windows Server 2025 | 10.0.26100 | PENDING |
+| Windows Server 2022 | 10.0.20348 | COMPLETE |
+| Windows Server 2025 | 10.0.26100 | COMPLETE |
 
 Gate 1 build includes the current four-operation broker and live `ReadSACL` path.
 Earlier release/build characterization and earlier accepted production pairs
@@ -96,8 +96,9 @@ returns the raw bounded descriptor to `FICollector`, which owns descriptor
 parsing and record construction.
 
 Live Gate 1 acceptance of this four-operation broker, including `ReadSACL`,
-is complete on Windows Server 2016 build `14393` and Windows Server 2019 build
-`17763`. Equivalent Gate 1 acceptance on Server 2022 and 2025 remains pending.
+is complete on Windows Server 2016 build `14393`, Windows Server 2019 build
+`17763`, Windows Server 2022 build `20348`, and Windows Server 2025 build
+`26100`.
 
 ---
 

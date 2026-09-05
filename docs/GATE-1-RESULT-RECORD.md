@@ -1,12 +1,16 @@
 # FI Gate 1 Result Record
 
-Record date: 2026-09-04
+Record date: 2026-09-05
 
 Overall Gate 1 status: **OPEN**
 
 Windows Server 2016 Gate 1 status: **COMPLETE**
 
 Windows Server 2019 Gate 1 status: **COMPLETE**
+
+Windows Server 2022 Gate 1 status: **COMPLETE**
+
+Windows Server 2025 Gate 1 status: **COMPLETE**
 
 This record tracks exact Gate 1 acceptance separately from earlier
 Windows release/build characterization.
@@ -61,8 +65,8 @@ acceptance artifacts.
 |---|---:|---|---|
 | Windows Server 2016 | 10.0.14393 | YES | COMPLETE |
 | Windows Server 2019 | 10.0.17763 | YES | COMPLETE |
-| Windows Server 2022 | 10.0.20348 | YES | PENDING |
-| Windows Server 2025 | 10.0.26100 | YES | PENDING |
+| Windows Server 2022 | 10.0.20348 | YES | COMPLETE |
+| Windows Server 2025 | 10.0.26100 | YES | COMPLETE |
 
 Adjacent builds are not accepted by similarity.
 
@@ -175,6 +179,100 @@ acceptance required the Windows-build-sensitive deployment, service-token,
 activity/Security/SMB, broker/ReadSACL, restart/catch-up, helper-outage, bounded
 dependency, baseline, and resource boundaries to be proven on build `17763`.
 
+## Windows Server 2022 exact-current-pair acceptance
+
+Test host:
+
+```text
+ISS-FS-22
+Windows Server 2022
+10.0.20348
+```
+
+Exact-current-pair unified-validator acceptance completed on 2026-09-05.
+
+```text
+Run ID: 3657cdaa4ffc
+Mode: Full
+Result: PASS
+```
+
+The accepted run established exact artifact identity, service/gMSA boundaries,
+the FICollector service-token boundary, protected-object containment, local
+Security/FI correlation, restart recovery, helper-outage checkpoint freeze and
+catch-up, true remote SMB correlation, prerequisite restoration, and final exact
+state verification.
+
+Protected-object containment returned:
+
+```text
+Result:   Outside
+FRN:      204077
+Sequence: 1
+```
+
+The first unified-validator attempt exposed a validator-only NTFS File-ID parsing
+defect. The 16-digit regex alternative matched the first half of a 32-digit File
+ID. Matching 32 digits before 16 digits produced the correct FRN and sequence,
+after which the full Server 2022 validator passed.
+
+## Windows Server 2025 exact-current-pair acceptance
+
+Test host:
+
+```text
+ISS-FS-25
+Windows Server 2025
+10.0.26100
+```
+
+Exact-current-pair unified-validator acceptance completed on 2026-09-05.
+
+```text
+Run ID: 21d7a076a00d
+Mode: Full
+Result: PASS
+```
+
+The accepted run established exact artifact identity, service/gMSA boundaries,
+the FICollector service-token boundary, build-26100 protected-object containment,
+local Security/FI correlation, restart recovery, helper-outage checkpoint freeze
+and catch-up, true remote SMB correlation, prerequisite restoration, and final
+exact state verification.
+
+Protected-object containment returned:
+
+```text
+Result:   Outside
+FRN:      21026
+Sequence: 9
+```
+
+TCP/445 began unreachable and was verified returned to that original state after
+the controlled remote SMB test.
+
+## Unified validator cross-version result
+
+```text
+2016 / 14393 / ISS-FS-01 / PASS
+2019 / 17763 / ISS-FS-19 / PASS
+2022 / 20348 / ISS-FS-22 / PASS
+2025 / 26100 / ISS-FS-25 / PASS
+```
+
+The exact current Gate 1 pair used for 2022 and 2025 acceptance is:
+
+```text
+FICollector
+6D641A73D0CE116BA09C16885371164BF580D36631DD6F031090B2EE5DC86C13
+
+FIUSNReader
+A71A769F25E9CCB0C9ACAF8CAFBE6C751AEB8F3884FC5EBD1BF7723B3BBF2263
+```
+
+Overall Gate 1 remains OPEN until the remaining candidate-wide closure review,
+including the production cadence decision, is explicitly resolved.
+
 ## Test 12D dependency observation
 
 The original Test 12D implementation is **RETIRED** because its validation
@@ -285,8 +383,7 @@ The SACL operation:
 - leaves descriptor parsing and FI record construction in the non-admin
   `FICollector`.
 
-Equivalent live Gate 1 SACL acceptance remains pending on Server 2022 and
-2025.
+Equivalent live Gate 1 SACL acceptance is complete on Server 2022 build `20348` and Server 2025 build `26100`.
 
 ## Historical containment
 
@@ -395,13 +492,11 @@ Windows Server 2019 Gate 1 acceptance is complete.
 
 Gate 1 remains open overall for:
 
-1. exact Gate 1 acceptance on Windows Server 2022 build `20348`;
-2. exact Gate 1 acceptance on Windows Server 2025 build `26100`;
-3. repeated representative performance/source-impact measurement where needed
+1. repeated representative performance/source-impact measurement where needed
    across the intended supported deployment set;
-4. production collection/supporting-refresh cadence selection from accumulated
+2. production collection/supporting-refresh cadence selection from accumulated
    measurements; and
-5. final review of this result record across the intended exact release/build
+3. final review of this result record across the intended exact release/build
    set.
 
 No prior characterization result may be substituted for exact current-candidate

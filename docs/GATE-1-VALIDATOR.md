@@ -152,8 +152,7 @@ is the machine-readable record. Raw test artifacts are retained under `raw`.
 
 ## Cross-version validator acceptance
 
-The validator itself is not accepted until the same entry point has been run
-successfully against all four characterized servers:
+The validator has now been run successfully through the same entry point against all four characterized servers:
 
 ```powershell
 & .\tools\gate1\Validate.ps1 -Server ISS-FS-01 -Save 'C:\FI-Validation\2016'
@@ -162,9 +161,18 @@ successfully against all four characterized servers:
 & .\tools\gate1\Validate.ps1 -Server ISS-FS-25 -Save 'C:\FI-Validation\2025'
 ```
 
-2016, 2019, and 2022 are regression runs of already accepted behavior. The 2025
-run also participates in completing exact current-pair Gate 1 acceptance on build
-26100.
+Accepted full-run results:
+
+```text
+Windows Server 2016 / build 14393 / ISS-FS-01 / PASS
+Windows Server 2019 / build 17763 / ISS-FS-19 / PASS
+Windows Server 2022 / build 20348 / ISS-FS-22 / PASS
+Windows Server 2025 / build 26100 / ISS-FS-25 / PASS
+```
+
+The 2016, 2019, and 2022 campaigns include regression of already characterized
+behavior. The Server 2025 run completed exact-current-pair Gate 1 acceptance on
+build `26100`.
 
 ## Safety switches
 

@@ -169,8 +169,11 @@ The 2022 workaround is not a generic Windows rule.
 
 It does not establish that:
 
-- Server 2016 needs the fallback;
-- Server 2019 needs the fallback; or
-- Server 2025 should inherit the fallback.
+- Server 2016 needs the fallback; or
+- Server 2019 needs the fallback.
 
-Each release is characterized before FI changes release-specific behavior.
+Server 2025 build `26100` was subsequently characterized independently and
+accepted for the same bounded retry mechanics behind its own exact-build gate.
+That result does not make the fallback a generic Windows rule.
+
+Each release/build is characterized before FI changes release-specific behavior.
