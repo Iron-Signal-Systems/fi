@@ -311,3 +311,24 @@ A script PASS proves only the invariant encoded by that script. Gate 1 closes
 only after `docs/GATE-1-RESULT-RECORD.md` is reviewed across the intended exact
 Windows release/build set and representative workloads. Missing source facts
 remain missing/incomplete; they never become proof that no activity occurred.
+
+## Unified validator
+
+For repeat exact-pair acceptance on an already characterized Windows build, use
+`Validate.ps1` from the controller/admin system instead of manually invoking the
+individual scripts:
+
+```powershell
+& .\tools\gate1\Validate.ps1 `
+  -Server ISS-FS-22 `
+  -Save 'C:\FI-Validation\2022'
+```
+
+The validator discovers the target build, FI config, governed root, service gMSAs,
+service paths, and installed hashes. It selects the exact characterized build
+profile, runs the accepted quick-validation sequence, prints live PASS/FAIL status
+with ten-second wait heartbeats, restores temporary audit/firewall prerequisites,
+and saves a durable report package.
+
+See `docs/GATE-1-VALIDATOR.md` for the complete procedure and cross-version
+validator acceptance sequence.

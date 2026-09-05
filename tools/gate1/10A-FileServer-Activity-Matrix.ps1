@@ -31,7 +31,7 @@ function Get-FiGate110ABoundedSpoolSnapshot {
     param(
         [string]$SpoolPath = 'C:\ProgramData\FI\spool',
         [int]$TimeoutSeconds = 120,
-        [int]$HeartbeatSeconds = 15,
+        [int]$HeartbeatSeconds = 10,
         [int]$MaxFiles = 100000
     )
 
@@ -116,7 +116,7 @@ function Wait-FiGate110AConfiguredCollectionAfterTime {
         [Parameter(Mandatory = $true)]
         [DateTime]$AfterUTC,
         [int]$TimeoutSeconds = 180,
-        [int]$HeartbeatSeconds = 15
+        [int]$HeartbeatSeconds = 10
     )
 
     $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -164,7 +164,7 @@ function Get-FiGate110ARecentFinalizedBatches {
     }
 
     $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $NextHeartbeat = 15
+    $NextHeartbeat = 10
     $ScannedFiles = 0
     $Results = New-Object System.Collections.Generic.List[string]
     $Directory = New-Object -TypeName System.IO.DirectoryInfo -ArgumentList $SpoolPath
@@ -176,7 +176,7 @@ function Get-FiGate110ARecentFinalizedBatches {
         }
         if ($Stopwatch.Elapsed.TotalSeconds -ge $NextHeartbeat) {
             Write-Host "[INFO] 10A recent-batch enumeration: $ScannedFiles files scanned; $([int]$Stopwatch.Elapsed.TotalSeconds)s elapsed."
-            $NextHeartbeat += 15
+            $NextHeartbeat += 10
         }
         if ($File.LastWriteTimeUtc -lt $SinceUTC.ToUniversalTime()) {
             continue
@@ -215,7 +215,7 @@ function Find-FiGate110ARecentSpoolToken {
     }
 
     $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $NextHeartbeat = 15
+    $NextHeartbeat = 10
     $LinesRead = 0
     $Matches = New-Object System.Collections.Generic.List[object]
 
@@ -232,7 +232,7 @@ function Find-FiGate110ARecentSpoolToken {
             }
             if ($Stopwatch.Elapsed.TotalSeconds -ge $NextHeartbeat) {
                 Write-Host "[INFO] 10A recent spool token search: $LinesRead lines scanned; $([int]$Stopwatch.Elapsed.TotalSeconds)s elapsed."
-                $NextHeartbeat += 15
+                $NextHeartbeat += 10
             }
             if (-not $Line.Contains($Token)) { continue }
             try {
@@ -263,7 +263,7 @@ function Find-FiGate110ARecentSpoolFilename {
     )
 
     $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $NextHeartbeat = 15
+    $NextHeartbeat = 10
     $LinesRead = 0
     $Matches = New-Object System.Collections.Generic.List[object]
 
@@ -280,7 +280,7 @@ function Find-FiGate110ARecentSpoolFilename {
             }
             if ($Stopwatch.Elapsed.TotalSeconds -ge $NextHeartbeat) {
                 Write-Host "[INFO] 10A recent spool filename search: $LinesRead lines scanned; $([int]$Stopwatch.Elapsed.TotalSeconds)s elapsed."
-                $NextHeartbeat += 15
+                $NextHeartbeat += 10
             }
             if (-not $Line.Contains($FileName)) { continue }
             try {
@@ -323,11 +323,26 @@ function Invoke-FiGate110AHardLinkCreate {
         throw '10A could not start fsutil.exe for the hard-link workload.'
     }
 
-    if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
+    $StartedWait = Get-Date
+    $NextHeartbeat = $StartedWait.AddSeconds(10)
+    while (-not $Process.HasExited -and (Get-Date) -lt $StartedWait.AddSeconds($TimeoutSeconds)) {
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $StartedWait).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-Host "[INFO] 10A hard-link creation: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
+        Start-Sleep -Milliseconds 250
+        $Process.Refresh()
+    }
+
+    if (-not $Process.HasExited) {
         try { $Process.Kill() } catch {}
         throw "10A fsutil hardlink create exceeded ${TimeoutSeconds}s and was terminated."
     }
 
+    $Process.WaitForExit()
     $Process.Refresh()
     $StdOut = $Process.StandardOutput.ReadToEnd()
     $StdErr = $Process.StandardError.ReadToEnd()
@@ -574,7 +589,7 @@ function Find-FiGate1SpoolSecurityEvent {
 
     $Needle = [string]$EventRecordID
     $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $NextHeartbeat = 15
+    $NextHeartbeat = 10
     $LinesRead = 0
 
     foreach ($BatchPath in $BatchFiles) {
@@ -590,7 +605,7 @@ function Find-FiGate1SpoolSecurityEvent {
             }
             if ($Stopwatch.Elapsed.TotalSeconds -ge $NextHeartbeat) {
                 Write-Host "[INFO] 10A security spool search: $LinesRead lines scanned; $([int]$Stopwatch.Elapsed.TotalSeconds)s elapsed."
-                $NextHeartbeat += 15
+                $NextHeartbeat += 10
             }
             if (-not $Line.Contains($Needle)) { continue }
             try {

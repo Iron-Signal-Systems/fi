@@ -35,7 +35,7 @@ $StartedUTC = $null
 try {
     Write-FiInfo 'Stopping FICollector for controlled restart/recovery acceptance.'
     Stop-Service FICollector -Force -ErrorAction Stop
-    (Get-Service FICollector).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30))
+    Wait-FiGate1ServiceStatusVisible -Name 'FICollector' -State 'Stopped' -TimeoutSeconds 30
     $StoppedUTC = [DateTime]::UtcNow
 
     "FI Gate 1 collector stopped at $($StoppedUTC.ToString('o'))" | Set-Content -LiteralPath $TestPath -Encoding ASCII
@@ -43,7 +43,7 @@ try {
 
     Write-FiInfo 'Starting FICollector.'
     Start-Service FICollector -ErrorAction Stop
-    (Get-Service FICollector).WaitForStatus('Running',[TimeSpan]::FromSeconds(30))
+    Wait-FiGate1ServiceStatusVisible -Name 'FICollector' -State 'Running' -TimeoutSeconds 30
     $StartedUTC = [DateTime]::UtcNow
 
     $Advanced = Wait-FiCheckpointAdvance -CheckpointPath $CheckpointPath -BeforeUSN $BeforeUSN -TimeoutSeconds $RecoveryTimeoutSeconds

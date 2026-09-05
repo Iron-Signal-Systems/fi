@@ -79,7 +79,9 @@ try {
     Write-FiInfo "Waiting for FICollector to execute a configured collection cycle while FIUSNReader is down."
 
     $OutageRuntime = $null
-    $Deadline = (Get-Date).AddSeconds(90)
+    $StartedWait = Get-Date
+    $Deadline = $StartedWait.AddSeconds(90)
+    $NextHeartbeat = $StartedWait.AddSeconds(10)
 
     do {
         Start-Sleep -Seconds 2
@@ -92,6 +94,15 @@ try {
         ) {
             $OutageRuntime = $CurrentRuntime
             break
+        }
+
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $StartedWait).TotalSeconds)
+            $Remaining = [Math]::Max(0,90 - $Elapsed)
+            $Observed = if ($CurrentRuntime) { [string]$CurrentRuntime.observed_at } else { 'none' }
+            Write-FiInfo "Waiting for configured collection during helper outage: ${Elapsed}s elapsed / 90s timeout; ${Remaining}s remaining; latest=$Observed."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
         }
     } while ((Get-Date) -lt $Deadline)
 

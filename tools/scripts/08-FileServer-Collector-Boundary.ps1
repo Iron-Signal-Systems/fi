@@ -76,13 +76,22 @@ function Wait-FIFile {
         [int]$TimeoutSeconds = 30
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
 
     do {
         if (Test-Path -LiteralPath $Path -PathType Leaf) {
             return $true
         }
 
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-Host "[INFO] Waiting for file '$Path': ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
         Start-Sleep -Milliseconds 250
     }
     while ((Get-Date) -lt $Deadline)
@@ -100,7 +109,9 @@ function Wait-FIFreshConfiguredCollection {
         [int]$TimeoutSeconds = 120
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
 
     do {
         $Current = Get-FILatestConfiguredCollection -Path $Path
@@ -112,6 +123,14 @@ function Wait-FIFreshConfiguredCollection {
             return $Current
         }
 
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            $Observed = if ($Current) { [string]$Current.observed_at } else { 'none' }
+            Write-Host "[INFO] Waiting for fresh ConfiguredCollection: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; latest=$Observed."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
         Start-Sleep -Milliseconds 500
     }
     while ((Get-Date) -lt $Deadline)
@@ -124,7 +143,9 @@ function Wait-FIPipe {
         [int]$TimeoutSeconds = 120
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
 
     do {
         $Helper = Get-Service -Name $HelperService -ErrorAction Stop
@@ -137,6 +158,13 @@ function Wait-FIPipe {
             return
         }
 
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-Host "[INFO] Waiting for FI-USN pipe: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; helper=$($Helper.Status)."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
         Start-Sleep -Milliseconds 500
     }
     while ((Get-Date) -lt $Deadline)
@@ -155,7 +183,9 @@ function Wait-FIServiceState {
         [int]$TimeoutSeconds = 30
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
 
     do {
         $Current = (Get-Service -Name $Name -ErrorAction Stop).Status.ToString()
@@ -164,6 +194,13 @@ function Wait-FIServiceState {
             return
         }
 
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-Host "[INFO] Service ${Name}: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; waiting for $State; current=$Current."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
         Start-Sleep -Milliseconds 250
     }
     while ((Get-Date) -lt $Deadline)
@@ -290,15 +327,7 @@ finally {
 
     Stop-Service -Name $CollectorService -ErrorAction SilentlyContinue
 
-    $CollectorStoppedDeadline = (Get-Date).AddSeconds(30)
-    do {
-        if ((Get-Service -Name $CollectorService).Status -eq "Stopped") {
-            break
-        }
-
-        Start-Sleep -Milliseconds 250
-    }
-    while ((Get-Date) -lt $CollectorStoppedDeadline)
+    Wait-FIServiceState -Name $CollectorService -State "Stopped" -TimeoutSeconds 30
 
     Write-Host "[INFO] Restoring exact original FICollector PathName."
     Set-FIServicePath -Name $CollectorService -PathName $OriginalCollectorBinPath

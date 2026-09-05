@@ -781,3 +781,19 @@ For Server 2025 build `26100`, also retain the release-specific characterization
 and final restart/reboot acceptance results described in
 `tools\scripts\2025\README.md`. Do not apply the build-26100 fallback to an
 adjacent or future Server 2025 build without independent characterization.
+
+## Repeat Gate 1 validation
+
+For already characterized Windows Server builds, the supported repeat-acceptance
+entry point is `tools\gate1\Validate.ps1` from the controller/admin system:
+
+```powershell
+& .\tools\gate1\Validate.ps1 `
+  -Server ISS-FS-22 `
+  -Save 'C:\FI-Validation\2022'
+```
+
+The validator discovers the installed FI configuration and service identities,
+selects the exact build profile, orchestrates the common/release-sensitive tests,
+restores temporary test prerequisites, and saves one validation package. See
+`docs/GATE-1-VALIDATOR.md`.

@@ -25,6 +25,39 @@ function Assert-FiGate1Administrator {
         throw 'This Gate 1 test must run from elevated Windows PowerShell.'
     }
 }
+function Wait-FiGate1ServiceStatusVisible {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$State,
+
+        [int]$TimeoutSeconds = 30
+    )
+
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
+
+    while ((Get-Date) -lt $Deadline) {
+        $Current = (Get-Service -Name $Name -ErrorAction Stop).Status.ToString()
+        if ($Current -eq $State) {
+            return
+        }
+
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-FiInfo "Service ${Name}: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; waiting for $State; current=$Current."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    throw "$Name did not reach $State within $TimeoutSeconds seconds."
+}
 
 function Get-FiGate1SingleGovernedRoot {
     param(
@@ -71,13 +104,24 @@ function Wait-FiGate1ConfiguredCollectionAfter {
         [int]$TimeoutSeconds = 180
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
+    $Count = $BeforeCount
 
     do {
         $Count = Get-FiGate1ConfiguredCollectionCount -RuntimePath $RuntimePath
 
         if ($Count -gt $BeforeCount) {
             return Get-FiLatestConfiguredCollection -RuntimePath $RuntimePath
+        }
+
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-FiInfo "Waiting for configured collection: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; before_count=$BeforeCount current_count=$Count."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
         }
 
         Start-Sleep -Seconds 2

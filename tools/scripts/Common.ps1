@@ -230,7 +230,9 @@ function Wait-FiSpoolFilename {
         [int]$TimeoutSeconds = 60
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
 
     do {
         $SpoolMatches = @(
@@ -242,6 +244,14 @@ function Wait-FiSpoolFilename {
 
         if ($SpoolMatches.Count -gt 0) {
             return $SpoolMatches
+        }
+
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-FiInfo "Waiting for spool filename '$FileName': ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; matches=0."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
         }
 
         Start-Sleep -Seconds 2
@@ -261,7 +271,10 @@ function Wait-FiCheckpointAdvance {
         [int]$TimeoutSeconds = 60
     )
 
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($TimeoutSeconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
+    $CurrentUSN = $BeforeUSN
 
     do {
         Start-Sleep -Seconds 2
@@ -271,6 +284,14 @@ function Wait-FiCheckpointAdvance {
 
         if ($CurrentUSN -gt $BeforeUSN) {
             return $Current
+        }
+
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$TimeoutSeconds - $Elapsed)
+            Write-FiInfo "Waiting for checkpoint advance: ${Elapsed}s elapsed / ${TimeoutSeconds}s timeout; ${Remaining}s remaining; before=$BeforeUSN current=$CurrentUSN."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
         }
     } while ((Get-Date) -lt $Deadline)
 
@@ -288,7 +309,27 @@ function Wait-FiCheckpointStable {
         [int]$Seconds = 35
     )
 
-    Start-Sleep -Seconds $Seconds
+    $Started = Get-Date
+    $Deadline = $Started.AddSeconds($Seconds)
+    $NextHeartbeat = $Started.AddSeconds(10)
+    $CurrentUSN = $ExpectedUSN
+
+    while ((Get-Date) -lt $Deadline) {
+        $Current = Get-FiCheckpoint -CheckpointPath $CheckpointPath
+        $CurrentUSN = [UInt64]$Current.next_usn
+        if ($CurrentUSN -ne $ExpectedUSN) {
+            return $false
+        }
+
+        $Now = Get-Date
+        if ($Now -ge $NextHeartbeat) {
+            $Elapsed = [int](($Now - $Started).TotalSeconds)
+            $Remaining = [Math]::Max(0,$Seconds - $Elapsed)
+            Write-FiInfo "Waiting for checkpoint stability: ${Elapsed}s elapsed / ${Seconds}s window; ${Remaining}s remaining; expected=$ExpectedUSN current=$CurrentUSN."
+            $NextHeartbeat = $NextHeartbeat.AddSeconds(10)
+        }
+        Start-Sleep -Seconds 1
+    }
 
     $Current = Get-FiCheckpoint -CheckpointPath $CheckpointPath
     return ([UInt64]$Current.next_usn -eq $ExpectedUSN)

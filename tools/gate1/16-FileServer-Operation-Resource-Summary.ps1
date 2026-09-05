@@ -11,7 +11,7 @@ param(
     [string]$StatePath = 'C:\ProgramData\FI\state',
     [string]$ResultDirectory = 'C:\ProgramData\FI\gate1-results\performance',
     [ValidateRange(5,60)]
-    [int]$HeartbeatSeconds = 15,
+    [int]$HeartbeatSeconds = 10,
     [ValidateRange(30,1800)]
     [int]$ScanTimeoutSeconds = 180,
     [ValidateRange(1,256)]
