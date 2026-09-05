@@ -1,20 +1,20 @@
-# FI Gate 1 Candidate #4 Result Record
+# FI Gate 1 Result Record
 
 Record date: 2026-09-04
 
 Overall Gate 1 status: **OPEN**
 
-Windows Server 2016 Candidate #4 status: **COMPLETE**
+Windows Server 2016 Gate 1 status: **COMPLETE**
 
-Windows Server 2019 Candidate #4 status: **COMPLETE**
+Windows Server 2019 Gate 1 status: **COMPLETE**
 
-This record tracks exact Candidate #4 Gate 1 acceptance separately from earlier
+This record tracks exact Gate 1 acceptance separately from earlier
 Windows release/build characterization.
 
 A prior characterization result does not automatically establish acceptance of a
 later FI candidate.
 
-## Candidate #4 artifact identity
+## Gate 1 artifact identity
 
 Source repository base commit:
 
@@ -23,13 +23,13 @@ Source repository base commit:
 Update USN checkpoint ownership comments
 ```
 
-The Candidate #4 executables were built from the reviewed local Phase 1 working
+The Gate 1 acceptance executables were built from the reviewed local Phase 1 working
 tree based on that commit.
 
 Collector:
 
 ```text
-Artifact: fi-candidate-4.exe
+Artifact role: FICollector
 Size:     6,649,344 bytes
 SHA-256:  6D641A73D0CE116BA09C16885371164BF580D36631DD6F031090B2EE5DC86C13
 ```
@@ -37,7 +37,7 @@ SHA-256:  6D641A73D0CE116BA09C16885371164BF580D36631DD6F031090B2EE5DC86C13
 Privileged helper:
 
 ```text
-Artifact: fi-usn-candidate-4.exe
+Artifact role: FIUSNReader
 Size:     3,346,944 bytes
 SHA-256:  A71A769F25E9CCB0C9ACAF8CAFBE6C751AEB8F3884FC5EBD1BF7723B3BBF2263
 ```
@@ -57,7 +57,7 @@ acceptance artifacts.
 
 ## Exact Windows build matrix
 
-| Windows Server | Version / build | Windows behavior characterized | Candidate #4 |
+| Windows Server | Version / build | Windows behavior characterized | Gate 1 build |
 |---|---:|---|---|
 | Windows Server 2016 | 10.0.14393 | YES | COMPLETE |
 | Windows Server 2019 | 10.0.17763 | YES | COMPLETE |
@@ -66,7 +66,7 @@ acceptance artifacts.
 
 Adjacent builds are not accepted by similarity.
 
-## Windows Server 2016 Candidate #4 campaign
+## Windows Server 2016 Gate 1 campaign
 
 Test host:
 
@@ -97,10 +97,10 @@ Gate 1 closure-kit results:
 The Gate 1 kit extends the existing common/release-specific FI verification
 procedures; it does not erase the earlier Windows characterization record.
 
-During Candidate #4 deployment verification, common Tests 01, 07, and 08 were
+During Gate 1 deployment verification, common Tests 01, 07, and 08 were
 also re-run successfully.
 
-## Windows Server 2019 Candidate #4 campaign
+## Windows Server 2019 Gate 1 campaign
 
 Test host:
 
@@ -110,7 +110,7 @@ Windows Server 2019
 10.0.17763
 ```
 
-The exact Candidate #4 collector/helper hashes matched the artifacts identified
+The exact Gate 1 build collector/helper hashes matched the artifacts identified
 above throughout the acceptance campaign.
 
 Accepted Server 2019 results include:
@@ -166,7 +166,7 @@ F308CA4A2717FE9CE184B1A07BB147BD83BE1C55866754AB6772D57FD5B5AE0F
 Detailed Server 2019 verification is recorded in:
 
 ```text
-docs/GATE-1-SERVER-2019-CANDIDATE-4.md
+docs/GATE-1-SERVER-2019.md
 ```
 
 The Server 2019 sweep intentionally did not repeat every candidate-wide
@@ -261,7 +261,7 @@ a real LDAPS transport outage and verified dependency restoration.
 
 ## Four-operation privileged broker
 
-Candidate #4 uses four bounded `FIUSNReader` operations:
+The Gate 1 build uses four bounded `FIUSNReader` operations:
 
 ```text
 QueryJournal
@@ -285,12 +285,12 @@ The SACL operation:
 - leaves descriptor parsing and FI record construction in the non-admin
   `FICollector`.
 
-Equivalent live Candidate #4 SACL acceptance remains pending on Server 2022 and
+Equivalent live Gate 1 SACL acceptance remains pending on Server 2022 and
 2025.
 
 ## Historical containment
 
-Candidate #4 closes the deleted-child/deleted-parent historical-containment case
+The Gate 1 build closes the deleted-child/deleted-parent historical-containment case
 using bounded same-USN-batch NTFS identity relationships.
 
 The accepted design does not trust a stale path and does not blanket-include an
@@ -300,11 +300,11 @@ Server 2016 result: **PASS**
 
 ## Content-prefix custody
 
-Candidate #4 live validation used:
+Gate 1 live validation used:
 
 ```text
 Source:
-C:\FI-Lab\fi-candidate4-content-prefix.bin
+C:\FI-Lab\fi-gate1-content-prefix.bin
 
 Source size:
 51 bytes
@@ -370,11 +370,11 @@ Those values are acceptance configuration, not production defaults.
 
 ## Local source verification
 
-Immediately before the original Candidate #4 documentation reconciliation, the
-Candidate #4 source tree passed:
+Immediately before the original Gate 1 build documentation reconciliation, the
+Gate 1 source tree passed:
 
 ```text
-Candidate #4 changed/new Go files gofmt clean    PASS
+Gate 1 changed/new Go files gofmt clean    PASS
 go vet ./...                                    PASS
 go test ./...                                   PASS
 git diff --check                                PASS
@@ -385,18 +385,18 @@ The Gate 1 parser validation covered all 15 scripts in the closure kit.
 
 A pre-existing formatting difference in
 `go/internal/windows/ntfs/convert.go` was inspected separately and deliberately
-left untouched because it is not part of the Candidate #4 delta.
+left untouched because it is not part of the Gate 1 delta.
 
 ## Gate 1 remaining work
 
-Windows Server 2016 Candidate #4 acceptance is complete.
+Windows Server 2016 Gate 1 acceptance is complete.
 
-Windows Server 2019 Candidate #4 acceptance is complete.
+Windows Server 2019 Gate 1 acceptance is complete.
 
 Gate 1 remains open overall for:
 
-1. exact Candidate #4 acceptance on Windows Server 2022 build `20348`;
-2. exact Candidate #4 acceptance on Windows Server 2025 build `26100`;
+1. exact Gate 1 acceptance on Windows Server 2022 build `20348`;
+2. exact Gate 1 acceptance on Windows Server 2025 build `26100`;
 3. repeated representative performance/source-impact measurement where needed
    across the intended supported deployment set;
 4. production collection/supporting-refresh cadence selection from accumulated

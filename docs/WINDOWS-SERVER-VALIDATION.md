@@ -2,7 +2,7 @@
 
 This document records Windows Server release/build characterization for the FI
 Phase 1 Windows File & Identity Intelligence runtime and separately tracks exact
-Candidate #4 Gate 1 acceptance.
+Gate 1 acceptance.
 
 It records tested FI behavior. It does not assume later Windows Server releases
 behave identically.
@@ -19,19 +19,19 @@ behave identically.
 These rows preserve the established Windows behavior, raw-volume, service-token,
 File-ID, Security Event Log, and release-specific protected-object findings.
 
-## Candidate #4 Gate 1 acceptance
+## Gate 1 acceptance
 
-| Windows Server | Version / build | Candidate #4 status |
+| Windows Server | Version / build | Gate 1 status |
 |---|---:|---|
 | Windows Server 2016 | 10.0.14393 | COMPLETE |
-| Windows Server 2019 | 10.0.17763 | PENDING |
+| Windows Server 2019 | 10.0.17763 | COMPLETE |
 | Windows Server 2022 | 10.0.20348 | PENDING |
 | Windows Server 2025 | 10.0.26100 | PENDING |
 
-Candidate #4 includes the current four-operation broker and live `ReadSACL` path.
+Gate 1 build includes the current four-operation broker and live `ReadSACL` path.
 Earlier release/build characterization and earlier accepted production pairs
 remain valid for the design and behavior they tested, but do not substitute for
-exact Candidate #4 Gate 1 acceptance.
+exact Gate 1 acceptance.
 
 A later Windows Server release or an uncharacterized build must be characterized
 independently before FI assumes that its raw-volume, service-token, Security
@@ -95,9 +95,9 @@ around the privileged SACL read, restores the exact prior privilege state, and
 returns the raw bounded descriptor to `FICollector`, which owns descriptor
 parsing and record construction.
 
-Live Candidate #4 acceptance of this four-operation broker, including `ReadSACL`,
-is currently complete on Windows Server 2016 build `14393`. Equivalent
-Candidate #4 acceptance on Server 2019, 2022, and 2025 remains pending.
+Live Gate 1 acceptance of this four-operation broker, including `ReadSACL`,
+is complete on Windows Server 2016 build `14393` and Windows Server 2019 build
+`17763`. Equivalent Gate 1 acceptance on Server 2022 and 2025 remains pending.
 
 ---
 
@@ -478,8 +478,8 @@ Tests 01 through 08; those common tests were also run and passed on build
 ## Shared split-privilege properties across characterized releases
 
 The properties below were established by the earlier characterization and
-release-specific acceptance work. They do not by themselves establish Candidate
-#4 Gate 1 acceptance on every release.
+release-specific acceptance work. They do not by themselves establish Gate 1
+acceptance on every release.
 
 The validated split-privilege design preserves these properties:
 

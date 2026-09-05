@@ -15,8 +15,8 @@ Windows Server 2025    10.0.26100
 
 Adjacent or future builds are not accepted by similarity.
 
-Characterization of a Windows release/build is not the same as exact Candidate
-#4 Gate 1 acceptance. The current Candidate #4 campaign state is recorded in
+Characterization of a Windows release/build is not the same as exact Gate 1
+acceptance. The current Gate 1 campaign state is recorded in
 `docs/GATE-1-RESULT-RECORD.md`.
 
 ## Safety classes

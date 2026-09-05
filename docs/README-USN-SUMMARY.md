@@ -20,18 +20,18 @@ Windows Server 2022    10.0.20348
 Windows Server 2025    10.0.26100
 ```
 
-Exact Candidate #4 Gate 1 acceptance is tracked separately:
+Exact Gate 1 acceptance is tracked separately:
 
 ```text
 Windows Server 2016    10.0.14393    COMPLETE
-Windows Server 2019    10.0.17763    PENDING
+Windows Server 2019    10.0.17763    COMPLETE
 Windows Server 2022    10.0.20348    PENDING
 Windows Server 2025    10.0.26100    PENDING
 ```
 
-The four-operation broker, including live `ReadSACL`, is currently accepted
-only on Server 2016 build `14393`. Earlier 2019/2022/2025 characterization
-does not by itself establish Candidate #4 acceptance.
+The four-operation broker, including live `ReadSACL`, is currently accepted on
+Server 2016 build `14393` and Server 2019 build `17763`. Earlier 2022/2025
+characterization does not by itself establish Gate 1 acceptance.
 
 Later Windows Server releases and uncharacterized builds are characterized
 independently.

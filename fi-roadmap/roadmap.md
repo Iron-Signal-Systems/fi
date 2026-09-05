@@ -57,14 +57,14 @@ The major Phase 1 architecture is now established:
   `NT SERVICE\FICollector` service SID.
 
 Windows Server 2016 build `14393` and Windows Server 2019 build `17763` have
-completed exact Candidate #4 Gate 1 acceptance, including the current
+completed exact Gate 1 acceptance, including the current
 four-operation broker and live `ReadSACL` path.
 
 The underlying split-privilege Windows behavior is also characterized on Server
 2022 `20348` and Server 2025 `26100`, but those earlier findings do not substitute
-for exact Candidate #4 acceptance.
+for exact Gate 1 acceptance.
 
-Current Candidate #4 status:
+Current Gate 1 status:
 
 ```text
 Server 2016 / 14393    COMPLETE
@@ -76,7 +76,7 @@ Server 2025 / 26100    PENDING
 Remaining Gate 1 work is primarily **cross-version acceptance and production
 characterization**, not new source architecture:
 
-- exact Candidate #4 acceptance on Server 2022 and 2025;
+- exact Gate 1 acceptance on Server 2022 and 2025;
 - repeated representative performance/source-impact measurement where needed;
 - production interval/cadence characterization from accumulated measurements;
   and

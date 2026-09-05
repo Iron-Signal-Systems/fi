@@ -80,13 +80,13 @@ go test ./internal/windows/ntfs -run '^$' -bench '^Benchmark' -benchmem -count 3
 
 ## Gate 1 performance campaign status
 
-The Server 2016 Candidate #4 campaign has completed the first bounded Gate 1
+The Server 2016 Gate 1 campaign has completed the first bounded Gate 1
 performance/source-impact campaign:
 
-- Test 13 â€” repeated real `-perf-root` baseline measurements;
-- Test 14 â€” bounded churn characterization;
-- Test 15 â€” bounded spool-pressure characterization; and
-- Test 16 â€” immutable operation/resource-journal summary.
+- Test 13 — repeated real `-perf-root` baseline measurements;
+- Test 14 — bounded churn characterization;
+- Test 15 — bounded spool-pressure characterization; and
+- Test 16 — immutable operation/resource-journal summary.
 
 These results establish bounded, measurable behavior for the tested Server 2016
 acceptance workloads. They are not production sizing guidance and do not establish

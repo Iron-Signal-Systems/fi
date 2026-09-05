@@ -1,10 +1,10 @@
-# FI Gate 1 Candidate #4 — Windows Server 2019 Verification
+# FI Gate 1 — Windows Server 2019 Verification
 
 Record date: 2026-09-04
 
 Status: **COMPLETE**
 
-This record captures exact Candidate #4 Gate 1 acceptance on Windows Server 2019
+This record captures exact Gate 1 acceptance on Windows Server 2019
 build `17763`. It is separate from earlier Windows release/build
 characterization and does not extend acceptance to adjacent builds.
 
@@ -19,12 +19,12 @@ Install:    Server Core
 Domain:     iss.local
 ```
 
-## Candidate #4 artifact identity
+## Gate 1 artifact identity
 
 Collector:
 
 ```text
-Artifact: fi-candidate-4.exe
+Artifact role: FICollector
 Installed: C:\Program Files\FI\fi.exe
 Size:      6,649,344 bytes
 SHA-256:   6D641A73D0CE116BA09C16885371164BF580D36631DD6F031090B2EE5DC86C13
@@ -33,7 +33,7 @@ SHA-256:   6D641A73D0CE116BA09C16885371164BF580D36631DD6F031090B2EE5DC86C13
 Privileged helper:
 
 ```text
-Artifact: fi-usn-candidate-4.exe
+Artifact role: FIUSNReader
 Installed: C:\Program Files\FI\fi-usn.exe
 Size:      3,346,944 bytes
 SHA-256:   A71A769F25E9CCB0C9ACAF8CAFBE6C751AEB8F3884FC5EBD1BF7723B3BBF2263
@@ -122,7 +122,7 @@ Overall: PASS
 Failure count: 0
 ```
 
-The production service command line and exact Candidate #4 binaries were restored
+The production service command line and exact Gate 1 build binaries were restored
 and verified after the controlled test. The lab probe executable was removed.
 
 ## Local governed-file activity — Test 10A
@@ -241,7 +241,7 @@ Data format:        Interpreted
 Observation status: Complete
 ```
 
-This closes the exact Candidate #4 `ReadSACL` acceptance requirement on Windows
+This closes the exact Gate 1 build `ReadSACL` acceptance requirement on Windows
 Server 2019 build `17763` while descriptor parsing and FI record construction
 remain in the non-admin collector.
 
@@ -322,20 +322,20 @@ At closure:
 
 - `FICollector` was `Running`;
 - `FIUSNReader` was `Running`;
-- exact Candidate #4 executable hashes remained installed;
+- exact Gate 1 build executable hashes remained installed;
 - no Test 12D firewall fault remained;
 - no Test 12D rollback scheduled task remained; and
 - the Test 08 lab-only probe executable had been removed.
 
 ## Acceptance conclusion
 
-Windows Server 2019 build `17763` is **COMPLETE** for exact Candidate #4 Gate 1
+Windows Server 2019 build `17763` is **COMPLETE** for exact Gate 1
 acceptance.
 
-This acceptance is limited to the exact release/build and exact Candidate #4
+This acceptance is limited to the exact release/build and exact Gate 1 build
 artifacts identified above. It does not declare production collection cadence,
 production sizing, or any adjacent/future Windows build accepted by similarity.
 
-Overall Gate 1 remains open for exact Candidate #4 acceptance on Windows Server
+Overall Gate 1 remains open for exact Gate 1 acceptance on Windows Server
 2022 build `20348`, Windows Server 2025 build `26100`, remaining representative
 production-characterization work, and final cross-version Gate 1 review.

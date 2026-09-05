@@ -343,7 +343,7 @@ Windows Server 2022    10.0.20348
 Windows Server 2025    10.0.26100
 ```
 
-Exact Candidate #4 Gate 1 acceptance is tracked separately:
+Exact Gate 1 acceptance is tracked separately:
 
 ```text
 Windows Server 2016    10.0.14393    COMPLETE
@@ -398,7 +398,7 @@ See:
 - [FI NTFS USN Privilege Boundary](docs/security/usn-privilege-boundary.md)
 - [FI Windows Server Validation](docs/WINDOWS-SERVER-VALIDATION.md)
 - [FI USN Split-Privilege Verification Kit](tools/README.md)
-- [FI Gate 1 Candidate #4 — Windows Server 2019 Verification](docs/GATE-1-SERVER-2019-CANDIDATE-4.md)
+- [FI Gate 1 — Windows Server 2019 Verification](docs/GATE-1-SERVER-2019.md)
 
 ---
 
@@ -590,7 +590,7 @@ manifest.
 
 The core Phase 1 source architecture is largely established.
 
-Windows Server 2016 build `14393` has completed the exact Candidate #4 Gate 1
+Windows Server 2016 build `14393` has completed the exact Gate 1 acceptance
 campaign. That campaign includes:
 
 - reproducible two-service/two-gMSA deployment and exact deployment acceptance;
@@ -606,13 +606,13 @@ campaign. That campaign includes:
 - the four-operation `FIUSNReader` broker, including live exact-object
   `ReadSACL`, while `FICollector` remains non-administrative.
 
-Windows Server 2019 build `17763` has also completed exact Candidate #4 Gate 1
+Windows Server 2019 build `17763` has also completed exact Gate 1
 acceptance. Its build-sensitive acceptance campaign covered deployment and ACL
 boundaries, the actual collector service-token boundary, local and true remote
 SMB activity/Security custody, live `ReadSACL`, collector and helper outage
 catch-up, bounded AD-LDAPS dependency observation, and bounded baseline/resource
 observation. The detailed record is
-[`docs/GATE-1-SERVER-2019-CANDIDATE-4.md`](docs/GATE-1-SERVER-2019-CANDIDATE-4.md).
+[`docs/GATE-1-SERVER-2019.md`](docs/GATE-1-SERVER-2019.md).
 
 The underlying Windows split-privilege behavior is characterized and green for
 the split-privilege acceptance baseline on:
@@ -623,7 +623,7 @@ Windows Server 2022    10.0.20348
 Windows Server 2025    10.0.26100
 ```
 
-Exact Candidate #4 Gate 1 acceptance is:
+Exact Gate 1 acceptance is:
 
 ```text
 Windows Server 2016    10.0.14393    COMPLETE
@@ -634,7 +634,7 @@ Windows Server 2025    10.0.26100    PENDING
 
 Remaining Gate 1 work is therefore primarily:
 
-- exact Candidate #4 acceptance on Server 2022 and 2025;
+- exact Gate 1 acceptance on Server 2022 and 2025;
 - repeated representative performance/source-impact measurement across the
   intended supported deployment set where needed;
 - production collection/supporting-refresh cadence selection from accumulated
