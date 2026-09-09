@@ -32,7 +32,7 @@ investigation.
 
 ## Current Development Focus
 
-FI is currently focused on **Phase 1 / Gate 1**.
+FI is currently focused on **Phase 2 / Gate 2 — Secure Record Transport**.
 
 The major Phase 1 architecture is now established:
 
@@ -69,12 +69,11 @@ Current Gate 1 status:
 ```text
 Server 2016 / 14393    COMPLETE
 Server 2019 / 17763    COMPLETE
-Server 2022 / 20348    PENDING
-Server 2025 / 26100    PENDING
+Server 2022 / 20348    COMPLETE
+Server 2025 / 26100    COMPLETE
 ```
 
-Remaining Gate 1 work is primarily **cross-version acceptance and production
-characterization**, not new source architecture:
+Gate 1 closure completed the remaining **cross-version acceptance and source-impact characterization** work:
 
 - exact Gate 1 acceptance on Server 2022 and 2025;
 - repeated representative performance/source-impact measurement where needed;
@@ -82,9 +81,21 @@ characterization**, not new source architecture:
   and
 - final Gate 1 result-record review across the intended exact release/build set.
 
-Gate 1 remains open overall until those boundaries are proved.
+Gate 1 is complete. Phase 2 begins at the finalized, verified, published local-spool boundary.
 
 ---
+
+### Phase 1 closeout
+
+Final source-impact acceptance included a `100,000`-file / `122.344-GiB`
+onboarding campaign with configured collection outcome `Complete`.
+
+The source-side operating rule is that host availability and durable FI state
+take priority over maintaining nominal cadence.
+
+**Phase 1 / Gate 1: COMPLETE — PASS**
+
+**Phase 2 / Gate 2: ACTIVE**
 
 ## Phase 1 — Windows File & Identity Intelligence
 

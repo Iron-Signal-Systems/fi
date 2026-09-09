@@ -348,8 +348,8 @@ Exact Gate 1 acceptance is tracked separately:
 ```text
 Windows Server 2016    10.0.14393    COMPLETE
 Windows Server 2019    10.0.17763    COMPLETE
-Windows Server 2022    10.0.20348    PENDING
-Windows Server 2025    10.0.26100    PENDING
+Windows Server 2022    10.0.20348    COMPLETE
+Windows Server 2025    10.0.26100    COMPLETE
 ```
 
 2019, 2022, and 2025 characterization explicitly established that a restricted
@@ -586,9 +586,9 @@ manifest.
 
 ---
 
-## Current Phase 1 focus
+## Phase 1 closeout and current Phase 2 focus
 
-The core Phase 1 source architecture is largely established.
+Phase 1 / Gate 1 is complete for the accepted source-intelligence boundary.
 
 Windows Server 2016 build `14393` has completed the exact Gate 1 acceptance
 campaign. That campaign includes:
@@ -628,11 +628,11 @@ Exact Gate 1 acceptance is:
 ```text
 Windows Server 2016    10.0.14393    COMPLETE
 Windows Server 2019    10.0.17763    COMPLETE
-Windows Server 2022    10.0.20348    PENDING
-Windows Server 2025    10.0.26100    PENDING
+Windows Server 2022    10.0.20348    COMPLETE
+Windows Server 2025    10.0.26100    COMPLETE
 ```
 
-Remaining Gate 1 work is therefore primarily:
+Gate 1 closure subsequently completed:
 
 - exact Gate 1 acceptance on Server 2022 and 2025;
 - repeated representative performance/source-impact measurement across the
@@ -642,16 +642,48 @@ Remaining Gate 1 work is therefore primarily:
 - final review of the Gate 1 result record across the intended release/build set.
 
 The Gate 1 test deployment uses `1m` collection and `30m` supporting-source
-refresh only as an acceptance configuration. Production cadence remains
-`NOT_EVALUATED`.
+refresh only as an acceptance configuration. Gate 1 does not declare one universal production cadence; pilot and production intervals remain deployment-specific and measurement-driven.
 
-Gate 1 remains open overall until those remaining cross-version and production
-acceptance boundaries are resolved.
+Gate 1 is complete. FI is now focused on Phase 2 / Gate 2 secure record transport.
 
 No additional Phase 1 source subsystem should be added unless a concrete Gate 1
 requirement demonstrates that a required source fact is missing.
 
 ---
+
+### Phase 1 / Gate 1 final closeout
+
+Final source-impact acceptance used FICollector SHA-256:
+
+```text
+5C2A8FA07D9AF6F9762F7ED62975E6E6247CCF50325CF3B24211229596E90DB0
+```
+
+The final onboarding acceptance covered `100,000` files totaling
+`131,365,642,498` bytes (`122.344 GiB`) with `ConfiguredCollection: Complete`.
+
+```text
+Collection elapsed:          10,048.082 sec
+Peak whole-host CPU:         36.91 %
+Peak combined FI CPU:        11.14 % of host
+Peak combined FI RAM:        36.21 MiB
+Minimum host available RAM:  7,069.99 MiB
+Peak host memory load:       21.00 %
+Peak Y: logical read:        34.842 MiB/s
+Peak Y: logical write:       0.723 MiB/s
+Peak observed Y: queue:       3
+Spool files:                 6,320
+Spool bytes:                 870,946,901
+Manifest record count:       202,012
+```
+
+Y: values are Windows logical-disk measurements, not per-process physical-disk
+byte counters.
+
+The accepted source-side rule is that host availability and durable FI collection
+state take priority over maintaining nominal FI cadence.
+
+Phase 2 begins at the finalized, verified, published local spool boundary.
 
 ## Source file content and classification
 

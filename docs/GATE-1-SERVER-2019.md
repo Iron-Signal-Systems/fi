@@ -336,6 +336,11 @@ This acceptance is limited to the exact release/build and exact Gate 1 build
 artifacts identified above. It does not declare production collection cadence,
 production sizing, or any adjacent/future Windows build accepted by similarity.
 
-Overall Gate 1 remains open for exact Gate 1 acceptance on Windows Server
+At the time of this Server 2019-specific record, overall Gate 1 remained open for exact Gate 1 acceptance on Windows Server
 2022 build `20348`, Windows Server 2025 build `26100`, remaining representative
 production-characterization work, and final cross-version Gate 1 review.
+
+> **Later status update — 2026-09-09:** subsequent Server 2022/2025,
+> source-impact, and candidate-wide closure work completed. The authoritative
+> overall status is now **Phase 1 / Gate 1: COMPLETE — PASS**. See
+> `docs/GATE-1-RESULT-RECORD.md`.

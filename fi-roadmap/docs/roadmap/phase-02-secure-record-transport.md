@@ -11,6 +11,18 @@ Phase 1 creates and verifies the durable local source queue. Phase 2 begins at
 that accepted queue boundary and owns transport custody, acknowledgement,
 retry/resume, and retirement only after backend custody is established.
 
+## Current Development Status
+
+**ACTIVE — Phase 2 / Gate 2**
+
+Phase 1 / Gate 1 completed on 2026-09-09.
+
+The Phase 2 entry boundary is the finalized, verified, and published local spool
+batch. Phase 1 verifies producer-private spool material before publication.
+Phase 2 owns active sender/receiver concurrency, durable acknowledgement,
+retry/resume, duplicate/replay/conflict behavior, backlog recovery, and local
+retirement only after downstream custody is established.
+
 ## Responsibilities
 
 Phase 2 owns:

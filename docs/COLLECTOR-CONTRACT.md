@@ -50,3 +50,16 @@ returned by the collected `member` attribute.
 
 That derivation belongs in the backend, where derived relationships can remain
 distinct from the source facts used to produce them.
+
+## Local durable queue handoff
+
+Phase 1 owns construction and verification of the local durable FI spool batch.
+
+The producer verifies the private/unpublished data-manifest pair before
+publication and must not depend on reopening that pair after final-manifest
+publication.
+
+Phase 2 begins at the published local queue boundary and owns discovery,
+send/retry/resume, durable downstream acknowledgement,
+duplicate/replay/conflict handling, backlog/catch-up, and eventual retirement of
+the acknowledged local pair.

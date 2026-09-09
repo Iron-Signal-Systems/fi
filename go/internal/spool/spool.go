@@ -328,6 +328,13 @@ func writeManifest(path string, value Manifest) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	verification, err := VerifyManifest(tempPath)
+	if err != nil {
+		return fmt.Errorf("verify unpublished FI batch manifest: %w", err)
+	}
+	if !verification.Verified {
+		return errors.New("unpublished FI batch manifest did not verify")
+	}
 	if err := durableRename(tempPath, path); err != nil {
 		return err
 	}

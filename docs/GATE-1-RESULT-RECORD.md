@@ -1,8 +1,8 @@
 # FI Gate 1 Result Record
 
-Record date: 2026-09-05
+Record date: 2026-09-09
 
-Overall Gate 1 status: **OPEN**
+Overall Gate 1 status: **COMPLETE — PASS**
 
 Windows Server 2016 Gate 1 status: **COMPLETE**
 
@@ -270,7 +270,7 @@ FIUSNReader
 A71A769F25E9CCB0C9ACAF8CAFBE6C751AEB8F3884FC5EBD1BF7723B3BBF2263
 ```
 
-Overall Gate 1 remains OPEN until the remaining candidate-wide closure review,
+At that point, Gate 1 remained open until the remaining candidate-wide closure review,
 including the production cadence decision, is explicitly resolved.
 
 ## Test 12D dependency observation
@@ -450,11 +450,7 @@ Server 2019 exact acceptance included bounded baseline and operation/resource
 observation on build `17763`; the full candidate-wide churn/spool-pressure stress
 campaign was not repeated as a Server-2019-specific closure requirement.
 
-Production cadence remains:
-
-```text
-NOT_EVALUATED
-```
+Universal production cadence remains deployment-specific and measurement-driven.
 
 The Gate 1 test deployment command line uses:
 
@@ -484,13 +480,13 @@ A pre-existing formatting difference in
 `go/internal/windows/ntfs/convert.go` was inspected separately and deliberately
 left untouched because it is not part of the Gate 1 delta.
 
-## Gate 1 remaining work
+## Gate 1 closure
 
 Windows Server 2016 Gate 1 acceptance is complete.
 
 Windows Server 2019 Gate 1 acceptance is complete.
 
-Gate 1 remains open overall for:
+Gate 1 closure subsequently completed:
 
 1. repeated representative performance/source-impact measurement where needed
    across the intended supported deployment set;
@@ -501,3 +497,78 @@ Gate 1 remains open overall for:
 
 No prior characterization result may be substituted for exact current-candidate
 acceptance.
+
+## Final Phase 1 source-impact and publication-boundary acceptance
+
+Final Phase 1 source-impact acceptance used:
+
+```text
+FICollector SHA-256
+5C2A8FA07D9AF6F9762F7ED62975E6E6247CCF50325CF3B24211229596E90DB0
+```
+
+This candidate includes the local spool publication-boundary correction and its
+Go regression test. Earlier exact cross-version artifact identities remain
+historical acceptance facts.
+
+The accepted ownership rule is:
+
+```text
+producer-private spool state
+        |
+        v
+finalize data
+        |
+        v
+construct + verify private manifest/data pair
+        |
+        v
+publish final manifest
+        |
+        v
+Phase 2 transport-visible boundary
+```
+
+After publication, Phase 1 producer correctness does not depend on reopening the
+published pair. Active sender acknowledgement/delete concurrency belongs to
+Phase 2 / Gate 2.
+
+Final onboarding acceptance:
+
+```text
+Files:                       100,000
+Bytes:                       131,365,642,498
+GiB:                         122.344
+Outcome:                     Complete
+Collection elapsed:          10,048.082 sec
+Peak whole-host CPU:         36.91 %
+Peak combined FI CPU:        11.14 % of host
+Peak combined FI RAM:        36.21 MiB
+Minimum host available RAM:  7,069.99 MiB
+Peak host memory load:       21.00 %
+Peak Y: logical read:        34.842 MiB/s
+Peak Y: logical write:       0.723 MiB/s
+Peak observed Y: queue:       3
+Spool files:                 6,320
+Spool bytes:                 870,946,901
+Manifest record count:       202,012
+```
+
+Operation timings included:
+
+```text
+Baseline          4997.792 sec  Complete
+USNCatchUp           1.671 sec  Complete
+Reconciliation    5047.862 sec  Complete
+```
+
+Both FI Windows services remained running at completion.
+
+Gate 1 does not declare one universal production interval. Pilot/production
+cadence remains deployment-specific and measurement-driven.
+
+**Gate 1 — Source Intelligence & Continuity: COMPLETE — PASS**
+
+**Phase 1: COMPLETE**
+
+**Phase 2 / Gate 2: ACTIVE**

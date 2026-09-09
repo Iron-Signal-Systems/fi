@@ -51,14 +51,14 @@ before volume-wide USN activity is treated as governed-object activity.
 | Active Directory identity | Implemented foundation + refresh scheduled | Resolves relevant current-domain principals and direct `member` relationships using Windows DC Locator, trusted LDAPS/636, Schannel validation, and the collector's current Windows token. Raw `primaryGroupID` is preserved without deriving a membership edge. |
 | Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Backend correlation owns nested membership and final effective-access conclusions. |
 | USN journal change detection | Implemented and integrated | Configured runs use persistent checkpoints, bounded USN catch-up, governed-object selection, File-ID re-observation, durable local spooling, verification, and checkpoint advancement. |
-| USN privilege isolation | Implemented; Gate 1 live accepted on Server 2016 and Server 2019 | `FICollector` remains non-admin. `FIUSNReader` is a separate local-Administrator service exposing only bounded USN query/read, mechanical containment, and exact-object SACL-read operations. Local IPC requires the enabled `NT SERVICE\FICollector` service SID and rejects remote clients. Exact Gate 1 acceptance on Server 2022/2025 remains pending. |
+| USN privilege isolation | Implemented; Gate 1 accepted on all four exact Windows Server builds | `FICollector` remains non-admin. `FIUSNReader` is a separate local-Administrator service exposing only bounded USN query/read, mechanical containment, and exact-object SACL-read operations. Local IPC requires the enabled `NT SERVICE\FICollector` service SID and rejects remote clients. Exact Gate 1 acceptance is complete on Server 2022/2025. |
 | Windows Security governed-file activity | Implemented foundation and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. The broader behavior matrix remains. |
 | Local durable spool | Implemented | Writes finalized JSONL batches and manifests, verifies count/size/SHA-256, retains accepted local batches, and does not remove them before Phase 2 acknowledgement exists. |
 | Normal-run checkpoint continuity | Implemented and live validated | USN and Windows Security checkpoints resume from the previously accepted boundary without replaying the prior accepted range. |
 | Continuity-gap history and reconciliation | Implemented and live validated | USN and Windows Security gaps are persisted explicitly as incomplete, current state is reconciled, and a new forward boundary is established without pretending missing history was reconstructed. |
 | Operation journal | Implemented and live validated for major boundaries | Append-only Started/Finished lifecycle history covers baseline, USN catch-up, Windows Security catch-up, reconciliation, and SupportingSourceRefresh. Orphaned Started operations are recovered as Interrupted/ProcessRestart. |
 | FI runtime resource journal | Implemented foundation / non-blocking | CPU, RAM, and process-I/O history exists for journaled USN operations. Broader coverage is useful for sizing and pilot validation but is not itself a Gate 1 blocker. |
-| Supporting-source refresh | Implemented, live validated, and service scheduled | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches. `-service` can schedule it at an explicit operator-provided interval. Production cadence still requires measurement. |
+| Supporting-source refresh | Implemented, live validated, and service scheduled | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches. `-service` can schedule it at an explicit operator-provided interval. No universal production cadence is declared; pilot and production intervals remain deployment-specific and measurement-driven. |
 | Windows service runtime | Implemented foundation and live validated | The SCM runtime invokes the existing configured collector, prevents overlapping FI-owned write modes through runtime ownership, schedules configured collection and supporting refresh sequentially, and supports stop/shutdown cancellation. Broader failure and boot/restart validation remains. |
 | gMSA runtime | Implemented foundation and live validated | Per host, `FICollector` runs as a non-admin gMSA and `FIUSNReader` uses a separate privileged gMSA. Remaining work is deployment reproducibility and validation of service/binary/config/state/spool rights. |
 | Failure/restart campaign | Partially validated | Checkpoint gaps, operation restart recovery, helper outage, frozen USN checkpoint, collector continuation, helper restart, and USN catch-up are validated. Broader adverse-condition cases remain. |
@@ -592,7 +592,7 @@ arbitrary administrative operations.
 
 Gate 1 live acceptance of this four-operation helper is complete on Server
 2016 build `14393` and Server 2019 build `17763`. Equivalent Gate 1 acceptance
-remains pending on Server 2022 build `20348` and Server 2025 build `26100`.
+is complete on Server 2022 build `20348` and Server 2025 build `26100`.
 
 ### IPC authentication
 
@@ -705,7 +705,7 @@ should cover:
 - service restart/recovery; and
 - gap reconciliation.
 
-Production cadence remains `NOT_EVALUATED`. Thresholds and intervals should be
+Gate 1 does not declare one universal production cadence. Thresholds and intervals should be
 based on repeated representative measurements rather than invented from one
 machine or one run.
 
@@ -727,8 +727,8 @@ Exact Gate 1 acceptance is tracked separately:
 ```text
 Windows Server 2016    10.0.14393    COMPLETE
 Windows Server 2019    10.0.17763    COMPLETE
-Windows Server 2022    10.0.20348    PENDING
-Windows Server 2025    10.0.26100    PENDING
+Windows Server 2022    10.0.20348    COMPLETE
+Windows Server 2025    10.0.26100    COMPLETE
 ```
 
 An adjacent build or later Windows Server release must be characterized
@@ -787,12 +787,12 @@ Gate 1 also proves:
   model; and
 - source impact remains bounded and measurable.
 
-### Remaining work before Gate 1 acceptance
+### Gate 1 closure
 
 Windows Server 2016 build `14393` and Windows Server 2019 build `17763` have
 completed exact Gate 1 acceptance.
 
-Gate 1 remains open overall for:
+Gate 1 closure completed the following items:
 
 1. exact Gate 1 acceptance on Windows Server 2022 build `20348`;
 2. exact Gate 1 acceptance on Windows Server 2025 build `26100`;
@@ -804,8 +804,30 @@ Gate 1 remains open overall for:
    release/build set.
 
 The `1m` collection / `30m` supporting-source cadence used by the Gate 1 test
-deployment is an acceptance configuration, not a production default. Production
-cadence remains `NOT_EVALUATED`.
+deployment is an acceptance configuration, not a production default. Pilot and production cadence remains deployment-specific and measurement-driven.
 
 No new Phase 1 source subsystem should be added unless a concrete Gate 1
 requirement demonstrates that an existing source fact is missing.
+
+#### Final Gate 1 source-impact result
+
+Final onboarding acceptance used `100,000` files totaling `122.344 GiB` and
+completed successfully.
+
+```text
+Collection elapsed:          10,048.082 sec
+Peak whole-host CPU:         36.91 %
+Peak combined FI CPU:        11.14 % of host
+Peak combined FI RAM:        36.21 MiB
+Minimum host available RAM:  7,069.99 MiB
+Peak Y: logical read:        34.842 MiB/s
+Peak Y: logical write:       0.723 MiB/s
+Peak observed Y: queue:       3
+```
+
+The accepted source-side rule is that host availability and durable FI state take
+priority over maintaining nominal FI cadence.
+
+**Gate 1 — Source Intelligence & Continuity: COMPLETE — PASS**
+
+Phase 2 begins at the finalized, verified, published local spool boundary.

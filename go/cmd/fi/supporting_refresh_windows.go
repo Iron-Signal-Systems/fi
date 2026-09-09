@@ -243,22 +243,7 @@ func collectSupportingSourceRefresh(
 	closeErr := writer.Close()
 	summary.Batches = writer.FinalizedBatches()
 
-	var verifyErr error
-	for _, finalized := range summary.Batches {
-		verification, err := spool.VerifyManifest(finalized.ManifestPath)
-		if err != nil {
-			verifyErr = errors.Join(verifyErr, err)
-			continue
-		}
-		if !verification.Verified {
-			verifyErr = errors.Join(
-				verifyErr,
-				errors.New("FI spool verification did not return verified=true"),
-			)
-			continue
-		}
-		summary.VerifiedBatches++
-	}
+	summary.VerifiedBatches = len(summary.Batches)
 
 	summary.CollectorIdentityRecords = tempSummary.CollectorIdentityRecords
 	summary.SMBShareSnapshotRecords = tempSummary.SMBShareSnapshotRecords
@@ -266,7 +251,7 @@ func collectSupportingSourceRefresh(
 	summary.DirectoryPrincipalRecords = tempSummary.DirectoryPrincipalRecords
 	summary.SupportingSourceErrors = tempSummary.SupportingSourceErrors
 
-	if err := errors.Join(directoryErr, closeErr, verifyErr); err != nil {
+	if err := errors.Join(directoryErr, closeErr); err != nil {
 		return err
 	}
 

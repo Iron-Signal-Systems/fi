@@ -85,7 +85,7 @@ It does **not** silently create customer data roots, rewrite customer data ACLs,
 change Advanced Audit Policy, or install SACLs. `-GrantTestRootReadAccess` is
 available only for a clearly named test/lab root.
 
-The `1m` collection / `30m` supporting-source command line is fixed in this Gate 1 test installer because the existing Test 08 restoration contract is fixed to that exact acceptance command line. These are **not** accepted production defaults. Production cadence remains `NOT_EVALUATED` until the performance campaign is reviewed.
+The `1m` collection / `30m` supporting-source command line is fixed in this Gate 1 test installer because the existing Test 08 restoration contract is fixed to that exact acceptance command line. These are **not** universal production defaults. Gate 1 source-impact characterization is complete; pilot/production cadence remains deployment-specific and measurement-driven.
 
 Example:
 
@@ -332,3 +332,23 @@ and saves a durable report package.
 
 See `docs/GATE-1-VALIDATOR.md` for the complete procedure and cross-version
 validator acceptance sequence.
+
+## Final 100K onboarding acceptance artifacts
+
+The accepted onboarding campaign is preserved as:
+
+```text
+24A-FileServer-Onboarding100K-Dataset.ps1
+24B-FileServer-Onboarding100K-Measure.ps1
+24C-Remote-Onboarding100K-Watchdog.ps1
+```
+
+`24A` created the exact `100,000`-file / `122.344-GiB` dataset. Its later
+measurement stage encountered an unavailable Windows performance-counter category
+before FI started.
+
+`24B` independently reverified the exact dataset, used the corrected native host
+CPU/RAM measurement path and logical-disk counters, started FI, and produced the
+accepted final PASS result.
+
+`24C` provided independent remote availability observation.

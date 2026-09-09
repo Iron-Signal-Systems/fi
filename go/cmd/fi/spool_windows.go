@@ -195,24 +195,9 @@ func writeSpoolRoot(
 	closeErr := writer.Close()
 	summary.Batches = writer.FinalizedBatches()
 
-	var verifyErr error
-	for _, finalized := range summary.Batches {
-		verification, err := spool.VerifyManifest(finalized.ManifestPath)
-		if err != nil {
-			verifyErr = errors.Join(verifyErr, err)
-			continue
-		}
-		if !verification.Verified {
-			verifyErr = errors.Join(
-				verifyErr,
-				errors.New("FI spool verification did not return verified=true"),
-			)
-			continue
-		}
-		summary.VerifiedBatches++
-	}
+	summary.VerifiedBatches = len(summary.Batches)
 
-	if err := errors.Join(walkErr, directoryErr, closeErr, verifyErr); err != nil {
+	if err := errors.Join(walkErr, directoryErr, closeErr); err != nil {
 		return summary, err
 	}
 

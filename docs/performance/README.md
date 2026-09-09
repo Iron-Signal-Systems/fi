@@ -108,6 +108,34 @@ measurement of:
 Record the environment, exact FI executable hash, governed-root size/object
 count, and source workload.
 
-Production cadence remains `NOT_EVALUATED`. Do not optimize against one machine
+Gate 1 does not declare one universal production cadence. Do not optimize against one machine
 or one run. Compare like workloads on like environments before defining
 thresholds or production defaults.
+
+## Final Phase 1 / Gate 1 source-impact acceptance
+
+The final onboarding campaign used `100,000` files totaling `122.344 GiB`.
+
+```text
+ConfiguredCollection:        Complete
+Collection elapsed:          10,048.082 sec
+Peak whole-host CPU:         36.91 %
+Peak combined FI CPU:        11.14 % of host
+Peak combined FI RAM:        36.21 MiB
+Minimum host available RAM:  7,069.99 MiB
+Peak host memory load:       21.00 %
+Peak Y: logical read:        34.842 MiB/s
+Peak Y: logical write:       0.723 MiB/s
+Peak observed Y: queue:       3
+Spool files:                 6,320
+Spool bytes:                 870,946,901
+Manifest record count:       202,012
+```
+
+These are measurements from the tested environment, not universal production
+limits.
+
+The accepted operating principle is that host availability and durable FI state
+take priority over maintaining nominal FI cadence.
+
+See `PHASE-1-GATE-1-CLOSEOUT.md`.
