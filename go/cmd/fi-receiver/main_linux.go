@@ -9,8 +9,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -39,96 +37,6 @@ func fail(err error) {
 	os.Exit(1)
 }
 
-func loadCertificate(path string) (*x509.Certificate, error) {
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"read certificate %q: %w",
-			path,
-			err,
-		)
-	}
-
-	block, rest := pem.Decode(value)
-	if block == nil {
-		return nil, fmt.Errorf(
-			"%q does not contain PEM data",
-			path,
-		)
-	}
-
-	if block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf(
-			"%q contains PEM type %q, want CERTIFICATE",
-			path,
-			block.Type,
-		)
-	}
-
-	if len(rest) != 0 {
-		return nil, fmt.Errorf(
-			"%q contains unexpected data after the certificate",
-			path,
-		)
-	}
-
-	certificate, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"parse certificate %q: %w",
-			path,
-			err,
-		)
-	}
-
-	return certificate, nil
-}
-
-func loadCRL(path string) (*x509.RevocationList, error) {
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"read CRL %q: %w",
-			path,
-			err,
-		)
-	}
-
-	block, rest := pem.Decode(value)
-	if block == nil {
-		return nil, fmt.Errorf(
-			"%q does not contain PEM data",
-			path,
-		)
-	}
-
-	if block.Type != "X509 CRL" {
-		return nil, fmt.Errorf(
-			"%q contains PEM type %q, want X509 CRL",
-			path,
-			block.Type,
-		)
-	}
-
-	if len(rest) != 0 {
-		return nil, fmt.Errorf(
-			"%q contains unexpected data after the CRL",
-			path,
-		)
-	}
-
-	crl, err := x509.ParseRevocationList(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"parse CRL %q: %w",
-			path,
-			err,
-		)
-	}
-
-	return crl, nil
-}
-
 func printTransportUsage() {
 	fmt.Fprintln(
 		os.Stderr,
@@ -136,11 +44,20 @@ func printTransportUsage() {
 	)
 }
 
-func printTrustUsage() {
-	fmt.Fprintln(
-		os.Stderr,
-		"usage: fi-receiver trust status",
-	)
+func printTrustParseState(
+	name string,
+	state receivertrust.ParseState,
+) {
+	result := "INVALID"
+	if state.Parsed {
+		result = "PARSED"
+	}
+
+	fmt.Printf("%-23s %s\n", name, result)
+
+	if !state.Parsed && state.Detail != "" {
+		fmt.Printf("  %s\n", state.Detail)
+	}
 }
 
 func printTrustState(name string, present bool) {
@@ -150,6 +67,13 @@ func printTrustState(name string, present bool) {
 	}
 
 	fmt.Printf("%-23s %s\n", name, state)
+}
+
+func printTrustUsage() {
+	fmt.Fprintln(
+		os.Stderr,
+		"usage: fi-receiver trust status",
+	)
 }
 
 func runTransportCommand() {
@@ -231,19 +155,21 @@ func runTransportCommand() {
 		))
 	}
 
-	root, err := loadCertificate(receivertrust.RootCAPath)
+	root, err := receivertrust.LoadCertificate(
+		receivertrust.RootCAPath,
+	)
 	if err != nil {
 		fail(err)
 	}
 
-	transportIssuer, err := loadCertificate(
+	transportIssuer, err := receivertrust.LoadCertificate(
 		receivertrust.TransportIssuerPath,
 	)
 	if err != nil {
 		fail(err)
 	}
 
-	transportCRL, err := loadCRL(
+	transportCRL, err := receivertrust.LoadCRL(
 		receivertrust.TransportCRLPath,
 	)
 	if err != nil {
@@ -329,10 +255,44 @@ func runTrustCommand(args []string) {
 
 	if status.Complete {
 		fmt.Println("Presence state          COMPLETE")
+	} else {
+		fmt.Println("Presence state          INCOMPLETE")
+	}
+
+	fmt.Println()
+
+	parseStatus := receivertrust.InspectParsing()
+
+	printTrustParseState("Root CA", parseStatus.RootCA)
+	printTrustParseState(
+		"Transport issuing CA",
+		parseStatus.TransportIssuer,
+	)
+	printTrustParseState(
+		"Batch signing CA",
+		parseStatus.BatchIssuer,
+	)
+	printTrustParseState(
+		"Transport CRL",
+		parseStatus.TransportCRL,
+	)
+	printTrustParseState(
+		"Batch signing CRL",
+		parseStatus.BatchCRL,
+	)
+	printTrustParseState(
+		"Receiver certificate",
+		parseStatus.ReceiverCert,
+	)
+
+	fmt.Println()
+
+	if parseStatus.Complete {
+		fmt.Println("Parse state             COMPLETE")
 		return
 	}
 
-	fmt.Println("Presence state          INCOMPLETE")
+	fmt.Println("Parse state             INCOMPLETE")
 }
 
 func validateSourceID(sourceID string) error {
