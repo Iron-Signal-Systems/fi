@@ -20,134 +20,18 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportreceiver"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
-const (
-	receiverCertPath    = "/etc/fi/pki/receiver/certs/fi-receiver-tls-fullchain.pem"
-	receiverKeyPath     = "/etc/fi/pki/receiver/private/fi-receiver-tls.key.pem"
-	rootCAPath          = "/etc/fi/pki/trust/fi-root-ca.crt.pem"
-	sourceConfigRoot    = "/etc/fi/sources"
-	transportCRLPath    = "/etc/fi/pki/trust/fi-transport-ca.crl.pem"
-	transportIssuerPath = "/etc/fi/pki/trust/fi-transport-ca.crt.pem"
-)
-
 func main() {
-	transportListen := flag.Bool(
-		"transport-listen",
-		false,
-		"accept one authenticated FI transport connection",
-	)
-
-	bindAddress := flag.String(
-		"bind",
-		"",
-		"receiver bind address, for example 192.168.1.119:8443",
-	)
-
-	sourceID := flag.String(
-		"source",
-		"",
-		"authorized FI source ID, for example iss-fs-01.iss.local",
-	)
-
-	flag.Parse()
-
-	if !*transportListen {
-		printUsage()
-		os.Exit(2)
+	if len(os.Args) >= 2 && os.Args[1] == "trust" {
+		runTrustCommand(os.Args[2:])
+		return
 	}
 
-	if flag.NArg() != 0 {
-		printUsage()
-		os.Exit(2)
-	}
-
-	if *bindAddress == "" {
-		fail(errors.New("-bind is required"))
-	}
-
-	if err := validateSourceID(*sourceID); err != nil {
-		fail(err)
-	}
-
-	sourceConfigPath := filepath.Join(
-		sourceConfigRoot,
-		*sourceID+".conf",
-	)
-
-	sourceConfig, err := transporttrust.LoadSourceConfig(sourceConfigPath)
-	if err != nil {
-		fail(err)
-	}
-
-	if !strings.EqualFold(
-		sourceConfig.Authorization.SourceID,
-		*sourceID,
-	) {
-		fail(fmt.Errorf(
-			"source config identity %q does not match requested source %q",
-			sourceConfig.Authorization.SourceID,
-			*sourceID,
-		))
-	}
-
-	serverCertificate, err := tls.LoadX509KeyPair(
-		receiverCertPath,
-		receiverKeyPath,
-	)
-	if err != nil {
-		fail(fmt.Errorf("load receiver TLS identity: %w", err))
-	}
-
-	root, err := loadCertificate(rootCAPath)
-	if err != nil {
-		fail(err)
-	}
-
-	transportIssuer, err := loadCertificate(transportIssuerPath)
-	if err != nil {
-		fail(err)
-	}
-
-	transportCRL, err := loadCRL(transportCRLPath)
-	if err != nil {
-		fail(err)
-	}
-
-	ctx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stop()
-
-	result, err := transportreceiver.ListenOnce(
-		ctx,
-		transportreceiver.Config{
-			BindAddress:       *bindAddress,
-			CRL:               transportCRL,
-			Root:              root,
-			ServerCertificate: serverCertificate,
-			Source:            sourceConfig.Authorization,
-			TransportIssuer:   transportIssuer,
-		},
-	)
-	if err != nil {
-		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "FI receiver stopped.")
-			return
-		}
-
-		fail(err)
-	}
-
-	fmt.Printf("Source:        %s\n", result.SourceID)
-	fmt.Printf("TLS:           %s\n", result.TLSVersion)
-	fmt.Printf("CipherSuite:   %s\n", result.CipherSuite)
-	fmt.Println("MutualTLS:     true")
-	fmt.Println("Authorization: AUTHORIZED")
+	runTransportCommand()
 }
 
 func fail(err error) {
@@ -245,11 +129,210 @@ func loadCRL(path string) (*x509.RevocationList, error) {
 	return crl, nil
 }
 
-func printUsage() {
+func printTransportUsage() {
 	fmt.Fprintln(
 		os.Stderr,
 		"usage: fi-receiver -transport-listen -bind <address:port> -source <source-id>",
 	)
+}
+
+func printTrustUsage() {
+	fmt.Fprintln(
+		os.Stderr,
+		"usage: fi-receiver trust status",
+	)
+}
+
+func printTrustState(name string, present bool) {
+	state := "MISSING"
+	if present {
+		state = "PRESENT"
+	}
+
+	fmt.Printf("%-23s %s\n", name, state)
+}
+
+func runTransportCommand() {
+	flags := flag.NewFlagSet(
+		"fi-receiver",
+		flag.ContinueOnError,
+	)
+	flags.SetOutput(os.Stderr)
+
+	transportListen := flags.Bool(
+		"transport-listen",
+		false,
+		"accept one authenticated FI transport connection",
+	)
+
+	bindAddress := flags.String(
+		"bind",
+		"",
+		"receiver bind address, for example 192.168.1.119:8443",
+	)
+
+	sourceID := flags.String(
+		"source",
+		"",
+		"authorized FI source ID, for example iss-fs-01.iss.local",
+	)
+
+	if err := flags.Parse(os.Args[1:]); err != nil {
+		os.Exit(2)
+	}
+
+	if !*transportListen {
+		printTransportUsage()
+		os.Exit(2)
+	}
+
+	if flags.NArg() != 0 {
+		printTransportUsage()
+		os.Exit(2)
+	}
+
+	if *bindAddress == "" {
+		fail(errors.New("-bind is required"))
+	}
+
+	if err := validateSourceID(*sourceID); err != nil {
+		fail(err)
+	}
+
+	sourceConfigPath := filepath.Join(
+		receivertrust.SourceRegistryPath,
+		*sourceID+".conf",
+	)
+
+	sourceConfig, err := transporttrust.LoadSourceConfig(sourceConfigPath)
+	if err != nil {
+		fail(err)
+	}
+
+	if !strings.EqualFold(
+		sourceConfig.Authorization.SourceID,
+		*sourceID,
+	) {
+		fail(fmt.Errorf(
+			"source config identity %q does not match requested source %q",
+			sourceConfig.Authorization.SourceID,
+			*sourceID,
+		))
+	}
+
+	serverCertificate, err := tls.LoadX509KeyPair(
+		receivertrust.ReceiverCertPath,
+		receivertrust.ReceiverKeyPath,
+	)
+	if err != nil {
+		fail(fmt.Errorf(
+			"load receiver TLS identity: %w",
+			err,
+		))
+	}
+
+	root, err := loadCertificate(receivertrust.RootCAPath)
+	if err != nil {
+		fail(err)
+	}
+
+	transportIssuer, err := loadCertificate(
+		receivertrust.TransportIssuerPath,
+	)
+	if err != nil {
+		fail(err)
+	}
+
+	transportCRL, err := loadCRL(
+		receivertrust.TransportCRLPath,
+	)
+	if err != nil {
+		fail(err)
+	}
+
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	result, err := transportreceiver.ListenOnce(
+		ctx,
+		transportreceiver.Config{
+			BindAddress:       *bindAddress,
+			CRL:               transportCRL,
+			Root:              root,
+			ServerCertificate: serverCertificate,
+			Source:            sourceConfig.Authorization,
+			TransportIssuer:   transportIssuer,
+		},
+	)
+	if err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "FI receiver stopped.")
+			return
+		}
+
+		fail(err)
+	}
+
+	fmt.Printf("Source:        %s\n", result.SourceID)
+	fmt.Printf("TLS:           %s\n", result.TLSVersion)
+	fmt.Printf("CipherSuite:   %s\n", result.CipherSuite)
+	fmt.Println("MutualTLS:     true")
+	fmt.Println("Authorization: AUTHORIZED")
+}
+
+func runTrustCommand(args []string) {
+	if len(args) != 1 || args[0] != "status" {
+		printTrustUsage()
+		os.Exit(2)
+	}
+
+	status, err := receivertrust.Inspect()
+	if err != nil {
+		fail(err)
+	}
+
+	printTrustState("Root CA", status.RootCA.Present)
+	printTrustState(
+		"Transport issuing CA",
+		status.TransportIssuer.Present,
+	)
+	printTrustState(
+		"Batch signing CA",
+		status.BatchIssuer.Present,
+	)
+	printTrustState(
+		"Transport CRL",
+		status.TransportCRL.Present,
+	)
+	printTrustState(
+		"Batch signing CRL",
+		status.BatchCRL.Present,
+	)
+	printTrustState(
+		"Receiver certificate",
+		status.ReceiverCert.Present,
+	)
+	printTrustState(
+		"Receiver private key",
+		status.ReceiverKey.Present,
+	)
+	printTrustState(
+		"Source registry",
+		status.SourceRegistry.Present,
+	)
+
+	fmt.Println()
+
+	if status.Complete {
+		fmt.Println("Presence state          COMPLETE")
+		return
+	}
+
+	fmt.Println("Presence state          INCOMPLETE")
 }
 
 func validateSourceID(sourceID string) error {
@@ -258,7 +341,9 @@ func validateSourceID(sourceID string) error {
 	}
 
 	if strings.ContainsAny(sourceID, `/\`) {
-		return errors.New("source ID must not contain path separators")
+		return errors.New(
+			"source ID must not contain path separators",
+		)
 	}
 
 	if sourceID == "." || sourceID == ".." {
