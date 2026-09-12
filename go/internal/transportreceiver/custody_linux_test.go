@@ -69,48 +69,16 @@ func TestReceiveToDurableCustody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReceiveToDurableCustody() error = %v", err)
 	}
+	if result.Disposition != CustodyDispositionNew {
+		t.Fatalf(
+			"Disposition = %q, want %q",
+			result.Disposition,
+			CustodyDispositionNew,
+		)
+	}
 
 	descriptor := fixture.signedBatch.Descriptor
-	if result.SourceID != descriptor.SourceID {
-		t.Fatalf("SourceID = %q, want %q", result.SourceID, descriptor.SourceID)
-	}
-	if result.BatchID != descriptor.BatchID {
-		t.Fatalf("BatchID = %q, want %q", result.BatchID, descriptor.BatchID)
-	}
-	if result.DataBytes != descriptor.DataBytes {
-		t.Fatalf("DataBytes = %d, want %d", result.DataBytes, descriptor.DataBytes)
-	}
-	if result.DataSHA256 != descriptor.DataSHA256 {
-		t.Fatalf("DataSHA256 = %q, want %q", result.DataSHA256, descriptor.DataSHA256)
-	}
-	if result.ManifestSHA256 != descriptor.ManifestSHA256 {
-		t.Fatalf(
-			"ManifestSHA256 = %q, want %q",
-			result.ManifestSHA256,
-			descriptor.ManifestSHA256,
-		)
-	}
-	if result.FrameBytes != uint64(len(frame)) {
-		t.Fatalf("FrameBytes = %d, want %d", result.FrameBytes, len(frame))
-	}
-
-	frameDigest := sha256.Sum256(frame)
-	wantFrameSHA256 := hex.EncodeToString(frameDigest[:])
-	if result.FrameSHA256 != wantFrameSHA256 {
-		t.Fatalf(
-			"FrameSHA256 = %q, want %q",
-			result.FrameSHA256,
-			wantFrameSHA256,
-		)
-	}
-
-	wantPath := filepath.Join(
-		root,
-		custodyObjectName(descriptor.SourceID, descriptor.BatchID),
-	)
-	if result.FramePath != wantPath {
-		t.Fatalf("FramePath = %q, want %q", result.FramePath, wantPath)
-	}
+	assertCustodyResultMatchesFrame(t, result, descriptor.SourceID, descriptor.BatchID, frame)
 
 	stored, err := os.ReadFile(result.FramePath)
 	if err != nil {
@@ -152,7 +120,171 @@ func TestReceiveToDurableCustody(t *testing.T) {
 	}
 }
 
-func TestReceiveToDurableCustodyDoesNotReplaceExistingObject(t *testing.T) {
+func TestReceiveToDurableCustodyClassifiesConcurrentExactRetry(t *testing.T) {
+	fixture := newIntakeTestFixture(t)
+	frame := encodeIntakeTestFrame(
+		t,
+		fixture.signedBatch,
+		fixture.manifest,
+		fixture.data,
+	)
+	root := t.TempDir()
+	config := CustodyConfig{
+		Intake:  fixture.config,
+		RootDir: root,
+	}
+
+	type response struct {
+		result DurableCustodyResult
+		err    error
+	}
+	start := make(chan struct{})
+	responses := make(chan response, 2)
+	for range 2 {
+		go func() {
+			<-start
+			result, err := ReceiveToDurableCustody(bytes.NewReader(frame), config)
+			responses <- response{result: result, err: err}
+		}()
+	}
+	close(start)
+
+	first := <-responses
+	second := <-responses
+	for index, value := range []response{first, second} {
+		if value.err != nil {
+			t.Fatalf("concurrent ReceiveToDurableCustody() result %d error = %v", index, value.err)
+		}
+	}
+
+	dispositions := map[CustodyDisposition]int{
+		first.result.Disposition:  1,
+		second.result.Disposition: 1,
+	}
+	if first.result.Disposition == second.result.Disposition {
+		dispositions[first.result.Disposition] = 2
+	}
+	if dispositions[CustodyDispositionNew] != 1 ||
+		dispositions[CustodyDispositionDuplicate] != 1 {
+		t.Fatalf(
+			"concurrent dispositions = %q and %q, want one NEW and one DUPLICATE",
+			first.result.Disposition,
+			second.result.Disposition,
+		)
+	}
+
+	assertNoCustodyOpenFiles(t, root)
+	assertSingleCustodyObject(t, root)
+}
+
+func TestReceiveToDurableCustodyRejectsConflict(t *testing.T) {
+	firstFixture := newIntakeTestFixture(t)
+	firstFrame := encodeIntakeTestFrame(
+		t,
+		firstFixture.signedBatch,
+		firstFixture.manifest,
+		firstFixture.data,
+	)
+	root := t.TempDir()
+
+	firstResult, err := ReceiveToDurableCustody(
+		bytes.NewReader(firstFrame),
+		CustodyConfig{
+			Intake:  firstFixture.config,
+			RootDir: root,
+		},
+	)
+	if err != nil {
+		t.Fatalf("first ReceiveToDurableCustody() error = %v", err)
+	}
+
+	secondFixture := newIntakeTestFixture(t)
+	secondFrame := encodeIntakeTestFrame(
+		t,
+		secondFixture.signedBatch,
+		secondFixture.manifest,
+		secondFixture.data,
+	)
+	if bytes.Equal(firstFrame, secondFrame) {
+		t.Fatal("independent signed frames unexpectedly match exactly")
+	}
+
+	_, err = ReceiveToDurableCustody(
+		bytes.NewReader(secondFrame),
+		CustodyConfig{
+			Intake:  secondFixture.config,
+			RootDir: root,
+		},
+	)
+	if err == nil {
+		t.Fatal("second ReceiveToDurableCustody() error = nil, want custody conflict")
+	}
+	if !errors.Is(err, ErrCustodyConflict) {
+		t.Fatalf(
+			"second ReceiveToDurableCustody() error = %v, want ErrCustodyConflict",
+			err,
+		)
+	}
+
+	stored, err := os.ReadFile(firstResult.FramePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(stored, firstFrame) {
+		t.Fatal("custody conflict replaced the original durable object")
+	}
+	assertNoCustodyOpenFiles(t, root)
+	assertSingleCustodyObject(t, root)
+}
+
+func TestReceiveToDurableCustodyReturnsDuplicateForExactRetry(t *testing.T) {
+	fixture := newIntakeTestFixture(t)
+	frame := encodeIntakeTestFrame(
+		t,
+		fixture.signedBatch,
+		fixture.manifest,
+		fixture.data,
+	)
+	root := t.TempDir()
+	config := CustodyConfig{
+		Intake:  fixture.config,
+		RootDir: root,
+	}
+
+	first, err := ReceiveToDurableCustody(bytes.NewReader(frame), config)
+	if err != nil {
+		t.Fatalf("first ReceiveToDurableCustody() error = %v", err)
+	}
+	second, err := ReceiveToDurableCustody(bytes.NewReader(frame), config)
+	if err != nil {
+		t.Fatalf("second ReceiveToDurableCustody() error = %v", err)
+	}
+
+	if first.Disposition != CustodyDispositionNew {
+		t.Fatalf("first Disposition = %q, want NEW", first.Disposition)
+	}
+	if second.Disposition != CustodyDispositionDuplicate {
+		t.Fatalf("second Disposition = %q, want DUPLICATE", second.Disposition)
+	}
+	if second.FramePath != first.FramePath {
+		t.Fatalf("duplicate FramePath = %q, want %q", second.FramePath, first.FramePath)
+	}
+	if second.FrameSHA256 != first.FrameSHA256 {
+		t.Fatalf("duplicate FrameSHA256 = %q, want %q", second.FrameSHA256, first.FrameSHA256)
+	}
+
+	stored, err := os.ReadFile(first.FramePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(stored, frame) {
+		t.Fatal("exact retry changed durable custody bytes")
+	}
+	assertNoCustodyOpenFiles(t, root)
+	assertSingleCustodyObject(t, root)
+}
+
+func TestReceiveToDurableCustodyRejectsExistingMutableObject(t *testing.T) {
 	fixture := newIntakeTestFixture(t)
 	frame := encodeIntakeTestFrame(
 		t,
@@ -166,8 +298,7 @@ func TestReceiveToDurableCustodyDoesNotReplaceExistingObject(t *testing.T) {
 		root,
 		custodyObjectName(descriptor.SourceID, descriptor.BatchID),
 	)
-	original := []byte("existing durable object")
-	if err := os.WriteFile(finalPath, original, 0o600); err != nil {
+	if err := os.WriteFile(finalPath, frame, 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
 
@@ -179,23 +310,14 @@ func TestReceiveToDurableCustodyDoesNotReplaceExistingObject(t *testing.T) {
 		},
 	)
 	if err == nil {
-		t.Fatal("ReceiveToDurableCustody() error = nil, want existing-object rejection")
+		t.Fatal("ReceiveToDurableCustody() error = nil, want mutable-object rejection")
 	}
-	if !errors.Is(err, ErrCustodyAlreadyExists) {
+	if !strings.Contains(err.Error(), "mode must be 0400") {
 		t.Fatalf(
-			"ReceiveToDurableCustody() error = %v, want ErrCustodyAlreadyExists",
+			"ReceiveToDurableCustody() error = %q, want immutable-mode rejection",
 			err,
 		)
 	}
-
-	stored, err := os.ReadFile(finalPath)
-	if err != nil {
-		t.Fatalf("os.ReadFile() error = %v", err)
-	}
-	if !bytes.Equal(stored, original) {
-		t.Fatalf("existing custody object changed to %q", stored)
-	}
-
 	assertNoCustodyOpenFiles(t, root)
 }
 
@@ -324,6 +446,31 @@ func TestValidateCustodyConfigRejectsSymlinkRoot(t *testing.T) {
 
 // Test helpers.
 
+func assertCustodyResultMatchesFrame(
+	t *testing.T,
+	result DurableCustodyResult,
+	sourceID string,
+	batchID string,
+	frame []byte,
+) {
+	t.Helper()
+
+	if result.SourceID != sourceID {
+		t.Fatalf("SourceID = %q, want %q", result.SourceID, sourceID)
+	}
+	if result.BatchID != batchID {
+		t.Fatalf("BatchID = %q, want %q", result.BatchID, batchID)
+	}
+	if result.FrameBytes != uint64(len(frame)) {
+		t.Fatalf("FrameBytes = %d, want %d", result.FrameBytes, len(frame))
+	}
+	frameDigest := sha256.Sum256(frame)
+	wantFrameSHA256 := hex.EncodeToString(frameDigest[:])
+	if result.FrameSHA256 != wantFrameSHA256 {
+		t.Fatalf("FrameSHA256 = %q, want %q", result.FrameSHA256, wantFrameSHA256)
+	}
+}
+
 func assertNoCustodyOpenFiles(t *testing.T, root string) {
 	t.Helper()
 
@@ -335,5 +482,21 @@ func assertNoCustodyOpenFiles(t *testing.T, root string) {
 		if strings.HasSuffix(entry.Name(), ".open") {
 			t.Fatalf("provisional custody file remains after operation: %s", entry.Name())
 		}
+	}
+}
+
+func assertSingleCustodyObject(t *testing.T, root string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("os.ReadDir() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("custody root contains %d entries, want 1", len(entries))
+	}
+	if !strings.HasPrefix(entries[0].Name(), "batch-") ||
+		!strings.HasSuffix(entries[0].Name(), ".fiwb") {
+		t.Fatalf("custody root entry = %q, want batch-<digest>.fiwb", entries[0].Name())
 	}
 }
