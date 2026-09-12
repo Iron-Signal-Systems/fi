@@ -139,6 +139,19 @@ func runTransportCommand() {
 		fail(err)
 	}
 
+	readiness := receivertrust.InspectReadiness()
+	if !readiness.Ready {
+		detail := readiness.Detail
+		if detail == "" {
+			detail = "unspecified trust validation failure"
+		}
+
+		fail(fmt.Errorf(
+			"receiver trust not ready: %s",
+			detail,
+		))
+	}
+
 	sourceConfigPath := filepath.Join(
 		receivertrust.SourceRegistryPath,
 		*sourceID+".conf",
