@@ -378,7 +378,16 @@ func runTrustCommand(args []string) {
 	)
 
 	fmt.Println()
-	fmt.Println("Receiver coverage       LEAF_FULLCHAIN_SERVER_AUTH_KEY_MATCH_HOSTNAME")
+	receiverRevocationValidation :=
+		receivertrust.InspectReceiverRevocationValidation()
+
+	printTrustValidationState(
+		"Receiver revocation",
+		receiverRevocationValidation,
+	)
+
+	fmt.Println()
+	fmt.Println("Receiver coverage       LEAF_FULLCHAIN_SERVER_AUTH_KEY_MATCH_HOSTNAME_REVOCATION")
 
 	fmt.Println()
 
@@ -392,6 +401,50 @@ func runTrustCommand(args []string) {
 
 	fmt.Println()
 	fmt.Println("Registry coverage       PARSE_FILENAME_UNIQUENESS_CA_PINS")
+
+	fmt.Println()
+
+	trustCustodyValidation :=
+		receivertrust.InspectTrustCustodyValidation()
+
+	printTrustValidationState(
+		"Trust custody",
+		trustCustodyValidation,
+	)
+
+	fmt.Println()
+	fmt.Println("Custody coverage        OWNER_GROUP_TYPE_RUNTIME_ACCESS_WRITE_PROTECTION_NO_SYMLINKS")
+
+	readiness := receivertrust.EvaluateReadiness(
+		receivertrust.ReadinessInput{
+			BatchCRL:            batchCRLValidation,
+			BatchIssuer:         batchIssuerValidation,
+			Parsing:             parseStatus,
+			Presence:            status,
+			ReceiverCertificate: receiverCertificateValidation,
+			ReceiverHostname:    receiverHostnameValidation,
+			ReceiverKey:         receiverKeyValidation,
+			ReceiverRevocation:  receiverRevocationValidation,
+			RootCA:              rootCAValidation,
+			SourceRegistry:      sourceRegistryValidation,
+			TransportCRL:        transportCRLValidation,
+			TransportIssuer:     transportIssuerValidation,
+			TrustCustody:        trustCustodyValidation,
+		},
+	)
+
+	fmt.Println()
+
+	trustState := "NOT_READY"
+	if readiness.Ready {
+		trustState = "READY"
+	}
+
+	fmt.Printf("%-23s %s\n", "Trust state", trustState)
+
+	if !readiness.Ready && readiness.Detail != "" {
+		fmt.Printf("  %s\n", readiness.Detail)
+	}
 }
 
 func validateSourceID(sourceID string) error {
