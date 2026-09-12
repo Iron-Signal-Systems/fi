@@ -13,11 +13,14 @@ import (
 	"time"
 )
 
+const receiverTransportOrganizationalUnit = "FI Receiver Transport"
+
 // ValidateReceiverCertificate validates the FI receiver TLS leaf certificate
 // against the expected FI Transport Issuing CA and FI Root CA.
 //
 // This validation requires:
 //   - a non-CA leaf certificate;
+//   - exactly one organizational unit identifying the FI receiver role;
 //   - digital-signature key usage;
 //   - the expected Transport Issuing CA as issuer;
 //   - a valid signature from that issuing CA;
@@ -49,6 +52,21 @@ func ValidateReceiverCertificate(
 
 	if leaf.IsCA {
 		return errors.New("receiver certificate must not be a CA")
+	}
+
+	if len(leaf.Subject.OrganizationalUnit) != 1 {
+		return fmt.Errorf(
+			"receiver certificate must contain exactly one organizational unit, got %d",
+			len(leaf.Subject.OrganizationalUnit),
+		)
+	}
+
+	if leaf.Subject.OrganizationalUnit[0] != receiverTransportOrganizationalUnit {
+		return fmt.Errorf(
+			"receiver certificate organizational unit must be %q, got %q",
+			receiverTransportOrganizationalUnit,
+			leaf.Subject.OrganizationalUnit[0],
+		)
 	}
 
 	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {

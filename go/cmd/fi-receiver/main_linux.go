@@ -400,7 +400,7 @@ func runTrustCommand(args []string) {
 	)
 
 	fmt.Println()
-	fmt.Println("Receiver coverage       LEAF_FULLCHAIN_SERVER_AUTH_KEY_MATCH_HOSTNAME_REVOCATION")
+	fmt.Println("Receiver coverage       LEAF_ROLE_OU_FULLCHAIN_SERVER_AUTH_KEY_MATCH_HOSTNAME_REVOCATION")
 
 	fmt.Println()
 

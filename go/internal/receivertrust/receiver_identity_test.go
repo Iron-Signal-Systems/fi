@@ -148,6 +148,53 @@ func TestValidateReceiverCertificateRejectsCA(t *testing.T) {
 	}
 }
 
+func TestValidateReceiverCertificateRejectsOrganizationalUnit(t *testing.T) {
+	root, issuer, leaf, _, _ := newReceiverIdentityMaterial(t)
+	at := time.Now()
+
+	tests := []struct {
+		name               string
+		organizationalUnit []string
+	}{
+		{
+			name:               "missing organizational unit",
+			organizationalUnit: nil,
+		},
+		{
+			name: "wrong organizational unit",
+			organizationalUnit: []string{
+				"FI Shipper Transport",
+			},
+		},
+		{
+			name: "multiple organizational units",
+			organizationalUnit: []string{
+				receiverTransportOrganizationalUnit,
+				"FI Shipper Transport",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := *leaf
+			candidate.Subject = leaf.Subject
+			candidate.Subject.OrganizationalUnit = test.organizationalUnit
+
+			if err := ValidateReceiverCertificate(
+				&candidate,
+				root,
+				issuer,
+				at,
+			); err == nil {
+				t.Fatal(
+					"ValidateReceiverCertificate() error = nil, want error",
+				)
+			}
+		})
+	}
+}
+
 func TestValidateReceiverKeyPairFiles(t *testing.T) {
 	root, issuer, leaf, _, leafKey := newReceiverIdentityMaterial(t)
 
@@ -274,6 +321,9 @@ func newReceiverIdentityMaterial(
 		SerialNumber: big.NewInt(3),
 		Subject: pkix.Name{
 			CommonName: "fi-receiver-test.iss.local",
+			OrganizationalUnit: []string{
+				receiverTransportOrganizationalUnit,
+			},
 		},
 		DNSNames:    []string{"fi-receiver-test.iss.local"},
 		NotBefore:   now.Add(-time.Hour),
