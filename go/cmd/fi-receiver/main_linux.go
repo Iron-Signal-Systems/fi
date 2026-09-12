@@ -60,6 +60,22 @@ func printTrustParseState(
 	}
 }
 
+func printTrustValidationState(
+	name string,
+	state receivertrust.ValidationState,
+) {
+	result := "INVALID"
+	if state.Valid {
+		result = "VALID"
+	}
+
+	fmt.Printf("%-23s %s\n", name, result)
+
+	if !state.Valid && state.Detail != "" {
+		fmt.Printf("  %s\n", state.Detail)
+	}
+}
+
 func printTrustState(name string, present bool) {
 	state := "MISSING"
 	if present {
@@ -289,10 +305,93 @@ func runTrustCommand(args []string) {
 
 	if parseStatus.Complete {
 		fmt.Println("Parse state             COMPLETE")
-		return
+	} else {
+		fmt.Println("Parse state             INCOMPLETE")
 	}
 
-	fmt.Println("Parse state             INCOMPLETE")
+	fmt.Println()
+
+	rootCAValidation := receivertrust.InspectRootCAValidation()
+
+	printTrustValidationState(
+		"Root CA",
+		rootCAValidation,
+	)
+
+	fmt.Println()
+	transportIssuerValidation := receivertrust.InspectTransportIssuerValidation()
+	batchIssuerValidation := receivertrust.InspectBatchIssuerValidation()
+
+	printTrustValidationState(
+		"Transport issuing CA",
+		transportIssuerValidation,
+	)
+	printTrustValidationState(
+		"Batch signing CA",
+		batchIssuerValidation,
+	)
+
+	fmt.Println()
+	fmt.Println("Root CA coverage        STRUCTURE_SELF_SIGNATURE_VALIDITY")
+	fmt.Println("Issuing CA coverage     STRUCTURE_ROOT_SIGNATURE_VALIDITY")
+
+	fmt.Println()
+
+	transportCRLValidation := receivertrust.InspectTransportCRLValidation()
+	batchCRLValidation := receivertrust.InspectBatchCRLValidation()
+
+	printTrustValidationState(
+		"Transport CRL",
+		transportCRLValidation,
+	)
+	printTrustValidationState(
+		"Batch signing CRL",
+		batchCRLValidation,
+	)
+
+	fmt.Println()
+	fmt.Println("CRL coverage            ISSUER_SIGNATURE_FRESHNESS")
+
+	fmt.Println()
+
+	receiverCertificateValidation :=
+		receivertrust.InspectReceiverCertificateValidation()
+	receiverKeyValidation :=
+		receivertrust.InspectReceiverKeyValidation()
+
+	printTrustValidationState(
+		"Receiver certificate",
+		receiverCertificateValidation,
+	)
+	printTrustValidationState(
+		"Receiver private key",
+		receiverKeyValidation,
+	)
+
+	fmt.Println()
+	receiverHostnameValidation :=
+		receivertrust.InspectReceiverHostnameValidation()
+
+	printTrustValidationState(
+		"Receiver hostname",
+		receiverHostnameValidation,
+	)
+
+	fmt.Println()
+	fmt.Println("Receiver coverage       LEAF_FULLCHAIN_SERVER_AUTH_KEY_MATCH_HOSTNAME")
+
+	fmt.Println()
+
+	sourceRegistryValidation :=
+		receivertrust.InspectSourceRegistryValidation()
+
+	printTrustValidationState(
+		"Source registry",
+		sourceRegistryValidation,
+	)
+
+	fmt.Println()
+	fmt.Println("Registry coverage       PARSE_FILENAME_UNIQUENESS_CA_PINS")
 }
 
 func validateSourceID(sourceID string) error {
