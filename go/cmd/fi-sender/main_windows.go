@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -31,10 +32,13 @@ const receiverTransportOrganizationalUnit = "FI Receiver Transport"
 type senderConfig struct {
 	BatchSigningCertificateSHA256 string
 	ManifestPath                  string
+	PollInterval                  time.Duration
 	ReceiverAddress               string
 	ReceiverName                  string
+	RetryBackoff                  time.Duration
 	RootCertificateSHA256         string
 	SourceID                      string
+	SpoolDir                      string
 	StageDir                      string
 	Timeout                       time.Duration
 	TransportCRLPath              string
@@ -64,6 +68,13 @@ func main() {
 		os.Interrupt,
 	)
 	defer stopSignal()
+
+	if config.SpoolDir != "" {
+		if err := runSenderQueue(signalContext, config); err != nil {
+			fail(err)
+		}
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(signalContext, config.Timeout)
 	defer cancel()
@@ -109,7 +120,8 @@ func dialReceiver(
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"dial FI receiver %s: %w",
+			"%w: dial FI receiver %s: %w",
+			transportsender.ErrRetryableTransport,
 			config.ReceiverAddress,
 			err,
 		)
@@ -125,7 +137,15 @@ func dialReceiver(
 	tlsConnection := tls.Client(connection, tlsConfig)
 	if err := tlsConnection.HandshakeContext(ctx); err != nil {
 		_ = tlsConnection.Close()
-		return nil, fmt.Errorf("FI receiver TLS handshake rejected: %w", err)
+		wrapped := fmt.Errorf("FI receiver TLS handshake rejected: %w", err)
+		if retryableSenderNetworkError(err) {
+			return nil, fmt.Errorf(
+				"%w: %w",
+				transportsender.ErrRetryableTransport,
+				wrapped,
+			)
+		}
+		return nil, wrapped
 	}
 
 	return tlsConnection, nil
@@ -180,7 +200,13 @@ func parseSenderConfig() (senderConfig, error) {
 		&config.ManifestPath,
 		"manifest",
 		"",
-		"absolute path to one published Phase 1 FI batch manifest",
+		"absolute path to one published Phase 1 FI batch manifest; mutually exclusive with -spool-dir",
+	)
+	flags.DurationVar(
+		&config.PollInterval,
+		"poll-interval",
+		5*time.Second,
+		"queue-mode delay before rescanning an empty Phase 1 spool",
 	)
 	flags.StringVar(
 		&config.ReceiverAddress,
@@ -194,6 +220,12 @@ func parseSenderConfig() (senderConfig, error) {
 		"",
 		"FI receiver certificate DNS name, for example fi-receiver-a.iss.local",
 	)
+	flags.DurationVar(
+		&config.RetryBackoff,
+		"retry-backoff",
+		10*time.Second,
+		"queue-mode delay before retrying the same batch after a failed transport transaction",
+	)
 	flags.StringVar(
 		&config.RootCertificateSHA256,
 		"root-cert-sha256",
@@ -205,6 +237,12 @@ func parseSenderConfig() (senderConfig, error) {
 		"source",
 		"",
 		"FI source ID, for example iss-fs-01.iss.local",
+	)
+	flags.StringVar(
+		&config.SpoolDir,
+		"spool-dir",
+		"",
+		"absolute Phase 1 FI spool directory for continuous oldest-first queue mode; mutually exclusive with -manifest",
 	)
 	flags.StringVar(
 		&config.StageDir,
@@ -421,6 +459,103 @@ func runSender(
 	return result, nil
 }
 
+func runSenderQueue(ctx context.Context, config senderConfig) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+
+	queue, err := transportsender.NewPublishedBatchQueue(config.SpoolDir)
+	if err != nil {
+		return fmt.Errorf("open FI published-batch queue: %w", err)
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		manifestPath, found, err := queue.Next()
+		if err != nil {
+			return fmt.Errorf("scan FI published-batch queue: %w", err)
+		}
+		if !found {
+			if err := waitForSenderInterval(ctx, config.PollInterval); err != nil {
+				return nil
+			}
+			continue
+		}
+
+		attemptConfig := config
+		attemptConfig.ManifestPath = manifestPath
+		attemptContext, cancel := context.WithTimeout(ctx, config.Timeout)
+		result, sendErr := runSender(attemptContext, attemptConfig)
+		cancel()
+		printSenderResult(result)
+
+		if sendErr != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if !queuedTransportFailureRetryable(result, sendErr) {
+				if result.AcknowledgementOutcome != "" {
+					return fmt.Errorf(
+						"FI queued transport reached durable receiver acknowledgement %q for %s but local completion failed: %w",
+						result.AcknowledgementOutcome,
+						manifestPath,
+						sendErr,
+					)
+				}
+				return fmt.Errorf(
+					"FI queued transport fail-stopped for %s before durable acknowledgement: %w",
+					manifestPath,
+					sendErr,
+				)
+			}
+
+			fmt.Fprintf(
+				os.Stderr,
+				"ERROR: FI queued transport failed for %s: %v\n",
+				manifestPath,
+				sendErr,
+			)
+			if err := waitForSenderInterval(ctx, config.RetryBackoff); err != nil {
+				return nil
+			}
+			continue
+		}
+
+		if err := queue.Advance(manifestPath); err != nil {
+			return fmt.Errorf("advance FI published-batch queue: %w", err)
+		}
+	}
+}
+
+func queuedTransportFailureRetryable(result senderResult, err error) bool {
+	return err != nil &&
+		result.AcknowledgementOutcome == "" &&
+		errors.Is(err, transportsender.ErrRetryableTransport)
+}
+
+func retryableSenderNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return true
+	case errors.Is(err, io.EOF):
+		return true
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return true
+	case errors.Is(err, io.ErrClosedPipe):
+		return true
+	}
+
+	var networkError net.Error
+	return errors.As(err, &networkError)
+}
+
 func tlsVersion(version uint16) string {
 	switch version {
 	case tls.VersionTLS12:
@@ -501,7 +636,6 @@ func validateSenderConfig(config senderConfig) error {
 		name  string
 		value string
 	}{
-		{name: "-manifest", value: config.ManifestPath},
 		{name: "-receiver", value: config.ReceiverAddress},
 		{name: "-receiver-name", value: config.ReceiverName},
 		{name: "-root-cert-sha256", value: config.RootCertificateSHA256},
@@ -516,8 +650,26 @@ func validateSenderConfig(config senderConfig) error {
 			return fmt.Errorf("%s is required", field.name)
 		}
 	}
+
+	hasManifest := strings.TrimSpace(config.ManifestPath) != ""
+	hasSpool := strings.TrimSpace(config.SpoolDir) != ""
+	switch {
+	case hasManifest && hasSpool:
+		return errors.New("-manifest and -spool-dir are mutually exclusive")
+	case !hasManifest && !hasSpool:
+		return errors.New("exactly one of -manifest or -spool-dir is required")
+	case hasSpool && strings.TrimSpace(config.BatchSigningCertificateSHA256) == "":
+		return errors.New("-batch-signing-cert-sha256 is required in queue mode")
+	}
+
 	if config.Timeout <= 0 {
 		return errors.New("-timeout must be greater than zero")
+	}
+	if hasSpool && config.PollInterval <= 0 {
+		return errors.New("-poll-interval must be greater than zero in queue mode")
+	}
+	if hasSpool && config.RetryBackoff <= 0 {
+		return errors.New("-retry-backoff must be greater than zero in queue mode")
 	}
 	if strings.ContainsAny(config.SourceID, `/\\`) ||
 		config.SourceID == "." ||
@@ -528,6 +680,22 @@ func validateSenderConfig(config senderConfig) error {
 		return fmt.Errorf("-receiver must be host:port: %w", err)
 	}
 	return nil
+}
+
+func waitForSenderInterval(ctx context.Context, interval time.Duration) error {
+	if interval <= 0 {
+		return errors.New("FI sender wait interval must be greater than zero")
+	}
+
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validateSourceTransportIdentity(

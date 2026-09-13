@@ -53,15 +53,23 @@ func SendAndRetirePreparedFrame(
 
 	result := TransportTransactionResult{Sent: outbound.Sent}
 	if err := sendPreparedOutboundFrame(stream, outbound); err != nil {
-		return result, fmt.Errorf("send exact FI outbound frame: %w", err)
+		wrapped := fmt.Errorf("send exact FI outbound frame: %w", err)
+		if retryableTransportWriteError(err) {
+			return result, fmt.Errorf("%w: %w", ErrRetryableTransport, wrapped)
+		}
+		return result, wrapped
 	}
 
 	authorization, err := VerifyDurableAcknowledgement(stream, outbound.Sent)
 	if err != nil {
-		return result, fmt.Errorf(
+		wrapped := fmt.Errorf(
 			"verify FI durable receiver acknowledgement: %w",
 			err,
 		)
+		if retryableAcknowledgementReadError(err) {
+			return result, fmt.Errorf("%w: %w", ErrRetryableTransport, wrapped)
+		}
+		return result, wrapped
 	}
 	result.Authorization = authorization
 
