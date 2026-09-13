@@ -31,6 +31,7 @@ type intakeTestFixture struct {
 	config         IntakeConfig
 	data           []byte
 	leaf           *x509.Certificate
+	leafKey        *rsa.PrivateKey
 	manifest       []byte
 	now            time.Time
 	signedBatch    transportpackage.SignedBatch
@@ -640,6 +641,7 @@ func newIntakeTestFixture(t *testing.T) intakeTestFixture {
 		},
 		data:        data,
 		leaf:        leaf,
+		leafKey:     leafKey,
 		manifest:    manifest,
 		now:         now,
 		signedBatch: signedBatch,
