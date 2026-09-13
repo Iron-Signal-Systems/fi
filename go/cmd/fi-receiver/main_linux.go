@@ -40,7 +40,7 @@ func fail(err error) {
 func printTransportUsage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: fi-receiver -transport-listen -bind <address:port> -source <source-id>",
+		"usage: fi-receiver -transport-listen -bind <address:port> -custody-root <path> -max-data-bytes <bytes> -source <source-id>",
 	)
 }
 
@@ -111,6 +111,18 @@ func runTransportCommand() {
 		"receiver bind address, for example 192.168.1.119:8443",
 	)
 
+	custodyRoot := flags.String(
+		"custody-root",
+		"",
+		"durable receiver custody root directory",
+	)
+
+	maxDataBytes := flags.Uint64(
+		"max-data-bytes",
+		0,
+		"maximum FI batch data payload accepted per transport transaction",
+	)
+
 	sourceID := flags.String(
 		"source",
 		"",
@@ -133,6 +145,14 @@ func runTransportCommand() {
 
 	if *bindAddress == "" {
 		fail(errors.New("-bind is required"))
+	}
+
+	if *custodyRoot == "" {
+		fail(errors.New("-custody-root is required"))
+	}
+
+	if *maxDataBytes == 0 {
+		fail(errors.New("-max-data-bytes must be greater than zero"))
 	}
 
 	if err := validateSourceID(*sourceID); err != nil {
@@ -191,6 +211,20 @@ func runTransportCommand() {
 		fail(err)
 	}
 
+	batchIssuer, err := receivertrust.LoadCertificate(
+		receivertrust.BatchIssuerPath,
+	)
+	if err != nil {
+		fail(err)
+	}
+
+	batchCRL, err := receivertrust.LoadCRL(
+		receivertrust.BatchCRLPath,
+	)
+	if err != nil {
+		fail(err)
+	}
+
 	transportIssuer, err := receivertrust.LoadCertificate(
 		receivertrust.TransportIssuerPath,
 	)
@@ -215,11 +249,15 @@ func runTransportCommand() {
 	result, err := transportreceiver.ListenOnce(
 		ctx,
 		transportreceiver.Config{
+			BatchCRL:          batchCRL,
+			BatchIssuer:       batchIssuer,
 			BindAddress:       *bindAddress,
-			CRL:               transportCRL,
+			CustodyRoot:       *custodyRoot,
+			MaxDataBytes:      *maxDataBytes,
 			Root:              root,
 			ServerCertificate: serverCertificate,
 			Source:            sourceConfig.Authorization,
+			TransportCRL:      transportCRL,
 			TransportIssuer:   transportIssuer,
 		},
 	)
@@ -233,10 +271,15 @@ func runTransportCommand() {
 	}
 
 	fmt.Printf("Source:        %s\n", result.SourceID)
+	fmt.Printf("BatchID:       %s\n", result.BatchID)
 	fmt.Printf("TLS:           %s\n", result.TLSVersion)
 	fmt.Printf("CipherSuite:   %s\n", result.CipherSuite)
+	fmt.Printf("Custody:       %s\n", result.CustodyDisposition)
+	fmt.Printf("DataBytes:     %d\n", result.DataBytes)
+	fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
 	fmt.Println("MutualTLS:     true")
 	fmt.Println("Authorization: AUTHORIZED")
+	fmt.Println("BatchSigning:  AUTHORIZED")
 }
 
 func runTrustCommand(args []string) {
