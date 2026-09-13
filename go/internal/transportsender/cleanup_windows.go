@@ -10,8 +10,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"syscall"
-	"unsafe"
 )
 
 func removeOutboundFrame(path string) (bool, error) {
@@ -25,39 +23,17 @@ func removeOutboundFrame(path string) (bool, error) {
 		return false, err
 	}
 
-	pathPtr, err := syscall.UTF16PtrFromString(path)
-	if err != nil {
-		_ = os.Chmod(path, 0o400)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+
+		restoreErr := os.Chmod(path, 0o400)
+		if restoreErr != nil && !errors.Is(restoreErr, fs.ErrNotExist) {
+			return false, errors.Join(err, restoreErr)
+		}
 		return false, err
 	}
 
-	result, _, callErr := outboundMoveFileExW.Call(
-		uintptr(unsafe.Pointer(pathPtr)),
-		0,
-		uintptr(outboundMoveFileWriteThrough),
-	)
-	if result != 0 {
-		return true, nil
-	}
-
-	if errno, ok := callErr.(syscall.Errno); ok {
-		if errno == syscall.Errno(2) || errno == syscall.Errno(3) {
-			return false, nil
-		}
-	}
-
-	restoreErr := os.Chmod(path, 0o400)
-	if callErr != nil && callErr != syscall.Errno(0) {
-		if restoreErr != nil {
-			return false, errors.Join(callErr, restoreErr)
-		}
-		return false, callErr
-	}
-	if restoreErr != nil {
-		return false, errors.Join(
-			errors.New("MoveFileExW failed for FI outbound cleanup"),
-			restoreErr,
-		)
-	}
-	return false, errors.New("MoveFileExW failed for FI outbound cleanup")
+	return true, nil
 }

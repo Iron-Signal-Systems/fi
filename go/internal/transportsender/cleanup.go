@@ -224,13 +224,10 @@ func validateOutboundCleanupPaths(
 	}
 
 	frameDir := filepath.Dir(outbound.FramePath)
-	resolvedFrameDir, err := filepath.EvalSymlinks(frameDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve FI outbound cleanup directory: %w", err)
-	}
-	if filepath.Clean(resolvedFrameDir) != filepath.Clean(frameDir) {
-		return "", errors.New(
-			"FI outbound cleanup directory path must not traverse symlinks",
+	if err := validateOutboundStageDirectoryPath(frameDir); err != nil {
+		return "", fmt.Errorf(
+			"validate FI outbound cleanup directory: %w",
+			err,
 		)
 	}
 

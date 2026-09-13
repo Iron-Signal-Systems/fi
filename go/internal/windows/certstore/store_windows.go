@@ -35,6 +35,7 @@ const (
 )
 
 const (
+	StoreCA   = "CA"
 	StoreMy   = "MY"
 	StoreRoot = "ROOT"
 )
@@ -44,7 +45,6 @@ var (
 	ncryptDLL  = syscall.NewLazyDLL("ncrypt.dll")
 
 	certCloseStoreProc                    = crypt32DLL.NewProc("CertCloseStore")
-	certEnumCertificatesInStoreProc       = crypt32DLL.NewProc("CertEnumCertificatesInStore")
 	certOpenStoreProc                     = crypt32DLL.NewProc("CertOpenStore")
 	cryptAcquireCertificatePrivateKeyProc = crypt32DLL.NewProc("CryptAcquireCertificatePrivateKey")
 	ncryptFreeObjectProc                  = ncryptDLL.NewProc("NCryptFreeObject")
@@ -67,14 +67,6 @@ type bcryptPKCS1PaddingInfo struct {
 type bcryptPSSPaddingInfo struct {
 	AlgID      *uint16
 	SaltLength uint32
-}
-
-type certContext struct {
-	EncodingType uint32
-	Encoded      *byte
-	EncodedLen   uint32
-	CertInfo     uintptr
-	Store        uintptr
 }
 
 type cngRSASigner struct {
@@ -386,18 +378,15 @@ func findCertificate(
 	store uintptr,
 	wantSHA256 string,
 ) (*x509.Certificate, uintptr, error) {
-	var previous uintptr
+	var previous *syscall.CertContext
 
 	for {
-		context, _, _ := certEnumCertificatesInStoreProc.Call(
-			store,
+		context, err := syscall.CertEnumCertificatesInStore(
+			syscall.Handle(store),
 			previous,
 		)
-		if context == 0 {
-			lastErr := syscall.GetLastError()
-			if lastErr == nil ||
-				lastErr == syscall.Errno(0) ||
-				lastErr == cryptENotFound {
+		if err != nil {
+			if errors.Is(err, cryptENotFound) {
 				return nil, 0, fmt.Errorf(
 					"FI Windows certificate SHA-256 %s was not found",
 					wantSHA256,
@@ -406,19 +395,24 @@ func findCertificate(
 
 			return nil, 0, fmt.Errorf(
 				"enumerate FI Windows certificate store: %w",
-				lastErr,
+				err,
+			)
+		}
+		if context == nil {
+			return nil, 0, fmt.Errorf(
+				"FI Windows certificate SHA-256 %s was not found",
+				wantSHA256,
 			)
 		}
 		previous = context
 
-		native := (*certContext)(unsafe.Pointer(context))
-		if native.Encoded == nil || native.EncodedLen == 0 {
+		if context.EncodedCert == nil || context.Length == 0 {
 			continue
 		}
 
 		raw := append(
 			[]byte(nil),
-			unsafe.Slice(native.Encoded, int(native.EncodedLen))...,
+			unsafe.Slice(context.EncodedCert, int(context.Length))...,
 		)
 		certificate, err := x509.ParseCertificate(raw)
 		if err != nil {
@@ -427,7 +421,7 @@ func findCertificate(
 
 		digest := sha256.Sum256(certificate.Raw)
 		if hex.EncodeToString(digest[:]) == wantSHA256 {
-			return certificate, context, nil
+			return certificate, uintptr(unsafe.Pointer(context)), nil
 		}
 	}
 }
@@ -447,7 +441,7 @@ func hashAlgorithmName(hash crypto.Hash) string {
 
 func openLocalMachineStore(storeName string) (uintptr, error) {
 	switch storeName {
-	case StoreMy, StoreRoot:
+	case StoreCA, StoreMy, StoreRoot:
 	default:
 		return 0, fmt.Errorf(
 			"unsupported FI Windows certificate store %q",

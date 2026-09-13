@@ -10,6 +10,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -140,6 +141,24 @@ func TestPrepareOutboundFrameRejectsCorruptExistingStageWithoutReplacingIt(t *te
 	if !bytes.Equal(stored, corrupt) {
 		t.Fatal("corrupt existing outbound frame was overwritten")
 	}
+}
+
+func TestPrepareOutboundFrameSignalsSigningIdentityRequirement(t *testing.T) {
+	fixture := newOutboundStageFixture(t)
+	fixture.config.BatchSigner = nil
+	fixture.config.BatchSigningCertificate = nil
+
+	_, err := PrepareOutboundFrame(fixture.config)
+	if err == nil {
+		t.Fatal("PrepareOutboundFrame() error = nil, want signing identity requirement")
+	}
+	if !errors.Is(err, ErrOutboundSigningIdentityRequired) {
+		t.Fatalf(
+			"PrepareOutboundFrame() error = %q, want ErrOutboundSigningIdentityRequired",
+			err,
+		)
+	}
+	assertNoOutboundOpenFiles(t, fixture.config.StageDir)
 }
 
 func TestPrepareOutboundFrameRejectsNewFrameWithoutSigner(t *testing.T) {

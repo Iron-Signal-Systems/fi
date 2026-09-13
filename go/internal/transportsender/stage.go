@@ -28,6 +28,10 @@ const (
 	outboundFrameIdentityDomain = "FI-SOURCE-OUTBOUND-IDENTITY-V1"
 )
 
+var ErrOutboundSigningIdentityRequired = errors.New(
+	"FI outbound batch-signing identity is required",
+)
+
 // OutboundFrameConfig defines the source material needed to create or recover
 // one durable exact transport frame before any network send is attempted.
 //
@@ -106,13 +110,15 @@ func PrepareOutboundFrame(config OutboundFrameConfig) (OutboundFrame, error) {
 	}
 
 	if config.BatchSigningCertificate == nil {
-		return OutboundFrame{}, errors.New(
-			"batch-signing certificate is required to create a new outbound frame",
+		return OutboundFrame{}, fmt.Errorf(
+			"%w: batch-signing certificate is required to create a new outbound frame",
+			ErrOutboundSigningIdentityRequired,
 		)
 	}
 	if config.BatchSigner == nil {
-		return OutboundFrame{}, errors.New(
-			"batch signer is required to create a new outbound frame",
+		return OutboundFrame{}, fmt.Errorf(
+			"%w: batch signer is required to create a new outbound frame",
+			ErrOutboundSigningIdentityRequired,
 		)
 	}
 
@@ -359,12 +365,8 @@ func validateOutboundFrameConfig(config OutboundFrameConfig) error {
 		return errors.New("FI outbound stage directory must be absolute")
 	}
 
-	resolved, err := filepath.EvalSymlinks(config.StageDir)
-	if err != nil {
-		return fmt.Errorf("resolve FI outbound stage directory: %w", err)
-	}
-	if filepath.Clean(resolved) != filepath.Clean(config.StageDir) {
-		return errors.New("FI outbound stage directory path must not traverse symlinks")
+	if err := validateOutboundStageDirectoryPath(config.StageDir); err != nil {
+		return err
 	}
 	info, err := os.Lstat(config.StageDir)
 	if err != nil {

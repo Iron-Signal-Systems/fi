@@ -209,12 +209,11 @@ func validateTransportTransaction(
 	}
 
 	frameDir := filepath.Dir(outbound.FramePath)
-	resolvedFrameDir, err := filepath.EvalSymlinks(frameDir)
-	if err != nil {
-		return fmt.Errorf("resolve FI outbound frame directory: %w", err)
-	}
-	if filepath.Clean(resolvedFrameDir) != filepath.Clean(frameDir) {
-		return errors.New("FI outbound frame directory path must not traverse symlinks")
+	if err := validateOutboundStageDirectoryPath(frameDir); err != nil {
+		return fmt.Errorf(
+			"validate FI outbound frame directory: %w",
+			err,
+		)
 	}
 
 	if _, err := validateRetirementManifestPath(
