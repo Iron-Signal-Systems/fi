@@ -244,7 +244,10 @@ func PrepareOutboundFrame(config OutboundFrameConfig) (OutboundFrame, error) {
 
 	// Another concurrent preparer won the no-replace publication race. Its
 	// complete frame is now authoritative for retries of this batch identity.
-	existingSent, err := validateStagedOutboundFrame(finalPath, descriptor)
+	existingSent, err := validateConcurrentlyPublishedOutboundFrame(
+		finalPath,
+		descriptor,
+	)
 	if err != nil {
 		return OutboundFrame{}, fmt.Errorf(
 			"validate concurrently published FI outbound frame: %w",
