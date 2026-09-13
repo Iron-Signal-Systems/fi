@@ -1,0 +1,99 @@
+name: Security Validation
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  schedule:
+    - cron: "15 11 * * 1"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  race:
+    name: Go Race Detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: go
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Race detector
+        run: go test -race ./... -count=1
+
+  vulnerability:
+    name: Go Vulnerability Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: go
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+      - name: Check reachable Go vulnerabilities
+        run: '"$(go env GOPATH)/bin/govulncheck" ./...'
+
+  fuzz:
+    name: Phase 2 Wire Fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: go
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Fuzz wire header
+        run: >
+          go test ./internal/transportwire
+          -run='^$'
+          -fuzz='^FuzzReadHeader$'
+          -fuzztime=30s
+
+      - name: Fuzz durable acknowledgement
+        run: >
+          go test ./internal/transportack
+          -run='^$'
+          -fuzz='^FuzzReadAcknowledgement$'
+          -fuzztime=30s

@@ -197,7 +197,7 @@ func assertWireHeadersEqual(t *testing.T, got Header, want Header) {
 	}
 }
 
-func encodedWireTestHeader(t *testing.T) (Header, []byte, []byte) {
+func encodedWireTestHeader(t testing.TB) (Header, []byte, []byte) {
 	t.Helper()
 
 	signedBatch, manifest := newWireTestBatch(t)
@@ -213,7 +213,7 @@ func encodedWireTestHeader(t *testing.T) (Header, []byte, []byte) {
 	return value, encoded.Bytes(), manifest
 }
 
-func newWireTestBatch(t *testing.T) (transportpackage.SignedBatch, []byte) {
+func newWireTestBatch(t testing.TB) (transportpackage.SignedBatch, []byte) {
 	t.Helper()
 
 	const sourceID = "iss-fs-01.iss.local"
