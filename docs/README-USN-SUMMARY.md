@@ -194,6 +194,44 @@ Because USN is volume-wide, the broker can observe raw journal metadata for
 changes elsewhere on an approved volume. That does not make the entire volume
 governed.
 
+## Independent service cadence
+
+`FICollector` has an independent service USN worker for roots that already have
+a continuous checkpoint.
+
+The default interval is:
+
+```text
+10m
+```
+
+The interval can be overridden with:
+
+```text
+FI_SERVICE_USN_EVERY
+```
+
+Initial onboarding remains under the configured collector. If no checkpoint
+exists, the independent worker skips that root rather than starting a competing
+baseline. If the checkpoint is in a continuity-gap state, the independent worker
+also skips the root and leaves reconciliation to the configured collector.
+
+For a continuous checkpoint, the independent worker reads toward a fixed
+observed journal target, preserves the raw USN change facts, freshly re-observes
+the affected current object, writes the normal durable USN spool material, and
+advances the checkpoint only through the existing accepted durability boundary.
+
+On 2026-09-19 this behavior was live validated on Server 2016. FRN 45 /
+sequence 9 was renamed from `F000000-USER-CHANGED.bin` to
+`F000000-USN-10M-TEST.bin` and then extended. FI preserved the rename and data
+extension USNs, re-observed the same stable NTFS object at the new path, captured
+the new metadata and content hashes, and delivered the resulting generation to
+receiver custody while the long configured collection was still active.
+
+This establishes the tested concurrency behavior. The observed approximately
+7-minute end-to-end result is a lab measurement, not a universal latency
+guarantee.
+
 ## Design rule
 
 > **If an operation does not require the privileged Windows source boundary, it

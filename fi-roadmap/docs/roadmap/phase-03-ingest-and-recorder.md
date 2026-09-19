@@ -7,6 +7,24 @@ Turn transported FI material into immutable FI System of Record history.
 Verification, acceptance/rejection decisions, recording, and journal outcomes are
 one product boundary.
 
+## Boundary with the current Phase 2 generation recorder
+
+The current code contains a `generationrecorder` package that semantically
+validates an exact canonical generation and durably publishes an immutable
+receipt used by the Phase 2 acknowledgement contract.
+
+That receipt is intentionally narrower than the Phase 3 FI System of Record. It
+proves that a specific transported generation crossed the validated durable
+receipt boundary and supports safe `recorded` / `already_recorded`
+acknowledgement behavior.
+
+It does not by itself implement the Phase 3 authoritative historical record
+model, cross-record journal, projections, rejection history, or database/System
+of Record semantics described below.
+
+Phase 3 therefore remains a separate future gate even though Phase 2 now uses a
+durable semantic recorder receipt.
+
 ## Ingest Responsibilities
 
 Phase 3 owns:

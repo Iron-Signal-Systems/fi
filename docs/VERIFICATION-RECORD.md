@@ -214,6 +214,34 @@ independently characterized.
 - [ ] Required audit policy/SACL coverage is administrator-controlled and is not
       silently enabled by FI runtime.
 
+## Post-Gate-1 service / generation verification
+
+These checks apply when validating the current Phase 2-integrated Windows
+runtime.
+
+- [ ] Effective independent USN interval is recorded in `ServiceStarted`.
+- [ ] Independent `USNCatchUp` runs at the configured interval after a
+      continuous checkpoint exists.
+- [ ] A root with no checkpoint is skipped by the independent USN worker rather
+      than baselined concurrently.
+- [ ] A root in continuity-gap state is left to configured reconciliation.
+- [ ] A rename/content mutation preserves raw USN change facts and stable NTFS
+      object identity.
+- [ ] Fresh re-observation records the current path/state and current content
+      hashes.
+- [ ] Independent USN catch-up can complete while a long configured
+      collection/Security reconciliation remains active.
+- [ ] Generation descriptor canonical and encoded byte/hash fields validate.
+- [ ] Durable receiver FIGT transfer SHA-256 matches the recorder receipt's
+      transfer SHA-256.
+- [ ] Receiver acknowledgement outcome is `recorded` or
+      `already_recorded` and binds the exact durable transfer identity.
+- [ ] Sender retirement occurs only after the exact acknowledgement contract is
+      satisfied.
+- [ ] Lost acknowledgement/retry does not produce ambiguous loss.
+- [ ] Startup recovery preserves or resumes interrupted generation state.
+- [ ] Acknowledged-generation reclamation does not touch active generations.
+
 ## Final service state
 
 - [ ] FICollector is Running.

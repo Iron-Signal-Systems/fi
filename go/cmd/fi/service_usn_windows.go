@@ -329,7 +329,7 @@ func writeServiceUSNRoot(
 // that own a governed-root USN checkpoint.
 //
 // The long Windows Security reconciliation/full-state walk is intentionally not
-// covered by serviceRootUSNMu. That is the path we want the 200K-file test to
+// covered by serviceRootUSNMu. That is the path we want the 250K-file test to
 // exercise concurrently with independent USN catch-up.
 func writeServiceConfiguredCollector(
 	ctx context.Context,

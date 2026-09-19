@@ -34,3 +34,31 @@ acknowledged local copy.
 
 This prevents producer correctness from racing transport discovery and
 retirement.
+
+
+## Generation transport boundary
+
+Phase 2 may freeze multiple published Phase 1 batches into one immutable
+generation transaction.
+
+Generation construction does not weaken the Phase 1 publication boundary. The
+raw published batches remain the source material until the generation
+transaction has established the applicable downstream custody and retirement
+conditions.
+
+The generation transport binds source and generation identity, canonical
+representation version, canonical byte count and SHA-256, encoded byte count and
+SHA-256, artifact count, signed generation metadata, and the exact FIGT transfer
+byte count and SHA-256 recorded by the receiver.
+
+The receiver's durable semantic receipt may report a newly recorded generation or
+an already-recorded identical generation. A conflicting identity is not treated
+as a duplicate.
+
+Sender retirement requires an acknowledgement that matches the exact durable
+transfer identity. Socket success, TLS success, byte delivery, FIGT file
+creation, or semantic parsing alone is insufficient.
+
+Startup recovery and acknowledged-generation reclamation are part of the same
+custody contract. An interrupted local state is recovered or preserved
+explicitly; it is not silently discarded.

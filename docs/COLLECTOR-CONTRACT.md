@@ -51,6 +51,31 @@ returned by the collected `member` attribute.
 That derivation belongs in the backend, where derived relationships can remain
 distinct from the source facts used to produce them.
 
+## Service scheduling boundary
+
+The persistent Windows service has two runtime lanes:
+
+- the configured-collection lane, which also owns the slower supporting-source
+  refresh; and
+- an independent USN catch-up lane for governed roots that already have a
+  continuous accepted checkpoint.
+
+The independent USN interval defaults to 10 minutes and is configurable through
+`FI_SERVICE_USN_EVERY`.
+
+The independent lane does not create an initial baseline and does not perform
+continuity-gap reconciliation. If no checkpoint exists, initial onboarding owns
+the baseline and its anchored catch-up. If continuity is not continuous, the
+configured collector owns reconciliation.
+
+The lanes may overlap only where their ownership boundaries permit it. Shared
+checkpoint/publication mechanics are serialized so background USN work does not
+race the configured root checkpoint or treat an actively written USN spool batch
+as abandoned work.
+
+A scheduled interval is a runtime policy, not a claim that source history only
+exists at that cadence. Checkpoint and continuity rules remain authoritative.
+
 ## Local durable queue handoff
 
 Phase 1 owns construction and verification of the local durable FI spool batch.

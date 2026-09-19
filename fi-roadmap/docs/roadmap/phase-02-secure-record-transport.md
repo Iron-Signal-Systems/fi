@@ -23,6 +23,44 @@ Phase 2 owns active sender/receiver concurrency, durable acknowledgement,
 retry/resume, duplicate/replay/conflict behavior, backlog recovery, and local
 retirement only after downstream custody is established.
 
+## Current implemented / validated generation boundary
+
+The current Phase 2 implementation adds a generation layer over published Phase
+1 spool batches.
+
+Implemented behavior includes:
+
+- freezing an exact set of published batches into a generation transaction;
+- canonical representation using `fi-generation-canonical/0.1`;
+- zstd encoded generation data;
+- a signed generation descriptor binding source/generation identity, artifact
+  count, canonical bytes/hash, and encoded bytes/hash;
+- FIGT generation transfer;
+- durable receiver generation custody;
+- semantic canonical validation;
+- immutable durable recorder receipts;
+- `recorded` and `already_recorded` acknowledgement outcomes bound to the
+  exact durable transfer identity;
+- sender retirement only after acknowledgement validation;
+- startup recovery of interrupted generation state; and
+- bounded reclamation of acknowledged generations without touching active
+  generations.
+
+Integrated tests cover lost acknowledgement, receiver restart, retry,
+already-recorded duplicate handling, retirement, and reclamation.
+
+On 2026-09-19 the live Server 2016 lab also transported a two-record independent
+USN generation for a rename plus content extension into receiver custody. The
+receiver receipt's transfer SHA-256 matched the exact FIGT SHA-256.
+
+The durable generation recorder receipt used here is part of the Phase 2 custody
+and acknowledgement boundary. It is not the complete Phase 3 FI System of
+Record.
+
+Gate 2 remains active. Broader release acceptance still requires the remaining
+transport failure, revocation, resource-bound, and operational campaigns defined
+for this gate.
+
 ## Responsibilities
 
 Phase 2 owns:

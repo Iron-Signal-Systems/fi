@@ -107,6 +107,7 @@ checkpoint ownership
 Windows service runtime
 gMSA boundaries
 bounded FIUSNReader operations
+independent service USN catch-up after checkpoint establishment
 ```
 
 Phase 1 is complete for Gate 1, but defect correction, supported-build
@@ -133,6 +134,11 @@ conflicting duplicate handling
 sequence handling
 backlog / catch-up
 restart / recovery behavior
+generation freezing / canonicalization / zstd encoding
+signed generation descriptors and FIGT transfer
+durable generation custody and semantic recorder receipts
+exact recorded / already-recorded acknowledgement binding
+startup recovery and acknowledged-generation reclamation
 local retirement after durable downstream custody
 ```
 
@@ -582,6 +588,9 @@ one test host result                      != universal sizing limit
 100K campaign                             != maximum supported dataset
 1-minute acceptance configuration         != universal production cadence
 PowerShell test harness behavior          != production collector architecture
+configured collection cadence                != independent USN cadence
+missing USN checkpoint                        != permission for background USN to create a baseline
+generation recorder receipt                   != full Phase 3 System of Record
 successful lab workaround                 != supported product behavior
 Windows 2025 behavior                     != Windows 2022 behavior
 adjacent Windows build                    != automatically accepted build
@@ -932,6 +941,18 @@ Do not reinterpret this as a maximum supported dataset or universal production
 cadence.
 
 Phase 2 work must preserve the accepted Phase 1 source-side behavior.
+
+Post-Gate-1 live characterization on 2026-09-19 also established that the
+independent 10-minute USN worker can complete while a long configured collection
+remains active. A rename plus content extension of one stable NTFS object was
+re-observed, hashed, transported, and placed into receiver generation custody in
+about 7 minutes 13 seconds. This is a lab measurement, not a universal latency
+guarantee.
+
+The next planned scale campaign uses 250,000 files in an irregular randomized
+directory tree with depths from shallow paths through a maximum depth of 15.
+That campaign is additional characterization and does not rewrite the accepted
+historical 100K Gate 1 result.
 
 ---
 

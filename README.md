@@ -289,21 +289,26 @@ Other filesystems and operating systems are outside the initial scope.
 
 ## Current Windows runtime
 
-Phase 1 now has a persistent Windows service runtime around the existing
-configured collector.
-
-The runtime does not create a second collection path.
+Phase 1 has a persistent Windows service runtime around the configured collector,
+with an independent USN catch-up lane for established checkpoints.
 
 ```text
 FICollector
     restricted per-host gMSA
     non-admin
         |
-        | configured collection
-        | Windows Security
-        | NTFS observation
-        | SMB/local/AD
-        | spool/checkpoints
+        +-- configured collection lane
+        |      Windows Security
+        |      baseline / reconciliation ownership
+        |      governed-root configured work
+        |      slower supporting-source refresh
+        |
+        +-- independent USN lane
+               default interval: 10m
+               override: FI_SERVICE_USN_EVERY
+               existing continuous checkpoints only
+               fresh object re-observation + hashing
+               durable spool/checkpoint ownership
         |
         +------ local authenticated pipe ------+
                                                |
@@ -319,17 +324,29 @@ FICollector
                                       bounded exact-object SACL read
 ```
 
-The service runtime can schedule:
+The configured-collection/supporting-refresh lane remains sequential. The
+independent USN lane is a separate service worker so a long Windows Security
+reconciliation/full-state walk does not force normal USN catch-up to wait for the
+configured cycle to finish.
 
-- the configured collector cycle; and
-- the slower supporting-source refresh.
+Initial onboarding remains intentionally exclusive: when a governed root has no
+checkpoint yet, the independent USN worker skips it and the configured collector
+owns baseline creation plus its anchored catch-up. The independent worker also
+does not initiate continuity-gap reconciliation. Once a continuous checkpoint
+exists, it may catch up independently.
 
-Work is sequential. FI does not intentionally overlap configured collection and
-supporting-source refresh inside the service runtime.
+The independent interval defaults to `10m` and may be overridden through
+`FI_SERVICE_USN_EVERY`. The effective interval is written to
+`service-runtime.jsonl` in `ServiceStarted` and `USNCatchUp` records.
 
-The exact production intervals remain an operational measurement and deployment
-decision.
-
+On 2026-09-19, the 10-minute lane was live validated on the Server 2016 lab. A
+single NTFS object (FRN 45 / sequence 9) was renamed and extended while a long
+configured collection was still active. FI preserved the raw
+`RenameOldName`, `RenameNewName`, and `DataExtend` USN facts, freshly
+re-observed the same object at its new path, computed new content hashes, sealed
+the records into a generation, and established receiver custody about 7 minutes
+13 seconds after the mutation. The configured collection had not completed when
+the independent USN worker completed.
 ---
 
 ## USN split-privilege boundary
@@ -532,6 +549,34 @@ Phase 2 owns authenticated transport, retries, downstream acknowledgement, and
 removal of acknowledged batches from the source spool.
 
 FI must not silently convert missing coverage into certainty.
+
+---
+
+## Current generation transport and custody
+
+Phase 2 now includes generation-based transport for published Phase 1 spool
+material.
+
+A generation is built from an exact frozen set of published batches, represented
+canonically as `fi-generation-canonical/0.1`, compressed with zstd, and bound
+to a signed generation descriptor. The wire object is a FIGT transfer whose
+descriptor binds source identity, generation identity, canonical byte count and
+SHA-256, encoded byte count and SHA-256, and artifact count.
+
+The receiver first establishes durable FIGT custody, then semantically validates
+the decoded canonical generation and durably publishes an immutable recorder
+receipt. The acknowledgement returned to the sender is only valid when it binds
+the exact durable transfer identity and has outcome `recorded` or
+`already_recorded`.
+
+The sender retires local generation custody only after that exact acknowledgement
+matches the generation descriptor, metadata identity, transfer byte count, and
+transfer SHA-256. Lost acknowledgement, receiver restart, sender retry, duplicate
+delivery of the same bytes, startup recovery, and post-acknowledgement
+reclamation are covered by the generation transport tests integrated in Phase 2.
+
+The durable generation receipt used at this boundary is a Phase 2 custody and
+acknowledgement fact. It is not yet the complete Phase 3 FI System of Record.
 
 ---
 

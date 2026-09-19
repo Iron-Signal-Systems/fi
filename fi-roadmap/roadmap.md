@@ -49,6 +49,8 @@ The major Phase 1 architecture is now established:
 - bounded SMB/local/AD supporting-source refresh;
 - a persistent Windows service runtime;
 - service scheduling for configured collection and supporting-source refresh;
+- an independent USN catch-up lane for established continuous checkpoints,
+  defaulting to 10 minutes and configurable through `FI_SERVICE_USN_EVERY`;
 - a non-administrative `FICollector` service identity;
 - a separate privileged `FIUSNReader` helper exposing only bounded
   `QueryJournal`, `ReadJournal`, `CheckContainment`, and `ReadSACL` operations;
@@ -96,6 +98,25 @@ take priority over maintaining nominal cadence.
 **Phase 1 / Gate 1: COMPLETE — PASS**
 
 **Phase 2 / Gate 2: ACTIVE**
+
+Current Phase 2 implementation now includes generation freezing,
+`fi-generation-canonical/0.1` canonical representation, zstd encoding, signed
+generation descriptors, FIGT transport, durable receiver generation custody,
+semantic generation recorder receipts, exact `recorded` /
+`already_recorded` acknowledgement binding, sender retirement only after that
+acknowledgement, startup recovery, and acknowledged-generation reclamation.
+
+Lost-acknowledgement / receiver-restart / retry / already-recorded behavior and
+end-to-end reclamation are covered by the integrated generation tests. A live
+Server 2016 run on 2026-09-19 also carried an independent-USN rename/content
+observation through generation transport into receiver custody while the long
+configured collection remained active.
+
+Before the next scale run, FI will use a 250,000-file randomized nested
+onboarding campaign with directory depth up to 15. That campaign is
+post-Gate-1 characterization and does not reopen or overwrite the historical
+100K Gate 1 acceptance.
+
 
 ## Phase 1 — Windows File & Identity Intelligence
 

@@ -46,6 +46,13 @@ and should expose technical information such as:
 - source/feed status;
 - operation identifier and operation lifecycle status;
 - spool batch and manifest identity;
+- effective configured-collection, independent-USN, and supporting-refresh
+  intervals;
+- service-runtime record kind and outcome, including `ServiceStarted`,
+  `ConfiguredCollection`, `USNCatchUp`, `SupportingSourceRefresh`, and
+  `ServiceStopped`;
+- generation identity, canonical/encoded byte counts and hashes, FIGT transfer
+  byte count/hash, recorder disposition, and acknowledgement outcome;
 - record count, byte count, and integrity verification status;
 - continuity and reconciliation status;
 - Windows error code and the operation that produced it;
