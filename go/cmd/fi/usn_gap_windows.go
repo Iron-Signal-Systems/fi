@@ -48,7 +48,12 @@ func newUSNContinuityGapObservation(
 	}, nil
 }
 
-func writeUSNContinuityGap(value records.USNContinuityGapObservation) (usnGapSpoolSummary, error) {
+func writeUSNContinuityGap(
+	value records.USNContinuityGapObservation,
+) (
+	returnSummary usnGapSpoolSummary,
+	returnErr error,
+) {
 	if err := records.ValidateUSNContinuityGapObservation(value); err != nil {
 		return usnGapSpoolSummary{}, err
 	}
@@ -68,12 +73,12 @@ func writeUSNContinuityGap(value records.USNContinuityGapObservation) (usnGapSpo
 	if err != nil {
 		return usnGapSpoolSummary{}, err
 	}
-	closeNeeded := true
-	defer func() {
-		if closeNeeded {
-			_ = writer.Close()
-		}
-	}()
+	defer finalizeSpoolWriterOnReturn(
+		writer,
+		&returnSummary.Batches,
+		&returnSummary.VerifiedBatches,
+		&returnErr,
+	)
 
 	if err := writer.Append("USNContinuityGap", value.ScopeID, value); err != nil {
 		return usnGapSpoolSummary{}, err
@@ -81,7 +86,6 @@ func writeUSNContinuityGap(value records.USNContinuityGapObservation) (usnGapSpo
 	if err := writer.Close(); err != nil {
 		return usnGapSpoolSummary{}, err
 	}
-	closeNeeded = false
 
 	summary := usnGapSpoolSummary{Batches: writer.FinalizedBatches()}
 	summary.VerifiedBatches = len(summary.Batches)

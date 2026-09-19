@@ -45,6 +45,7 @@ var (
 	ncryptDLL  = syscall.NewLazyDLL("ncrypt.dll")
 
 	certCloseStoreProc                    = crypt32DLL.NewProc("CertCloseStore")
+	certFreeCertificateContextProc        = crypt32DLL.NewProc("CertFreeCertificateContext")
 	certOpenStoreProc                     = crypt32DLL.NewProc("CertOpenStore")
 	cryptAcquireCertificatePrivateKeyProc = crypt32DLL.NewProc("CryptAcquireCertificatePrivateKey")
 	ncryptFreeObjectProc                  = ncryptDLL.NewProc("NCryptFreeObject")
@@ -104,10 +105,11 @@ func LoadLocalMachineCertificate(
 	}
 	defer closeCertificateStore(store)
 
-	certificate, _, err := findCertificate(store, normalized)
+	certificate, context, err := findCertificate(store, normalized)
 	if err != nil {
 		return nil, err
 	}
+	defer freeCertificateContext(context)
 
 	return certificate, nil
 }
@@ -133,6 +135,7 @@ func LoadLocalMachineSigningIdentity(
 	if err != nil {
 		return nil, err
 	}
+	defer freeCertificateContext(context)
 	if _, ok := certificate.PublicKey.(*rsa.PublicKey); !ok {
 		return nil, errors.New(
 			"FI Windows signing certificate must use an RSA public key",
@@ -225,6 +228,12 @@ func acquireCNGSigner(
 func closeCertificateStore(store uintptr) {
 	if store != 0 {
 		_, _, _ = certCloseStoreProc.Call(store, 0)
+	}
+}
+
+func freeCertificateContext(context uintptr) {
+	if context != 0 {
+		_, _, _ = certFreeCertificateContextProc.Call(context)
 	}
 }
 

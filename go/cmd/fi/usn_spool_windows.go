@@ -139,7 +139,10 @@ func writeUSNSpoolNext(
 	ctx context.Context,
 	scopeID string,
 	governedRoot string,
-) (usnSpoolNextSummary, error) {
+) (
+	returnSummary usnSpoolNextSummary,
+	returnErr error,
+) {
 	statePath, err := checkpoint.DefaultPath(scopeID)
 	if err != nil {
 		return usnSpoolNextSummary{}, err
@@ -243,6 +246,13 @@ func writeUSNSpoolNext(
 	if err != nil {
 		return summary, err
 	}
+
+	defer finalizeSpoolWriterOnReturn(
+		writer,
+		&returnSummary.Batches,
+		&returnSummary.VerifiedBatches,
+		&returnErr,
+	)
 
 	if err := writer.Append("USNReadBoundary", scopeID, spooledUSNReadBoundary{
 		ObservedAt:                 batch.ObservedAt,

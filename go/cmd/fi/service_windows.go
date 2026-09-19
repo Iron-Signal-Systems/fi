@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -35,22 +36,26 @@ type serviceRuntimeRecord struct {
 	RecordKind                string `json:"record_kind"`
 	ObservedAt                string `json:"observed_at"`
 	CollectionInterval        string `json:"collection_interval,omitempty"`
+	USNInterval               string `json:"usn_interval,omitempty"`
 	SupportingRefreshInterval string `json:"supporting_refresh_interval,omitempty"`
 	Outcome                   string `json:"outcome,omitempty"`
 	ConfiguredRoots           int    `json:"configured_roots,omitempty"`
 	CompletedRoots            int    `json:"completed_roots,omitempty"`
 	PartialRoots              int    `json:"partial_roots,omitempty"`
+	SkippedRoots              int    `json:"skipped_roots,omitempty"`
 	FailedRoots               int    `json:"failed_roots,omitempty"`
 	SupportingRefreshStatus   string `json:"supporting_refresh_status,omitempty"`
 	Error                     string `json:"error,omitempty"`
 }
 
+type serviceStartupRecoveryFunc func() error
 type serviceCollectorFunc func(context.Context) (configuredRunSummary, error)
 type serviceSupportingRefreshFunc func(context.Context) (supportingSourceRefreshSummary, error)
 type serviceAppendRecordFunc func(serviceRuntimeRecord) error
 
 type fiWindowsService struct {
 	collectionInterval        time.Duration
+	usnInterval               time.Duration
 	supportingRefreshInterval time.Duration
 }
 
@@ -81,10 +86,16 @@ func runWindowsService(
 		return errors.New("service supporting-refresh interval must be greater than zero")
 	}
 
+	usnInterval, err := resolveServiceUSNInterval()
+	if err != nil {
+		return err
+	}
+
 	return svc.Run(
 		windowsServiceName,
 		&fiWindowsService{
 			collectionInterval:        collectionInterval,
+			usnInterval:               usnInterval,
 			supportingRefreshInterval: supportingRefreshInterval,
 		},
 	)
@@ -100,14 +111,25 @@ func (service *fiWindowsService) Execute(
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	done := make(chan error, 1)
+	done := make(chan error, 2)
+
 	go func() {
 		done <- runServiceLoop(
 			ctx,
 			service.collectionInterval,
 			service.supportingRefreshInterval,
-			writeConfiguredCollector,
+			recoverServiceSpoolPublications,
+			writeServiceConfiguredCollector,
 			writeSupportingSourceRefresh,
+			appendServiceRuntimeRecord,
+		)
+	}()
+
+	go func() {
+		done <- runServiceUSNLoop(
+			ctx,
+			service.usnInterval,
+			writeServiceUSNCatchUp,
 			appendServiceRuntimeRecord,
 		)
 	}()
@@ -118,10 +140,21 @@ func (service *fiWindowsService) Execute(
 	}
 	statuses <- runningStatus
 
+	waitForWorkers := func(first error, firstAlreadyReceived bool) error {
+		cancel()
+
+		if firstAlreadyReceived {
+			return errors.Join(first, <-done)
+		}
+
+		return errors.Join(<-done, <-done)
+	}
+
 	for {
 		select {
 		case err := <-done:
 			statuses <- svc.Status{State: svc.StopPending}
+			err = waitForWorkers(err, true)
 			if err != nil {
 				return false, 1
 			}
@@ -130,8 +163,7 @@ func (service *fiWindowsService) Execute(
 		case request, ok := <-requests:
 			if !ok {
 				statuses <- svc.Status{State: svc.StopPending}
-				cancel()
-				err := <-done
+				err := waitForWorkers(nil, false)
 				if err != nil {
 					return false, 1
 				}
@@ -144,8 +176,7 @@ func (service *fiWindowsService) Execute(
 
 			case svc.Stop, svc.Shutdown:
 				statuses <- svc.Status{State: svc.StopPending}
-				cancel()
-				err := <-done
+				err := waitForWorkers(nil, false)
 				if err != nil {
 					return false, 1
 				}
@@ -155,10 +186,34 @@ func (service *fiWindowsService) Execute(
 	}
 }
 
+func recoverServiceSpoolPublications() error {
+	spoolDir, err :=
+		spool.DefaultDir()
+	if err != nil {
+		return fmt.Errorf(
+			"resolve FI spool directory for service startup recovery: %w",
+			err,
+		)
+	}
+
+	if _, err :=
+		spool.RecoverAbandonedPublications(
+			spoolDir,
+		); err != nil {
+		return fmt.Errorf(
+			"recover FI spool publications at service startup: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
 func runServiceLoop(
 	ctx context.Context,
 	collectionInterval time.Duration,
 	supportingRefreshInterval time.Duration,
+	recoverStartup serviceStartupRecoveryFunc,
 	collect serviceCollectorFunc,
 	refresh serviceSupportingRefreshFunc,
 	appendRecord serviceAppendRecordFunc,
@@ -169,8 +224,18 @@ func runServiceLoop(
 	if collectionInterval <= 0 || supportingRefreshInterval <= 0 {
 		return errors.New("service intervals must be greater than zero")
 	}
-	if collect == nil || refresh == nil || appendRecord == nil {
+	if recoverStartup == nil ||
+		collect == nil ||
+		refresh == nil ||
+		appendRecord == nil {
 		return errors.New("service runtime dependency is nil")
+	}
+
+	if err := recoverStartup(); err != nil {
+		return fmt.Errorf(
+			"FI service startup recovery failed: %w",
+			err,
+		)
 	}
 
 	if err := appendRecord(serviceRuntimeRecord{
@@ -178,6 +243,7 @@ func runServiceLoop(
 		RecordKind:                "ServiceStarted",
 		ObservedAt:                serviceNow(),
 		CollectionInterval:        collectionInterval.String(),
+		USNInterval:               currentServiceUSNInterval(),
 		SupportingRefreshInterval: supportingRefreshInterval.String(),
 	}); err != nil {
 		return err
@@ -295,6 +361,9 @@ func appendServiceStopped(appendRecord serviceAppendRecordFunc) error {
 }
 
 func appendServiceRuntimeRecord(record serviceRuntimeRecord) error {
+	serviceRuntimeLogMu.Lock()
+	defer serviceRuntimeLogMu.Unlock()
+
 	if record.Version != serviceRuntimeVersion {
 		return errors.New("invalid service runtime record version")
 	}

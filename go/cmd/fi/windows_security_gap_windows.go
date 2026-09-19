@@ -74,7 +74,10 @@ func writeWindowsSecurityRecoveryCoverage(
 func writeWindowsSecurityRecoveryRecord(
 	recordKind string,
 	payload any,
-) (windowsSecurityGapSpoolSummary, error) {
+) (
+	returnSummary windowsSecurityGapSpoolSummary,
+	returnErr error,
+) {
 	spoolDir, err := spool.DefaultDir()
 	if err != nil {
 		return windowsSecurityGapSpoolSummary{}, err
@@ -90,12 +93,12 @@ func writeWindowsSecurityRecoveryRecord(
 	if err != nil {
 		return windowsSecurityGapSpoolSummary{}, err
 	}
-	closeNeeded := true
-	defer func() {
-		if closeNeeded {
-			_ = writer.Close()
-		}
-	}()
+	defer finalizeSpoolWriterOnReturn(
+		writer,
+		&returnSummary.Batches,
+		&returnSummary.VerifiedBatches,
+		&returnErr,
+	)
 
 	if err := writer.Append(recordKind, configuredSecurityScopeID, payload); err != nil {
 		return windowsSecurityGapSpoolSummary{}, err
@@ -103,7 +106,6 @@ func writeWindowsSecurityRecoveryRecord(
 	if err := writer.Close(); err != nil {
 		return windowsSecurityGapSpoolSummary{}, err
 	}
-	closeNeeded = false
 
 	summary := windowsSecurityGapSpoolSummary{
 		Batches: writer.FinalizedBatches(),

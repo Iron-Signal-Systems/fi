@@ -1579,6 +1579,9 @@ func TestRunServiceLoopStartsCollectionImmediatelyAndStops(t *testing.T) {
 			ctx,
 			time.Hour,
 			time.Hour,
+			func() error {
+				return nil
+			},
 			func(context.Context) (configuredRunSummary, error) {
 				select {
 				case collected <- struct{}{}:
@@ -1632,6 +1635,9 @@ func TestRunServiceLoopSchedulesSupportingRefreshWithoutOverlap(t *testing.T) {
 			ctx,
 			time.Hour,
 			20*time.Millisecond,
+			func() error {
+				return nil
+			},
 			func(context.Context) (configuredRunSummary, error) {
 				active++
 				if active != 1 {
@@ -1680,5 +1686,134 @@ func TestRunServiceLoopSchedulesSupportingRefreshWithoutOverlap(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("service loop did not stop")
+	}
+}
+
+func TestRunServiceLoopRecoversBeforeFirstCollection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	recovered := false
+	collected := make(chan struct{}, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- runServiceLoop(
+			ctx,
+			time.Hour,
+			time.Hour,
+			func() error {
+				recovered = true
+				return nil
+			},
+			func(context.Context) (configuredRunSummary, error) {
+				if !recovered {
+					t.Error(
+						"configured collection started before startup recovery completed",
+					)
+				}
+
+				select {
+				case collected <- struct{}{}:
+				default:
+				}
+
+				cancel()
+
+				return configuredRunSummary{
+					ConfiguredRoots: 1,
+					CompletedRoots:  1,
+					Complete:        true,
+				}, nil
+			},
+			func(context.Context) (supportingSourceRefreshSummary, error) {
+				return supportingSourceRefreshSummary{
+					Status: supportingSourceRefreshComplete,
+				}, nil
+			},
+			func(serviceRuntimeRecord) error {
+				return nil
+			},
+		)
+	}()
+
+	select {
+	case <-collected:
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"configured collection did not run after startup recovery",
+		)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"service loop did not stop after recovery-order test cancellation",
+		)
+	}
+}
+
+func TestRunServiceLoopFailsClosedWhenStartupRecoveryFails(t *testing.T) {
+	collectionCalled := false
+	refreshCalled := false
+	recordCalled := false
+
+	expected :=
+		errors.New(
+			"startup recovery test failure",
+		)
+
+	err :=
+		runServiceLoop(
+			context.Background(),
+			time.Hour,
+			time.Hour,
+			func() error {
+				return expected
+			},
+			func(context.Context) (configuredRunSummary, error) {
+				collectionCalled = true
+				return configuredRunSummary{}, nil
+			},
+			func(context.Context) (supportingSourceRefreshSummary, error) {
+				refreshCalled = true
+				return supportingSourceRefreshSummary{}, nil
+			},
+			func(serviceRuntimeRecord) error {
+				recordCalled = true
+				return nil
+			},
+		)
+
+	if !errors.Is(
+		err,
+		expected,
+	) {
+		t.Fatalf(
+			"runServiceLoop error = %v, want startup recovery failure",
+			err,
+		)
+	}
+
+	if collectionCalled {
+		t.Fatal(
+			"configured collection ran despite failed startup recovery",
+		)
+	}
+
+	if refreshCalled {
+		t.Fatal(
+			"supporting refresh ran despite failed startup recovery",
+		)
+	}
+
+	if recordCalled {
+		t.Fatal(
+			"service runtime record was written before failed startup recovery returned",
+		)
 	}
 }

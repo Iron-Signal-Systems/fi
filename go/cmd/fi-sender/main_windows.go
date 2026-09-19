@@ -35,6 +35,11 @@ type senderConfig struct {
 	PollInterval                  time.Duration
 	ReceiverAddress               string
 	ReceiverName                  string
+	GenerationInterval            time.Duration
+	GenerationMaxEncodedBytes     uint64
+	GenerationTransferTimeout     time.Duration
+	RecoveryThresholdBytes        uint64
+	RecoveryTimeout               time.Duration
 	RetryBackoff                  time.Duration
 	RootCertificateSHA256         string
 	SourceID                      string
@@ -219,6 +224,36 @@ func parseSenderConfig() (senderConfig, error) {
 		"receiver-name",
 		"",
 		"FI receiver certificate DNS name, for example fi-receiver-a.iss.local",
+	)
+	flags.DurationVar(
+		&config.GenerationInterval,
+		"generation-interval",
+		0,
+		"queue-mode local sealing cadence; 0 preserves the R1 queue path, 60s enables R2 sealed-generation mode",
+	)
+	flags.Uint64Var(
+		&config.GenerationMaxEncodedBytes,
+		"generation-max-encoded-bytes",
+		64<<30,
+		"maximum encoded bytes for one locally sealed FI generation",
+	)
+	flags.DurationVar(
+		&config.GenerationTransferTimeout,
+		"generation-transfer-timeout",
+		2*time.Hour,
+		"maximum duration for transport of one already-built sealed generation; local build time is excluded",
+	)
+	flags.Uint64Var(
+		&config.RecoveryThresholdBytes,
+		"recovery-threshold-bytes",
+		0,
+		"queue-mode pending canonical byte threshold above which FI negotiates adaptive backlog recovery; 0 disables new recovery bundles",
+	)
+	flags.DurationVar(
+		&config.RecoveryTimeout,
+		"recovery-timeout",
+		2*time.Hour,
+		"maximum duration for one negotiated FI backlog-recovery transaction",
 	)
 	flags.DurationVar(
 		&config.RetryBackoff,
@@ -463,6 +498,9 @@ func runSenderQueue(ctx context.Context, config senderConfig) error {
 	if ctx == nil {
 		return errors.New("context is required")
 	}
+	if config.GenerationInterval > 0 {
+		return runGenerationQueue(ctx, config)
+	}
 
 	queue, err := transportsender.NewPublishedBatchQueue(config.SpoolDir)
 	if err != nil {
@@ -472,6 +510,30 @@ func runSenderQueue(ctx context.Context, config senderConfig) error {
 	for {
 		if ctx.Err() != nil {
 			return nil
+		}
+
+		recoveryContext, recoveryCancel := recoveryAttemptContext(ctx, config)
+		recoveryHandled, recoveryErr := tryRecovery(
+			recoveryContext,
+			config,
+			queue,
+		)
+		recoveryCancel()
+		if recoveryErr != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if !errors.Is(recoveryErr, transportsender.ErrRetryableTransport) {
+				return fmt.Errorf("FI queued recovery fail-stopped: %w", recoveryErr)
+			}
+			fmt.Fprintf(os.Stderr, "ERROR: FI queued recovery transport failed: %v\n", recoveryErr)
+			if err := waitForSenderInterval(ctx, config.RetryBackoff); err != nil {
+				return nil
+			}
+			continue
+		}
+		if recoveryHandled {
+			continue
 		}
 
 		manifestPath, found, err := queue.Next()
@@ -664,6 +726,29 @@ func validateSenderConfig(config senderConfig) error {
 
 	if config.Timeout <= 0 {
 		return errors.New("-timeout must be greater than zero")
+	}
+	if config.GenerationInterval < 0 {
+		return errors.New("-generation-interval cannot be negative")
+	}
+	if config.GenerationInterval > 0 {
+		if !hasSpool {
+			return errors.New("-generation-interval requires -spool-dir queue mode")
+		}
+		if config.GenerationMaxEncodedBytes == 0 {
+			return errors.New("-generation-max-encoded-bytes must be greater than zero")
+		}
+		if config.GenerationTransferTimeout <= 0 {
+			return errors.New("-generation-transfer-timeout must be greater than zero")
+		}
+		if config.BatchSigningCertificateSHA256 == "" {
+			return errors.New("-batch-signing-cert-sha256 is required for sealed-generation mode")
+		}
+	}
+	if config.RecoveryThresholdBytes != 0 && config.RecoveryTimeout <= 0 {
+		return errors.New("-recovery-timeout must be greater than zero")
+	}
+	if !hasSpool && config.RecoveryThresholdBytes != 0 {
+		return errors.New("-recovery-threshold-bytes requires -spool-dir queue mode")
 	}
 	if hasSpool && config.PollInterval <= 0 {
 		return errors.New("-poll-interval must be greater than zero in queue mode")

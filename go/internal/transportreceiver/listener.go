@@ -7,6 +7,7 @@
 package transportreceiver
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -16,42 +17,72 @@ import (
 	"net"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
+	"github.com/Iron-Signal-Systems/fi/go/internal/transportrecovery"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 // Config defines the Phase 2 receiver transport-listener requirements.
 type Config struct {
-	BatchCRL          *x509.RevocationList
-	BatchIssuer       *x509.Certificate
-	BindAddress       string
-	CustodyRoot       string
-	MaxDataBytes      uint64
-	Root              *x509.Certificate
-	ServerCertificate tls.Certificate
-	Source            transporttrust.SourceAuthorization
-	TransportCRL      *x509.RevocationList
-	TransportIssuer   *x509.Certificate
+	BatchCRL                    *x509.RevocationList
+	BatchIssuer                 *x509.Certificate
+	BindAddress                 string
+	CustodyRoot                 string
+	GenerationEnabled           bool
+	GenerationCustodyRoot       string
+	GenerationMaxCanonicalBytes uint64
+	GenerationMaxEncodedBytes   uint64
+	GenerationMaxManifestBytes  uint64
+	GenerationRecordedRoot      string
+	MaxDataBytes                uint64
+	RecoveryMaxCanonicalBytes   uint64
+	RecoveryMaxEncodedBytes     uint64
+	RecoveryMaxMembers          uint64
+	Root                        *x509.Certificate
+	ServerCertificate           tls.Certificate
+	Source                      transporttrust.SourceAuthorization
+	TransportCRL                *x509.RevocationList
+	TransportIssuer             *x509.Certificate
 }
 
 // Result describes one successfully authenticated, authorized, durably received,
 // and acknowledged FI transport connection.
 type Result struct {
-	BatchID            string
-	CipherSuite        string
-	CustodyDisposition CustodyDisposition
-	DataBytes          uint64
-	FrameSHA256        string
-	SourceID           string
-	TLSVersion         string
+	BatchID                   string
+	CipherSuite               string
+	CustodyDisposition        CustodyDisposition
+	DataBytes                 uint64
+	FrameSHA256               string
+	Generation                bool
+	GenerationAcknowledgement string
+	GenerationArtifactCount   uint64
+	GenerationBatchCount      uint64
+	GenerationCanonicalBytes  uint64
+	GenerationDataBytes       uint64
+	GenerationEncodedBytes    uint64
+	GenerationID              string
+	GenerationRecordCount     uint64
+	GenerationRecordedState   string
+	GenerationTransferSHA256  string
+	Recovery                  bool
+	RecoveryCanonicalBytes    uint64
+	RecoveryID                string
+	RecoveryMembers           uint64
+	SourceID                  string
+	TLSVersion                string
 }
 
 // ListenOnce accepts, authenticates, and receives one FI transport transaction.
 //
 // The transport client must first pass FI mTLS authorization. The authenticated
-// stream is then handed directly to ReceiveAndAcknowledge, so no success response
-// is written until the exact frame has crossed the durable receiver-custody
-// boundary. Validation failure, custody conflict, storage failure, or context
-// cancellation therefore produces no FI durable success acknowledgement.
+// application stream is then dispatched by its FI protocol magic. Batch and
+// recovery transactions retain their existing durable-custody acknowledgement
+// contracts. A generation transaction does not emit FIGA0001 until the exact
+// FIGT0001 transfer is durable, current signing trust is revalidated, collector
+// semantics pass, and the immutable recorder receipt is durable.
+//
+// Validation failure, custody conflict, recorder failure, storage failure, or
+// context cancellation therefore produces no generation success acknowledgement.
 //
 // This is intentionally single-connection while the Phase 2 transport contract
 // is being established. Long-running receiver lifecycle belongs to the later
@@ -162,8 +193,10 @@ func ListenOnce(
 	stopConnectionWatch := closeConnectionOnContext(ctx, tlsConnection)
 	defer stopConnectionWatch()
 
-	transaction, err := receiveAuthenticatedBatch(
-		tlsConnection,
+	buffered := bufio.NewReader(tlsConnection)
+
+	result, err := receiveAuthenticatedApplication(
+		buffered,
 		tlsConnection,
 		config,
 		time.Now(),
@@ -175,21 +208,126 @@ func ListenOnce(
 				ctx.Err(),
 			)
 		}
+
 		return Result{}, fmt.Errorf(
 			"receive authenticated FI transport transaction: %w",
 			err,
 		)
 	}
 
-	return Result{
-		BatchID:            transaction.Custody.BatchID,
-		CipherSuite:        tls.CipherSuiteName(state.CipherSuite),
-		CustodyDisposition: transaction.Custody.Disposition,
-		DataBytes:          transaction.Custody.DataBytes,
-		FrameSHA256:        transaction.Custody.FrameSHA256,
-		SourceID:           transaction.Custody.SourceID,
-		TLSVersion:         tlsVersion(state.Version),
-	}, nil
+	result.CipherSuite = tls.CipherSuiteName(state.CipherSuite)
+	result.TLSVersion = tlsVersion(state.Version)
+
+	return result, nil
+}
+
+func receiveAuthenticatedApplication(
+	reader *bufio.Reader,
+	writer io.Writer,
+	config Config,
+	currentTime time.Time,
+) (Result, error) {
+	if reader == nil {
+		return Result{}, errors.New(
+			"FI authenticated transport reader is required",
+		)
+	}
+
+	if writer == nil {
+		return Result{}, errors.New(
+			"FI authenticated transport writer is required",
+		)
+	}
+
+	magic, err := reader.Peek(8)
+	if err != nil {
+		return Result{}, fmt.Errorf(
+			"read FI authenticated transport magic: %w",
+			err,
+		)
+	}
+
+	switch string(magic) {
+	case transportgeneration.OfferMagic:
+		generation, err := receiveAuthenticatedGeneration(
+			reader,
+			writer,
+			config,
+			currentTime,
+		)
+		if err != nil {
+			return Result{}, fmt.Errorf(
+				"receive authenticated FI generation transaction: %w",
+				err,
+			)
+		}
+
+		return Result{
+			CustodyDisposition: CustodyDisposition(
+				generation.Custody.Disposition,
+			),
+			Generation:                true,
+			GenerationAcknowledgement: generation.Acknowledgement.Outcome,
+			GenerationArtifactCount:   generation.Recorder.Receipt.Descriptor.ArtifactCount,
+			GenerationBatchCount:      generation.Recorder.Receipt.BatchCount,
+			GenerationCanonicalBytes:  generation.Recorder.Receipt.Descriptor.CanonicalBytes,
+			GenerationDataBytes:       generation.Recorder.Receipt.DataBytes,
+			GenerationEncodedBytes:    generation.Recorder.Receipt.Descriptor.EncodedDataBytes,
+			GenerationID:              generation.Recorder.Receipt.Descriptor.GenerationID,
+			GenerationRecordCount:     generation.Recorder.Receipt.RecordCount,
+			GenerationRecordedState: string(
+				generation.Recorder.Disposition,
+			),
+			GenerationTransferSHA256: generation.Custody.Transfer.TransferSHA256,
+			SourceID:                 generation.Recorder.Receipt.Descriptor.SourceID,
+		}, nil
+
+	case transportrecovery.OfferMagic:
+		recovery, err := receiveAuthenticatedRecovery(
+			reader,
+			writer,
+			config,
+			currentTime,
+		)
+		if err != nil {
+			return Result{}, fmt.Errorf(
+				"receive authenticated FI recovery transaction: %w",
+				err,
+			)
+		}
+
+		return Result{
+			CustodyDisposition: CustodyDisposition(
+				recovery.Custody.Disposition,
+			),
+			DataBytes:              recovery.Custody.Descriptor.EncodedDataBytes,
+			FrameSHA256:            recovery.Custody.FrameSHA256,
+			Recovery:               true,
+			RecoveryCanonicalBytes: recovery.Custody.Descriptor.CanonicalBytes,
+			RecoveryID:             recovery.Custody.Descriptor.RecoveryID,
+			RecoveryMembers:        recovery.Custody.Descriptor.MemberCount,
+			SourceID:               recovery.Custody.Descriptor.SourceID,
+		}, nil
+
+	default:
+		transaction, err := receiveAuthenticatedBatch(
+			reader,
+			writer,
+			config,
+			currentTime,
+		)
+		if err != nil {
+			return Result{}, err
+		}
+
+		return Result{
+			BatchID:            transaction.Custody.BatchID,
+			CustodyDisposition: transaction.Custody.Disposition,
+			DataBytes:          transaction.Custody.DataBytes,
+			FrameSHA256:        transaction.Custody.FrameSHA256,
+			SourceID:           transaction.Custody.SourceID,
+		}, nil
+	}
 }
 
 func clientCAPool(issuer *x509.Certificate) *x509.CertPool {
@@ -314,6 +452,13 @@ func validateConfig(config Config) error {
 
 	if config.ServerCertificate.PrivateKey == nil {
 		return errors.New("receiver TLS private key is required")
+	}
+	if err := validateGenerationListenerConfig(config); err != nil {
+		return err
+	}
+
+	if err := validateRecoveryConfig(config); err != nil {
+		return err
 	}
 
 	return validateCustodyConfig(CustodyConfig{

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportreceiver"
@@ -40,7 +41,7 @@ func fail(err error) {
 func printTransportUsage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: fi-receiver -transport-listen -bind <address:port> -custody-root <path> -max-data-bytes <bytes> -source <source-id>",
+		"usage: fi-receiver -transport-listen -bind <address:port> -custody-root <path> -max-data-bytes <bytes> [-recovery-max-canonical-bytes <bytes> -recovery-max-encoded-bytes <bytes> -recovery-max-members <count>] [-generation-enable -generation-custody-root <path> -generation-recorded-root <path> -generation-max-canonical-bytes <bytes> -generation-max-encoded-bytes <bytes> -generation-max-manifest-bytes <bytes>] -source <source-id>",
 	)
 }
 
@@ -123,6 +124,53 @@ func runTransportCommand() {
 		"maximum FI batch data payload accepted per transport transaction",
 	)
 
+	recoveryMaxCanonicalBytes := flags.Uint64(
+		"recovery-max-canonical-bytes",
+		0,
+		"maximum canonical bytes accepted in one negotiated FI recovery transaction; 0 disables recovery",
+	)
+	recoveryMaxEncodedBytes := flags.Uint64(
+		"recovery-max-encoded-bytes",
+		0,
+		"maximum encoded bytes accepted in one negotiated FI recovery transaction; 0 disables recovery",
+	)
+	recoveryMaxMembers := flags.Uint64(
+		"recovery-max-members",
+		0,
+		"maximum original published batches accepted in one negotiated FI recovery transaction; 0 disables recovery",
+	)
+
+	generationEnable := flags.Bool(
+		"generation-enable",
+		false,
+		"explicitly enable FI generation transport and startup recovery",
+	)
+	generationCustodyRoot := flags.String(
+		"generation-custody-root",
+		"",
+		"durable FI generation FIGT custody root; requires -generation-enable",
+	)
+	generationRecordedRoot := flags.String(
+		"generation-recorded-root",
+		"",
+		"durable FI generation recorded-receipt root; requires -generation-enable",
+	)
+	generationMaxCanonicalBytes := flags.Uint64(
+		"generation-max-canonical-bytes",
+		0,
+		"maximum canonical bytes accepted in one FI generation; requires -generation-enable",
+	)
+	generationMaxEncodedBytes := flags.Uint64(
+		"generation-max-encoded-bytes",
+		0,
+		"maximum encoded bytes accepted in one FI generation; requires -generation-enable",
+	)
+	generationMaxManifestBytes := flags.Uint64(
+		"generation-max-manifest-bytes",
+		0,
+		"maximum collector manifest bytes accepted inside one FI generation; requires -generation-enable",
+	)
+
 	sourceID := flags.String(
 		"source",
 		"",
@@ -153,6 +201,19 @@ func runTransportCommand() {
 
 	if *maxDataBytes == 0 {
 		fail(errors.New("-max-data-bytes must be greater than zero"))
+	}
+
+	generationOptions := generationRuntimeOptions{
+		CustodyRoot:       *generationCustodyRoot,
+		Enabled:           *generationEnable,
+		MaxCanonicalBytes: *generationMaxCanonicalBytes,
+		MaxEncodedBytes:   *generationMaxEncodedBytes,
+		MaxManifestBytes:  *generationMaxManifestBytes,
+		RecordedRoot:      *generationRecordedRoot,
+	}
+
+	if err := generationOptions.validate(); err != nil {
+		fail(err)
 	}
 
 	if err := validateSourceID(*sourceID); err != nil {
@@ -246,20 +307,50 @@ func runTransportCommand() {
 	)
 	defer stop()
 
+	receiverConfig := transportreceiver.Config{
+		BatchCRL:                  batchCRL,
+		BatchIssuer:               batchIssuer,
+		BindAddress:               *bindAddress,
+		CustodyRoot:               *custodyRoot,
+		MaxDataBytes:              *maxDataBytes,
+		RecoveryMaxCanonicalBytes: *recoveryMaxCanonicalBytes,
+		RecoveryMaxEncodedBytes:   *recoveryMaxEncodedBytes,
+		RecoveryMaxMembers:        *recoveryMaxMembers,
+		Root:                      root,
+		ServerCertificate:         serverCertificate,
+		Source:                    sourceConfig.Authorization,
+		TransportCRL:              transportCRL,
+		TransportIssuer:           transportIssuer,
+	}
+
+	generationOptions.apply(
+		&receiverConfig,
+	)
+
+	if generationOptions.Enabled {
+		startup, err := transportreceiver.RecoverGenerationStartup(
+			receiverConfig,
+			time.Now(),
+		)
+		if err != nil {
+			fail(fmt.Errorf(
+				"recover FI generation startup state: %w",
+				err,
+			))
+		}
+
+		fmt.Printf(
+			"GenerationStartup: discovered=%d new=%d already_recorded=%d removed_provisional=%d\n",
+			startup.Discovered,
+			startup.RecordedNew,
+			startup.AlreadyRecorded,
+			startup.RemovedProvisional,
+		)
+	}
+
 	result, err := transportreceiver.ListenOnce(
 		ctx,
-		transportreceiver.Config{
-			BatchCRL:          batchCRL,
-			BatchIssuer:       batchIssuer,
-			BindAddress:       *bindAddress,
-			CustodyRoot:       *custodyRoot,
-			MaxDataBytes:      *maxDataBytes,
-			Root:              root,
-			ServerCertificate: serverCertificate,
-			Source:            sourceConfig.Authorization,
-			TransportCRL:      transportCRL,
-			TransportIssuer:   transportIssuer,
-		},
+		receiverConfig,
 	)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -271,12 +362,31 @@ func runTransportCommand() {
 	}
 
 	fmt.Printf("Source:        %s\n", result.SourceID)
-	fmt.Printf("BatchID:       %s\n", result.BatchID)
+	if result.Generation {
+		fmt.Printf("GenerationID:  %s\n", result.GenerationID)
+		fmt.Printf("Artifacts:     %d\n", result.GenerationArtifactCount)
+		fmt.Printf("Batches:       %d\n", result.GenerationBatchCount)
+		fmt.Printf("Records:       %d\n", result.GenerationRecordCount)
+		fmt.Printf("CanonicalBytes:%d\n", result.GenerationCanonicalBytes)
+		fmt.Printf("EncodedBytes:  %d\n", result.GenerationEncodedBytes)
+		fmt.Printf("GenerationData:%d\n", result.GenerationDataBytes)
+		fmt.Printf("RecordedState: %s\n", result.GenerationRecordedState)
+		fmt.Printf("GenerationACK: %s\n", result.GenerationAcknowledgement)
+		fmt.Printf("TransferSHA256:%s\n", result.GenerationTransferSHA256)
+	} else if result.Recovery {
+		fmt.Printf("RecoveryID:    %s\n", result.RecoveryID)
+		fmt.Printf("Members:       %d\n", result.RecoveryMembers)
+		fmt.Printf("CanonicalBytes:%d\n", result.RecoveryCanonicalBytes)
+		fmt.Printf("DataBytes:     %d\n", result.DataBytes)
+		fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
+	} else {
+		fmt.Printf("BatchID:       %s\n", result.BatchID)
+		fmt.Printf("DataBytes:     %d\n", result.DataBytes)
+		fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
+	}
+	fmt.Printf("Custody:       %s\n", result.CustodyDisposition)
 	fmt.Printf("TLS:           %s\n", result.TLSVersion)
 	fmt.Printf("CipherSuite:   %s\n", result.CipherSuite)
-	fmt.Printf("Custody:       %s\n", result.CustodyDisposition)
-	fmt.Printf("DataBytes:     %d\n", result.DataBytes)
-	fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
 	fmt.Println("MutualTLS:     true")
 	fmt.Println("Authorization: AUTHORIZED")
 	fmt.Println("BatchSigning:  AUTHORIZED")

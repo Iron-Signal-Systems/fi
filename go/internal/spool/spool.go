@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,9 +21,11 @@ import (
 )
 
 const (
-	RecordVersion    = "fi-spool-record/0.1"
-	ManifestVersion  = "fi-batch-manifest/0.1"
-	DefaultBatchSize = 64
+	RecordVersion           = "fi-spool-record/0.1"
+	ManifestVersion         = "fi-batch-manifest/0.1"
+	DefaultBatchSize        = 262144
+	DefaultTargetBatchBytes = 32 * 1024 * 1024
+	DefaultMaxBatchBytes    = 64 * 1024 * 1024
 )
 
 var (
@@ -30,6 +33,7 @@ var (
 	ErrBatchHashMismatch  = errors.New("FI batch SHA-256 mismatch")
 	ErrBatchCountMismatch = errors.New("FI batch record count mismatch")
 	ErrBatchSizeMismatch  = errors.New("FI batch byte count mismatch")
+	ErrRecordTooLarge     = errors.New("FI spool record exceeds maximum batch bytes")
 )
 
 type CollectorIdentity struct {
@@ -71,16 +75,22 @@ type Verification struct {
 }
 
 type Writer struct {
-	dir       string
-	batchSize int
-	collector CollectorIdentity
-	file      *os.File
-	openPath  string
-	batchID   string
-	createdAt string
-	count     int
-	closed    bool
-	finalized []FinalizedBatch
+	dir              string
+	workDir          string
+	batchSize        int
+	targetBatchBytes int64
+	maxBatchBytes    int64
+	collector        CollectorIdentity
+	file             *os.File
+	openPath         string
+	batchID          string
+	createdAt        string
+	count            int
+	dataBytes        int64
+	dataHasher       hash.Hash
+	pending          *preparedBatch
+	closed           bool
+	finalized        []FinalizedBatch
 }
 
 func DefaultDir() (string, error) {
@@ -107,20 +117,68 @@ func NewWriter(dir string, batchSize int, collector CollectorIdentity) (*Writer,
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Writer{dir: dir, batchSize: batchSize, collector: collector, finalized: []FinalizedBatch{}}, nil
+
+	publicationDir, err :=
+		resolveDirectoryPath(
+			filepath.Clean(dir),
+		)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"resolve FI spool publication directory: %w",
+			err,
+		)
+	}
+
+	workDir, err :=
+		CollectorWorkDir(
+			dir,
+		)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(workDir, 0o700); err != nil {
+		return nil, fmt.Errorf(
+			"create FI collector work directory: %w",
+			err,
+		)
+	}
+
+	workInfo, err :=
+		os.Lstat(workDir)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"inspect FI collector work directory: %w",
+			err,
+		)
+	}
+	if workInfo.Mode()&os.ModeSymlink != 0 ||
+		!workInfo.IsDir() {
+		return nil, errors.New(
+			"FI collector work path must name a real directory",
+		)
+	}
+
+	return &Writer{
+		dir:              publicationDir,
+		workDir:          workDir,
+		batchSize:        batchSize,
+		targetBatchBytes: DefaultTargetBatchBytes,
+		maxBatchBytes:    DefaultMaxBatchBytes,
+		collector:        collector,
+		finalized:        []FinalizedBatch{},
+	}, nil
 }
 
 func (w *Writer) Append(recordKind, scopeID string, payload any) error {
 	if w == nil || w.closed {
 		return ErrWriterClosed
 	}
+	if w.pending != nil {
+		return ErrWriterPendingFinalization
+	}
 	if recordKind == "" || scopeID == "" {
 		return errors.New("record kind and scope ID are required")
-	}
-	if w.file == nil {
-		if err := w.openBatch(); err != nil {
-			return err
-		}
 	}
 
 	rawPayload, err := json.Marshal(payload)
@@ -139,13 +197,52 @@ func (w *Writer) Append(recordKind, scopeID string, payload any) error {
 		return err
 	}
 	encoded = append(encoded, '\n')
-	if _, err := w.file.Write(encoded); err != nil {
+
+	encodedBytes := int64(len(encoded))
+	if encodedBytes > w.maxBatchBytes {
+		return fmt.Errorf(
+			"%w: record bytes %d exceed limit %d",
+			ErrRecordTooLarge,
+			encodedBytes,
+			w.maxBatchBytes,
+		)
+	}
+
+	if w.file == nil {
+		if err := w.openBatch(); err != nil {
+			return err
+		}
+	}
+
+	if w.count > 0 &&
+		w.dataBytes > w.targetBatchBytes-encodedBytes {
+		if err := w.finalizeCurrent(); err != nil {
+			return err
+		}
+		if err := w.openBatch(); err != nil {
+			return err
+		}
+	}
+
+	written, err := w.file.Write(encoded)
+	if err != nil {
 		return err
 	}
+	if written != len(encoded) {
+		return io.ErrShortWrite
+	}
+	if _, err := w.dataHasher.Write(encoded); err != nil {
+		return err
+	}
+
+	w.dataBytes += encodedBytes
 	w.count++
-	if w.count == w.batchSize {
+
+	if w.count >= w.batchSize ||
+		w.dataBytes >= w.targetBatchBytes {
 		return w.finalizeCurrent()
 	}
+
 	return nil
 }
 
@@ -174,75 +271,397 @@ func (w *Writer) openBatch() error {
 	if err != nil {
 		return err
 	}
-	openPath := filepath.Join(w.dir, "batch-"+id+".open")
-	file, err := os.OpenFile(openPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+
+	openPath :=
+		filepath.Join(
+			w.workDir,
+			"batch-"+id+".open",
+		)
+
+	file, err :=
+		os.OpenFile(
+			openPath,
+			os.O_CREATE|os.O_EXCL|os.O_WRONLY,
+			0o600,
+		)
 	if err != nil {
 		return err
 	}
+
 	w.file = file
 	w.openPath = openPath
 	w.batchID = id
 	w.createdAt = canonicalNow()
 	w.count = 0
+	w.dataBytes = 0
+	w.dataHasher = sha256.New()
+
 	return nil
 }
 
 func (w *Writer) finalizeCurrent() error {
+	if w.pending != nil {
+		return w.finishPendingBatch()
+	}
+
 	if w.file == nil {
 		return nil
 	}
+
 	if w.count == 0 {
 		name := w.openPath
-		_ = w.file.Close()
+
+		closeErr :=
+			w.file.Close()
+
 		w.file = nil
-		w.openPath = ""
-		return os.Remove(name)
+		w.resetCurrent()
+
+		removeErr :=
+			os.Remove(name)
+
+		return errors.Join(
+			closeErr,
+			removeErr,
+		)
 	}
+
+	if w.dataHasher == nil {
+		return errors.New(
+			"FI spool batch hash state is unavailable",
+		)
+	}
+
 	if err := w.file.Sync(); err != nil {
 		return err
 	}
-	if err := w.file.Close(); err != nil {
-		return err
-	}
+
+	dataName :=
+		"batch-" +
+			w.batchID +
+			".jsonl"
+
+	workDataPath :=
+		filepath.Join(
+			w.workDir,
+			dataName,
+		)
+
+	digest :=
+		hex.EncodeToString(
+			w.dataHasher.Sum(nil),
+		)
+
+	dataBytes :=
+		w.dataBytes
+
+	records :=
+		w.count
+
+	manifest :=
+		Manifest{
+			Version:         ManifestVersion,
+			BatchID:         w.batchID,
+			TargetBatchSize: w.batchSize,
+			RecordCount:     records,
+			DataBytes:       dataBytes,
+			DataSHA256:      digest,
+			DataFile:        dataName,
+			Collector:       w.collector,
+			CreatedAt:       w.createdAt,
+			CompletedAt:     canonicalNow(),
+		}
+
+	manifestName :=
+		"batch-" +
+			w.batchID +
+			".manifest.json"
+
+	workManifestPath :=
+		filepath.Join(
+			w.workDir,
+			manifestName,
+		)
+
+	// Establish retry state before closing the completed data file. From this
+	// point forward, Close must never lose knowledge of the batch even if a
+	// later filesystem or publication operation fails.
+	w.pending =
+		&preparedBatch{
+			openPath:         w.openPath,
+			workDataPath:     workDataPath,
+			workManifestPath: workManifestPath,
+			dataName:         dataName,
+			manifestName:     manifestName,
+			manifest:         manifest,
+		}
+
+	closeErr :=
+		w.file.Close()
+
 	w.file = nil
 
-	dataName := "batch-" + w.batchID + ".jsonl"
-	dataPath := filepath.Join(w.dir, dataName)
-	if err := durableRename(w.openPath, dataPath); err != nil {
-		return err
+	if closeErr != nil {
+		return fmt.Errorf(
+			"close completed FI collector work data: %w",
+			closeErr,
+		)
 	}
 
-	digest, dataBytes, records, err := inspectDataFile(dataPath)
+	return w.finishPendingBatch()
+}
+
+func (w *Writer) publishPreparedBatch(
+	workDataPath string,
+	workManifestPath string,
+	dataName string,
+	manifestName string,
+	expected Manifest,
+) (
+	dataPath string,
+	manifestPath string,
+	returnErr error,
+) {
+	boundary, err :=
+		AcquirePublishBoundary()
 	if err != nil {
-		return err
-	}
-	if records != w.count {
-		return fmt.Errorf("%w: wrote %d, inspected %d", ErrBatchCountMismatch, w.count, records)
-	}
-
-	manifest := Manifest{
-		Version:         ManifestVersion,
-		BatchID:         w.batchID,
-		TargetBatchSize: w.batchSize,
-		RecordCount:     records,
-		DataBytes:       dataBytes,
-		DataSHA256:      digest,
-		DataFile:        dataName,
-		Collector:       w.collector,
-		CreatedAt:       w.createdAt,
-		CompletedAt:     canonicalNow(),
-	}
-	manifestPath := filepath.Join(w.dir, "batch-"+w.batchID+".manifest.json")
-	if err := writeManifest(manifestPath, manifest); err != nil {
-		return err
+		return "", "", fmt.Errorf(
+			"acquire FI spool publish boundary: %w",
+			err,
+		)
 	}
 
-	w.finalized = append(w.finalized, FinalizedBatch{DataPath: dataPath, ManifestPath: manifestPath, Manifest: manifest})
+	defer func() {
+		returnErr =
+			errors.Join(
+				returnErr,
+				boundary.Close(),
+			)
+	}()
+
+	dataPath =
+		filepath.Join(
+			w.dir,
+			dataName,
+		)
+
+	manifestPath =
+		filepath.Join(
+			w.dir,
+			manifestName,
+		)
+
+	workDataExists, err :=
+		recoveryRegularFileExists(
+			workDataPath,
+		)
+	if err != nil {
+		return "", "", err
+	}
+
+	workManifestExists, err :=
+		recoveryRegularFileExists(
+			workManifestPath,
+		)
+	if err != nil {
+		return "", "", err
+	}
+
+	publishedDataExists, err :=
+		recoveryRegularFileExists(
+			dataPath,
+		)
+	if err != nil {
+		return "", "", err
+	}
+
+	publishedManifestExists, err :=
+		recoveryRegularFileExists(
+			manifestPath,
+		)
+	if err != nil {
+		return "", "", err
+	}
+
+	switch {
+	case workDataExists &&
+		workManifestExists &&
+		!publishedDataExists &&
+		!publishedManifestExists:
+
+		if err :=
+			verifyExpectedManifestFile(
+				workManifestPath,
+				expected,
+			); err != nil {
+			return "", "", err
+		}
+
+		if err :=
+			durableRename(
+				workDataPath,
+				dataPath,
+			); err != nil {
+			return "", "", fmt.Errorf(
+				"publish FI batch data: %w",
+				err,
+			)
+		}
+
+		if err :=
+			durableRename(
+				workManifestPath,
+				manifestPath,
+			); err != nil {
+
+			rollbackErr :=
+				durableRename(
+					dataPath,
+					workDataPath,
+				)
+
+			if rollbackErr != nil {
+				return "", "", errors.Join(
+					fmt.Errorf(
+						"publish FI batch manifest: %w",
+						err,
+					),
+					fmt.Errorf(
+						"rollback FI batch data publication: %w",
+						rollbackErr,
+					),
+				)
+			}
+
+			return "", "", fmt.Errorf(
+				"publish FI batch manifest: %w",
+				err,
+			)
+		}
+
+		return dataPath, manifestPath, nil
+
+	case !workDataExists &&
+		workManifestExists &&
+		publishedDataExists &&
+		!publishedManifestExists:
+
+		// The prior publication reached the data rename but could not restore
+		// it to the work directory. Verify the expected batch against that
+		// already-published data before committing the manifest.
+		if err :=
+			verifyExpectedManifestFile(
+				workManifestPath,
+				expected,
+			); err != nil {
+			return "", "", err
+		}
+
+		if err :=
+			verifyPreparedManifestAgainstData(
+				expected,
+				dataPath,
+			); err != nil {
+			return "", "", fmt.Errorf(
+				"verify interrupted same-writer FI publication: %w",
+				err,
+			)
+		}
+
+		if err :=
+			durableRename(
+				workManifestPath,
+				manifestPath,
+			); err != nil {
+			return "", "", fmt.Errorf(
+				"complete interrupted same-writer FI publication: %w",
+				err,
+			)
+		}
+
+		return dataPath, manifestPath, nil
+
+	case !workDataExists &&
+		!workManifestExists &&
+		publishedDataExists &&
+		publishedManifestExists:
+
+		// Both publication renames completed, but the caller may have observed
+		// an error while releasing the publication boundary. Re-establish that
+		// these are exactly this writer's expected durable pair.
+		if err :=
+			verifyExpectedManifestFile(
+				manifestPath,
+				expected,
+			); err != nil {
+			return "", "", err
+		}
+
+		verification, err :=
+			VerifyManifest(
+				manifestPath,
+			)
+		if err != nil {
+			return "", "", fmt.Errorf(
+				"verify already-published same-writer FI batch: %w",
+				err,
+			)
+		}
+
+		if !verification.Verified {
+			return "", "", errors.New(
+				"already-published same-writer FI batch did not verify",
+			)
+		}
+
+		return dataPath, manifestPath, nil
+
+	default:
+		return "", "", fmt.Errorf(
+			"FI prepared publication has inconsistent retry state: work_data=%t work_manifest=%t published_data=%t published_manifest=%t",
+			workDataExists,
+			workManifestExists,
+			publishedDataExists,
+			publishedManifestExists,
+		)
+	}
+}
+
+func requirePublicationPathAbsent(
+	path string,
+) error {
+	_, err :=
+		os.Lstat(path)
+
+	switch {
+	case errors.Is(
+		err,
+		os.ErrNotExist,
+	):
+		return nil
+
+	case err != nil:
+		return fmt.Errorf(
+			"inspect FI publication destination %q: %w",
+			path,
+			err,
+		)
+
+	default:
+		return fmt.Errorf(
+			"FI publication destination already exists: %q",
+			path,
+		)
+	}
+}
+
+func (w *Writer) resetCurrent() {
 	w.openPath = ""
 	w.batchID = ""
 	w.createdAt = ""
 	w.count = 0
-	return nil
+	w.dataBytes = 0
+	w.dataHasher = nil
 }
 
 func VerifyManifest(manifestPath string) (Verification, error) {
