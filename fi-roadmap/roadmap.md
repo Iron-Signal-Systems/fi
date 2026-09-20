@@ -52,9 +52,13 @@ The major Phase 1 architecture is now established:
 - major operation lifecycle journaling;
 - bounded SMB/local/AD supporting-source refresh;
 - a persistent Windows service runtime;
-- service scheduling for configured collection and supporting-source refresh;
+- a governed-root/current-state lane with sequential supporting-source refresh;
 - an independent USN catch-up lane for established continuous checkpoints,
   defaulting to 10 minutes and configurable through `FI_SERVICE_USN_EVERY`;
+- an independent Windows Security lane, defaulting to one minute and configurable
+  through `FI_SERVICE_WINDOWS_SECURITY_EVERY`, with bounded EventRecordID
+  windows, immediate backlog drain, durable verification before checkpoint
+  advancement, and Security-specific continuity-gap recovery;
 - a non-administrative `FICollector` service identity;
 - a separate privileged `FIUSNReader` helper exposing only bounded
   `QueryJournal`, `ReadJournal`, `CheckContainment`, and `ReadSACL` operations;
@@ -120,6 +124,17 @@ The post-Gate-1 250K randomized nested campaign is retained as
 engineering/resilience characterization. Its strict clean onboarding acceptance
 was intentionally interrupted during fault injection and is not rewritten as a
 clean scale PASS.
+
+That campaign also exposed two source-runtime scheduling defects that were
+remediated without changing FI's source-truth rules. Cross-root USN work was
+separated with governed-root-scoped synchronization, and Windows Security was
+moved to its own sequential service worker so a multi-hour root operation cannot
+strand the Security checkpoint. On 2026-09-20 the Security worker remained inside
+the retained Server 2016 Security-log window with the lab log returned to 20 MiB
+and durably selected a controlled pair of Event ID 4719 records before advancing
+its checkpoint. This is post-Gate-1 resilience characterization, not a revision
+of the original Gate 1 acceptance result and not a universal Security-log sizing
+claim.
 
 Replay at the Phase 2 boundary is defined as exact generation re-delivery:
 identical durable state is idempotent / `already_recorded`, while conflicting
