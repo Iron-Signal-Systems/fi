@@ -46,13 +46,17 @@ and should expose technical information such as:
 - source/feed status;
 - operation identifier and operation lifecycle status;
 - spool batch and manifest identity;
-- effective configured-collection, independent-USN, and supporting-refresh
-  intervals;
+- effective configured-collection, independent-USN, independent-Windows-Security,
+  and supporting-refresh intervals;
 - service-runtime record kind and outcome, including `ServiceStarted`,
-  `ConfiguredCollection`, `USNCatchUp`, `SupportingSourceRefresh`, and
-  `ServiceStopped`;
+  `ConfiguredCollection`, `USNCatchUp`, `WindowsSecurityCatchUp`,
+  `SupportingSourceRefresh`, and `ServiceStopped`;
 - independent-USN cycle root accounting where recorded, including configured,
   completed, skipped, and failed governed-root counts;
+- Windows Security worker facts where recorded, including read-window count,
+  source-match/selected/ignored counts, verified-batch count, checkpoint
+  advancement/reinitialization, continuity-gap state, and whether more source
+  history was immediately available;
 - generation identity, canonical/encoded byte counts and hashes, FIGT transfer
   byte count/hash, recorder disposition, and acknowledgement outcome;
 - record count, byte count, and integrity verification status;
@@ -84,6 +88,11 @@ USN boundaries rather than only reporting that collection encountered a problem.
 
 A Security source failure should expose the applicable event/checkpoint boundary
 and Windows status rather than only reporting that activity collection failed.
+
+For the independent service worker, diagnostics should also make it possible to
+distinguish steady-state waiting from active backlog drain. A
+`security_more_available=true` cycle followed immediately by another bounded
+cycle is expected catch-up behavior, not scheduler overlap.
 
 A spool failure should identify the affected batch or finalization boundary and
 must not imply that a checkpoint advanced when the applicable durable boundary
