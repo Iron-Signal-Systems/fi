@@ -210,9 +210,22 @@ independently characterized.
 
 - [ ] FICollector can read the local Security log under its restricted service
       identity with the approved Windows rights/group model.
-- [ ] Security checkpoint advances only after accepted collection work.
+- [ ] `ServiceStarted` records the effective independent Security interval.
+- [ ] `WindowsSecurityCatchUp` runs independently from governed-root collection.
+- [ ] Only one sequential Security worker owns the Security checkpoint.
+- [ ] Security checkpoint advances only after accepted durable spool work.
+- [ ] Backlog can drain through immediate additional bounded EventRecordID
+      windows without waiting for the steady-state interval.
+- [ ] Security checkpoint remains inside the retained Security-log window under
+      the representative acceptance workload.
+- [ ] A Security continuity gap is preserved as `Incomplete` rather than
+      inferred as no activity.
+- [ ] Service-mode Security gap recovery records Security-specific current
+      coverage and establishes a fresh forward boundary without requiring a full
+      governed-file tree walk.
 - [ ] Required audit policy/SACL coverage is administrator-controlled and is not
       silently enabled by FI runtime.
+- [ ] FI runtime does not resize the Windows Security log.
 
 ## Post-Gate-1 service / generation verification
 
@@ -236,6 +249,11 @@ runtime.
       blocking the whole independent scheduler.
 - [ ] Long configured work on one governed root does not block independent USN
       service for an unrelated governed root.
+- [ ] Independent Windows Security collection continues while governed-root
+      current-state work is active.
+- [ ] `FI_SERVICE_WINDOWS_SECURITY_EVERY` is honored when explicitly set.
+- [ ] A selected Security event is durably spooled before its checkpoint passes
+      that EventRecordID.
 - [ ] Generation descriptor canonical and encoded byte/hash fields validate.
 - [ ] Durable receiver FIGT transfer SHA-256 matches the recorder receipt's
       transfer SHA-256.
