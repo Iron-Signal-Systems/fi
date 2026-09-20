@@ -53,31 +53,53 @@ distinct from the source facts used to produce them.
 
 ## Service scheduling boundary
 
-The persistent Windows service has two runtime lanes:
+The persistent Windows service has three intentional runtime lanes:
 
-- the configured-collection lane, which also owns the slower supporting-source
-  refresh; and
+- the governed-root/current-state lane, which owns initial baselines, same-root
+  reconciliation work, normal configured-root collection, and the slower
+  supporting-source refresh;
 - an independent USN catch-up lane for governed roots that already have a
-  continuous accepted checkpoint.
+  continuous accepted checkpoint; and
+- an independent Windows Security lane that owns the single host Security
+  checkpoint and bounded Security Event Log collection.
+
+Shared startup spool recovery completes before any lane is allowed to publish.
+After that boundary, source scheduling is independent where source ownership
+allows it.
 
 The independent USN interval defaults to 10 minutes and is configurable through
-`FI_SERVICE_USN_EVERY`.
+`FI_SERVICE_USN_EVERY`. The USN lane does not create an initial root baseline.
+If no checkpoint exists, initial onboarding owns the baseline and anchored
+catch-up. Same-root checkpoint-owning work remains serialized, while unrelated
+governed roots must not block one another.
 
-The independent lane does not create an initial baseline and does not perform
-continuity-gap reconciliation. If no checkpoint exists, initial onboarding owns
-the baseline and its anchored catch-up. If continuity is not continuous, the
-configured collector owns reconciliation.
+The independent Windows Security interval defaults to one minute and is
+configurable through `FI_SERVICE_WINDOWS_SECURITY_EVERY`. One sequential worker
+owns `windows-security.json`. Security windows do not overlap. Each accepted
+window is durably spooled and verified before the checkpoint advances.
 
-The lanes may overlap only where their ownership boundaries permit it.
-Checkpoint-owning collection is serialized per governed root: same-root work does
-not overlap, but long work on one governed root must not block independent USN
-work for an unrelated root. A scheduled independent pass that finds its own root
-busy skips that root rather than waiting behind the same-root operation.
+The Security interval is a steady-state wait, not a backlog throttle. If a
+completed bounded EventRecordID window shows that the Security head is still
+ahead, FI immediately processes another bounded window before returning to the
+normal interval.
 
-Spool publication/recovery has its own publication boundary. It is not protected
-by a process-global governed-root lock.
+A service-mode Security continuity gap remains explicit and incomplete. FI
+durably records the gap, records current Security-specific coverage, queries a
+fresh Security head, and establishes a new forward Security boundary. The
+independent Security worker does not require a full governed-file tree walk merely
+to resume the Security source.
 
-A scheduled interval is a runtime policy, not a claim that source history only
+The current v0.1 `WindowsSecurityContinuityGap` schema retains
+`reconciliation_action = CurrentStateBaseline` for compatibility. In the
+independent service-worker path, that field does not mean that every governed
+file was rescanned. The one-shot configured `fi.exe -run` path retains its
+existing configured reconciliation behavior.
+
+The lanes may overlap only where their source/checkpoint ownership boundaries
+permit it. Spool publication/recovery has its own publication boundary and is not
+protected by a process-global governed-root lock.
+
+A scheduled interval is runtime policy, not a claim that source history only
 exists at that cadence. Checkpoint and continuity rules remain authoritative.
 
 ## Local durable queue handoff
