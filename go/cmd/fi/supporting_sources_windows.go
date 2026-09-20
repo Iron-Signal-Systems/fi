@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/directory"
@@ -27,6 +28,11 @@ const (
 	maxBaselineObservedSIDs = 262144
 	directorySIDBatchSize   = 16384
 )
+
+// supportingSIDStateMu protects the host-level relevant-SID read/merge/write
+// transaction when independent governed-root USN passes run concurrently.
+// It is deliberately separate from per-root checkpoint serialization.
+var supportingSIDStateMu sync.Mutex
 
 // supportingSourceContext contains the slower-changing source facts collected
 // alongside a governed-root baseline. It is deliberately separate from NTFS
@@ -435,6 +441,9 @@ func mergeSupportingSIDState(
 	identity records.ProcessIdentityObservation,
 	observedSIDs *observedSIDSet,
 ) (supportingSIDStateMergeResult, error) {
+	supportingSIDStateMu.Lock()
+	defer supportingSIDStateMu.Unlock()
+
 	if observedSIDs == nil {
 		return supportingSIDStateMergeResult{},
 			errors.New("supporting SID state requires observed SID set")
@@ -530,6 +539,9 @@ func saveSupportingSIDState(
 	identity records.ProcessIdentityObservation,
 	observedSIDs *observedSIDSet,
 ) (string, int, error) {
+	supportingSIDStateMu.Lock()
+	defer supportingSIDStateMu.Unlock()
+
 	if observedSIDs == nil {
 		return "", 0, errors.New("supporting SID state requires observed SID set")
 	}

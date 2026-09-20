@@ -28,10 +28,10 @@ const (
 )
 
 var (
-	serviceRootUSNMu     sync.Mutex
 	serviceRuntimeLogMu  sync.Mutex
 	serviceUSNIntervalMu sync.RWMutex
 	serviceUSNInterval   = serviceUSNIntervalDefault
+	serviceRootLocks     = newServiceRootLockSet()
 )
 
 type serviceUSNCatchUpFunc func(
@@ -49,6 +49,34 @@ type serviceUSNCatchUpSummary struct {
 type serviceUSNRootResult struct {
 	Partial bool
 	Skipped bool
+}
+
+// serviceRootLockSet serializes checkpoint-owning work only within the same
+// governed root. A long baseline or reconciliation on one root must never
+// block independent USN catch-up for a different governed root.
+type serviceRootLockSet struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func newServiceRootLockSet() *serviceRootLockSet {
+	return &serviceRootLockSet{
+		locks: make(map[string]*sync.Mutex),
+	}
+}
+
+func (set *serviceRootLockSet) lockFor(scopeID string) *sync.Mutex {
+	set.mu.Lock()
+	defer set.mu.Unlock()
+
+	lock := set.locks[scopeID]
+	if lock != nil {
+		return lock
+	}
+
+	lock = &sync.Mutex{}
+	set.locks[scopeID] = lock
+	return lock
 }
 
 func resolveServiceUSNInterval() (time.Duration, error) {
@@ -101,29 +129,51 @@ func runServiceUSNLoop(
 		)
 	}
 
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
+	loopCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-		case <-timer.C:
+	cycleErrors := make(chan error, 1)
+	var cycles sync.WaitGroup
+
+	launchCycle := func() {
+		cycles.Add(1)
+		go func() {
+			defer cycles.Done()
+
 			if err := runServiceUSNCycle(
-				ctx,
+				loopCtx,
 				interval,
 				catchUp,
 				appendRecord,
 			); err != nil {
-				return err
+				select {
+				case cycleErrors <- err:
+				default:
+				}
 			}
+		}()
+	}
 
-			if ctx.Err() != nil {
-				return nil
-			}
+	for {
+		select {
+		case <-ctx.Done():
+			cancel()
+			cycles.Wait()
+			return nil
 
-			timer.Reset(interval)
+		case err := <-cycleErrors:
+			cancel()
+			cycles.Wait()
+			return err
+
+		case <-ticker.C:
+			// Preserve fixed cadence. Per-root TryLock semantics make a root
+			// already doing baseline/USN work a quick skip rather than a global
+			// scheduling stall.
+			launchCycle()
 		}
 	}
 }
@@ -190,25 +240,54 @@ func writeServiceUSNCatchUp(
 
 	var runErr error
 
+	type rootOutcome struct {
+		governedRoot string
+		result       serviceUSNRootResult
+		err          error
+	}
+
+	outcomes := make(
+		chan rootOutcome,
+		len(value.GovernedRoots),
+	)
+
+	var roots sync.WaitGroup
+
 	for _, governedRoot := range value.GovernedRoots {
 		if err := ctx.Err(); err != nil {
 			return summary, errors.Join(runErr, err)
 		}
 
-		result, rootErr := writeServiceUSNRoot(
-			ctx,
-			governedRoot,
-		)
+		roots.Add(1)
+		go func(root string) {
+			defer roots.Done()
 
-		if rootErr != nil {
+			result, rootErr := writeServiceUSNRoot(
+				ctx,
+				root,
+			)
+
+			outcomes <- rootOutcome{
+				governedRoot: root,
+				result:       result,
+				err:          rootErr,
+			}
+		}(governedRoot)
+	}
+
+	roots.Wait()
+	close(outcomes)
+
+	for outcome := range outcomes {
+		if outcome.err != nil {
 			summary.FailedRoots++
 
 			runErr = errors.Join(
 				runErr,
 				fmt.Errorf(
 					"service USN root %q: %w",
-					governedRoot,
-					rootErr,
+					outcome.governedRoot,
+					outcome.err,
 				),
 			)
 
@@ -216,10 +295,10 @@ func writeServiceUSNCatchUp(
 		}
 
 		switch {
-		case result.Skipped:
+		case outcome.result.Skipped:
 			summary.SkippedRoots++
 
-		case result.Partial:
+		case outcome.result.Partial:
 			summary.PartialRoots++
 
 		default:
@@ -234,12 +313,21 @@ func writeServiceUSNRoot(
 	ctx context.Context,
 	governedRoot string,
 ) (serviceUSNRootResult, error) {
-	serviceRootUSNMu.Lock()
-	defer serviceRootUSNMu.Unlock()
-
 	scopeID := configuredScopeID(
 		governedRoot,
 	)
+
+	rootLock := serviceRootLocks.lockFor(
+		scopeID,
+	)
+
+	// Never let a long same-root baseline/reconciliation stall the independent
+	// USN scheduler. The configured operation already owns this root and will
+	// perform its required baseline/catch-up semantics before releasing it.
+	if !rootLock.TryLock() {
+		return serviceUSNRootResult{Skipped: true}, nil
+	}
+	defer rootLock.Unlock()
 
 	statePath, err := checkpoint.DefaultPath(
 		scopeID,
@@ -325,12 +413,13 @@ func writeServiceUSNRoot(
 }
 
 // writeServiceConfiguredCollector keeps the configured/full collection lane
-// independent from the 10-minute USN lane while serializing the short pieces
-// that own a governed-root USN checkpoint.
+// independent from the 10-minute USN lane while serializing checkpoint-owning
+// work only within the same governed root.
 //
-// The long Windows Security reconciliation/full-state walk is intentionally not
-// covered by serviceRootUSNMu. That is the path we want the 250K-file test to
-// exercise concurrently with independent USN catch-up.
+// Root synchronization is keyed by governed-root scope ID. A long operation on
+// one root therefore cannot block an unrelated root's independent USN pass.
+// Shared spool publication/recovery uses the spool publication boundary instead
+// of a root lock.
 func writeServiceConfiguredCollector(
 	ctx context.Context,
 ) (configuredRunSummary, error) {
@@ -354,14 +443,23 @@ func writeServiceConfiguredCollector(
 		return summary, err
 	}
 
-	// The independent USN lane writes to the same FI spool. Serialize this
-	// mechanical interrupted-artifact sweep with root USN publication so a
-	// live USN .open batch can never be mistaken for abandoned work.
-	serviceRootUSNMu.Lock()
+	// Interrupted-artifact recovery is a spool-publication concern, not a
+	// governed-root checkpoint concern. Use the existing short-lived,
+	// process-safe publication boundary so recovery never serializes unrelated
+	// roots for the duration of a filesystem baseline.
+	boundary, boundaryErr := spool.AcquirePublishBoundary()
+	if boundaryErr != nil {
+		summary.Complete = false
+		return summary, fmt.Errorf(
+			"acquire FI spool publish boundary for interrupted recovery: %w",
+			boundaryErr,
+		)
+	}
+
 	spoolRecovery, recoveryErr := spool.PreserveInterruptedArtifacts(
 		spoolDir,
 	)
-	serviceRootUSNMu.Unlock()
+	recoveryErr = errors.Join(recoveryErr, boundary.Close())
 
 	summary.SpoolRecovery = spoolRecovery
 
@@ -397,12 +495,19 @@ func writeServiceConfiguredCollector(
 			break
 		}
 
-		serviceRootUSNMu.Lock()
+		scopeID := configuredScopeID(
+			governedRoot,
+		)
+		rootLock := serviceRootLocks.lockFor(
+			scopeID,
+		)
+
+		rootLock.Lock()
 		rootSummary, rootErr := writeConfiguredRoot(
 			ctx,
 			governedRoot,
 		)
-		serviceRootUSNMu.Unlock()
+		rootLock.Unlock()
 
 		if rootErr != nil {
 			rootSummary.Status = configuredStatusFailed

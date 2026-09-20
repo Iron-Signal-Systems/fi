@@ -48,8 +48,12 @@ type batchArtifacts struct {
 // PreserveInterruptedArtifacts mechanically preserves FI-owned spool artifacts
 // that cannot represent a fully finalized batch.
 //
-// The caller must already hold exclusive collector runtime ownership. This
-// function never invents or reconstructs a manifest, never promotes an
+// The caller must either hold exclusive collector runtime ownership or hold
+// the FI spool publication boundary. Live writers keep unfinished batches in
+// the separate collector work directory; the publication boundary excludes
+// concurrent publication into the active spool while this function scans it.
+//
+// This function never invents or reconstructs a manifest, never promotes an
 // interrupted artifact into an accepted batch, never deletes the bytes, and
 // never advances a source checkpoint. Finalized data+manifest pairs are left
 // untouched; their normal verification semantics remain unchanged.

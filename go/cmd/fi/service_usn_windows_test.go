@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -161,5 +162,126 @@ func TestRunServiceUSNLoopSchedulesCatchUpAndStops(
 		t.Fatal(
 			"service USN loop did not stop after cancellation",
 		)
+	}
+}
+func TestServiceRootLockSetSeparatesGovernedRoots(
+	t *testing.T,
+) {
+	set := newServiceRootLockSet()
+
+	rootAFirst := set.lockFor("root-a")
+	rootASecond := set.lockFor("root-a")
+	rootB := set.lockFor("root-b")
+
+	if rootAFirst != rootASecond {
+		t.Fatal("same governed-root scope received different locks")
+	}
+	if rootAFirst == rootB {
+		t.Fatal("different governed-root scopes shared one lock")
+	}
+}
+
+func TestWriteServiceUSNRootSkipsBusySameRoot(
+	t *testing.T,
+) {
+	governedRoot := `T:\FI-Test-Busy-Root`
+	scopeID := configuredScopeID(governedRoot)
+	rootLock := serviceRootLocks.lockFor(scopeID)
+
+	rootLock.Lock()
+	defer rootLock.Unlock()
+
+	started := time.Now()
+	result, err := writeServiceUSNRoot(
+		context.Background(),
+		governedRoot,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skipped {
+		t.Fatal("busy same-root USN pass was not skipped")
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf(
+			"busy same-root USN pass blocked for %s",
+			elapsed,
+		)
+	}
+}
+
+func TestRunServiceUSNLoopKeepsFixedCadenceWhilePriorCycleRuns(
+	t *testing.T,
+) {
+	ctx, cancel := context.WithCancel(
+		context.Background(),
+	)
+	defer cancel()
+
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	done := make(chan error, 1)
+
+	var calls atomic.Int32
+
+	go func() {
+		done <- runServiceUSNLoop(
+			ctx,
+			20*time.Millisecond,
+			func(
+				cycleCtx context.Context,
+			) (
+				serviceUSNCatchUpSummary,
+				error,
+			) {
+				call := calls.Add(1)
+
+				switch call {
+				case 1:
+					close(firstStarted)
+					select {
+					case <-releaseFirst:
+					case <-cycleCtx.Done():
+						return serviceUSNCatchUpSummary{}, cycleCtx.Err()
+					}
+
+				case 2:
+					close(secondStarted)
+				}
+
+				return serviceUSNCatchUpSummary{
+					ConfiguredRoots: 1,
+					CompletedRoots:  1,
+				}, nil
+			},
+			func(serviceRuntimeRecord) error {
+				return nil
+			},
+		)
+	}()
+
+	select {
+	case <-firstStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first USN cycle did not start")
+	}
+
+	select {
+	case <-secondStarted:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("second USN cycle was delayed by the first cycle")
+	}
+
+	close(releaseFirst)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("service USN loop did not stop")
 	}
 }
