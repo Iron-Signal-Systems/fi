@@ -105,6 +105,16 @@ FI currently selects:
 FI preserves Windows Security records independently from NTFS/USN observations.
 A denied request is not represented as though the file changed.
 
+In persistent service mode, the Security Event Log is collected by an independent
+single-owner worker. The worker uses bounded EventRecordID windows, durably
+verifies selected output before advancing the Security checkpoint, and immediately
+continues with another bounded window while backlog remains. This scheduling
+separation prevents long governed-root current-state work from blocking the
+Security source.
+
+The worker does not change audit policy, SACLs, or Security-log size. Those remain
+administrator-controlled deployment settings.
+
 ## Recommended governed-root SACLs
 
 The example uses two separate audit rules because change auditing and successful
