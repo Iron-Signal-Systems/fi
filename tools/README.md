@@ -684,15 +684,47 @@ The Security Event Log is a separate FI source.
 A passing USN test does not prove Security-log readability or audit-policy/SACL
 coverage.
 
+In persistent service mode, Windows Security has its own sequential collector
+worker. The default steady-state interval is `1m` and may be overridden with:
+
+```text
+FI_SERVICE_WINDOWS_SECURITY_EVERY
+```
+
+The worker owns one Security checkpoint, uses bounded EventRecordID windows, and
+advances the checkpoint only after the corresponding local spool output has been
+durably finalized and verified. If backlog remains after one bounded window, the
+worker immediately processes another window rather than sleeping for the normal
+interval.
+
 During deployment acceptance, verify:
 
 - the restricted collector can read the local Security log through the approved
   Windows rights/group model;
-- the FI Security checkpoint advances after accepted collection; and
+- `ServiceStarted` records the effective Security interval;
+- `WindowsSecurityCatchUp` records appear independently from governed-root
+  collection;
+- the Security checkpoint advances after accepted durable collection work;
+- the checkpoint remains inside the retained Security-log window under
+  representative load;
+- a controlled selected Security event can be durably spooled when that test is
+  authorized; and
 - required Advanced Audit Policy and SACL configuration are present where
   governed-file activity is expected.
 
-FI runtime does not silently enable audit policy or add governed-root SACLs.
+A Security continuity gap must remain explicit. Service-mode gap recovery records
+Security-specific current coverage and establishes a fresh forward boundary; it
+must not require a multi-hour full file-tree walk merely to resume Event Log
+collection.
+
+FI runtime does not silently enable audit policy, resize the Security log, or add
+governed-root SACLs.
+
+The 2026-09-20 Server 2016 lab validation demonstrated the independent worker
+under the active 250K resilience workload with the Security log returned to
+20 MiB. That is a tested lab result, not a universal production log-size
+recommendation. See
+`docs\performance\PHASE-2-WINDOWS-SECURITY-WORKER-VALIDATION.md`.
 
 ---
 
