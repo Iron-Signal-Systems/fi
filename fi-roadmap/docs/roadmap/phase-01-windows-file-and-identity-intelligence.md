@@ -52,14 +52,14 @@ before volume-wide USN activity is treated as governed-object activity.
 | Effective-access source inputs | Strong foundation | NTFS, share, local-identity, AD identity, and direct-membership inputs exist. Backend correlation owns nested membership and final effective-access conclusions. |
 | USN journal change detection | Implemented and integrated | Configured runs use persistent checkpoints, bounded USN catch-up, governed-object selection, File-ID re-observation, durable local spooling, verification, and checkpoint advancement. |
 | USN privilege isolation | Implemented; Gate 1 accepted on all four exact Windows Server builds | `FICollector` remains non-admin. `FIUSNReader` is a separate local-Administrator service exposing only bounded USN query/read, mechanical containment, and exact-object SACL-read operations. Local IPC requires the enabled `NT SERVICE\FICollector` service SID and rejects remote clients. Exact Gate 1 acceptance is complete on Server 2022/2025. |
-| Windows Security governed-file activity | Implemented foundation and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. The broader behavior matrix remains. |
+| Windows Security governed-file activity | Implemented and live validated | Selected file/security events, read/denied access, Detailed File Share/5145 context, coverage assessment, durable spooling, and Security checkpoints are integrated. Service mode now owns the Security source in an independent sequential worker with bounded EventRecordID windows, immediate backlog drain, and durable verification before checkpoint advancement. |
 | Local durable spool | Implemented | Writes finalized JSONL batches and manifests, verifies count/size/SHA-256, retains accepted local batches, and does not remove them before Phase 2 acknowledgement exists. |
 | Normal-run checkpoint continuity | Implemented and live validated | USN and Windows Security checkpoints resume from the previously accepted boundary without replaying the prior accepted range. |
 | Continuity-gap history and reconciliation | Implemented and live validated | USN and Windows Security gaps are persisted explicitly as incomplete, current state is reconciled, and a new forward boundary is established without pretending missing history was reconstructed. |
 | Operation journal | Implemented and live validated for major boundaries | Append-only Started/Finished lifecycle history covers baseline, USN catch-up, Windows Security catch-up, reconciliation, and SupportingSourceRefresh. Orphaned Started operations are recovered as Interrupted/ProcessRestart. |
 | FI runtime resource journal | Implemented foundation / non-blocking | CPU, RAM, and process-I/O history exists for journaled USN operations. Broader coverage is useful for sizing and pilot validation but is not itself a Gate 1 blocker. |
 | Supporting-source refresh | Implemented, live validated, and service scheduled | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches. `-service` can schedule it at an explicit operator-provided interval. No universal production cadence is declared; pilot and production intervals remain deployment-specific and measurement-driven. |
-| Windows service runtime | Implemented foundation and live validated | The SCM runtime invokes the existing configured collector, prevents overlapping FI-owned write modes through runtime ownership, schedules configured collection and supporting refresh sequentially, and supports stop/shutdown cancellation. Broader failure and boot/restart validation remains. |
+| Windows service runtime | Implemented and live validated | The SCM runtime performs shared startup spool recovery, then runs governed-root/current-state work, USN catch-up, and Windows Security collection as intentional independent lanes. Each source keeps single-owner checkpoint semantics; supporting refresh remains sequential with the root lane. Stop/shutdown cancellation remains coordinated across workers. |
 | gMSA runtime | Implemented foundation and live validated | Per host, `FICollector` runs as a non-admin gMSA and `FIUSNReader` uses a separate privileged gMSA. Remaining work is deployment reproducibility and validation of service/binary/config/state/spool rights. |
 | Failure/restart campaign | Partially validated | Checkpoint gaps, operation restart recovery, helper outage, frozen USN checkpoint, collector continuation, helper restart, and USN catch-up are validated. Broader adverse-condition cases remain. |
 | Performance/source impact | Server 2016 Gate 1 campaign complete; production sizing remains | Tests 13 through 16 provide bounded baseline, churn, spool-pressure, and operation/resource characterization on Server 2016. Repeated representative measurements are still required before production cadence or general sizing limits are declared. |
@@ -312,26 +312,47 @@ Windows Security provides independent activity facts such as actor, process,
 requested/used access, share context, remote source, and result where Windows
 emitted the applicable event.
 
-The configured collection path:
+The one-shot configured collector retains its bounded configured-cycle behavior.
+The persistent Windows service runtime now schedules source work through three
+intentional lanes:
 
-1. anchors the Windows Security source;
-2. processes each configured governed root;
-3. safely baselines a root when no checkpoint exists;
-4. otherwise performs bounded USN catch-up;
-5. re-observes selected changed governed objects;
-6. catches the Security source up through a fixed target;
-7. writes and verifies local spool batches;
-8. advances checkpoints only after the applicable local durable boundary is
-   satisfied;
-9. persists and reconciles known USN/Security continuity gaps; and
-10. journals major configured operation lifecycle boundaries.
+1. the governed-root/current-state lane owns initial baselines, same-root USN
+   continuity reconciliation, normal configured root work, and the slower
+   supporting-source refresh;
+2. the independent USN lane services established continuous checkpoints without
+   allowing unrelated long root work to stall another governed root; and
+3. the independent Windows Security lane owns the host Security checkpoint,
+   starts immediately after shared startup spool recovery, and reads bounded
+   EventRecordID windows independently from file-tree work.
 
-The Windows service runtime invokes this same configured path. It does not create
-a second collection implementation.
+The Security worker is sequential within its own source boundary. One worker owns
+`windows-security.json`; concurrent Security readers do not race checkpoint
+advancement. Each accepted Security window is durably spooled and verified before
+its EventRecordID boundary advances.
 
-The service runtime performs work sequentially rather than overlapping collection
-cycles. The configured interval is measured after a cycle completes, preventing a
-slow run from creating a backlog of concurrent FI collectors.
+The steady-state Security interval defaults to `1m` and can be overridden with
+`FI_SERVICE_WINDOWS_SECURITY_EVERY`. The interval is not an artificial pause
+while backlog exists: when a bounded window completes and the live Security head
+is still ahead, the worker immediately processes another bounded window. Once
+caught up, it waits for the normal interval.
+
+The independent USN interval defaults to `10m` and can be overridden with
+`FI_SERVICE_USN_EVERY`. Initial root onboarding remains exclusive to the root
+lane so an independent USN pass does not race creation of a new root checkpoint.
+
+The service runtime records the effective source intervals and per-cycle outcomes
+in `service-runtime.jsonl`. A slow root operation therefore does not imply that
+Windows Security or an unrelated established USN checkpoint must wait for the
+root cycle to finish.
+
+On 2026-09-20, post-Gate-1 Server 2016 resilience testing under the 250K lab
+workload validated the independent Security worker with the Security log returned
+to 20 MiB. Sampled Security checkpoints remained inside the retained log window;
+the largest sampled lag from the live head was 584 EventRecordIDs. A controlled
+File System audit-policy toggle produced Event ID 4719 records 185819888 and
+185819899. FI selected both, durably verified the Security batch, and advanced
+the checkpoint to 185820374. Receiver/relational proof for those exact two
+records remains a separate Gate 3 validation item.
 
 ---
 
@@ -456,11 +477,24 @@ The current Security checkpoint assessment detects:
 - overwritten records where the next required EventRecordID is older than the
   oldest available record.
 
-A `WindowsSecurityContinuityGap` is durably recorded before current-state
-reconciliation and a new fixed forward Security boundary is established.
+A `WindowsSecurityContinuityGap` is durably recorded before a new forward
+boundary is established. Missing historical Security events remain
+`Incomplete`; FI does not reconstruct them from USN, NTFS state, or any other
+source.
 
-Current-state reconciliation does **not** reconstruct missing historical Security
-events.
+In persistent service mode, gap recovery is Security-specific. FI records current
+audit-policy state, Security-log readability, and governed-root SACL coverage,
+durably records that coverage, then queries a fresh Security head and establishes
+the new checkpoint there. The Security worker does not wait for or trigger a full
+governed-file tree baseline merely to resume the Event Log source.
+
+The current v0.1 gap-record schema still carries
+`reconciliation_action = CurrentStateBaseline` for compatibility with the
+existing record contract. In the independent service-worker path, that value must
+not be interpreted as a claim that every governed file was rescanned.
+
+The one-shot configured collection path retains its existing configured
+reconciliation behavior.
 
 ---
 
@@ -557,10 +591,12 @@ NTFS raw-volume USN query/read
 
 ### FICollector
 
-`FICollector` owns normal FI behavior:
+`FICollector` owns normal FI behavior. Its service runtime deliberately
+separates governed-root/current-state work, established USN catch-up, and Windows
+Security scheduling while retaining one checkpoint owner per source:
 
 - configuration/root handling;
-- Windows Security collection;
+- Windows Security collection through the independent Security worker;
 - NTFS baseline and re-observation;
 - USN parsing;
 - governed-root containment;
@@ -698,7 +734,7 @@ should cover:
 - initial baseline;
 - normal low-churn catch-up;
 - high-churn catch-up;
-- Security activity volume;
+- Security activity volume and retained-log margin under the independent worker;
 - supporting-source refresh;
 - CPU/RAM/I/O;
 - spool growth;
