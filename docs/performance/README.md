@@ -98,7 +98,7 @@ measurement of:
 - initial baseline;
 - normal low-churn configured runs;
 - high-churn USN catch-up;
-- Security activity volume;
+- Security activity volume, retained-log margin, and independent-worker catch-up;
 - supporting-source refresh;
 - gap reconciliation;
 - CPU/RAM/I/O;
@@ -155,8 +155,10 @@ injection and is therefore **not a clean 250K PASS**.
 
 The retained campaign validated receiver-outage backlog retention/recovery,
 sender interruption recovery, collector interruption history, governed-source
-zero-free behavior, source-host CPU/RAM/I/O impact, and cross-root independent
-USN scheduling after remediation in `41906af`.
+zero-free behavior, source-host CPU/RAM/I/O impact, cross-root independent USN
+scheduling after remediation in `41906af`, and later independent Windows
+Security scheduling after the campaign exposed that Security catch-up could be
+stranded behind multi-hour root work.
 
 During recovery from the one-hour receiver outage, host CPU averaged 9.946% and
 combined FI CPU averaged 7.626%, essentially unchanged from the surrounding
@@ -167,4 +169,5 @@ See:
 
 - `PHASE-2-250K-RANDOM-NESTED-ONBOARDING-PLAN.md`
 - `PHASE-2-250K-RANDOM-NESTED-ONBOARDING-REPORT.md`
+- `PHASE-2-WINDOWS-SECURITY-WORKER-VALIDATION.md`
 - `PHASE-2-GATE-2-CLOSEOUT.md`
