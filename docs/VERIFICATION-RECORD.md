@@ -231,6 +231,11 @@ runtime.
       hashes.
 - [ ] Independent USN catch-up can complete while a long configured
       collection/Security reconciliation remains active.
+- [ ] Same-root checkpoint-owning work does not overlap.
+- [ ] A busy same-root independent USN pass is reported as skipped rather than
+      blocking the whole independent scheduler.
+- [ ] Long configured work on one governed root does not block independent USN
+      service for an unrelated governed root.
 - [ ] Generation descriptor canonical and encoded byte/hash fields validate.
 - [ ] Durable receiver FIGT transfer SHA-256 matches the recorder receipt's
       transfer SHA-256.
@@ -239,6 +244,13 @@ runtime.
 - [ ] Sender retirement occurs only after the exact acknowledgement contract is
       satisfied.
 - [ ] Lost acknowledgement/retry does not produce ambiguous loss.
+- [ ] Receiver outage preserves source custody and queued generations recover
+      without premature retirement.
+- [ ] Sender interruption preserves source custody and resumes without ambiguous
+      loss.
+- [ ] Exact duplicate replay returns duplicate-safe durable state rather than
+      creating ambiguous history.
+- [ ] Conflicting bytes for an existing generation identity fail closed.
 - [ ] Startup recovery preserves or resumes interrupted generation state.
 - [ ] Acknowledged-generation reclamation does not touch active generations.
 

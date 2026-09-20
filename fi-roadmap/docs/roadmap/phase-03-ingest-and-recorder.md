@@ -1,5 +1,11 @@
 # Phase 3 — Ingest & Recorder
 
+## Current Development Status
+
+**ACTIVE — Phase 3 / Gate 3**
+
+Phase 2 / Gate 2 completed on 2026-09-20.
+
 ## Purpose
 
 Turn transported FI material into immutable FI System of Record history.
@@ -22,8 +28,9 @@ It does not by itself implement the Phase 3 authoritative historical record
 model, cross-record journal, projections, rejection history, or database/System
 of Record semantics described below.
 
-Phase 3 therefore remains a separate future gate even though Phase 2 now uses a
-durable semantic recorder receipt.
+Phase 3 remains a separate product/durability gate even though Phase 2 uses a
+durable semantic recorder receipt. With Gate 2 complete, Phase 3 is now the
+active development focus.
 
 ## Ingest Responsibilities
 

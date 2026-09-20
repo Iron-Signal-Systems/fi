@@ -32,7 +32,11 @@ investigation.
 
 ## Current Development Focus
 
-FI is currently focused on **Phase 2 / Gate 2 — Secure Record Transport**.
+FI is currently focused on **Phase 3 / Gate 3 — Ingest & Recorder**.
+
+**Phase 1 / Gate 1: COMPLETE — PASS**
+
+**Phase 2 / Gate 2: COMPLETE — PASS**
 
 The major Phase 1 architecture is now established:
 
@@ -97,25 +101,33 @@ take priority over maintaining nominal cadence.
 
 **Phase 1 / Gate 1: COMPLETE — PASS**
 
-**Phase 2 / Gate 2: ACTIVE**
+**Phase 2 / Gate 2: COMPLETE — PASS**
 
-Current Phase 2 implementation now includes generation freezing,
-`fi-generation-canonical/0.1` canonical representation, zstd encoding, signed
-generation descriptors, FIGT transport, durable receiver generation custody,
-semantic generation recorder receipts, exact `recorded` /
-`already_recorded` acknowledgement binding, sender retirement only after that
+Phase 2 closeout includes generation freezing, `fi-generation-canonical/0.1`,
+zstd encoding, signed generation descriptors, FIGT transport, durable receiver
+generation custody, semantic generation recorder receipts, exact `recorded` /
+`already_recorded` acknowledgement binding, sender retirement only after exact
 acknowledgement, startup recovery, and acknowledged-generation reclamation.
 
-Lost-acknowledgement / receiver-restart / retry / already-recorded behavior and
-end-to-end reclamation are covered by the integrated generation tests. A live
-Server 2016 run on 2026-09-19 also carried an independent-USN rename/content
-observation through generation transport into receiver custody while the long
-configured collection remained active.
+Integrated coverage established lost-acknowledgement, retry, duplicate,
+conflicting-identity, revocation, bounds, startup, retirement, and reclaim
+behavior. Live Server 2016 campaigns established receiver-outage backlog
+retention/recovery, sender interruption recovery, measured source impact during
+backlog drain, and cross-root independent-USN behavior after remediation in
+`41906af`.
 
-Before the next scale run, FI will use a 250,000-file randomized nested
-onboarding campaign with directory depth up to 15. That campaign is
-post-Gate-1 characterization and does not reopen or overwrite the historical
-100K Gate 1 acceptance.
+The post-Gate-1 250K randomized nested campaign is retained as
+engineering/resilience characterization. Its strict clean onboarding acceptance
+was intentionally interrupted during fault injection and is not rewritten as a
+clean scale PASS.
+
+Replay at the Phase 2 boundary is defined as exact generation re-delivery:
+identical durable state is idempotent / `already_recorded`, while conflicting
+bytes for the same generation identity fail closed. The final generation
+protocol does not use a separate monotonic security sequence; earlier
+`sequence conflict` wording is retired.
+
+See `docs/performance/PHASE-2-GATE-2-CLOSEOUT.md`.
 
 
 ## Phase 1 — Windows File & Identity Intelligence

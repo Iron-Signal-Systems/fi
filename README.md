@@ -345,8 +345,13 @@ configured collection was still active. FI preserved the raw
 `RenameOldName`, `RenameNewName`, and `DataExtend` USN facts, freshly
 re-observed the same object at its new path, computed new content hashes, sealed
 the records into a generation, and established receiver custody about 7 minutes
-13 seconds after the mutation. The configured collection had not completed when
-the independent USN worker completed.
+13 seconds after the mutation.
+
+The later 250K resilience campaign exposed a separate cross-root scheduling
+defect. Commit `41906af` replaced the process-global governed-root lock with
+governed-root-scoped synchronization. Live validation then recorded 33
+independent USN cycles on the intended approximately 10-minute cadence while a
+different governed root remained in a 5h32m baseline.
 ---
 
 ## USN split-privilege boundary
@@ -575,6 +580,17 @@ transfer SHA-256. Lost acknowledgement, receiver restart, sender retry, duplicat
 delivery of the same bytes, startup recovery, and post-acknowledgement
 reclamation are covered by the generation transport tests integrated in Phase 2.
 
+Live Phase 2 fault campaigns also retained source custody through approximately
+10-minute and 60-minute receiver outages and through a sender interruption. The
+one-hour receiver outage retained seven generations / 51,538 records; backlog
+reached receiver custody within approximately 8m53s after receiver service
+returned, without manual sender repair.
+
+Replay protection at this boundary is generation-identity based: exact
+re-delivery is duplicate-safe and may return `already_recorded`; the same
+generation identity with conflicting bytes fails closed. Phase 2 does not use a
+separate monotonic security sequence.
+
 The durable generation receipt used at this boundary is a Phase 2 custody and
 acknowledgement fact. It is not yet the complete Phase 3 FI System of Record.
 
@@ -689,10 +705,24 @@ Gate 1 closure subsequently completed:
 The Gate 1 test deployment uses `1m` collection and `30m` supporting-source
 refresh only as an acceptance configuration. Gate 1 does not declare one universal production cadence; pilot and production intervals remain deployment-specific and measurement-driven.
 
-Gate 1 is complete. FI is now focused on Phase 2 / Gate 2 secure record transport.
+Gate 1 and Gate 2 are complete.
 
-No additional Phase 1 source subsystem should be added unless a concrete Gate 1
-requirement demonstrates that a required source fact is missing.
+**Phase 2 / Gate 2 — Secure Record Transport: COMPLETE — PASS**
+
+FI is now focused on **Phase 3 / Gate 3 — Ingest & Recorder**.
+
+Phase 2 closeout includes durable FIGT custody, semantic recorder receipts,
+exact acknowledgement-before-retirement, retry/duplicate/conflict safety,
+receiver and sender interruption recovery, and the root-isolation remediation
+validated during the 250K resilience campaign.
+
+See:
+
+- `docs/performance/PHASE-2-250K-RANDOM-NESTED-ONBOARDING-REPORT.md`
+- `docs/performance/PHASE-2-GATE-2-CLOSEOUT.md`
+
+No additional Phase 1 or Phase 2 subsystem should be added unless a concrete
+accepted requirement demonstrates that the corresponding boundary is incomplete.
 
 ---
 

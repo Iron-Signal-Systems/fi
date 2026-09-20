@@ -68,10 +68,14 @@ continuity-gap reconciliation. If no checkpoint exists, initial onboarding owns
 the baseline and its anchored catch-up. If continuity is not continuous, the
 configured collector owns reconciliation.
 
-The lanes may overlap only where their ownership boundaries permit it. Shared
-checkpoint/publication mechanics are serialized so background USN work does not
-race the configured root checkpoint or treat an actively written USN spool batch
-as abandoned work.
+The lanes may overlap only where their ownership boundaries permit it.
+Checkpoint-owning collection is serialized per governed root: same-root work does
+not overlap, but long work on one governed root must not block independent USN
+work for an unrelated root. A scheduled independent pass that finds its own root
+busy skips that root rather than waiting behind the same-root operation.
+
+Spool publication/recovery has its own publication boundary. It is not protected
+by a process-global governed-root lock.
 
 A scheduled interval is a runtime policy, not a claim that source history only
 exists at that cadence. Checkpoint and continuity rules remain authoritative.

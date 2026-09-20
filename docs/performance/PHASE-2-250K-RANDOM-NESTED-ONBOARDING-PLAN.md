@@ -2,10 +2,21 @@
 
 ## Status
 
-**PLANNED — NOT YET EXECUTED**
+**EXECUTED AS ENGINEERING / RESILIENCE CHARACTERIZATION**
 
-This campaign is post-Gate-1 scale and integration characterization. It does not
-replace the historical 100K Gate 1 acceptance result.
+**ORIGINAL CLEAN 250K ACCEPTANCE: INTERRUPTED — NOT A PASS**
+
+This plan remains the record of the intended campaign. Execution began on
+2026-09-19. The strict clean onboarding run was intentionally interrupted as the
+campaign expanded into receiver-outage, sender-interruption,
+collector-interruption, governed-volume-exhaustion, and cross-root scheduler
+testing.
+
+The resulting engineering record is preserved in
+`PHASE-2-250K-RANDOM-NESTED-ONBOARDING-REPORT.md`.
+
+This campaign remains post-Gate-1 characterization. It does not replace or reopen
+the historical 100K Gate 1 acceptance result.
 
 ## Purpose
 

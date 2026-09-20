@@ -51,6 +51,8 @@ and should expose technical information such as:
 - service-runtime record kind and outcome, including `ServiceStarted`,
   `ConfiguredCollection`, `USNCatchUp`, `SupportingSourceRefresh`, and
   `ServiceStopped`;
+- independent-USN cycle root accounting where recorded, including configured,
+  completed, skipped, and failed governed-root counts;
 - generation identity, canonical/encoded byte counts and hashes, FIGT transfer
   byte count/hash, recorder disposition, and acknowledgement outcome;
 - record count, byte count, and integrity verification status;

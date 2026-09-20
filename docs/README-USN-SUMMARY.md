@@ -228,9 +228,27 @@ extension USNs, re-observed the same stable NTFS object at the new path, capture
 the new metadata and content hashes, and delivered the resulting generation to
 receiver custody while the long configured collection was still active.
 
-This establishes the tested concurrency behavior. The observed approximately
-7-minute end-to-end result is a lab measurement, not a universal latency
-guarantee.
+This establishes the tested same-root/long-configured-work concurrency behavior.
+The observed approximately 7-minute end-to-end result is a lab measurement, not
+a universal latency guarantee.
+
+The later 250K resilience campaign exposed a separate cross-root locking defect:
+a process-global governed-root mutex allowed long configured work on one root to
+block the independent USN scheduler before it could service another root.
+Commit `41906af` changed the runtime to governed-root-scoped synchronization.
+
+The accepted scheduling rule is now:
+
+- checkpoint-owning work for the same governed root does not overlap;
+- a scheduled independent pass skips a root that is already busy rather than
+  blocking the whole scheduler;
+- different governed roots do not share the checkpoint-owning root lock; and
+- spool publication/recovery synchronization is handled at the spool publication
+  boundary.
+
+Live validation recorded 33 independent USN cycles during a 5h32m Y: baseline.
+Each cycle completed the unrelated root, skipped the busy Y: root, and recorded
+zero failed roots.
 
 ## Design rule
 

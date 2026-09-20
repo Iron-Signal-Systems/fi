@@ -13,7 +13,9 @@ retry/resume, and retirement only after backend custody is established.
 
 ## Current Development Status
 
-**ACTIVE — Phase 2 / Gate 2**
+**COMPLETE — PASS — Phase 2 / Gate 2**
+
+Gate 2 closed on 2026-09-20.
 
 Phase 1 / Gate 1 completed on 2026-09-09.
 
@@ -57,9 +59,19 @@ The durable generation recorder receipt used here is part of the Phase 2 custody
 and acknowledgement boundary. It is not the complete Phase 3 FI System of
 Record.
 
-Gate 2 remains active. Broader release acceptance still requires the remaining
-transport failure, revocation, resource-bound, and operational campaigns defined
-for this gate.
+Final Gate 2 acceptance includes integrated failure/retry/revocation/bounds
+coverage plus live receiver-outage, sender-interruption, backlog-recovery,
+source-impact, and cross-root scheduler-remediation campaigns.
+
+The accepted replay rule is exact generation identity plus exact transfer
+binding: exact re-delivery is duplicate-safe and may return `already_recorded`;
+conflicting bytes for the same generation identity fail closed.
+
+Phase 2 does not use a separate monotonic security sequence. Earlier roadmap
+references to `sequencing` / `sequence conflict` are retired as stale
+pre-generation terminology.
+
+See `../../../docs/performance/PHASE-2-GATE-2-CLOSEOUT.md`.
 
 ## Responsibilities
 
@@ -76,9 +88,8 @@ Phase 2 owns:
 - durable acknowledgement/receipt;
 - retry and resume;
 - duplicate handling;
-- replay protection;
-- conflicting duplicate detection;
-- sequencing;
+- exact-generation replay/idempotency;
+- conflicting same-identity detection;
 - identity/certificate revocation handling;
 - bounded storage and retry behavior;
 - restart and recovery behavior.
@@ -112,18 +123,22 @@ Gate 2 proves:
 > An FI record either reaches durable backend custody or remains safely under
 > source custody.
 
-Representative testing includes:
+Accepted testing includes:
 
 - network interruption;
 - source restart;
 - backend restart;
 - lost acknowledgement;
 - retransmission;
-- duplicate delivery;
-- replay;
-- conflicting duplicate;
-- sequence conflict;
+- exact duplicate delivery / replay;
+- conflicting same-identity delivery;
 - revoked identity;
-- resource exhaustion/bounds.
+- explicit transport byte/manifest bounds;
+- sender interruption and retry;
+- receiver backlog accumulation and automatic drain; and
+- cross-root source scheduling under long-running collection.
 
-No ambiguous record loss is accepted.
+A separate monotonic transport sequence is not part of the accepted generation
+protocol. No ambiguous record loss is accepted.
+
+**Gate 2 — Secure Durable Record Transfer: COMPLETE — PASS**
