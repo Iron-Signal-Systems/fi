@@ -362,8 +362,8 @@ replace them.
       database, not from mixed historical materialization state.
 - [ ] Final reconcile reports all discovered receipts accepted, `Pending=0`, and
       `Conflict=0` for the accepted corpus.
-- [ ] All 13 supported record kinds have authoritative receiver/database proof.
-- [ ] `USNContinuityGap` receiver/database proof is complete.
+- [x] All 13 supported record kinds have authoritative receiver/database proof.
+- [x] `USNContinuityGap` receiver/database proof is complete.
 - [ ] Controlled PostgreSQL outage/recovery retains recorder custody and catches
       up without partial authority.
 - [ ] Worker restart during representative ingest does not create ambiguous

@@ -27,8 +27,8 @@ Current status:
 | Read-only recorder-aware reconcile/inventory | PASS |
 | Live sequential Go ingest worker | PASS for validation |
 | Fresh 250K relational acceptance campaign | IN PROGRESS |
-| Authoritative receiver/database record-kind proof | 12/13 |
-| `USNContinuityGap` receiver/database proof | OUTSTANDING |
+| Authoritative receiver/database record-kind proof | 13/13 PASS |
+| `USNContinuityGap` receiver/database proof | PASS |
 | Permanent worker hardening / service deployment | OUTSTANDING |
 | Gate 3 closure | NOT YET |
 
@@ -269,11 +269,18 @@ Current acceptance has proven, among other items:
   warnings;
 - real `SupportingSourceCollectionError` relational materialization;
 - real `WindowsSecurityEvent` relational materialization; and
-- 12 of 13 supported record kinds through authoritative receiver/database proof.
+- all 13 supported record kinds through authoritative receiver/database proof.
 
-`USNContinuityGap` has completed a controlled source-side gap/baseline/catch-up
-proof. Its final receiver/database materialization proof remains the last
-record-kind closure item.
+`USNContinuityGap` completed controlled source-side detection,
+gap/baseline/catch-up reconciliation, normal Phase 2 transport, immutable
+receiver custody, recorder receipt creation, and exact Phase 3 relational
+materialization on 2026-09-20. The closing generation was
+`20260920T224721.460692300Z-9b2a72230f46185b`, with `JournalIDChanged`, explicit
+`Incomplete` coverage, and `CurrentStateBaselineAndUSNCatchUp` reconciliation.
+
+This closes the record-family proof requirement at 13/13. Gate 3 remains active
+for completion of the fresh 250K acceptance campaign, worker hardening,
+failure/recovery acceptance, and permanent service deployment.
 
 The running acceptance record is:
 

@@ -340,8 +340,8 @@ WindowsSecurityCoverage
 WindowsSecurityEvent
 ```
 
-Before the fresh 250K database reset, controlled authoritative proofs had closed
-12 of the 13 kinds.
+Controlled authoritative receiver/database proofs now close all 13 supported
+record kinds.
 
 Notable controlled generations included:
 
@@ -355,15 +355,22 @@ WindowsSecurityEvent
   GenerationID: 20260920T161438.962456500Z-5cf6e5d4fdbd9c6c
   Source condition: controlled audit-policy toggle
   Result: exact relational acceptance
-```
 
-The only outstanding record-kind receiver/database proof is:
-
-```text
 USNContinuityGap
+  Source: iss-fs-01.iss.local
+  GenerationID: 20260920T224721.460692300Z-9b2a72230f46185b
+  GovernedRoot: Y:\FI-Phase3-USNGap
+  ReasonCode: JournalIDChanged
+  CheckpointJournalID: 0
+  CurrentJournalID: 134333792069841021
+  CoverageState: Incomplete
+  ReconciliationAction: CurrentStateBaselineAndUSNCatchUp
+  TransferSHA256: 46b3887288b0458d120d15f395bfdb3c4edc820811473be202be070707cee385
+  ReceiptSHA256: dec2b68b6c44074b4cb27f9ba46a8c761583bb586999c8961dcb0f2ffcdffd7c
+  Result: exact relational acceptance
 ```
 
-## USNContinuityGap source-side proof
+## USNContinuityGap authoritative proof
 
 A dedicated controlled governed root was used for the gap test:
 
@@ -376,18 +383,47 @@ would encounter a controlled continuity mismatch.
 
 FI then:
 
-- detected the continuity condition;
-- recorded the gap/baseline/catch-up source behavior;
+- detected `JournalIDChanged`;
+- durably published the `USNContinuityGap` source record;
 - reconciled to the actual current Journal ID;
-- established a new forward `NextUSN`; and
-- completed all configured roots.
+- established a new forward `NextUSN`;
+- transported the resulting record through normal Phase 2 generation custody;
+- created the immutable recorder receipt; and
+- materialized the exact typed Phase 3 relational record.
 
-That closes the source-side behavior required for the record kind.
+The authoritative relational row was materialized as:
 
-The final Gate 3 task for this kind is to carry the resulting real
-`USNContinuityGap` generation through receiver custody and the relational
-materialization path. The source fault must not be repeated merely because the
-backend proof is still open.
+```text
+source_record_id: 238472
+record_kind: USNContinuityGap
+scope_id: root-e4e56e13ef412aa90bb5fe072db7ebcb
+checkpoint_next_usn: 751243768
+current_first_usn: 134217728
+current_lowest_valid_usn: 0
+current_next_usn: 751253000
+```
+
+After reconciliation the source checkpoint returned to the real journal and
+advanced forward:
+
+```text
+JournalID: 134333792069841021
+NextUSN:   751263488
+```
+
+At the receiver/database closure checkpoint:
+
+```text
+ReceiptsDiscovered: 263
+AlreadyAccepted:    263
+Pending:            0
+Conflict:           0
+```
+
+The fresh relational database at that checkpoint contained eight of the 13
+record kinds naturally produced by the active campaign. That corpus population
+count is separate from authoritative record-family proof: controlled receiver /
+database proofs now exist for all 13 supported kinds.
 
 ## Reconciliation contract
 
@@ -417,7 +453,6 @@ The campaign is not complete until the following are closed:
   `Pending=0`, `Conflict=0`;
 - compare final generation, batch, source-record, database-size, and journal
   totals;
-- close the final `USNContinuityGap` receiver/database proof;
 - persist rejection retry suppression across worker restart;
 - implement bounded/incremental receipt discovery;
 - formalize rejected-generation ordering/bypass behavior;
