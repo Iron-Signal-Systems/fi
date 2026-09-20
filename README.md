@@ -289,26 +289,34 @@ Other filesystems and operating systems are outside the initial scope.
 
 ## Current Windows runtime
 
-Phase 1 has a persistent Windows service runtime around the configured collector,
-with an independent USN catch-up lane for established checkpoints.
+Phase 1 has a persistent Windows service runtime with three intentional source
+execution lanes. The lanes are concurrent with one another, but each lane remains
+sequential within its own checkpoint/source boundary.
 
 ```text
 FICollector
     restricted per-host gMSA
     non-admin
         |
-        +-- configured collection lane
-        |      Windows Security
-        |      baseline / reconciliation ownership
+        +-- governed-root/current-state lane
+        |      baseline / root reconciliation ownership
         |      governed-root configured work
         |      slower supporting-source refresh
         |
         +-- independent USN lane
-               default interval: 10m
-               override: FI_SERVICE_USN_EVERY
-               existing continuous checkpoints only
-               fresh object re-observation + hashing
-               durable spool/checkpoint ownership
+        |      default interval: 10m
+        |      override: FI_SERVICE_USN_EVERY
+        |      existing continuous checkpoints only
+        |      fresh object re-observation + hashing
+        |      durable spool/checkpoint ownership
+        |
+        +-- independent Windows Security lane
+        |      default interval: 1m
+        |      override: FI_SERVICE_WINDOWS_SECURITY_EVERY
+        |      single sequential Security checkpoint owner
+        |      bounded EventRecordID windows
+        |      immediate additional windows while behind
+        |      durable spool verification before checkpoint advance
         |
         +------ local authenticated pipe ------+
                                                |
@@ -324,34 +332,62 @@ FICollector
                                       bounded exact-object SACL read
 ```
 
-The configured-collection/supporting-refresh lane remains sequential. The
-independent USN lane is a separate service worker so a long Windows Security
-reconciliation/full-state walk does not force normal USN catch-up to wait for the
-configured cycle to finish.
+Service startup completes interrupted-spool publication recovery before any
+independent writer begins. After that boundary, governed-root work, USN catch-up,
+and Windows Security collection have separate scheduling and checkpoint
+ownership.
 
-Initial onboarding remains intentionally exclusive: when a governed root has no
-checkpoint yet, the independent USN worker skips it and the configured collector
-owns baseline creation plus its anchored catch-up. The independent worker also
-does not initiate continuity-gap reconciliation. Once a continuous checkpoint
-exists, it may catch up independently.
+Initial USN onboarding remains intentionally exclusive: when a governed root has
+no checkpoint yet, the independent USN worker skips it and the governed-root lane
+owns baseline creation plus anchored catch-up. The USN lane also does not initiate
+a same-root continuity-gap reconciliation.
 
-The independent interval defaults to `10m` and may be overridden through
-`FI_SERVICE_USN_EVERY`. The effective interval is written to
-`service-runtime.jsonl` in `ServiceStarted` and `USNCatchUp` records.
+Windows Security is different because the Security Event Log is an independent
+host source. Its service worker starts immediately, never overlaps itself, and
+reads the existing bounded EventRecordID windows. When a completed window shows
+that more Security history is already available, the worker immediately processes
+another bounded window instead of sleeping for the steady-state interval. Once
+caught up, it returns to its configured cadence.
 
-On 2026-09-19, the 10-minute lane was live validated on the Server 2016 lab. A
-single NTFS object (FRN 45 / sequence 9) was renamed and extended while a long
+A service-mode Windows Security continuity gap remains explicit and incomplete.
+The Security worker records the gap, records current Security-specific coverage
+(audit-policy state, Security-log readability, and governed-root SACL coverage),
+then establishes a fresh forward Security boundary. It does not block Security
+collection behind a full file-tree rescan. The one-shot configured
+`fi.exe -run` path retains its existing configured-collection behavior.
+
+The independent intervals default to `10m` for USN and `1m` for Windows
+Security. They may be overridden through `FI_SERVICE_USN_EVERY` and
+`FI_SERVICE_WINDOWS_SECURITY_EVERY`. Effective intervals are written to
+`service-runtime.jsonl` in `ServiceStarted`, `USNCatchUp`, and
+`WindowsSecurityCatchUp` records.
+
+On 2026-09-19, the 10-minute USN lane was live validated on the Server 2016 lab.
+A single NTFS object (FRN 45 / sequence 9) was renamed and extended while a long
 configured collection was still active. FI preserved the raw
 `RenameOldName`, `RenameNewName`, and `DataExtend` USN facts, freshly
 re-observed the same object at its new path, computed new content hashes, sealed
 the records into a generation, and established receiver custody about 7 minutes
 13 seconds after the mutation.
 
-The later 250K resilience campaign exposed a separate cross-root scheduling
+The later 250K resilience campaign exposed a separate cross-root USN scheduling
 defect. Commit `41906af` replaced the process-global governed-root lock with
 governed-root-scoped synchronization. Live validation then recorded 33
 independent USN cycles on the intended approximately 10-minute cadence while a
 different governed root remained in a 5h32m baseline.
+
+On 2026-09-20, the same 250K campaign exposed a Windows Security scheduling
+defect: Security catch-up could remain coupled to multi-hour root work long enough
+for a small Security log to overwrite the next required EventRecordID range.
+The independent Security worker was then live validated on Server 2016 with the
+Security log returned to 20 MiB. During sampled operation every checkpoint
+remained inside the retained log window; the largest observed head lag was 584
+EventRecordIDs. A controlled File System audit-policy toggle produced two real
+Event ID 4719 records (185819888 and 185819899); FI selected both, durably
+verified their batch, and advanced the Security checkpoint to 185820374. This is
+source-side validation; receiver/relational proof for those exact two records is
+tracked separately.
+
 ---
 
 ## USN split-privilege boundary
@@ -440,6 +476,19 @@ Windows Server 2019    10.0.17763
 Windows Server 2022    10.0.20348
 Windows Server 2025    10.0.26100
 ```
+
+In service mode, Windows Security is collected by an independent sequential
+worker rather than waiting for governed-root baseline/reconciliation work. The
+worker defaults to a one-minute cadence, immediately drains another bounded
+EventRecordID window when backlog remains, and advances its checkpoint only after
+the corresponding local spool batch is durably finalized and verified.
+
+The 2026-09-20 Server 2016 post-Gate-1 resilience test demonstrated this behavior
+with the Security log at 20 MiB under the active 250K lab workload. The test
+proved the collector could remain within the retained Event Log window and
+select/durably spool a controlled pair of Event ID 4719 audit-policy changes
+without requiring a large Event Log as a workaround. That result is a tested lab
+condition, not a universal production Security-log sizing guarantee.
 
 Detailed audit-event generation still depends on Windows release, effective
 Advanced Audit Policy, SACL coverage, and the access path. Later Windows Server
