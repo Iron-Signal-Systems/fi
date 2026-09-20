@@ -235,6 +235,25 @@ recovery surge.
 This was source-runtime resilience characterization; the Phase 2 transport
 custody rule remained unchanged.
 
+### Post-closeout Windows Security scheduling remediation
+
+Subsequent work on 2026-09-20 found that service-mode Windows Security collection
+could be delayed behind multi-hour governed-root/current-state work. The Windows
+Security source was moved to an independent sequential worker with bounded
+EventRecordID windows, immediate backlog drain, durable spool verification before
+checkpoint advancement, and Security-specific continuity-gap recovery.
+
+The source-side remediation was live validated on the Server 2016 250K lab with
+the Security log returned to 20 MiB, including successful selection and durable
+local spooling of a controlled pair of Event ID 4719 records.
+
+This source-runtime change does not alter the Gate 2 generation, custody,
+acknowledgement, retry, replay, or retirement contract accepted by this closeout.
+Full receiver/relational proof of the exact controlled 4719 pair is tracked under
+Phase 3.
+
+See `PHASE-2-WINDOWS-SECURITY-WORKER-VALIDATION.md`.
+
 ## Governed-source full-volume characterization
 
 A separate governed NTFS root on T: was driven to zero free bytes.
