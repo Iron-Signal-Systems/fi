@@ -39,41 +39,74 @@ SQL
 
     rm -f "$INGEST_LOG" "$LOCK_LOG" "$RETRY_LOG"
 }
-
 trap cleanup EXIT
 
-printf '%s\n' '===== REFRESH SUDO CREDENTIALS ====='
-sudo -v
-
-if [ ! -x /tmp/fi-ingest ]; then
-    echo 'ERROR: /tmp/fi-ingest is missing or not executable' >&2
+fail() {
+    echo "ERROR: $*" >&2
     false
-fi
+}
 
-printf '\n%s\n' '===== AUTHORITATIVE STATE BEFORE INTERRUPTION ====='
-
-BEFORE="$({
-  sudo -u fi-receiver \
-    psql \
-      -X \
-      -h /run/postgresql \
-      -U fi_ingest \
-      -d fi \
-      -At <<'SQL'
+read_authoritative_state() {
+    sudo -u fi-receiver \
+      psql \
+        -X \
+        -h /run/postgresql \
+        -U fi_ingest \
+        -d fi \
+        -At \
+        -v ON_ERROR_STOP=1 <<'SQL'
 SELECT
     (SELECT count(*) FROM fi.recorded_generation)::text || '|' ||
     (SELECT count(*) FROM fi.source_batch)::text || '|' ||
     (SELECT count(*) FROM fi.source_record)::text || '|' ||
     (
-        SELECT COALESCE(sum(octet_length(raw_record_bytes)), 0)
+        SELECT COALESCE(sum(record_bytes), 0)
         FROM fi.source_record
     )::text;
 SQL
-} )"
+}
 
-printf 'recorded_generation|source_batch|source_record|raw_bytes = %s\n' "$BEFORE"
+printf '%s\n' '===== REFRESH SUDO CREDENTIALS ====='
+sudo -v
 
-printf '\n%s\n' '===== HOLD AUTHORITATIVE TABLE ====='
+if pgrep -af 'fi-ingest-worker|fi-live-relational-ingest' >/dev/null 2>&1; then
+    fail 'a live relational ingest worker appears to be running; use a controlled quiescent window for this failure gate'
+fi
+
+if [ ! -x /tmp/fi-ingest ]; then
+    fail '/tmp/fi-ingest is missing or not executable'
+fi
+
+printf '\n%s\n' '===== VERIFY KNOWN ACCEPTED GENERATION ====='
+
+ACCEPTED_COUNT="$(
+    sudo -u fi-receiver \
+      psql \
+        -X \
+        -h /run/postgresql \
+        -U fi_ingest \
+        -d fi \
+        -At \
+        -v ON_ERROR_STOP=1 \
+        -v source_id="$SOURCE_ID" \
+        -v generation_id="$GENERATION_ID" <<'SQL'
+SELECT count(*)
+FROM fi.recorded_generation
+WHERE source_id = :'source_id'
+  AND generation_id = :'generation_id';
+SQL
+)"
+
+if [ "$ACCEPTED_COUNT" != '1' ]; then
+    fail "expected exactly one accepted generation for source=$SOURCE_ID generation=$GENERATION_ID; found $ACCEPTED_COUNT"
+fi
+
+printf '\n%s\n' '===== RELATIONAL AUTHORITY BEFORE INTERRUPTION ====='
+
+BEFORE="$(read_authoritative_state)"
+printf 'recorded_generation|source_batch|source_record|record_bytes = %s\n' "$BEFORE"
+
+printf '\n%s\n' '===== HOLD RECORDED GENERATION TABLE ====='
 
 sudo -iu postgres \
   env PGAPPNAME="$LOCK_APPLICATION_NAME" \
@@ -87,7 +120,7 @@ LOCK_WRAPPER_PID=$!
 
 LOCK_READY=''
 for _ in $(seq 1 100); do
-    LOCK_READY="$({
+    LOCK_READY="$(
       sudo -iu postgres \
         psql \
           -X \
@@ -99,7 +132,7 @@ FROM pg_stat_activity
 WHERE application_name = :'app'
   AND state = 'active';
 SQL
-    } )"
+    )"
 
     if [ "$LOCK_READY" = '1' ]; then
         break
@@ -110,11 +143,10 @@ done
 
 if [ "$LOCK_READY" != '1' ]; then
     cat "$LOCK_LOG"
-    echo 'ERROR: authoritative-table lock session did not become active' >&2
-    false
+    fail 'recorded-generation lock session did not become active'
 fi
 
-printf '%s\n' '===== START INGEST ATTEMPT ====='
+printf '%s\n' '===== START RELATIONAL INGEST ATTEMPT ====='
 
 INGEST_CONNECTION="host=/run/postgresql dbname=fi user=fi_ingest sslmode=disable application_name=$INGEST_APPLICATION_NAME"
 
@@ -130,7 +162,6 @@ for _ in $(seq 1 300); do
     if grep -q '^AttemptID:' "$INGEST_LOG" 2>/dev/null; then
         break
     fi
-
     sleep 0.05
 done
 
@@ -138,8 +169,7 @@ ATTEMPT_ID="$(awk '/^AttemptID:/ {print $2; exit}' "$INGEST_LOG")"
 
 if [ -z "$ATTEMPT_ID" ]; then
     cat "$INGEST_LOG"
-    echo 'ERROR: ingest attempt did not publish AttemptID before timeout' >&2
-    false
+    fail 'ingest attempt did not publish AttemptID before timeout'
 fi
 
 printf 'attempt_id: %s\n' "$ATTEMPT_ID"
@@ -150,7 +180,7 @@ TARGET_PID=''
 TARGET_WAIT=''
 
 for _ in $(seq 1 400); do
-    TARGET_STATE="$({
+    TARGET_STATE="$(
       sudo -iu postgres \
         psql \
           -X \
@@ -164,11 +194,10 @@ WHERE application_name = :'app'
 ORDER BY pid
 LIMIT 1;
 SQL
-    } )"
+    )"
 
     if [ -n "$TARGET_STATE" ]; then
         IFS='|' read -r TARGET_PID TARGET_WAIT <<<"$TARGET_STATE"
-
         if [ "$TARGET_WAIT" = 'Lock' ]; then
             break
         fi
@@ -179,8 +208,7 @@ done
 
 if [ -z "$TARGET_PID" ] || [ "$TARGET_WAIT" != 'Lock' ]; then
     cat "$INGEST_LOG"
-    echo 'ERROR: fi-ingest PostgreSQL backend did not reach the expected blocked authoritative operation' >&2
-    false
+    fail 'fi-ingest PostgreSQL backend did not reach the expected blocked relational transaction'
 fi
 
 printf 'postgres backend pid: %s\n' "$TARGET_PID"
@@ -188,7 +216,7 @@ printf 'wait_event_type:     %s\n' "$TARGET_WAIT"
 
 printf '%s\n' '===== TERMINATE FI-INGEST DATABASE BACKEND ====='
 
-TERMINATED="$({
+TERMINATED="$(
   sudo -iu postgres \
     psql \
       -X \
@@ -199,11 +227,10 @@ SELECT COALESCE(bool_and(pg_terminate_backend(pid)), false)
 FROM pg_stat_activity
 WHERE application_name = :'app';
 SQL
-} )"
+)"
 
 if [ "$TERMINATED" != 't' ]; then
-    echo 'ERROR: PostgreSQL did not confirm termination of the fi-ingest backend' >&2
-    false
+    fail 'PostgreSQL did not confirm termination of the fi-ingest backend'
 fi
 
 printf '%s\n' '===== RELEASE TEST LOCK ====='
@@ -230,8 +257,7 @@ printf '\n%s\n' '===== INTERRUPTED PROCESS OUTPUT ====='
 cat "$INGEST_LOG"
 
 if [ "$INGEST_STATUS" -eq 0 ]; then
-    echo 'ERROR: database-interrupted fi-ingest unexpectedly succeeded' >&2
-    false
+    fail 'database-interrupted fi-ingest unexpectedly succeeded'
 fi
 
 printf '\n%s\n' '===== INTERRUPTED ATTEMPT JOURNAL ====='
@@ -257,7 +283,7 @@ WHERE attempt_id = :'attempt_id'
 ORDER BY event_sequence;
 SQL
 
-EVENT_STATE="$({
+EVENT_STATE="$(
   sudo -u fi-receiver \
     psql \
       -X \
@@ -279,46 +305,26 @@ SELECT
 FROM fi.ingest_journal
 WHERE attempt_id = :'attempt_id';
 SQL
-} )"
+)"
 
 IFS='|' read -r EVENT_COUNT START_COUNT TERMINAL_COUNT <<<"$EVENT_STATE"
 
 if [ "$EVENT_COUNT" != '1' ] || \
    [ "$START_COUNT" != '1' ] || \
    [ "$TERMINAL_COUNT" != '0' ]; then
-    echo 'ERROR: database interruption did not leave exactly one durable unmatched AttemptStarted event' >&2
-    false
+    fail 'database interruption did not leave exactly one durable unmatched AttemptStarted event'
 fi
 
-printf '\n%s\n' '===== AUTHORITATIVE STATE AFTER INTERRUPTION ====='
+printf '\n%s\n' '===== RELATIONAL AUTHORITY AFTER INTERRUPTION ====='
 
-AFTER_INTERRUPTION="$({
-  sudo -u fi-receiver \
-    psql \
-      -X \
-      -h /run/postgresql \
-      -U fi_ingest \
-      -d fi \
-      -At <<'SQL'
-SELECT
-    (SELECT count(*) FROM fi.recorded_generation)::text || '|' ||
-    (SELECT count(*) FROM fi.source_batch)::text || '|' ||
-    (SELECT count(*) FROM fi.source_record)::text || '|' ||
-    (
-        SELECT COALESCE(sum(octet_length(raw_record_bytes)), 0)
-        FROM fi.source_record
-    )::text;
-SQL
-} )"
-
-printf 'recorded_generation|source_batch|source_record|raw_bytes = %s\n' "$AFTER_INTERRUPTION"
+AFTER_INTERRUPTION="$(read_authoritative_state)"
+printf 'recorded_generation|source_batch|source_record|record_bytes = %s\n' "$AFTER_INTERRUPTION"
 
 if [ "$AFTER_INTERRUPTION" != "$BEFORE" ]; then
-    echo 'ERROR: interrupted authoritative transaction changed authoritative database state' >&2
-    false
+    fail 'interrupted relational transaction changed authoritative database state'
 fi
 
-printf '\n%s\n' '===== RETRY SAME GENERATION ====='
+printf '\n%s\n' '===== RETRY SAME ACCEPTED GENERATION ====='
 
 sudo -u fi-receiver \
   /tmp/fi-ingest \
@@ -327,31 +333,12 @@ sudo -u fi-receiver \
     | tee "$RETRY_LOG"
 
 if ! grep -q '^Outcome:[[:space:]]*AlreadyAccepted$' "$RETRY_LOG"; then
-    echo 'ERROR: retry after database interruption did not return AlreadyAccepted' >&2
-    false
+    fail 'retry after database interruption did not return AlreadyAccepted'
 fi
 
-printf '\n%s\n' '===== OLD INTERRUPTED ATTEMPT STILL PRESENT ====='
+printf '\n%s\n' '===== ORIGINAL INTERRUPTED ATTEMPT STILL PRESENT ====='
 
-sudo -u fi-receiver \
-  psql \
-    -X \
-    -h /run/postgresql \
-    -U fi_ingest \
-    -d fi \
-    -v attempt_id="$ATTEMPT_ID" <<'SQL'
-SELECT
-    attempt_id,
-    event_sequence,
-    outcome,
-    stage,
-    reason_code
-FROM fi.ingest_journal
-WHERE attempt_id = :'attempt_id'
-ORDER BY event_sequence;
-SQL
-
-OLD_EVENT_COUNT="$({
+OLD_EVENT_COUNT="$(
   sudo -u fi-receiver \
     psql \
       -X \
@@ -364,39 +351,20 @@ SELECT count(*)
 FROM fi.ingest_journal
 WHERE attempt_id = :'attempt_id';
 SQL
-} )"
+)"
 
 if [ "$OLD_EVENT_COUNT" != '1' ]; then
-    echo 'ERROR: retry altered the interrupted attempt history' >&2
-    false
+    fail 'retry altered the interrupted attempt history'
 fi
 
-printf '\n%s\n' '===== AUTHORITATIVE STATE AFTER RETRY ====='
+printf '\n%s\n' '===== RELATIONAL AUTHORITY AFTER RETRY ====='
 
-AFTER_RETRY="$({
-  sudo -u fi-receiver \
-    psql \
-      -X \
-      -h /run/postgresql \
-      -U fi_ingest \
-      -d fi \
-      -At <<'SQL'
-SELECT
-    (SELECT count(*) FROM fi.recorded_generation)::text || '|' ||
-    (SELECT count(*) FROM fi.source_batch)::text || '|' ||
-    (SELECT count(*) FROM fi.source_record)::text || '|' ||
-    (
-        SELECT COALESCE(sum(octet_length(raw_record_bytes)), 0)
-        FROM fi.source_record
-    )::text;
-SQL
-} )"
-
-printf 'recorded_generation|source_batch|source_record|raw_bytes = %s\n' "$AFTER_RETRY"
+AFTER_RETRY="$(read_authoritative_state)"
+printf 'recorded_generation|source_batch|source_record|record_bytes = %s\n' "$AFTER_RETRY"
 
 if [ "$AFTER_RETRY" != "$BEFORE" ]; then
-    echo 'ERROR: retry after database interruption changed the known-good authoritative state' >&2
-    false
+    fail 'retry after database interruption changed known-good relational authority'
 fi
 
-printf '\n%s\n' 'PASS: database connection loss during the authoritative transaction left durable incomplete attempt history, committed no partial authoritative state, and retry was safe.'
+printf '\n%s\n' \
+  'PASS: database connection loss while the relational transaction was blocked left durable unmatched-attempt history, committed no partial relational authority, and retry remained duplicate-safe.'

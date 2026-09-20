@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+fail() {
+    echo "ERROR: $*" >&2
+    false
+}
+
 printf '%s\n' '===== REFRESH SUDO CREDENTIALS ====='
 sudo -v
 
-printf '%s\n' '===== SOURCE-RECORD RELATIONAL COVERAGE ====='
+printf '%s\n' '===== SOURCE-RECORD RELATIONAL TARGETS ====='
 sudo -iu postgres psql -X -d fi -v ON_ERROR_STOP=1 <<'SQL'
 WITH expected(record_kind, relation_name) AS (
     VALUES
@@ -30,7 +35,8 @@ FROM expected
 ORDER BY record_kind;
 SQL
 
-missing="$(sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 <<'SQL'
+missing_relations="$(
+  sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 <<'SQL'
 WITH expected(relation_name) AS (
     VALUES
         ('collector_identity'),
@@ -52,68 +58,152 @@ FROM expected
 WHERE to_regclass('fi.' || relation_name) IS NULL;
 SQL
 )"
-if [[ "$missing" != "0" ]]; then
-    printf 'ERROR: %s source-record relational targets are missing\n' "$missing" >&2
-    exit 1
-fi
 
-printf '%s\n' '===== RELATIONAL SHAPE ====='
-sudo -iu postgres psql -X -d fi -v ON_ERROR_STOP=1 <<'SQL'
-SELECT count(*) AS fi_tables
-FROM pg_tables
-WHERE schemaname = 'fi';
+[ "$missing_relations" = '0' ] || fail "$missing_relations source-record relational targets are missing"
 
-SELECT
-    count(*) FILTER (WHERE data_type IN ('json','jsonb','xml')) AS semi_structured_columns,
-    count(*) AS total_columns
-FROM information_schema.columns
-WHERE table_schema = 'fi';
-
-SELECT table_name, column_name, data_type
-FROM information_schema.columns
-WHERE table_schema = 'fi'
-  AND data_type IN ('json','jsonb','xml')
-ORDER BY table_name, ordinal_position;
+printf '%s\n' '===== CURRENT RECORD-KIND COVERAGE ====='
+sudo -u fi-receiver \
+  psql \
+    -X \
+    -h /run/postgresql \
+    -U fi_ingest \
+    -d fi \
+    -v ON_ERROR_STOP=1 <<'SQL'
+SELECT record_kind, count(*)
+FROM fi.source_record
+GROUP BY record_kind
+ORDER BY record_kind;
 SQL
 
-table_count="$(sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_tables WHERE schemaname='fi'")"
-if [[ "$table_count" != "49" ]]; then
-    printf 'ERROR: FI relational table count is %s, expected 49\n' "$table_count" >&2
-    exit 1
-fi
-
-semi="$(sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='fi' AND data_type IN ('json','jsonb','xml')")"
-if [[ "$semi" != "0" ]]; then
-    printf 'ERROR: FI relational schema contains %s JSON/JSONB/XML columns\n' "$semi" >&2
-    exit 1
-fi
-
-printf '%s\n' '===== TABLE OWNERSHIP ====='
-bad_owner="$(sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_tables WHERE schemaname='fi' AND tableowner <> 'fi_owner'")"
-if [[ "$bad_owner" != "0" ]]; then
-    printf 'ERROR: %s FI tables are not owned by fi_owner\n' "$bad_owner" >&2
-    exit 1
-fi
-printf 'fi_owner_tables=%s\n' "$table_count"
-
-printf '%s\n' '===== FI_INGEST APPEND-ONLY BOUNDARY ====='
-sudo -iu postgres psql -X -d fi -v ON_ERROR_STOP=1 <<'SQL'
-WITH tables AS (
-    SELECT tablename
-    FROM pg_tables
-    WHERE schemaname = 'fi'
+unsupported="$(
+  sudo -u fi-receiver \
+    psql \
+      -X \
+      -h /run/postgresql \
+      -U fi_ingest \
+      -d fi \
+      -At \
+      -v ON_ERROR_STOP=1 <<'SQL'
+WITH expected(record_kind) AS (
+    VALUES
+        ('CollectorIdentity'),
+        ('DirectoryPrincipalSnapshot'),
+        ('FileObservation'),
+        ('LocalPrincipalSnapshot'),
+        ('NTFSCollectionError'),
+        ('SMBShareSnapshot'),
+        ('SupportingSourceCollectionError'),
+        ('USNContinuityGap'),
+        ('USNObjectObservation'),
+        ('USNReadBoundary'),
+        ('WindowsSecurityContinuityGap'),
+        ('WindowsSecurityCoverage'),
+        ('WindowsSecurityEvent')
 )
-SELECT
-    count(*) AS table_count,
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'SELECT')) AS selectable,
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'INSERT')) AS insertable,
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'UPDATE')) AS updatable,
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'DELETE')) AS deletable,
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'TRUNCATE')) AS truncatable
-FROM tables;
+SELECT count(*)
+FROM fi.source_record sr
+LEFT JOIN expected e
+  ON e.record_kind = sr.record_kind
+WHERE e.record_kind IS NULL;
 SQL
+)"
 
-rights="$(sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 <<'SQL'
+[ "$unsupported" = '0' ] || fail "$unsupported source records use an unsupported record kind"
+
+missing_projection="$(
+  sudo -u fi-receiver \
+    psql \
+      -X \
+      -h /run/postgresql \
+      -U fi_ingest \
+      -d fi \
+      -At \
+      -v ON_ERROR_STOP=1 <<'SQL'
+SELECT count(*)
+FROM fi.source_record sr
+WHERE CASE sr.record_kind
+    WHEN 'CollectorIdentity' THEN NOT EXISTS (
+        SELECT 1 FROM fi.collector_identity x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'DirectoryPrincipalSnapshot' THEN NOT EXISTS (
+        SELECT 1 FROM fi.directory_principal_snapshot x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'FileObservation' THEN NOT EXISTS (
+        SELECT 1 FROM fi.file_observation x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'LocalPrincipalSnapshot' THEN NOT EXISTS (
+        SELECT 1 FROM fi.local_principal_snapshot x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'NTFSCollectionError' THEN NOT EXISTS (
+        SELECT 1 FROM fi.ntfs_collection_error x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'SMBShareSnapshot' THEN NOT EXISTS (
+        SELECT 1 FROM fi.smb_share_snapshot x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'SupportingSourceCollectionError' THEN NOT EXISTS (
+        SELECT 1 FROM fi.supporting_source_collection_error x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'USNContinuityGap' THEN NOT EXISTS (
+        SELECT 1 FROM fi.usn_continuity_gap x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'USNObjectObservation' THEN NOT EXISTS (
+        SELECT 1 FROM fi.usn_object_observation x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'USNReadBoundary' THEN NOT EXISTS (
+        SELECT 1 FROM fi.usn_read_boundary x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'WindowsSecurityContinuityGap' THEN NOT EXISTS (
+        SELECT 1 FROM fi.windows_security_continuity_gap x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'WindowsSecurityCoverage' THEN NOT EXISTS (
+        SELECT 1 FROM fi.windows_security_coverage x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    WHEN 'WindowsSecurityEvent' THEN NOT EXISTS (
+        SELECT 1 FROM fi.windows_security_event x
+        WHERE x.source_record_id = sr.source_record_id
+    )
+    ELSE true
+END;
+SQL
+)"
+
+[ "$missing_projection" = '0' ] || fail "$missing_projection source records lack their required typed relational projection"
+
+table_count="$(
+  sudo -iu postgres \
+    psql -X -At -d fi -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM pg_tables WHERE schemaname='fi'"
+)"
+[ "$table_count" = '49' ] || fail "FI relational table count is $table_count; expected 49"
+
+semi_structured="$(
+  sudo -iu postgres \
+    psql -X -At -d fi -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='fi' AND data_type IN ('json','jsonb','xml')"
+)"
+[ "$semi_structured" = '0' ] || fail "FI relational schema contains $semi_structured JSON/JSONB/XML columns"
+
+bad_owner="$(
+  sudo -iu postgres \
+    psql -X -At -d fi -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM pg_tables WHERE schemaname='fi' AND tableowner <> 'fi_owner'"
+)"
+[ "$bad_owner" = '0' ] || fail "$bad_owner FI tables are not owned by fi_owner"
+
+rights="$(
+  sudo -iu postgres psql -X -At -d fi -v ON_ERROR_STOP=1 <<'SQL'
 WITH tables AS (
     SELECT tablename
     FROM pg_tables
@@ -121,38 +211,46 @@ WITH tables AS (
 )
 SELECT
     count(*)::text || '|' ||
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'SELECT'))::text || '|' ||
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'INSERT'))::text || '|' ||
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'UPDATE'))::text || '|' ||
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'DELETE'))::text || '|' ||
-    count(*) FILTER (WHERE has_table_privilege('fi_ingest', format('fi.%I', tablename), 'TRUNCATE'))::text
+    count(*) FILTER (
+        WHERE has_table_privilege(
+            'fi_ingest',
+            format('fi.%I', tablename),
+            'SELECT'
+        )
+    )::text || '|' ||
+    count(*) FILTER (
+        WHERE has_table_privilege(
+            'fi_ingest',
+            format('fi.%I', tablename),
+            'INSERT'
+        )
+    )::text || '|' ||
+    count(*) FILTER (
+        WHERE has_table_privilege(
+            'fi_ingest',
+            format('fi.%I', tablename),
+            'UPDATE'
+        )
+    )::text || '|' ||
+    count(*) FILTER (
+        WHERE has_table_privilege(
+            'fi_ingest',
+            format('fi.%I', tablename),
+            'DELETE'
+        )
+    )::text || '|' ||
+    count(*) FILTER (
+        WHERE has_table_privilege(
+            'fi_ingest',
+            format('fi.%I', tablename),
+            'TRUNCATE'
+        )
+    )::text
 FROM tables;
 SQL
 )"
-if [[ "$rights" != "49|49|49|0|0|0" ]]; then
-    printf 'ERROR: unexpected fi_ingest rights summary: %s\n' "$rights" >&2
-    exit 1
-fi
 
-printf '%s\n' '===== EMPTY DATABASE STATE ====='
-sudo -u fi-receiver psql -X -h /run/postgresql -U fi_ingest -d fi -v ON_ERROR_STOP=1 <<'SQL'
-SELECT 'recorded_generation=' || count(*) FROM fi.recorded_generation;
-SELECT 'source_batch=' || count(*) FROM fi.source_batch;
-SELECT 'source_record=' || count(*) FROM fi.source_record;
-SELECT 'file_observation=' || count(*) FROM fi.file_observation;
-SELECT 'collector_identity=' || count(*) FROM fi.collector_identity;
-SELECT 'smb_share_snapshot=' || count(*) FROM fi.smb_share_snapshot;
-SELECT 'local_principal_snapshot=' || count(*) FROM fi.local_principal_snapshot;
-SELECT 'directory_principal_snapshot=' || count(*) FROM fi.directory_principal_snapshot;
-SELECT 'usn_read_boundary=' || count(*) FROM fi.usn_read_boundary;
-SELECT 'windows_security_event=' || count(*) FROM fi.windows_security_event;
-SELECT 'ingest_journal=' || count(*) FROM fi.ingest_journal;
-SQL
+[ "$rights" = '49|49|49|0|0|0' ] || fail "unexpected fi_ingest rights summary: $rights"
 
-source_records="$(sudo -u fi-receiver psql -X -h /run/postgresql -U fi_ingest -d fi -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM fi.source_record")"
-if [[ "$source_records" != "0" ]]; then
-    printf 'ERROR: source_record is not empty: %s\n' "$source_records" >&2
-    exit 1
-fi
-
-printf '%s\n' 'PASS: all 13 collector-emitted record kinds now have explicit relational targets; FI has 49 typed tables, no JSON/JSONB/XML storage, and fi_ingest remains append-only.'
+printf '\n%s\n' \
+  'PASS: all 13 supported collector record kinds have explicit typed relational targets; current rows use only supported kinds, every committed source record has its required typed projection, the FI schema remains 49-table relational-only storage, and fi_ingest remains append-only.'
