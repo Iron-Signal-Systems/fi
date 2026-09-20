@@ -393,6 +393,99 @@ The operational model uses local `Event Log Readers` membership where required.
 The Security Event Log collection/checkpoint path has been validated across the
 current 2016, 2019, 2022, and 2025 acceptance work.
 
+### Independent service worker
+
+Post-Gate-1 resilience work on 2026-09-20 exposed a scheduling defect during the
+Server 2016 250K campaign. Windows Security collection was logically independent,
+but service-mode catch-up could still be delayed behind multi-hour
+governed-root/current-state work. Under the lab's high Security-event rate, the
+20 MiB Security log retained only minutes of history, so a checkpoint could age
+out before Security catch-up received service time.
+
+The service runtime now gives Windows Security its own sequential worker:
+
+```text
+FICollector
+    |
+    +-- governed-root/current-state worker
+    |
+    +-- USN worker
+    |
+    +-- Windows Security worker
+            default: 1m
+            override: FI_SERVICE_WINDOWS_SECURITY_EVERY
+            one checkpoint owner
+            bounded EventRecordID windows
+            durable verification before checkpoint advance
+            immediate next bounded window while backlog remains
+```
+
+The Security worker starts immediately after shared startup spool recovery. It
+does not overlap itself. A completed bounded window that still has backlog is
+followed immediately by another bounded window; the one-minute interval is the
+steady-state wait after catch-up, not a forced pause between backlog windows.
+
+For service-mode Security continuity gaps, FI preserves the missing interval as
+`Incomplete`, records current Security-specific coverage, and establishes a
+fresh post-coverage checkpoint boundary. The service worker does not perform a
+full governed-file tree rescan merely to resume the Security source. The current
+v0.1 continuity-gap record retains the existing
+`reconciliation_action = CurrentStateBaseline` value for schema compatibility;
+that label must not be read as proof that the independent service worker
+performed a full file-tree baseline.
+
+### 2026-09-20 Server 2016 live result
+
+The independent worker was compiled/tested on ADMINBOX and then deployed to
+`ISS-FS-01` during the existing 250K engineering/resilience campaign.
+
+Build facts:
+
+```text
+Base repository commit:
+878e1d2a8c42baac29ef1fc3e1e99a55b2d5f0ae
+
+ADMINBOX:
+go test .\cmd\fi    PASS (3.577s)
+go vet  .\cmd\fi    PASS
+go build              PASS
+
+Validated collector SHA-256:
+DB88D1527AAEAF8CB65B507158CF2CDDA798B5AEACEE4E4953FBCCEBB037E45B
+```
+
+With the Security log first constrained to 50 MiB, repeated samples remained
+inside the retained window. The largest sampled distance from the Security head
+was 584 EventRecordIDs, and every sampled checkpoint was still safe relative to
+the oldest retained EventRecordID.
+
+The log was then returned to the Server 2016 lab's original 20 MiB value. A
+controlled File System audit-policy Failure toggle produced:
+
+```text
+EventRecordID 185819888    Event ID 4719    Failure removed
+EventRecordID 185819899    Event ID 4719    Failure added
+```
+
+The next independent FI Security catch-up reported:
+
+```text
+security_source_matching_events = 2
+security_selected_events        = 2
+security_verified_batches       = 1
+security_checkpoint_advanced    = true
+security_more_available         = true
+```
+
+FI immediately ran the next bounded window and the Security checkpoint reached
+`185820374`, beyond both controlled events.
+
+This result validates the source-side scheduler, selection, durable-spool, and
+checkpoint behavior on the tested Server 2016 workload. It does not establish
+20 MiB as a universal production Security-log sizing recommendation, and it does
+not yet claim receiver/relational materialization for those exact two 4719
+records.
+
 Detailed audit event generation still depends on Advanced Audit Policy, SACL
 coverage, access path, and Windows behavior.
 
