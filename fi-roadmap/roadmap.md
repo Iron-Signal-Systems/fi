@@ -38,6 +38,34 @@ FI is currently focused on **Phase 3 / Gate 3 — Ingest & Recorder**.
 
 **Phase 2 / Gate 2: COMPLETE — PASS**
 
+**Phase 3 / Gate 3: ACTIVE — ACCEPTANCE IN PROGRESS**
+
+Phase 3 has moved beyond initial design. The relational PostgreSQL foundation,
+typed materialization path, recorder-aware reconciliation/inventory, and live
+sequential Go ingest worker are implemented and have passed the current
+correctness gates. Gate 3 is not yet closed.
+
+Current Phase 3 checkpoint:
+
+```text
+49-table relational foundation          PASS
+No JSON/JSONB/XML storage shortcut      PASS
+13 typed record-kind projectors         PASS
+Generation-atomic ingest                PASS
+Receipt/transfer identity binding       PASS
+Typed-projection completeness           PASS
+Duplicate-safe AlreadyAccepted          PASS
+Rejected-generation rollback            PASS
+Volume-qualified NTFS/USN identity      PASS
+Read-only reconcile/inventory           PASS
+Live Go ingest worker                   PASS for validation
+Fresh 250K relational acceptance        IN PROGRESS
+Authoritative record-kind proof         12/13
+USNContinuityGap receiver/DB proof      OUTSTANDING
+Permanent worker hardening              OUTSTANDING
+Gate 3                                  NOT YET CLOSED
+```
+
 The major Phase 1 architecture is now established:
 
 - governed NTFS baseline collection;
@@ -132,9 +160,10 @@ moved to its own sequential service worker so a multi-hour root operation cannot
 strand the Security checkpoint. On 2026-09-20 the Security worker remained inside
 the retained Server 2016 Security-log window with the lab log returned to 20 MiB
 and durably selected a controlled pair of Event ID 4719 records before advancing
-its checkpoint. This is post-Gate-1 resilience characterization, not a revision
-of the original Gate 1 acceptance result and not a universal Security-log sizing
-claim.
+its checkpoint. The same real controlled source record family was subsequently
+accepted by the Phase 3 receiver/relational path. This remains post-Gate-1
+resilience characterization, not a revision of the original Gate 1 acceptance
+result and not a universal Security-log sizing claim.
 
 Replay at the Phase 2 boundary is defined as exact generation re-delivery:
 identical durable state is idempotent / `already_recorded`, while conflicting
@@ -198,11 +227,33 @@ lose FI history across failures, retries, restarts, or network interruption.
 
 ## Phase 3 — Ingest & Recorder
 
-Verify transported FI material and write the resulting history to the FI System
-of Record.
+Verify transported FI material and write the resulting typed historical records
+to the FI relational System-of-Record materialization while preserving the
+immutable Phase 2 recorder authority that authorized the generation.
 
-Accepted, rejected, failed, interrupted, and conflicting ingest actions leave
-immutable journal history.
+The implemented Phase 3 path now includes:
+
+- a 49-table typed PostgreSQL foundation;
+- zero JSON/JSONB/XML database-storage shortcuts;
+- the append-only `fi_ingest` runtime boundary;
+- typed projectors for all 13 current collector record kinds;
+- generation-atomic ingest;
+- receipt/transfer/batch/record reconciliation;
+- typed-projection completeness checks;
+- append-only ingest-journal outcomes;
+- duplicate-safe `AlreadyAccepted` handling;
+- conflict detection and source-record rejection rollback;
+- volume-qualified NTFS/USN identity;
+- recorder-aware read-only reconciliation/inventory; and
+- a sequential Go live-ingest worker used for the current acceptance campaign.
+
+Accepted, rejected, failed, incomplete, duplicate, and conflicting ingest
+actions leave journal history appropriate to their outcome.
+
+The remaining Gate 3 work is acceptance/hardening, not a relational redesign:
+finish the fresh 250K relational campaign, close authoritative
+`USNContinuityGap` receiver/database proof, harden the permanent ingest worker,
+and run the final controlled service/database interruption and recovery cases.
 
 **Gate 3 — Authoritative Record & Journal Integrity:** prove authoritative FI
 history is write-once, reconstructable, and every material ingest outcome is
