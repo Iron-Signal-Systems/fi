@@ -32,20 +32,30 @@ const (
 )
 
 type serviceRuntimeRecord struct {
-	Version                   string `json:"version"`
-	RecordKind                string `json:"record_kind"`
-	ObservedAt                string `json:"observed_at"`
-	CollectionInterval        string `json:"collection_interval,omitempty"`
-	USNInterval               string `json:"usn_interval,omitempty"`
-	SupportingRefreshInterval string `json:"supporting_refresh_interval,omitempty"`
-	Outcome                   string `json:"outcome,omitempty"`
-	ConfiguredRoots           int    `json:"configured_roots,omitempty"`
-	CompletedRoots            int    `json:"completed_roots,omitempty"`
-	PartialRoots              int    `json:"partial_roots,omitempty"`
-	SkippedRoots              int    `json:"skipped_roots,omitempty"`
-	FailedRoots               int    `json:"failed_roots,omitempty"`
-	SupportingRefreshStatus   string `json:"supporting_refresh_status,omitempty"`
-	Error                     string `json:"error,omitempty"`
+	Version                    string `json:"version"`
+	RecordKind                 string `json:"record_kind"`
+	ObservedAt                 string `json:"observed_at"`
+	CollectionInterval         string `json:"collection_interval,omitempty"`
+	USNInterval                string `json:"usn_interval,omitempty"`
+	SecurityInterval           string `json:"security_interval,omitempty"`
+	SupportingRefreshInterval  string `json:"supporting_refresh_interval,omitempty"`
+	Outcome                    string `json:"outcome,omitempty"`
+	ConfiguredRoots            int    `json:"configured_roots,omitempty"`
+	CompletedRoots             int    `json:"completed_roots,omitempty"`
+	PartialRoots               int    `json:"partial_roots,omitempty"`
+	SkippedRoots               int    `json:"skipped_roots,omitempty"`
+	FailedRoots                int    `json:"failed_roots,omitempty"`
+	SupportingRefreshStatus    string `json:"supporting_refresh_status,omitempty"`
+	SecurityReadWindows        int    `json:"security_read_windows,omitempty"`
+	SecuritySourceMatches      int    `json:"security_source_matching_events,omitempty"`
+	SecuritySelectedEvents     int    `json:"security_selected_events,omitempty"`
+	SecurityIgnoredEvents      int    `json:"security_ignored_events,omitempty"`
+	SecurityVerifiedBatches    int    `json:"security_verified_batches,omitempty"`
+	SecurityCheckpointAdvanced bool   `json:"security_checkpoint_advanced,omitempty"`
+	SecurityCheckpointRebased  bool   `json:"security_checkpoint_reinitialized,omitempty"`
+	SecurityContinuityGap      bool   `json:"security_continuity_gap,omitempty"`
+	SecurityMoreAvailable      bool   `json:"security_more_available,omitempty"`
+	Error                      string `json:"error,omitempty"`
 }
 
 type serviceStartupRecoveryFunc func() error
@@ -56,6 +66,7 @@ type serviceAppendRecordFunc func(serviceRuntimeRecord) error
 type fiWindowsService struct {
 	collectionInterval        time.Duration
 	usnInterval               time.Duration
+	securityInterval          time.Duration
 	supportingRefreshInterval time.Duration
 }
 
@@ -90,12 +101,17 @@ func runWindowsService(
 	if err != nil {
 		return err
 	}
+	securityInterval, err := resolveServiceWindowsSecurityInterval()
+	if err != nil {
+		return err
+	}
 
 	return svc.Run(
 		windowsServiceName,
 		&fiWindowsService{
 			collectionInterval:        collectionInterval,
 			usnInterval:               usnInterval,
+			securityInterval:          securityInterval,
 			supportingRefreshInterval: supportingRefreshInterval,
 		},
 	)
@@ -108,18 +124,26 @@ func (service *fiWindowsService) Execute(
 ) (bool, uint32) {
 	statuses <- svc.Status{State: svc.StartPending}
 
+	// Startup recovery must finish before any independently scheduled writer is
+	// allowed to publish. After this boundary, each worker owns its own source
+	// checkpoint and the shared spool publication boundary arbitrates publishing.
+	if err := recoverServiceSpoolPublications(); err != nil {
+		return false, 1
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	done := make(chan error, 2)
+	const workerCount = 3
+	done := make(chan error, workerCount)
 
 	go func() {
 		done <- runServiceLoop(
 			ctx,
 			service.collectionInterval,
 			service.supportingRefreshInterval,
-			recoverServiceSpoolPublications,
-			writeServiceConfiguredCollector,
+			func() error { return nil },
+			writeServiceRootCollector,
 			writeSupportingSourceRefresh,
 			appendServiceRuntimeRecord,
 		)
@@ -134,27 +158,38 @@ func (service *fiWindowsService) Execute(
 		)
 	}()
 
+	go func() {
+		done <- runServiceWindowsSecurityLoop(
+			ctx,
+			service.securityInterval,
+			liveServiceWindowsSecuritySource{},
+			appendServiceRuntimeRecord,
+		)
+	}()
+
 	runningStatus := svc.Status{
 		State:   svc.Running,
 		Accepts: svc.AcceptStop | svc.AcceptShutdown,
 	}
 	statuses <- runningStatus
 
-	waitForWorkers := func(first error, firstAlreadyReceived bool) error {
+	waitForWorkers := func(first error, received int) error {
 		cancel()
-
-		if firstAlreadyReceived {
-			return errors.Join(first, <-done)
+		errs := make([]error, 0, workerCount)
+		if received > 0 {
+			errs = append(errs, first)
 		}
-
-		return errors.Join(<-done, <-done)
+		for index := received; index < workerCount; index++ {
+			errs = append(errs, <-done)
+		}
+		return errors.Join(errs...)
 	}
 
 	for {
 		select {
 		case err := <-done:
 			statuses <- svc.Status{State: svc.StopPending}
-			err = waitForWorkers(err, true)
+			err = waitForWorkers(err, 1)
 			if err != nil {
 				return false, 1
 			}
@@ -163,7 +198,7 @@ func (service *fiWindowsService) Execute(
 		case request, ok := <-requests:
 			if !ok {
 				statuses <- svc.Status{State: svc.StopPending}
-				err := waitForWorkers(nil, false)
+				err := waitForWorkers(nil, 0)
 				if err != nil {
 					return false, 1
 				}
@@ -176,7 +211,7 @@ func (service *fiWindowsService) Execute(
 
 			case svc.Stop, svc.Shutdown:
 				statuses <- svc.Status{State: svc.StopPending}
-				err := waitForWorkers(nil, false)
+				err := waitForWorkers(nil, 0)
 				if err != nil {
 					return false, 1
 				}
@@ -187,8 +222,7 @@ func (service *fiWindowsService) Execute(
 }
 
 func recoverServiceSpoolPublications() error {
-	spoolDir, err :=
-		spool.DefaultDir()
+	spoolDir, err := spool.DefaultDir()
 	if err != nil {
 		return fmt.Errorf(
 			"resolve FI spool directory for service startup recovery: %w",
@@ -196,10 +230,7 @@ func recoverServiceSpoolPublications() error {
 		)
 	}
 
-	if _, err :=
-		spool.RecoverAbandonedPublications(
-			spoolDir,
-		); err != nil {
+	if _, err := spool.RecoverAbandonedPublications(spoolDir); err != nil {
 		return fmt.Errorf(
 			"recover FI spool publications at service startup: %w",
 			err,
@@ -244,6 +275,7 @@ func runServiceLoop(
 		ObservedAt:                serviceNow(),
 		CollectionInterval:        collectionInterval.String(),
 		USNInterval:               currentServiceUSNInterval(),
+		SecurityInterval:          currentServiceWindowsSecurityInterval(),
 		SupportingRefreshInterval: supportingRefreshInterval.String(),
 	}); err != nil {
 		return err
