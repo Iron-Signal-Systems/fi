@@ -26,7 +26,7 @@ exercise. The interrupted clean acceptance run is not rewritten as a success.
 Payload-file target: 250,000
 Directories:         20,000
 Maximum depth:       15
-Seed decimal:        7966167548685396239
+Seed decimal:        7966157670060267791
 Seed hexadecimal:    0x6E8D7A31C4B2190F
 Generators:          4
 ```
@@ -110,10 +110,17 @@ Accordingly, the later count of **250,004** is intentional:
       = 250,004 observed files
 ```
 
-Byte accounting was not fully reconciled during the campaign. An earlier
-deterministic base total was 421,910,556,433 bytes (about 392.935 GiB), while a
-later live enumeration reported about 393.921 GiB. This report therefore does
-not claim one reconciled exact generated-byte total.
+The executed harness fixes the generator seed at decimal
+`7966157670060267791` / hexadecimal `0x6E8D7A31C4B2190F`. Recomputing the
+deterministic generator for exactly 250,000 payload files produces
+`422,969,503,185` bytes (`393.921046690 GiB`), which agrees with the campaign's
+approximately `393.921 GiB` live measurement.
+
+The previously recorded `421,910,556,433`-byte value came from using the
+incorrect decimal seed `7966167548685396239`, which is
+`0x6E8D832DD0A3290F` and is not the seed embedded in the executed harness. That
+earlier byte total is therefore retired rather than treated as an unresolved
+dataset discrepancy.
 
 ## Environment
 
