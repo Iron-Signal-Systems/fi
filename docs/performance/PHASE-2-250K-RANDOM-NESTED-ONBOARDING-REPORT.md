@@ -462,6 +462,76 @@ During those 33 cycles T was already caught up. The overlap therefore proves
 root-lock/scheduler isolation; the immediately preceding T recovery separately
 proves non-empty backlog processing at zero free space.
 
+## Post-campaign Windows Security scheduler defect and remediation
+
+On 2026-09-20, while the retained 250K environment remained active for Phase 3
+source/receiver work, the campaign exposed a second source-runtime scheduling
+problem.
+
+The local Windows Security log was only 20 MiB. At the observed event rate, the
+retained window was measured in minutes. FI's Security checkpoint had reached
+`184209612`, while Windows later reported:
+
+```text
+OldestAvailable:        185600266
+NewestAvailable:        185629542
+CheckpointBeforeOldest: true
+RecordsBehindNewest:    1419930
+```
+
+The gap record was correct: FI did not claim that the unavailable interval
+contained no relevant events. The defect was that service-mode Security handling
+could remain coupled to multi-hour governed-root/current-state work, allowing the
+independent Security source to age out while unrelated heavyweight work was in
+progress.
+
+The service runtime was changed so Windows Security has its own sequential
+single-checkpoint worker. The worker uses bounded EventRecordID windows, verifies
+local durable spool output before checkpoint advancement, and immediately reads
+another bounded window while backlog remains. Service-mode Security continuity
+recovery records Security-specific current coverage and establishes a fresh
+forward Security boundary without requiring a full governed-file tree walk merely
+to resume Event Log collection.
+
+The change was built/tested on ADMINBOX:
+
+```text
+Base repository commit:
+878e1d2a8c42baac29ef1fc3e1e99a55b2d5f0ae
+
+go test .\cmd\fi    PASS (3.577s)
+go vet  .\cmd\fi    PASS
+go build              PASS
+
+Validated collector SHA-256:
+DB88D1527AAEAF8CB65B507158CF2CDDA798B5AEACEE4E4953FBCCEBB037E45B
+```
+
+It was then deployed to `ISS-FS-01`.
+
+With the Security log at 50 MiB, repeated samples remained inside the retained
+window and the largest observed head lag was 584 EventRecordIDs.
+
+The Security log was then returned to 20 MiB. A controlled File System
+audit-policy Failure toggle produced Event ID 4719 records `185819888` and
+`185819899`. The independent worker reported two source matches, two selected
+events, one verified batch, checkpoint advancement, and immediate further backlog
+drain. The accepted Security checkpoint reached `185820374`, beyond both
+controlled events.
+
+This validates the source-side scheduler, selection, durable-spool, and
+checkpoint path under the tested Server 2016 workload. It does not establish
+20 MiB as a universal production Security-log size and it does not yet prove
+receiver/relational materialization for those exact two 4719 records.
+
+A visible source-VM resource drop occurred near the collector replacement, but
+`fi-sender` was accidentally stopped during the same interval. That graph is
+therefore confounded and is not accepted as quantitative proof of a collector
+resource reduction.
+
+Detailed results are preserved in
+`PHASE-2-WINDOWS-SECURITY-WORKER-VALIDATION.md`.
+
 ## Campaign conclusions
 
 The campaign establishes, in the tested environment:
@@ -479,7 +549,11 @@ The campaign establishes, in the tested environment:
 - T later recovered from NextUSN 352 to 274368 while still full;
 - a real cross-root head-of-line blocking defect was discovered;
 - the defect was corrected and live validated; and
-- 33 independent USN cycles continued during a 5h32m Y baseline.
+- 33 independent USN cycles continued during a 5h32m Y baseline;
+- a Windows Security head-of-line scheduling defect was later discovered;
+- Security was separated into an independent single-owner bounded worker; and
+- the source-side Security worker was live validated with the Server 2016 lab
+  Security log returned to 20 MiB.
 
 This campaign does **not** establish a clean uninterrupted 250K acceptance result,
 one reconciled exact generated-byte total, universal production sizing, or
@@ -495,6 +569,7 @@ Collector interruption history:          PASS
 Governed-source zero-free behavior:       PASS
 T backlog recovery at zero free:          PASS
 Cross-root scheduler remediation:         PASS
+Windows Security scheduler remediation:   PASS (source-side)
 ```
 
 A later clean 250K rerun may be used for a clean scale datapoint. It does not
