@@ -286,11 +286,9 @@ func runWorker(
 	fmt.Printf("RelationalTables:     %d\n", state.RelationalTables)
 	fmt.Printf("PollInterval:         %s\n", config.PollInterval)
 	fmt.Printf("RetryAfter:           %s\n", config.RetryAfter)
+	fmt.Printf("RetryState:           durable ingest journal\n")
 	fmt.Printf("Started:              %s\n", time.Now().Format(time.RFC3339))
 	fmt.Println()
-
-	deferred :=
-		make(map[string]time.Time)
 
 	var totalAttempts uint64
 
@@ -319,11 +317,27 @@ func runWorker(
 			plan.Conflict,
 		)
 
+		if err := reconcileConflictError(plan); err != nil {
+			return err
+		}
+
+		rejectionTimes, err :=
+			recordingest.LoadSourceRecordRejectionTimes(
+				ctx,
+				connection,
+				config.SourceID,
+				pendingGenerationIDs(plan),
+			)
+		if err != nil {
+			return err
+		}
+
 		pending, deferredCount, err :=
 			selectPending(
 				plan,
 				time.Now(),
-				deferred,
+				rejectionTimes,
+				config.RetryAfter,
 			)
 		if err != nil {
 			return err
@@ -331,8 +345,9 @@ func runWorker(
 
 		if deferredCount != 0 {
 			fmt.Printf(
-				"DEFERRED count=%d\n",
+				"DEFERRED count=%d source=journal retry_after=%s\n",
 				deferredCount,
+				config.RetryAfter,
 			)
 		}
 
@@ -347,7 +362,6 @@ func runWorker(
 			}
 
 			candidate := item.Candidate
-			key := generationKey(candidate)
 
 			fmt.Printf(
 				"INGEST START source=%s generation=%s records=%d bytes=%d time=%s\n",
@@ -375,14 +389,9 @@ func runWorker(
 					attemptErr,
 					recordingest.ErrSourceRecordRejected,
 				) {
-					deferred[key] =
-						time.Now().Add(
-							config.RetryAfter,
-						)
-
 					fmt.Fprintf(
 						os.Stderr,
-						"INGEST REJECTED generation=%s elapsed=%s retry_after=%s error=%v\n",
+						"INGEST REJECTED generation=%s elapsed=%s retry_after=%s retry_state=journal error=%v\n",
 						candidate.GenerationID,
 						time.Since(start).Round(time.Millisecond),
 						config.RetryAfter,
@@ -398,11 +407,6 @@ func runWorker(
 					attemptErr,
 				)
 			}
-
-			delete(
-				deferred,
-				key,
-			)
 
 			fmt.Printf(
 				"INGEST FINISH generation=%s outcome=%s records_seen=%d records_committed=%d elapsed=%s\n",
@@ -433,33 +437,62 @@ func runWorker(
 	}
 }
 
-func generationKey(
-	candidate recordingest.RecordedReceiptCandidate,
-) string {
-	return candidate.SourceID +
-		"\x00" +
-		candidate.GenerationID
+func pendingGenerationIDs(
+	plan recordingest.ReconcilePlan,
+) []string {
+	generationIDs :=
+		make(
+			[]string,
+			0,
+			plan.Pending,
+		)
+
+	for _, item := range plan.Items {
+		if item.State !=
+			recordingest.ReconcileStatePending {
+			continue
+		}
+
+		generationIDs =
+			append(
+				generationIDs,
+				item.Candidate.GenerationID,
+			)
+	}
+
+	return generationIDs
 }
 
-func selectPending(
+func reconcileConflictError(
 	plan recordingest.ReconcilePlan,
-	now time.Time,
-	deferred map[string]time.Time,
-) (
-	[]recordingest.ReconcilePlanItem,
-	int,
-	error,
-) {
+) error {
 	for _, item := range plan.Items {
 		if item.State ==
 			recordingest.ReconcileStateConflict {
-			return nil, 0, fmt.Errorf(
+			return fmt.Errorf(
 				"FI relational reconcile conflict for source=%q generation=%q: %s",
 				item.Candidate.SourceID,
 				item.Candidate.GenerationID,
 				item.Detail,
 			)
 		}
+	}
+
+	return nil
+}
+
+func selectPending(
+	plan recordingest.ReconcilePlan,
+	now time.Time,
+	rejectionTimes map[string]time.Time,
+	retryAfter time.Duration,
+) (
+	[]recordingest.ReconcilePlanItem,
+	int,
+	error,
+) {
+	if err := reconcileConflictError(plan); err != nil {
+		return nil, 0, err
 	}
 
 	pending :=
@@ -477,16 +510,15 @@ func selectPending(
 			continue
 		}
 
-		key :=
-			generationKey(
-				item.Candidate,
-			)
-
-		until, found :=
-			deferred[key]
+		rejectedAt, found :=
+			rejectionTimes[item.Candidate.GenerationID]
 
 		if found &&
-			now.Before(until) {
+			now.Before(
+				rejectedAt.Add(
+					retryAfter,
+				),
+			) {
 			deferredCount++
 			continue
 		}

@@ -13,7 +13,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
 )
 
-func TestSelectPendingSkipsAcceptedAndDeferred(t *testing.T) {
+func TestSelectPendingSkipsAcceptedAndJournalDeferred(t *testing.T) {
 	now := time.Date(
 		2026,
 		time.September,
@@ -52,15 +52,16 @@ func TestSelectPendingSkipsAcceptedAndDeferred(t *testing.T) {
 		Pending: 2,
 	}
 
-	deferred := map[string]time.Time{
-		"source-1\x00generation-b": now.Add(10 * time.Minute),
+	rejectionTimes := map[string]time.Time{
+		"generation-b": now.Add(-5 * time.Minute),
 	}
 
 	got, deferredCount, err :=
 		selectPending(
 			plan,
 			now,
-			deferred,
+			rejectionTimes,
+			15*time.Minute,
 		)
 	if err != nil {
 		t.Fatalf(
@@ -88,6 +89,106 @@ func TestSelectPendingSkipsAcceptedAndDeferred(t *testing.T) {
 		t.Fatalf(
 			"GenerationID = %q, want generation-c",
 			got[0].Candidate.GenerationID,
+		)
+	}
+}
+
+func TestPendingGenerationIDsReturnsPendingOnly(t *testing.T) {
+	plan := recordingest.ReconcilePlan{
+		Items: []recordingest.ReconcilePlanItem{
+			{
+				Candidate: recordingest.RecordedReceiptCandidate{
+					GenerationID: "generation-a",
+				},
+				State: recordingest.ReconcileStateAccepted,
+			},
+			{
+				Candidate: recordingest.RecordedReceiptCandidate{
+					GenerationID: "generation-b",
+				},
+				State: recordingest.ReconcileStatePending,
+			},
+			{
+				Candidate: recordingest.RecordedReceiptCandidate{
+					GenerationID: "generation-c",
+				},
+				State: recordingest.ReconcileStateConflict,
+			},
+		},
+		Pending: 1,
+	}
+
+	got := pendingGenerationIDs(plan)
+
+	if len(got) != 1 {
+		t.Fatalf(
+			"generation count = %d, want 1",
+			len(got),
+		)
+	}
+
+	if got[0] != "generation-b" {
+		t.Fatalf(
+			"GenerationID = %q, want generation-b",
+			got[0],
+		)
+	}
+}
+
+func TestSelectPendingAllowsExpiredJournalRejection(t *testing.T) {
+	now := time.Date(
+		2026,
+		time.September,
+		20,
+		16,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	plan := recordingest.ReconcilePlan{
+		Items: []recordingest.ReconcilePlanItem{
+			{
+				Candidate: recordingest.RecordedReceiptCandidate{
+					SourceID:     "source-1",
+					GenerationID: "generation-a",
+				},
+				State: recordingest.ReconcileStatePending,
+			},
+		},
+		Pending: 1,
+	}
+
+	rejectionTimes := map[string]time.Time{
+		"generation-a": now.Add(-16 * time.Minute),
+	}
+
+	got, deferredCount, err :=
+		selectPending(
+			plan,
+			now,
+			rejectionTimes,
+			15*time.Minute,
+		)
+	if err != nil {
+		t.Fatalf(
+			"selectPending() error = %v",
+			err,
+		)
+	}
+
+	if deferredCount != 0 {
+		t.Fatalf(
+			"deferredCount = %d, want 0",
+			deferredCount,
+		)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf(
+			"pending count = %d, want 1",
+			len(got),
 		)
 	}
 }
@@ -120,6 +221,7 @@ func TestSelectPendingStopsOnConflict(t *testing.T) {
 			plan,
 			time.Now(),
 			nil,
+			15*time.Minute,
 		); err == nil {
 		t.Fatal(
 			"selectPending() accepted reconcile conflict",
