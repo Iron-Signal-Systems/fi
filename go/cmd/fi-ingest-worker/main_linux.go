@@ -290,6 +290,31 @@ func runWorker(
 	fmt.Printf("Started:              %s\n", time.Now().Format(time.RFC3339))
 	fmt.Println()
 
+	startupPlan, err :=
+		recordingest.PlanRecordedGenerations(
+			ctx,
+			connection,
+			config.RecordedRoot,
+			config.SourceID,
+		)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf(
+		"STARTUP RECONCILE discovered=%d accepted=%d pending=%d conflict=%d\n",
+		startupPlan.Discovered,
+		startupPlan.Accepted,
+		startupPlan.Pending,
+		startupPlan.Conflict,
+	)
+
+	if err := reconcileConflictError(startupPlan); err != nil {
+		return err
+	}
+
+	fmt.Println()
+
 	var totalAttempts uint64
 
 	for {
@@ -298,7 +323,7 @@ func runWorker(
 		}
 
 		plan, err :=
-			recordingest.PlanRecordedGenerations(
+			recordingest.PlanRecordedGenerationsForIngest(
 				ctx,
 				connection,
 				config.RecordedRoot,

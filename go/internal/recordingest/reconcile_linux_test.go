@@ -76,6 +76,86 @@ func TestDiscoverRecordedReceiptsSourceFilter(t *testing.T) {
 	}
 }
 
+func TestEvaluateIngestGeneration(t *testing.T) {
+	candidate := RecordedReceiptCandidate{
+		BatchCount:     1,
+		DataBytes:      33551261,
+		GenerationID:   "20260919T184530.695418700Z-ed9f36afc547f5f3",
+		ReceiptSHA256:  "469c7223f32eea690cd21eaeab81780a2ef28a2dcbf393f949c4db016d6b96d4",
+		RecordCount:    7492,
+		TransferSHA256: "004b309cee0cb8b4680f94f450a96066b9ef375dffa7c5e4f826017f2e1308a9",
+	}
+
+	snapshot := ingestGenerationSnapshot{
+		DeclaredBatchCount:  int64(candidate.BatchCount),
+		DeclaredDataBytes:   int64(candidate.DataBytes),
+		DeclaredRecordCount: int64(candidate.RecordCount),
+		Found:               true,
+		GenerationID:        candidate.GenerationID,
+		ReceiptSHA256:       candidate.ReceiptSHA256,
+		TransferSHA256:      candidate.TransferSHA256,
+	}
+
+	state, detail := evaluateIngestGeneration(
+		candidate,
+		snapshot,
+	)
+	if state != ReconcileStateAccepted ||
+		detail != "" {
+		t.Fatalf(
+			"state=%q detail=%q, want Accepted with empty detail",
+			state,
+			detail,
+		)
+	}
+
+	snapshot.DeclaredRecordCount--
+
+	state, detail = evaluateIngestGeneration(
+		candidate,
+		snapshot,
+	)
+	if state != ReconcileStateConflict ||
+		detail == "" {
+		t.Fatalf(
+			"state=%q detail=%q, want totals Conflict with detail",
+			state,
+			detail,
+		)
+	}
+
+	snapshot.DeclaredRecordCount++
+	snapshot.Found = false
+
+	state, detail = evaluateIngestGeneration(
+		candidate,
+		snapshot,
+	)
+	if state != ReconcileStatePending ||
+		detail != "" {
+		t.Fatalf(
+			"state=%q detail=%q, want Pending with empty detail",
+			state,
+			detail,
+		)
+	}
+
+	snapshot.ReceiptCollision = true
+
+	state, detail = evaluateIngestGeneration(
+		candidate,
+		snapshot,
+	)
+	if state != ReconcileStateConflict ||
+		detail == "" {
+		t.Fatalf(
+			"state=%q detail=%q, want collision Conflict with detail",
+			state,
+			detail,
+		)
+	}
+}
+
 func TestEvaluateExistingGeneration(t *testing.T) {
 	candidate := RecordedReceiptCandidate{
 		BatchCount:     1,

@@ -73,6 +73,18 @@ type existingGenerationSnapshot struct {
 	TransferSHA256 string
 }
 
+type ingestGenerationSnapshot struct {
+	DeclaredBatchCount  int64
+	DeclaredDataBytes   int64
+	DeclaredRecordCount int64
+	Found               bool
+	GenerationID        string
+	ReceiptCollision    bool
+	ReceiptSHA256       string
+	TransferCollision   bool
+	TransferSHA256      string
+}
+
 // DiscoverRecordedReceipts reads only immutable recorder receipt objects. It
 // never walks custody looking for guessed data files. Every selected receipt
 // must be a 0400 regular file whose deterministic filename agrees with the
@@ -225,6 +237,277 @@ func PlanRecordedGenerations(
 	}
 
 	return plan, nil
+}
+
+// PlanRecordedGenerationsForIngest performs the steady-state operational
+// receipt/database comparison used by the ingest worker. Immutable recorder
+// receipts remain authoritative. Unlike PlanRecordedGenerations, this path
+// does not re-count authoritative child rows or typed projections for every
+// already-accepted generation on every polling cycle.
+//
+// Deep reconciliation remains the startup/manual audit path.
+func PlanRecordedGenerationsForIngest(
+	ctx context.Context,
+	connection *pgx.Conn,
+	recordedRoot string,
+	sourceFilter string,
+) (ReconcilePlan, error) {
+	if ctx == nil {
+		return ReconcilePlan{}, errors.New("FI Phase 3 ingest plan context is required")
+	}
+	if connection == nil {
+		return ReconcilePlan{}, errors.New("FI Phase 3 PostgreSQL connection is required")
+	}
+	if strings.TrimSpace(sourceFilter) == "" {
+		return ReconcilePlan{}, errors.New("FI Phase 3 ingest plan requires one source ID")
+	}
+
+	candidates, err := DiscoverRecordedReceipts(recordedRoot, sourceFilter)
+	if err != nil {
+		return ReconcilePlan{}, err
+	}
+
+	plan := ReconcilePlan{
+		Discovered: uint64(len(candidates)),
+		Items:      make([]ReconcilePlanItem, 0, len(candidates)),
+	}
+
+	if len(candidates) == 0 {
+		return plan, nil
+	}
+
+	snapshots, err := loadIngestGenerationSnapshots(
+		ctx,
+		connection,
+		sourceFilter,
+		candidates,
+	)
+	if err != nil {
+		return ReconcilePlan{}, err
+	}
+
+	if len(snapshots) != len(candidates) {
+		return ReconcilePlan{}, errors.New(
+			"FI Phase 3 ingest plan database result count differs from recorder candidate count",
+		)
+	}
+
+	for index, candidate := range candidates {
+		snapshot := snapshots[index]
+
+		if snapshot.GenerationID != candidate.GenerationID {
+			return ReconcilePlan{}, errors.New(
+				"FI Phase 3 ingest plan database result order differs from recorder candidate order",
+			)
+		}
+
+		state, detail := evaluateIngestGeneration(
+			candidate,
+			snapshot,
+		)
+
+		plan.Items = append(
+			plan.Items,
+			ReconcilePlanItem{
+				Candidate: candidate,
+				Detail:    detail,
+				State:     state,
+			},
+		)
+
+		switch state {
+		case ReconcileStateAccepted:
+			plan.Accepted++
+
+		case ReconcileStateConflict:
+			plan.Conflict++
+
+		case ReconcileStatePending:
+			plan.Pending++
+
+		default:
+			return ReconcilePlan{}, fmt.Errorf(
+				"unsupported FI Phase 3 ingest plan state %q",
+				state,
+			)
+		}
+	}
+
+	return plan, nil
+}
+
+func evaluateIngestGeneration(
+	candidate RecordedReceiptCandidate,
+	snapshot ingestGenerationSnapshot,
+) (ReconcileState, string) {
+	if !snapshot.Found {
+		if snapshot.ReceiptCollision ||
+			snapshot.TransferCollision {
+			return ReconcileStateConflict,
+				"authoritative receipt or transfer identity is already bound to another generation"
+		}
+
+		return ReconcileStatePending, ""
+	}
+
+	if strings.TrimSpace(snapshot.ReceiptSHA256) != candidate.ReceiptSHA256 ||
+		strings.TrimSpace(snapshot.TransferSHA256) != candidate.TransferSHA256 {
+		return ReconcileStateConflict,
+			"authoritative receipt or transfer identity differs from immutable recorder receipt"
+	}
+
+	if snapshot.DeclaredBatchCount != int64(candidate.BatchCount) ||
+		snapshot.DeclaredDataBytes != int64(candidate.DataBytes) ||
+		snapshot.DeclaredRecordCount != int64(candidate.RecordCount) {
+		return ReconcileStateConflict,
+			"authoritative generation totals differ from immutable recorder receipt"
+	}
+
+	return ReconcileStateAccepted, ""
+}
+
+func loadIngestGenerationSnapshots(
+	ctx context.Context,
+	connection *pgx.Conn,
+	sourceID string,
+	candidates []RecordedReceiptCandidate,
+) ([]ingestGenerationSnapshot, error) {
+	if len(candidates) == 0 {
+		return []ingestGenerationSnapshot{}, nil
+	}
+
+	generationIDs := make([]string, len(candidates))
+	receiptSHA256s := make([]string, len(candidates))
+	transferSHA256s := make([]string, len(candidates))
+
+	for index, candidate := range candidates {
+		generationIDs[index] = candidate.GenerationID
+		receiptSHA256s[index] = candidate.ReceiptSHA256
+		transferSHA256s[index] = candidate.TransferSHA256
+	}
+
+	rows, err := connection.Query(
+		ctx,
+		`
+SELECT
+    c.ordinality::bigint,
+    c.generation_id,
+    rg.recorded_generation_id IS NOT NULL,
+    COALESCE(encode(rg.receipt_sha256, 'hex'), ''),
+    COALESCE(encode(rg.transfer_sha256, 'hex'), ''),
+    COALESCE(rg.batch_count::bigint, 0),
+    COALESCE(rg.data_bytes::bigint, 0),
+    COALESCE(rg.record_count::bigint, 0),
+    EXISTS (
+        SELECT 1
+        FROM fi.recorded_generation collision
+        WHERE collision.transfer_sha256 = decode(c.transfer_sha256, 'hex')
+          AND (
+              collision.source_id <> $1
+              OR collision.generation_id <> c.generation_id
+          )
+    ),
+    EXISTS (
+        SELECT 1
+        FROM fi.recorded_generation collision
+        WHERE collision.receipt_sha256 = decode(c.receipt_sha256, 'hex')
+          AND (
+              collision.source_id <> $1
+              OR collision.generation_id <> c.generation_id
+          )
+    )
+FROM unnest(
+    $2::text[],
+    $3::text[],
+    $4::text[]
+) WITH ORDINALITY AS c(
+    generation_id,
+    transfer_sha256,
+    receipt_sha256,
+    ordinality
+)
+LEFT JOIN fi.recorded_generation rg
+  ON rg.source_id = $1
+ AND rg.generation_id = c.generation_id
+ORDER BY c.ordinality
+`,
+		sourceID,
+		generationIDs,
+		transferSHA256s,
+		receiptSHA256s,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"read FI Phase 3 operational generation state: %w",
+			err,
+		)
+	}
+	defer rows.Close()
+
+	snapshots := make(
+		[]ingestGenerationSnapshot,
+		0,
+		len(candidates),
+	)
+
+	for rows.Next() {
+		var ordinal int64
+		var snapshot ingestGenerationSnapshot
+
+		if err := rows.Scan(
+			&ordinal,
+			&snapshot.GenerationID,
+			&snapshot.Found,
+			&snapshot.ReceiptSHA256,
+			&snapshot.TransferSHA256,
+			&snapshot.DeclaredBatchCount,
+			&snapshot.DeclaredDataBytes,
+			&snapshot.DeclaredRecordCount,
+			&snapshot.TransferCollision,
+			&snapshot.ReceiptCollision,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"scan FI Phase 3 operational generation state: %w",
+				err,
+			)
+		}
+
+		expectedOrdinal := int64(len(snapshots) + 1)
+		if ordinal != expectedOrdinal {
+			return nil, fmt.Errorf(
+				"FI Phase 3 operational generation state ordinal %d, expected %d",
+				ordinal,
+				expectedOrdinal,
+			)
+		}
+
+		if snapshot.GenerationID !=
+			candidates[len(snapshots)].GenerationID {
+			return nil, errors.New(
+				"FI Phase 3 operational generation state identity differs from recorder candidate",
+			)
+		}
+
+		snapshots = append(
+			snapshots,
+			snapshot,
+		)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"read FI Phase 3 operational generation state: %w",
+			err,
+		)
+	}
+
+	if len(snapshots) != len(candidates) {
+		return nil, errors.New(
+			"FI Phase 3 operational generation state is incomplete",
+		)
+	}
+
+	return snapshots, nil
 }
 
 func evaluateExistingGeneration(
