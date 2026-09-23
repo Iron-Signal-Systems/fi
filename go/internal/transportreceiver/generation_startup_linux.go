@@ -19,11 +19,15 @@ import (
 // durable generation custody.
 //
 // Startup recovery may create immutable recorder receipts for custody that was
-// durable before a prior receiver interruption. It never emits a protocol ACK
-// and never removes the durable FIGT custody object.
+// durable before a prior receiver interruption. Newly created receipts also get
+// a best-effort non-authoritative ingest-ready hint. It never emits a protocol
+// ACK and never removes the durable FIGT custody object.
 type GenerationStartupResult struct {
 	AlreadyRecorded    uint64
 	Discovered         uint64
+	ReadyPublished     uint64
+	ReadyWarning       string
+	ReadyWarnings      uint64
 	RecordedNew        uint64
 	RemovedProvisional uint64
 }
@@ -105,6 +109,19 @@ func RecoverGenerationStartup(
 		switch recorded.Disposition {
 		case generationrecorder.RecordedDispositionNew:
 			result.RecordedNew++
+
+			_, warning := publishGenerationReady(
+				transactionConfig.ReadyRoot,
+				recorded,
+			)
+			if warning != "" {
+				result.ReadyWarnings++
+				if result.ReadyWarning == "" {
+					result.ReadyWarning = warning
+				}
+			} else {
+				result.ReadyPublished++
+			}
 
 		case generationrecorder.RecordedDispositionAlreadyRecorded:
 			result.AlreadyRecorded++

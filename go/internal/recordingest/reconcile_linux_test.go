@@ -76,6 +76,71 @@ func TestDiscoverRecordedReceiptsSourceFilter(t *testing.T) {
 	}
 }
 
+func TestDiscoverRecordedReceiptsByName(t *testing.T) {
+	root := t.TempDir()
+	name, sourceID := writeReconcileTestReceipt(t, root)
+
+	candidates, err := DiscoverRecordedReceiptsByName(
+		root,
+		[]string{name},
+		sourceID,
+	)
+	if err != nil {
+		t.Fatalf("DiscoverRecordedReceiptsByName() error = %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidate count = %d, want 1", len(candidates))
+	}
+	if candidates[0].SourceID != sourceID ||
+		candidates[0].Path != filepath.Join(root, name) {
+		t.Fatalf("candidate = %+v, want source=%q path=%q", candidates[0], sourceID, filepath.Join(root, name))
+	}
+}
+
+func TestDiscoverRecordedReceiptsByNameRejectsDuplicateName(t *testing.T) {
+	root := t.TempDir()
+	name, sourceID := writeReconcileTestReceipt(t, root)
+
+	_, err := DiscoverRecordedReceiptsByName(
+		root,
+		[]string{name, name},
+		sourceID,
+	)
+	if err == nil {
+		t.Fatal("duplicate recorded receipt name was accepted")
+	}
+}
+
+func TestDiscoverRecordedReceiptsByNameRejectsNonBasename(t *testing.T) {
+	root := t.TempDir()
+
+	_, err := DiscoverRecordedReceiptsByName(
+		root,
+		[]string{"../generation-invalid.record.json"},
+		"iss-fs-01.iss.local",
+	)
+	if err == nil {
+		t.Fatal("non-basename recorded receipt name was accepted")
+	}
+}
+
+func TestDiscoverRecordedReceiptsByNameSourceFilter(t *testing.T) {
+	root := t.TempDir()
+	name, _ := writeReconcileTestReceipt(t, root)
+
+	candidates, err := DiscoverRecordedReceiptsByName(
+		root,
+		[]string{name},
+		"different-source",
+	)
+	if err != nil {
+		t.Fatalf("DiscoverRecordedReceiptsByName() error = %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("candidate count = %d, want 0", len(candidates))
+	}
+}
+
 func TestEvaluateIngestGeneration(t *testing.T) {
 	candidate := RecordedReceiptCandidate{
 		BatchCount:     1,
@@ -194,4 +259,31 @@ func TestEvaluateExistingGeneration(t *testing.T) {
 	if state != ReconcileStateConflict || detail == "" {
 		t.Fatalf("state=%q detail=%q, want projection Conflict with detail", state, detail)
 	}
+}
+
+func writeReconcileTestReceipt(
+	t *testing.T,
+	root string,
+) (
+	string,
+	string,
+) {
+	t.Helper()
+
+	raw := []byte(reconcileTestReceipt)
+	receipt, err := generationrecorder.UnmarshalRecordedReceipt(raw)
+	if err != nil {
+		t.Fatalf("UnmarshalRecordedReceipt() error = %v", err)
+	}
+
+	name := generationrecorder.RecordedReceiptObjectName(
+		receipt.Descriptor.SourceID,
+		receipt.Descriptor.GenerationID,
+	)
+	path := filepath.Join(root, name)
+	if err := os.WriteFile(path, raw, 0o400); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	return name, receipt.Descriptor.SourceID
 }

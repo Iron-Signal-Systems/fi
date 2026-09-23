@@ -33,6 +33,7 @@ type Config struct {
 	GenerationMaxCanonicalBytes uint64
 	GenerationMaxEncodedBytes   uint64
 	GenerationMaxManifestBytes  uint64
+	GenerationReadyRoot         string
 	GenerationRecordedRoot      string
 	MaxDataBytes                uint64
 	RecoveryMaxCanonicalBytes   uint64
@@ -62,6 +63,7 @@ type Result struct {
 	GenerationEncodedBytes    uint64
 	GenerationID              string
 	GenerationRecordCount     uint64
+	GenerationReadyWarning    string
 	GenerationRecordedState   string
 	GenerationTransferSHA256  string
 	Recovery                  bool
@@ -275,6 +277,7 @@ func receiveAuthenticatedApplication(
 			GenerationEncodedBytes:    generation.Recorder.Receipt.Descriptor.EncodedDataBytes,
 			GenerationID:              generation.Recorder.Receipt.Descriptor.GenerationID,
 			GenerationRecordCount:     generation.Recorder.Receipt.RecordCount,
+			GenerationReadyWarning:    generation.ReadyWarning,
 			GenerationRecordedState: string(
 				generation.Recorder.Disposition,
 			),

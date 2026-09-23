@@ -7,11 +7,83 @@
 package main
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/generationready"
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
 )
+
+func TestProcessPlanRetiresAcceptedReadyMarkerWithoutDatabaseWork(
+	t *testing.T,
+) {
+	readyRoot := t.TempDir()
+	name := "generation-0123456789abcdef.record.json"
+	if _, err := generationready.Publish(readyRoot, name); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := recordingest.ReconcilePlan{
+		Accepted:   1,
+		Discovered: 1,
+		Items: []recordingest.ReconcilePlanItem{
+			{
+				Candidate: recordingest.RecordedReceiptCandidate{
+					Path: filepath.Join("/recorded", name),
+				},
+				State: recordingest.ReconcileStateAccepted,
+			},
+		},
+	}
+
+	var attempts uint64
+	if err := processPlan(
+		context.Background(),
+		workerConfig{ReadyRoot: readyRoot},
+		postgresConnection{},
+		plan,
+		true,
+		&attempts,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := generationready.ReadReceiptNames(readyRoot, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("ready names after accepted retirement = %#v, want empty", names)
+	}
+	if attempts != 0 {
+		t.Fatalf("attempts = %d, want 0", attempts)
+	}
+}
+
+func TestReadyPlanEmptyQueueNeedsNoDatabaseConnection(
+	t *testing.T,
+) {
+	plan, markers, err := readyPlan(
+		context.Background(),
+		workerConfig{
+			ReadyBatchSize: 64,
+			ReadyRoot:      t.TempDir(),
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markers != 0 || plan.Discovered != 0 || len(plan.Items) != 0 {
+		t.Fatalf(
+			"empty ready plan markers=%d plan=%#v, want zero",
+			markers,
+			plan,
+		)
+	}
+}
 
 func TestSelectPendingSkipsAcceptedAndJournalDeferred(t *testing.T) {
 	now := time.Date(

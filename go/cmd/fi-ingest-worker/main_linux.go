@@ -13,10 +13,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/generationready"
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
 	"github.com/jackc/pgx/v5"
 )
@@ -30,7 +32,10 @@ type workerConfig struct {
 	MaxManifestBytes  uint64
 	Once              bool
 	PollInterval      time.Duration
+	ReadyBatchSize    uint64
+	ReadyRoot         string
 	RecordedRoot      string
+	RepairInterval    time.Duration
 	RetryAfter        time.Duration
 	SourceID          string
 }
@@ -65,6 +70,18 @@ func main() {
 		"durable FI generation recorder root",
 	)
 
+	readyRoot := flags.String(
+		"generation-ready-root",
+		"/var/lib/fi/custody/ready",
+		"non-authoritative FI generation ingest-ready root",
+	)
+
+	readyBatchSize := flags.Uint64(
+		"ready-batch-size",
+		64,
+		"maximum ingest-ready markers inspected per polling pass",
+	)
+
 	maxCanonicalBytes := flags.Uint64(
 		"generation-max-canonical-bytes",
 		68719476736,
@@ -93,6 +110,12 @@ func main() {
 		"retry-after",
 		15*time.Minute,
 		"delay before retrying a source-record rejection",
+	)
+
+	repairInterval := flags.Duration(
+		"repair-interval",
+		time.Hour,
+		"interval between full authoritative receipt repair sweeps",
 	)
 
 	once := flags.Bool(
@@ -130,6 +153,22 @@ func main() {
 		)
 	}
 
+	if *readyBatchSize == 0 {
+		fail(
+			errors.New(
+				"ready-batch-size must be greater than zero",
+			),
+		)
+	}
+
+	if *repairInterval <= 0 {
+		fail(
+			errors.New(
+				"repair-interval must be greater than zero",
+			),
+		)
+	}
+
 	ctx, stop :=
 		signal.NotifyContext(
 			context.Background(),
@@ -147,7 +186,10 @@ func main() {
 		MaxManifestBytes:  *maxManifestBytes,
 		Once:              *once,
 		PollInterval:      *pollInterval,
+		ReadyBatchSize:    *readyBatchSize,
+		ReadyRoot:         *readyRoot,
 		RecordedRoot:      *recordedRoot,
+		RepairInterval:    *repairInterval,
 		RetryAfter:        *retryAfter,
 		SourceID:          *sourceID,
 	}
@@ -285,13 +327,16 @@ func runWorker(
 	fmt.Printf("PostgreSQLDatabase:   %s\n", state.CurrentDatabase)
 	fmt.Printf("RelationalTables:     %d\n", state.RelationalTables)
 	fmt.Printf("PollInterval:         %s\n", config.PollInterval)
+	fmt.Printf("ReadyRoot:            %s\n", config.ReadyRoot)
+	fmt.Printf("ReadyBatchSize:       %d\n", config.ReadyBatchSize)
+	fmt.Printf("RepairInterval:       %s\n", config.RepairInterval)
 	fmt.Printf("RetryAfter:           %s\n", config.RetryAfter)
 	fmt.Printf("RetryState:           durable ingest journal\n")
 	fmt.Printf("Started:              %s\n", time.Now().Format(time.RFC3339))
 	fmt.Println()
 
 	startupPlan, err :=
-		recordingest.PlanRecordedGenerations(
+		recordingest.PlanRecordedGenerationsForIngest(
 			ctx,
 			connection,
 			config.RecordedRoot,
@@ -313,153 +358,330 @@ func runWorker(
 		return err
 	}
 
+	var totalAttempts uint64
+	if err := processPlan(
+		ctx,
+		config,
+		db,
+		startupPlan,
+		false,
+		&totalAttempts,
+	); err != nil {
+		return err
+	}
+	if config.MaxAttempts != 0 && totalAttempts >= config.MaxAttempts {
+		return nil
+	}
+
 	fmt.Println()
 
-	var totalAttempts uint64
+	nextRepair := time.Now().Add(config.RepairInterval)
 
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		plan, err :=
-			recordingest.PlanRecordedGenerationsForIngest(
-				ctx,
-				connection,
-				config.RecordedRoot,
-				config.SourceID,
-			)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf(
-			"PLAN time=%s discovered=%d accepted=%d pending=%d conflict=%d\n",
-			time.Now().Format(time.RFC3339),
-			plan.Discovered,
-			plan.Accepted,
-			plan.Pending,
-			plan.Conflict,
-		)
-
-		if err := reconcileConflictError(plan); err != nil {
-			return err
-		}
-
-		rejectionTimes, err :=
-			recordingest.LoadSourceRecordRejectionTimes(
-				ctx,
-				connection,
-				config.SourceID,
-				pendingGenerationIDs(plan),
-			)
-		if err != nil {
-			return err
-		}
-
-		pending, deferredCount, err :=
-			selectPending(
-				plan,
-				time.Now(),
-				rejectionTimes,
-				config.RetryAfter,
-			)
-		if err != nil {
-			return err
-		}
-
-		if deferredCount != 0 {
-			fmt.Printf(
-				"DEFERRED count=%d source=journal retry_after=%s\n",
-				deferredCount,
-				config.RetryAfter,
-			)
-		}
-
-		for _, item := range pending {
-			if config.MaxAttempts != 0 &&
-				totalAttempts >= config.MaxAttempts {
-				fmt.Printf(
-					"MaxAttempts reached: %d\n",
-					totalAttempts,
-				)
-				return nil
-			}
-
-			candidate := item.Candidate
-
-			fmt.Printf(
-				"INGEST START source=%s generation=%s records=%d bytes=%d time=%s\n",
-				candidate.SourceID,
-				candidate.GenerationID,
-				candidate.RecordCount,
-				candidate.DataBytes,
-				time.Now().Format(time.RFC3339),
-			)
-
-			start := time.Now()
-
-			result, attemptErr :=
-				attemptGeneration(
+		now := time.Now()
+		if !now.Before(nextRepair) {
+			plan, err :=
+				recordingest.PlanRecordedGenerationsForIngest(
 					ctx,
-					config,
-					db,
-					item,
+					connection,
+					config.RecordedRoot,
+					config.SourceID,
 				)
-
-			totalAttempts++
-
-			if attemptErr != nil {
-				if errors.Is(
-					attemptErr,
-					recordingest.ErrSourceRecordRejected,
-				) {
-					fmt.Fprintf(
-						os.Stderr,
-						"INGEST REJECTED generation=%s elapsed=%s retry_after=%s retry_state=journal error=%v\n",
-						candidate.GenerationID,
-						time.Since(start).Round(time.Millisecond),
-						config.RetryAfter,
-						attemptErr,
-					)
-
-					continue
-				}
-
-				return fmt.Errorf(
-					"generation %q ingest failed: %w",
-					candidate.GenerationID,
-					attemptErr,
-				)
+			if err != nil {
+				return err
 			}
 
 			fmt.Printf(
-				"INGEST FINISH generation=%s outcome=%s records_seen=%d records_committed=%d elapsed=%s\n",
-				result.GenerationID,
-				result.Outcome,
-				result.RecordsSeen,
-				result.RecordsCommitted,
-				time.Since(start).Round(time.Millisecond),
+				"REPAIR PLAN time=%s discovered=%d accepted=%d pending=%d conflict=%d\n",
+				now.Format(time.RFC3339),
+				plan.Discovered,
+				plan.Accepted,
+				plan.Pending,
+				plan.Conflict,
 			)
+
+			if err := processPlan(
+				ctx,
+				config,
+				db,
+				plan,
+				false,
+				&totalAttempts,
+			); err != nil {
+				return err
+			}
+
+			nextRepair = time.Now().Add(config.RepairInterval)
+		} else {
+			plan, markerCount, err := readyPlan(
+				ctx,
+				config,
+				connection,
+			)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf(
+				"READY PLAN time=%s markers=%d accepted=%d pending=%d conflict=%d\n",
+				now.Format(time.RFC3339),
+				markerCount,
+				plan.Accepted,
+				plan.Pending,
+				plan.Conflict,
+			)
+
+			if err := processPlan(
+				ctx,
+				config,
+				db,
+				plan,
+				true,
+				&totalAttempts,
+			); err != nil {
+				return err
+			}
+		}
+
+		if config.MaxAttempts != 0 &&
+			totalAttempts >= config.MaxAttempts {
+			return nil
 		}
 
 		if config.Once {
 			return nil
 		}
 
-		timer :=
-			time.NewTimer(
-				config.PollInterval,
-			)
-
+		timer := time.NewTimer(config.PollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
-
 		case <-timer.C:
 		}
 	}
+}
+
+func processPlan(
+	ctx context.Context,
+	config workerConfig,
+	connection postgresConnection,
+	plan recordingest.ReconcilePlan,
+	retireReady bool,
+	totalAttempts *uint64,
+) error {
+	if totalAttempts == nil {
+		return errors.New("FI ingest worker total-attempt counter is required")
+	}
+
+	if err := reconcileConflictError(plan); err != nil {
+		return err
+	}
+
+	retireNames := make([]string, 0, plan.Accepted+plan.Pending)
+	if retireReady {
+		for _, item := range plan.Items {
+			if item.State == recordingest.ReconcileStateAccepted {
+				retireNames = append(
+					retireNames,
+					filepath.Base(item.Candidate.Path),
+				)
+			}
+		}
+	}
+
+	flushReady := func() error {
+		if !retireReady || len(retireNames) == 0 {
+			return nil
+		}
+
+		if err := generationready.RemoveReceiptNames(
+			config.ReadyRoot,
+			retireNames,
+		); err != nil {
+			return err
+		}
+		retireNames = retireNames[:0]
+		return nil
+	}
+
+	if plan.Pending == 0 {
+		return flushReady()
+	}
+
+	rejectionTimes, err :=
+		recordingest.LoadSourceRecordRejectionTimes(
+			ctx,
+			connection.Connection(),
+			config.SourceID,
+			pendingGenerationIDs(plan),
+		)
+	if err != nil {
+		return err
+	}
+
+	pending, deferredCount, err :=
+		selectPending(
+			plan,
+			time.Now(),
+			rejectionTimes,
+			config.RetryAfter,
+		)
+	if err != nil {
+		return err
+	}
+
+	if deferredCount != 0 {
+		fmt.Printf(
+			"DEFERRED count=%d source=journal retry_after=%s\n",
+			deferredCount,
+			config.RetryAfter,
+		)
+	}
+
+	for _, item := range pending {
+		if config.MaxAttempts != 0 &&
+			*totalAttempts >= config.MaxAttempts {
+			if err := flushReady(); err != nil {
+				return err
+			}
+			fmt.Printf(
+				"MaxAttempts reached: %d\n",
+				*totalAttempts,
+			)
+			return nil
+		}
+
+		candidate := item.Candidate
+
+		fmt.Printf(
+			"INGEST START source=%s generation=%s records=%d bytes=%d time=%s\n",
+			candidate.SourceID,
+			candidate.GenerationID,
+			candidate.RecordCount,
+			candidate.DataBytes,
+			time.Now().Format(time.RFC3339),
+		)
+
+		start := time.Now()
+		result, attemptErr :=
+			attemptGeneration(
+				ctx,
+				config,
+				connection,
+				item,
+			)
+
+		(*totalAttempts)++
+
+		if attemptErr != nil {
+			if errors.Is(
+				attemptErr,
+				recordingest.ErrSourceRecordRejected,
+			) {
+				fmt.Fprintf(
+					os.Stderr,
+					"INGEST REJECTED generation=%s elapsed=%s retry_after=%s retry_state=journal error=%v\n",
+					candidate.GenerationID,
+					time.Since(start).Round(time.Millisecond),
+					config.RetryAfter,
+					attemptErr,
+				)
+				continue
+			}
+
+			if err := flushReady(); err != nil {
+				return errors.Join(
+					fmt.Errorf(
+						"generation %q ingest failed: %w",
+						candidate.GenerationID,
+						attemptErr,
+					),
+					err,
+				)
+			}
+
+			return fmt.Errorf(
+				"generation %q ingest failed: %w",
+				candidate.GenerationID,
+				attemptErr,
+			)
+		}
+
+		fmt.Printf(
+			"INGEST FINISH generation=%s outcome=%s records_seen=%d records_committed=%d elapsed=%s\n",
+			result.GenerationID,
+			result.Outcome,
+			result.RecordsSeen,
+			result.RecordsCommitted,
+			time.Since(start).Round(time.Millisecond),
+		)
+
+		if retireReady {
+			retireNames = append(
+				retireNames,
+				filepath.Base(candidate.Path),
+			)
+		}
+	}
+
+	return flushReady()
+}
+
+func readyPlan(
+	ctx context.Context,
+	config workerConfig,
+	connection *pgx.Conn,
+) (
+	recordingest.ReconcilePlan,
+	uint64,
+	error,
+) {
+	names, err := generationready.ReadReceiptNames(
+		config.ReadyRoot,
+		config.ReadyBatchSize,
+	)
+	if err != nil {
+		return recordingest.ReconcilePlan{}, 0, err
+	}
+	if len(names) == 0 {
+		return recordingest.ReconcilePlan{}, 0, nil
+	}
+
+	candidates, err := recordingest.DiscoverRecordedReceiptsByName(
+		config.RecordedRoot,
+		names,
+		config.SourceID,
+	)
+	if err != nil {
+		return recordingest.ReconcilePlan{}, 0, err
+	}
+	if len(candidates) != len(names) {
+		return recordingest.ReconcilePlan{},
+			uint64(len(names)),
+			fmt.Errorf(
+				"FI ingest-ready batch selected %d markers but %d authoritative receipts matched source %q",
+				len(names),
+				len(candidates),
+				config.SourceID,
+			)
+	}
+
+	plan, err := recordingest.PlanRecordedReceiptCandidatesForIngest(
+		ctx,
+		connection,
+		config.SourceID,
+		candidates,
+	)
+	if err != nil {
+		return recordingest.ReconcilePlan{}, uint64(len(names)), err
+	}
+
+	return plan, uint64(len(names)), nil
 }
 
 func pendingGenerationIDs(

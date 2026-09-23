@@ -18,6 +18,7 @@ type generationRuntimeOptions struct {
 	MaxCanonicalBytes uint64
 	MaxEncodedBytes   uint64
 	MaxManifestBytes  uint64
+	ReadyRoot         string
 	RecordedRoot      string
 }
 
@@ -26,6 +27,7 @@ func (
 ) validate() error {
 	configured :=
 		options.CustodyRoot != "" ||
+			options.ReadyRoot != "" ||
 			options.RecordedRoot != "" ||
 			options.MaxCanonicalBytes != 0 ||
 			options.MaxEncodedBytes != 0 ||
@@ -42,12 +44,13 @@ func (
 	}
 
 	if options.CustodyRoot == "" ||
+		options.ReadyRoot == "" ||
 		options.RecordedRoot == "" ||
 		options.MaxCanonicalBytes == 0 ||
 		options.MaxEncodedBytes == 0 ||
 		options.MaxManifestBytes == 0 {
 		return errors.New(
-			"-generation-enable requires generation custody/recorded roots and all generation byte limits",
+			"-generation-enable requires generation custody/recorded/ready roots and all generation byte limits",
 		)
 	}
 
@@ -67,6 +70,8 @@ func (
 		options.Enabled
 	config.GenerationCustodyRoot =
 		options.CustodyRoot
+	config.GenerationReadyRoot =
+		options.ReadyRoot
 	config.GenerationRecordedRoot =
 		options.RecordedRoot
 	config.GenerationMaxCanonicalBytes =

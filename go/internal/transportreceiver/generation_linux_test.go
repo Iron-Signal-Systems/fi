@@ -60,6 +60,16 @@ func TestReceiveGenerationAndAcknowledgeNewThenAlreadyRecorded(
 		)
 	}
 
+	if first.ReadyWarning != "" || first.ReadyPath == "" {
+		t.Fatalf(
+			"first ready state path=%q warning=%q, want published without warning",
+			first.ReadyPath,
+			first.ReadyWarning,
+		)
+	}
+
+	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 1)
+
 	decision, acknowledgement := readGenerationTransactionOutput(
 		t,
 		firstOutput.Bytes(),
@@ -106,6 +116,16 @@ func TestReceiveGenerationAndAcknowledgeNewThenAlreadyRecorded(
 			second.Recorder.Disposition,
 		)
 	}
+
+	if second.ReadyWarning != "" || second.ReadyPath == "" {
+		t.Fatalf(
+			"second ready state path=%q warning=%q, want idempotent publication without warning",
+			second.ReadyPath,
+			second.ReadyWarning,
+		)
+	}
+
+	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 1)
 
 	_, acknowledgement = readGenerationTransactionOutput(
 		t,
@@ -171,6 +191,7 @@ func TestReceiveGenerationAndAcknowledgeRecorderFailureWritesNoAcknowledgement(
 		t,
 		fixture.config.Recorder.RootDir,
 	)
+	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 0)
 }
 
 func TestReceiveGenerationAndAcknowledgeRejectsSourceBeforeTransfer(
@@ -221,6 +242,7 @@ func TestReceiveGenerationAndAcknowledgeRejectsSourceBeforeTransfer(
 		t,
 		fixture.config.Recorder.RootDir,
 	)
+	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 0)
 }
 
 func TestReceiveGenerationAndAcknowledgeRejectsOfferAboveCanonicalLimit(
@@ -262,6 +284,74 @@ func TestReceiveGenerationAndAcknowledgeRejectsOfferAboveCanonicalLimit(
 
 	if reader.Len() != 0 {
 		t.Fatal("canonical-limit rejection wrote bytes beyond decision")
+	}
+}
+
+func TestReceiveGenerationAndAcknowledgeReadyFailureStillAcknowledges(
+	t *testing.T,
+) {
+	fixture := newGenerationTransactionFixture(t, false)
+	fixture.config.ReadyRoot = filepath.Join(t.TempDir(), "missing")
+
+	var output bytes.Buffer
+	result, err := ReceiveGenerationAndAcknowledge(
+		bytes.NewReader(fixture.transactionBytes),
+		&output,
+		fixture.config,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.ReadyPath != "" || result.ReadyWarning == "" {
+		t.Fatalf(
+			"ready failure path=%q warning=%q, want warning-only publication failure",
+			result.ReadyPath,
+			result.ReadyWarning,
+		)
+	}
+	if result.Recorder.Disposition != generationrecorder.RecordedDispositionNew {
+		t.Fatalf(
+			"recorder disposition = %q, want NEW",
+			result.Recorder.Disposition,
+		)
+	}
+
+	_, acknowledgement := readGenerationTransactionOutput(
+		t,
+		output.Bytes(),
+	)
+	if acknowledgement.Outcome !=
+		transportgeneration.AcknowledgementOutcomeRecorded {
+		t.Fatalf(
+			"ready publication failure acknowledgement = %q, want recorded",
+			acknowledgement.Outcome,
+		)
+	}
+}
+
+func TestPublishGenerationReadyFailureIsWarningOnly(
+	t *testing.T,
+) {
+	fixture := newGenerationTransactionFixture(t, false)
+
+	recorded := generationrecorder.DurableResult{
+		ReceiptPath: filepath.Join(
+			fixture.config.Recorder.RootDir,
+			"generation-test.record.json",
+		),
+	}
+
+	path, warning := publishGenerationReady(
+		filepath.Join(t.TempDir(), "missing"),
+		recorded,
+	)
+	if path != "" || warning == "" {
+		t.Fatalf(
+			"ready failure path=%q warning=%q, want empty path and warning",
+			path,
+			warning,
+		)
 	}
 }
 
@@ -429,6 +519,11 @@ func newGenerationTransactionFixture(
 		t.Fatal(err)
 	}
 
+	readyRoot := filepath.Join(t.TempDir(), "ready")
+	if err := os.Mkdir(readyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	return generationTransactionFixture{
 		config: GenerationReceiveConfig{
 			Custody: transportgeneration.CustodyConfig{
@@ -443,6 +538,7 @@ func newGenerationTransactionFixture(
 				},
 				RootDir: custodyRoot,
 			},
+			ReadyRoot: readyRoot,
 			Recorder: generationrecorder.DurableConfig{
 				RootDir: recordedRoot,
 				Semantic: generationrecorder.Config{
@@ -713,6 +809,26 @@ func assertGenerationTransactionDirectoryEmpty(
 
 	if len(entries) != 0 {
 		t.Fatalf("directory %s contains %d entries, want empty", path, len(entries))
+	}
+}
+
+func assertGenerationReadyCount(
+	t *testing.T,
+	root string,
+	want int,
+) {
+	t.Helper()
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != want {
+		t.Fatalf(
+			"generation ready entry count = %d, want %d",
+			len(entries),
+			want,
+		)
 	}
 }
 

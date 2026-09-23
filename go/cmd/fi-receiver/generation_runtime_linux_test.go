@@ -48,7 +48,7 @@ func TestGenerationRuntimeOptionsRequireCompleteEnabledConfiguration(
 	if err == nil ||
 		!strings.Contains(
 			err.Error(),
-			"requires generation custody/recorded roots",
+			"requires generation custody/recorded/ready roots",
 		) {
 		t.Fatalf(
 			"incomplete enabled generation options error = %v",
@@ -66,6 +66,7 @@ func TestGenerationRuntimeOptionsApplyListenerConfiguration(
 		MaxCanonicalBytes: 64 << 30,
 		MaxEncodedBytes:   16 << 30,
 		MaxManifestBytes:  1 << 20,
+		ReadyRoot:         "/var/lib/fi/generation-ready",
 		RecordedRoot:      "/var/lib/fi/generation-recorded",
 	}
 
@@ -78,6 +79,7 @@ func TestGenerationRuntimeOptionsApplyListenerConfiguration(
 
 	if !config.GenerationEnabled ||
 		config.GenerationCustodyRoot != options.CustodyRoot ||
+		config.GenerationReadyRoot != options.ReadyRoot ||
 		config.GenerationRecordedRoot != options.RecordedRoot ||
 		config.GenerationMaxCanonicalBytes != options.MaxCanonicalBytes ||
 		config.GenerationMaxEncodedBytes != options.MaxEncodedBytes ||

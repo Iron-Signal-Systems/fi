@@ -90,33 +90,8 @@ type ingestGenerationSnapshot struct {
 // must be a 0400 regular file whose deterministic filename agrees with the
 // receipt's signed source/generation identity contract.
 func DiscoverRecordedReceipts(recordedRoot string, sourceFilter string) ([]RecordedReceiptCandidate, error) {
-	if recordedRoot == "" {
-		return nil, errors.New("FI Phase 3 recorded receipt root is required")
-	}
-	if !filepath.IsAbs(recordedRoot) {
-		return nil, errors.New("FI Phase 3 recorded receipt root must be absolute")
-	}
-
-	resolvedRoot, err := filepath.EvalSymlinks(recordedRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve FI Phase 3 recorded receipt root: %w", err)
-	}
-	if filepath.Clean(resolvedRoot) != filepath.Clean(recordedRoot) {
-		return nil, errors.New("FI Phase 3 recorded receipt root must not traverse symlinks")
-	}
-
-	rootInfo, err := os.Lstat(recordedRoot)
-	if err != nil {
-		return nil, fmt.Errorf("inspect FI Phase 3 recorded receipt root: %w", err)
-	}
-	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
-		return nil, errors.New("FI Phase 3 recorded receipt root must be a real directory")
-	}
-	if rootInfo.Mode().Perm()&0o022 != 0 {
-		return nil, fmt.Errorf(
-			"FI Phase 3 recorded receipt root must not be group- or other-writable: mode=%04o",
-			rootInfo.Mode().Perm(),
-		)
+	if err := validateRecordedReceiptRoot(recordedRoot); err != nil {
+		return nil, err
 	}
 
 	entries, err := os.ReadDir(recordedRoot)
@@ -131,63 +106,167 @@ func DiscoverRecordedReceipts(recordedRoot string, sourceFilter string) ([]Recor
 			continue
 		}
 
-		path := filepath.Join(recordedRoot, name)
-		info, err := os.Lstat(path)
-		if err != nil {
-			return nil, fmt.Errorf("inspect FI Phase 3 recorded receipt %q: %w", path, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm() != 0o400 {
-			return nil, fmt.Errorf("FI Phase 3 recorded receipt %q must be a 0400 regular file", path)
-		}
-		if info.Size() <= 0 || info.Size() > maxReconcileReceiptBytes {
-			return nil, fmt.Errorf("FI Phase 3 recorded receipt %q size is outside bounds", path)
-		}
-
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read FI Phase 3 recorded receipt %q: %w", path, err)
-		}
-		receipt, err := generationrecorder.UnmarshalRecordedReceipt(raw)
-		if err != nil {
-			return nil, fmt.Errorf("decode FI Phase 3 recorded receipt %q: %w", path, err)
-		}
-
-		expectedName := generationrecorder.RecordedReceiptObjectName(
-			receipt.Descriptor.SourceID,
-			receipt.Descriptor.GenerationID,
+		candidate, selected, err := discoverRecordedReceipt(
+			recordedRoot,
+			name,
+			sourceFilter,
 		)
-		if name != expectedName {
+		if err != nil {
+			return nil, err
+		}
+		if selected {
+			candidates = append(candidates, candidate)
+		}
+	}
+
+	sortRecordedReceiptCandidates(candidates)
+
+	return candidates, nil
+}
+
+// DiscoverRecordedReceiptsByName validates a bounded set of exact immutable
+// recorder receipt names without enumerating the complete recorded root.
+func DiscoverRecordedReceiptsByName(
+	recordedRoot string,
+	names []string,
+	sourceFilter string,
+) ([]RecordedReceiptCandidate, error) {
+	if err := validateRecordedReceiptRoot(recordedRoot); err != nil {
+		return nil, err
+	}
+
+	candidates := make(
+		[]RecordedReceiptCandidate,
+		0,
+		len(names),
+	)
+	seen := make(map[string]struct{}, len(names))
+
+	for _, name := range names {
+		if filepath.Base(name) != name ||
+			!strings.HasPrefix(name, "generation-") ||
+			!strings.HasSuffix(name, ".record.json") {
 			return nil, fmt.Errorf(
+				"FI Phase 3 recorded receipt name %q is not an exact receipt basename",
+				name,
+			)
+		}
+
+		if _, found := seen[name]; found {
+			return nil, fmt.Errorf(
+				"FI Phase 3 recorded receipt name %q was supplied more than once",
+				name,
+			)
+		}
+		seen[name] = struct{}{}
+
+		candidate, selected, err := discoverRecordedReceipt(
+			recordedRoot,
+			name,
+			sourceFilter,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if selected {
+			candidates = append(candidates, candidate)
+		}
+	}
+
+	sortRecordedReceiptCandidates(candidates)
+
+	return candidates, nil
+}
+
+func discoverRecordedReceipt(
+	recordedRoot string,
+	name string,
+	sourceFilter string,
+) (
+	RecordedReceiptCandidate,
+	bool,
+	error,
+) {
+	path := filepath.Join(recordedRoot, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return RecordedReceiptCandidate{},
+			false,
+			fmt.Errorf(
+				"inspect FI Phase 3 recorded receipt %q: %w",
+				path,
+				err,
+			)
+	}
+	if info.Mode()&os.ModeSymlink != 0 ||
+		!info.Mode().IsRegular() ||
+		info.Mode().Perm() != 0o400 {
+		return RecordedReceiptCandidate{},
+			false,
+			fmt.Errorf(
+				"FI Phase 3 recorded receipt %q must be a 0400 regular file",
+				path,
+			)
+	}
+	if info.Size() <= 0 || info.Size() > maxReconcileReceiptBytes {
+		return RecordedReceiptCandidate{},
+			false,
+			fmt.Errorf(
+				"FI Phase 3 recorded receipt %q size is outside bounds",
+				path,
+			)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return RecordedReceiptCandidate{},
+			false,
+			fmt.Errorf(
+				"read FI Phase 3 recorded receipt %q: %w",
+				path,
+				err,
+			)
+	}
+
+	receipt, err := generationrecorder.UnmarshalRecordedReceipt(raw)
+	if err != nil {
+		return RecordedReceiptCandidate{},
+			false,
+			fmt.Errorf(
+				"decode FI Phase 3 recorded receipt %q: %w",
+				path,
+				err,
+			)
+	}
+
+	expectedName := generationrecorder.RecordedReceiptObjectName(
+		receipt.Descriptor.SourceID,
+		receipt.Descriptor.GenerationID,
+	)
+	if name != expectedName {
+		return RecordedReceiptCandidate{},
+			false,
+			fmt.Errorf(
 				"FI Phase 3 recorded receipt filename %q does not match deterministic identity %q",
 				name,
 				expectedName,
 			)
-		}
-		if sourceFilter != "" && receipt.Descriptor.SourceID != sourceFilter {
-			continue
-		}
-
-		digest := sha256.Sum256(raw)
-		candidates = append(candidates, RecordedReceiptCandidate{
-			BatchCount:     receipt.BatchCount,
-			DataBytes:      receipt.DataBytes,
-			GenerationID:   receipt.Descriptor.GenerationID,
-			Path:           path,
-			ReceiptSHA256:  hex.EncodeToString(digest[:]),
-			RecordCount:    receipt.RecordCount,
-			SourceID:       receipt.Descriptor.SourceID,
-			TransferSHA256: receipt.TransferSHA256,
-		})
+	}
+	if sourceFilter != "" && receipt.Descriptor.SourceID != sourceFilter {
+		return RecordedReceiptCandidate{}, false, nil
 	}
 
-	sort.Slice(candidates, func(left int, right int) bool {
-		if candidates[left].SourceID == candidates[right].SourceID {
-			return candidates[left].GenerationID < candidates[right].GenerationID
-		}
-		return candidates[left].SourceID < candidates[right].SourceID
-	})
-
-	return candidates, nil
+	digest := sha256.Sum256(raw)
+	return RecordedReceiptCandidate{
+		BatchCount:     receipt.BatchCount,
+		DataBytes:      receipt.DataBytes,
+		GenerationID:   receipt.Descriptor.GenerationID,
+		Path:           path,
+		ReceiptSHA256:  hex.EncodeToString(digest[:]),
+		RecordCount:    receipt.RecordCount,
+		SourceID:       receipt.Descriptor.SourceID,
+		TransferSHA256: receipt.TransferSHA256,
+	}, true, nil
 }
 
 func PlanRecordedGenerations(
@@ -265,6 +344,43 @@ func PlanRecordedGenerationsForIngest(
 	candidates, err := DiscoverRecordedReceipts(recordedRoot, sourceFilter)
 	if err != nil {
 		return ReconcilePlan{}, err
+	}
+
+	return PlanRecordedReceiptCandidatesForIngest(
+		ctx,
+		connection,
+		sourceFilter,
+		candidates,
+	)
+}
+
+// PlanRecordedReceiptCandidatesForIngest performs the steady-state set-based
+// database comparison for a caller-supplied bounded set of already-validated
+// immutable recorder receipt candidates.
+func PlanRecordedReceiptCandidatesForIngest(
+	ctx context.Context,
+	connection *pgx.Conn,
+	sourceFilter string,
+	candidates []RecordedReceiptCandidate,
+) (ReconcilePlan, error) {
+	if ctx == nil {
+		return ReconcilePlan{}, errors.New("FI Phase 3 ingest plan context is required")
+	}
+	if connection == nil {
+		return ReconcilePlan{}, errors.New("FI Phase 3 PostgreSQL connection is required")
+	}
+	if strings.TrimSpace(sourceFilter) == "" {
+		return ReconcilePlan{}, errors.New("FI Phase 3 ingest plan requires one source ID")
+	}
+
+	for _, candidate := range candidates {
+		if candidate.SourceID != sourceFilter {
+			return ReconcilePlan{}, fmt.Errorf(
+				"FI Phase 3 ingest candidate source %q differs from requested source %q",
+				candidate.SourceID,
+				sourceFilter,
+			)
+		}
 	}
 
 	plan := ReconcilePlan{
@@ -508,6 +624,52 @@ ORDER BY c.ordinality
 	}
 
 	return snapshots, nil
+}
+
+func sortRecordedReceiptCandidates(
+	candidates []RecordedReceiptCandidate,
+) {
+	sort.Slice(candidates, func(left int, right int) bool {
+		if candidates[left].SourceID == candidates[right].SourceID {
+			return candidates[left].GenerationID < candidates[right].GenerationID
+		}
+		return candidates[left].SourceID < candidates[right].SourceID
+	})
+}
+
+func validateRecordedReceiptRoot(
+	recordedRoot string,
+) error {
+	if recordedRoot == "" {
+		return errors.New("FI Phase 3 recorded receipt root is required")
+	}
+	if !filepath.IsAbs(recordedRoot) {
+		return errors.New("FI Phase 3 recorded receipt root must be absolute")
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(recordedRoot)
+	if err != nil {
+		return fmt.Errorf("resolve FI Phase 3 recorded receipt root: %w", err)
+	}
+	if filepath.Clean(resolvedRoot) != filepath.Clean(recordedRoot) {
+		return errors.New("FI Phase 3 recorded receipt root must not traverse symlinks")
+	}
+
+	rootInfo, err := os.Lstat(recordedRoot)
+	if err != nil {
+		return fmt.Errorf("inspect FI Phase 3 recorded receipt root: %w", err)
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return errors.New("FI Phase 3 recorded receipt root must be a real directory")
+	}
+	if rootInfo.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf(
+			"FI Phase 3 recorded receipt root must not be group- or other-writable: mode=%04o",
+			rootInfo.Mode().Perm(),
+		)
+	}
+
+	return nil
 }
 
 func evaluateExistingGeneration(
