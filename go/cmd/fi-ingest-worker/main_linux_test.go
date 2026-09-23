@@ -128,7 +128,7 @@ func TestSelectPendingSkipsAcceptedAndJournalDeferred(t *testing.T) {
 		"generation-b": now.Add(-5 * time.Minute),
 	}
 
-	got, deferredCount, err :=
+	got, deferred, err :=
 		selectPending(
 			plan,
 			now,
@@ -142,10 +142,16 @@ func TestSelectPendingSkipsAcceptedAndJournalDeferred(t *testing.T) {
 		)
 	}
 
-	if deferredCount != 1 {
+	if len(deferred) != 1 {
 		t.Fatalf(
-			"deferredCount = %d, want 1",
-			deferredCount,
+			"deferred count = %d, want 1",
+			len(deferred),
+		)
+	}
+	if deferred[0].Candidate.GenerationID != "generation-b" {
+		t.Fatalf(
+			"deferred GenerationID = %q, want generation-b",
+			deferred[0].Candidate.GenerationID,
 		)
 	}
 
@@ -162,6 +168,56 @@ func TestSelectPendingSkipsAcceptedAndJournalDeferred(t *testing.T) {
 			"GenerationID = %q, want generation-c",
 			got[0].Candidate.GenerationID,
 		)
+	}
+}
+
+func TestOrderRetryCandidatesPreservesJournalOrder(t *testing.T) {
+	generationIDs := []string{
+		"generation-oldest",
+		"generation-middle",
+		"generation-newest",
+	}
+	candidates := []recordingest.RecordedReceiptCandidate{
+		{GenerationID: "generation-middle"},
+		{GenerationID: "generation-newest"},
+		{GenerationID: "generation-oldest"},
+	}
+
+	ordered, err := orderRetryCandidates(
+		generationIDs,
+		candidates,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered) != len(generationIDs) {
+		t.Fatalf(
+			"ordered count = %d, want %d",
+			len(ordered),
+			len(generationIDs),
+		)
+	}
+	for index, generationID := range generationIDs {
+		if ordered[index].GenerationID != generationID {
+			t.Fatalf(
+				"ordered[%d] = %q, want %q",
+				index,
+				ordered[index].GenerationID,
+				generationID,
+			)
+		}
+	}
+}
+
+func TestOrderRetryCandidatesRejectsMissingReceipt(t *testing.T) {
+	_, err := orderRetryCandidates(
+		[]string{"generation-a", "generation-b"},
+		[]recordingest.RecordedReceiptCandidate{
+			{GenerationID: "generation-a"},
+		},
+	)
+	if err == nil {
+		t.Fatal("missing authoritative retry receipt was accepted")
 	}
 }
 
@@ -236,7 +292,7 @@ func TestSelectPendingAllowsExpiredJournalRejection(t *testing.T) {
 		"generation-a": now.Add(-16 * time.Minute),
 	}
 
-	got, deferredCount, err :=
+	got, deferred, err :=
 		selectPending(
 			plan,
 			now,
@@ -250,10 +306,10 @@ func TestSelectPendingAllowsExpiredJournalRejection(t *testing.T) {
 		)
 	}
 
-	if deferredCount != 0 {
+	if len(deferred) != 0 {
 		t.Fatalf(
-			"deferredCount = %d, want 0",
-			deferredCount,
+			"deferred count = %d, want 0",
+			len(deferred),
 		)
 	}
 
