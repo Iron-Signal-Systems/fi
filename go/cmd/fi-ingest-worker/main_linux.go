@@ -21,12 +21,14 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationready"
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
+	"github.com/Iron-Signal-Systems/fi/go/internal/workerlock"
 	"github.com/jackc/pgx/v5"
 )
 
 type workerConfig struct {
 	ConnectionString  string
 	CustodyRoot       string
+	LockFile          string
 	MaxAttempts       uint64
 	MaxCanonicalBytes uint64
 	MaxEncodedBytes   uint64
@@ -58,6 +60,12 @@ func main() {
 		"postgres",
 		recordingest.DefaultPostgreSQLConnectionString,
 		"FI PostgreSQL connection string",
+	)
+
+	lockFile := flags.String(
+		"lock-file",
+		"/run/fi/fi-ingest-worker.lock",
+		"exclusive FI relational ingest worker lock file",
 	)
 
 	custodyRoot := flags.String(
@@ -196,6 +204,7 @@ func main() {
 	config := workerConfig{
 		ConnectionString:  *connectionString,
 		CustodyRoot:       *custodyRoot,
+		LockFile:          *lockFile,
 		MaxAttempts:       *maxAttempts,
 		MaxCanonicalBytes: *maxCanonicalBytes,
 		MaxEncodedBytes:   *maxEncodedBytes,
@@ -323,7 +332,15 @@ func (value postgresConnection) Connection() *pgx.Conn {
 func runWorker(
 	ctx context.Context,
 	config workerConfig,
-) error {
+) (runErr error) {
+	singleton, err := workerlock.Acquire(config.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		runErr = errors.Join(runErr, singleton.Close())
+	}()
+
 	connection, state, err :=
 		recordingest.OpenPostgreSQL(
 			ctx,
@@ -343,6 +360,7 @@ func runWorker(
 	fmt.Printf("PostgreSQLUser:       %s\n", state.CurrentUser)
 	fmt.Printf("PostgreSQLDatabase:   %s\n", state.CurrentDatabase)
 	fmt.Printf("RelationalTables:     %d\n", state.RelationalTables)
+	fmt.Printf("SingletonLock:        %s\n", singleton.Path())
 	fmt.Printf("PollInterval:         %s\n", config.PollInterval)
 	fmt.Printf("ReadyRoot:            %s\n", config.ReadyRoot)
 	fmt.Printf("ReadyBatchSize:       %d\n", config.ReadyBatchSize)

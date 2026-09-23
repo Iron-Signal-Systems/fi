@@ -8,12 +8,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationready"
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
+	"github.com/Iron-Signal-Systems/fi/go/internal/workerlock"
 )
 
 func TestProcessPlanRetiresAcceptedReadyMarkerWithoutDatabaseWork(
@@ -353,6 +355,30 @@ func TestSelectPendingStopsOnConflict(t *testing.T) {
 		); err == nil {
 		t.Fatal(
 			"selectPending() accepted reconcile conflict",
+		)
+	}
+}
+
+func TestRunWorkerRejectsSecondOwnerBeforePostgreSQL(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "fi-ingest-worker.lock")
+
+	owner, err := workerlock.Acquire(lockFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+
+	err = runWorker(
+		context.Background(),
+		workerConfig{
+			ConnectionString: "host=/definitely/not/used dbname=not_used user=not_used sslmode=disable",
+			LockFile:         lockFile,
+		},
+	)
+	if !errors.Is(err, workerlock.ErrAlreadyHeld) {
+		t.Fatalf(
+			"runWorker() error = %v, want ErrAlreadyHeld before PostgreSQL open",
+			err,
 		)
 	}
 }
