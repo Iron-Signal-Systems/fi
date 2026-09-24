@@ -735,8 +735,8 @@ hourly full operational reconciliations, one clean 12-hour reconciliation, then
 validation. READY-notified pending work and generations already governed by
 durable `SOURCE_RECORD_REJECTED` retry state do not count as repair anomalies.
 
-Database reconnect/backoff behavior and permanent service packaging remain open
-before Gate 3 closure.
+PostgreSQL reconnect/backoff behavior has completed controlled runtime
+acceptance. Permanent service packaging remains open before Gate 3 closure.
 
 Authoritative receiver/database proof is complete for all 13 current relational
 record kinds, including `USNContinuityGap`. See
@@ -872,8 +872,8 @@ all 13 current authoritative record-kind proofs, bounded READY-driven ingest,
 durable rejected-generation retry state, host-local singleton protection,
 controlled crash/restart recovery, and adaptive repair reconciliation. The
 current checkpoint is implementation and acceptance work, not Gate 3 closure:
-database reconnect/backoff behavior, permanent service packaging, the final
-250K relational closeout, and final Gate 3 reconciliation remain open.
+permanent service packaging, the final 250K relational closeout, and final
+Gate 3 reconciliation remain open.
 
 See:
 

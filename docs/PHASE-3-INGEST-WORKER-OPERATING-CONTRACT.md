@@ -131,11 +131,17 @@ Any repair anomaly resets the cadence to Validation mode with a zero clean count
 The cadence state is non-authoritative and is intentionally not persisted. A
 worker restart safely returns to Validation mode.
 
-A future successful PostgreSQL reconnect must also:
+A successful PostgreSQL reconnect:
 
-1. revalidate PostgreSQL runtime identity and relational/security boundaries;
-2. perform an immediate authoritative operational reconciliation; and
-3. reset repair cadence to Validation mode.
+1. revalidates PostgreSQL runtime identity and relational/security boundaries;
+2. performs an immediate authoritative operational reconciliation before READY
+   or durable retry processing resumes; and
+3. resets repair cadence to Validation mode.
+
+The worker retains its host-local singleton lock across PostgreSQL availability
+failures and reconnect backoff. Availability retries use bounded exponential
+backoff, while authentication, database identity, schema/foundation, privilege,
+relational-conflict, and other non-availability errors remain fail-closed.
 
 ## Repair anomaly classification
 

@@ -276,8 +276,8 @@ repair. Unexpected pending authority or conflict resets the cadence to hourly.
 READY-notified pending work and durable source-record rejection state do not
 reset repair confidence.
 
-PostgreSQL reconnect/backoff behavior and permanent service packaging remain
-open.
+PostgreSQL reconnect/backoff behavior has completed controlled runtime
+acceptance. Permanent service packaging remains open.
 
 See `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`.
 
@@ -294,6 +294,36 @@ That same repair sweep ingested the generation exactly once and reset repair con
 The production ingest worker, production PostgreSQL database, production custody, and production READY state were not modified by the test.
 
 The 12-hour Intermediate-to-24-hour Steady transition remains covered by the repair-cadence unit test; no test-only production configuration surface was added solely to compress that real interval.
+
+### PostgreSQL reconnect/backoff runtime proof
+
+PostgreSQL reconnect/backoff completed isolated runtime acceptance on 2026-09-24
+using the real ingest-worker candidate, isolated PostgreSQL clusters, isolated
+custody/READY roots, and exact immutable production generations.
+
+The startup-unavailable case proved that the worker acquired and retained its
+host-local singleton while PostgreSQL was down, used bounded availability
+backoff, rejected a second worker, then connected without a worker restart.
+After PostgreSQL became available, the worker revalidated `fi_ingest`, database
+`fi`, and the 49-table relational/security foundation before performing the
+authoritative startup reconciliation. The pending immutable generation was then
+accepted exactly once.
+
+The live-session-loss case proved that the same worker PID survived PostgreSQL
+loss and retained the singleton. While PostgreSQL was down, a second exact
+immutable generation and READY marker were added to the isolated authority
+tree. After PostgreSQL restarted, the same worker process reconnected, reset
+repair confidence to Validation, and performed authoritative reconciliation
+before READY processing resumed. The outage generation was accepted exactly
+once; the subsequent READY pass observed it as already accepted and retired the
+marker.
+
+The controlled test used accelerated reconnect bounds of 200ms initial and
+800ms maximum. Production defaults remain 1 second initial and 30 seconds
+maximum.
+
+The production ingest worker, production PostgreSQL database, production
+custody, and production READY state were not modified by the test.
 
 The campaign intentionally remains sequential. Parallel relational ingest is not
 yet authorized.
@@ -486,8 +516,6 @@ loader and reports record-kind coverage. Both modes report zero database writes.
 The campaign is not complete until the following remaining work is closed:
 
 - finish the fresh 250K relational ingest/catch-up closeout;
-- accept PostgreSQL reconnect/backoff behavior, including outage while receiver
-  custody continues and immediate authoritative reconciliation after reconnect;
 - package/deploy the permanent worker only after the remaining hardening gates
   pass;
 - run the final authoritative reconcile with `Pending=0` and `Conflict=0`; and
@@ -495,8 +523,8 @@ The campaign is not complete until the following remaining work is closed:
   totals.
 
 The earlier durable-retry, bounded discovery, rejection ordering, host-local
-singleton, ordinary restart, durable-rejection restart, and in-transaction crash
-recovery items are closed.
+singleton, ordinary restart, durable-rejection restart, in-transaction crash
+recovery, adaptive repair, and PostgreSQL reconnect/backoff items are closed.
 
 Distributed backend locking is documented as a future HA/failover requirement,
 not a current Gate 3 blocker, because Phase 3 authorizes one active backend

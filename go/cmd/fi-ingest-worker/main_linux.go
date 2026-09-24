@@ -26,22 +26,24 @@ import (
 )
 
 type workerConfig struct {
-	ConnectionString  string
-	CustodyRoot       string
-	LockFile          string
-	MaxAttempts       uint64
-	MaxCanonicalBytes uint64
-	MaxEncodedBytes   uint64
-	MaxManifestBytes  uint64
-	Once              bool
-	PollInterval      time.Duration
-	ReadyBatchSize    uint64
-	ReadyRoot         string
-	RecordedRoot      string
-	RepairInterval    time.Duration
-	RetryAfter        time.Duration
-	RetryBatchSize    uint64
-	SourceID          string
+	ConnectionString       string
+	CustodyRoot            string
+	LockFile               string
+	MaxAttempts            uint64
+	MaxCanonicalBytes      uint64
+	MaxEncodedBytes        uint64
+	MaxManifestBytes       uint64
+	Once                   bool
+	PollInterval           time.Duration
+	PostgreSQLRetryInitial time.Duration
+	PostgreSQLRetryMax     time.Duration
+	ReadyBatchSize         uint64
+	ReadyRoot              string
+	RecordedRoot           string
+	RepairInterval         time.Duration
+	RetryAfter             time.Duration
+	RetryBatchSize         uint64
+	SourceID               string
 }
 
 func main() {
@@ -60,6 +62,18 @@ func main() {
 		"postgres",
 		recordingest.DefaultPostgreSQLConnectionString,
 		"FI PostgreSQL connection string",
+	)
+
+	postgreSQLRetryInitial := flags.Duration(
+		"postgres-retry-initial",
+		time.Second,
+		"initial delay before retrying PostgreSQL availability failures",
+	)
+
+	postgreSQLRetryMax := flags.Duration(
+		"postgres-retry-max",
+		30*time.Second,
+		"maximum delay between PostgreSQL availability retries",
 	)
 
 	lockFile := flags.String(
@@ -161,6 +175,22 @@ func main() {
 		)
 	}
 
+	if *postgreSQLRetryInitial <= 0 {
+		fail(
+			errors.New(
+				"postgres-retry-initial must be greater than zero",
+			),
+		)
+	}
+
+	if *postgreSQLRetryMax < *postgreSQLRetryInitial {
+		fail(
+			errors.New(
+				"postgres-retry-max must be greater than or equal to postgres-retry-initial",
+			),
+		)
+	}
+
 	if *retryAfter <= 0 {
 		fail(
 			errors.New(
@@ -202,22 +232,24 @@ func main() {
 	defer stop()
 
 	config := workerConfig{
-		ConnectionString:  *connectionString,
-		CustodyRoot:       *custodyRoot,
-		LockFile:          *lockFile,
-		MaxAttempts:       *maxAttempts,
-		MaxCanonicalBytes: *maxCanonicalBytes,
-		MaxEncodedBytes:   *maxEncodedBytes,
-		MaxManifestBytes:  *maxManifestBytes,
-		Once:              *once,
-		PollInterval:      *pollInterval,
-		ReadyBatchSize:    *readyBatchSize,
-		ReadyRoot:         *readyRoot,
-		RecordedRoot:      *recordedRoot,
-		RepairInterval:    *repairInterval,
-		RetryAfter:        *retryAfter,
-		RetryBatchSize:    *retryBatchSize,
-		SourceID:          *sourceID,
+		ConnectionString:       *connectionString,
+		CustodyRoot:            *custodyRoot,
+		LockFile:               *lockFile,
+		MaxAttempts:            *maxAttempts,
+		MaxCanonicalBytes:      *maxCanonicalBytes,
+		MaxEncodedBytes:        *maxEncodedBytes,
+		MaxManifestBytes:       *maxManifestBytes,
+		Once:                   *once,
+		PollInterval:           *pollInterval,
+		PostgreSQLRetryInitial: *postgreSQLRetryInitial,
+		PostgreSQLRetryMax:     *postgreSQLRetryMax,
+		ReadyBatchSize:         *readyBatchSize,
+		ReadyRoot:              *readyRoot,
+		RecordedRoot:           *recordedRoot,
+		RepairInterval:         *repairInterval,
+		RetryAfter:             *retryAfter,
+		RetryBatchSize:         *retryBatchSize,
+		SourceID:               *sourceID,
 	}
 
 	if err := runWorker(ctx, config); err != nil &&
@@ -341,15 +373,151 @@ func runWorker(
 		runErr = errors.Join(runErr, singleton.Close())
 	}()
 
-	connection, state, err :=
-		recordingest.OpenPostgreSQL(
-			ctx,
-			config.ConnectionString,
-		)
+	backoff, err := newPostgreSQLBackoff(
+		config.PostgreSQLRetryInitial,
+		config.PostgreSQLRetryMax,
+	)
 	if err != nil {
 		return err
 	}
-	defer connection.Close(context.Background())
+
+	fmt.Println("===== FI RELATIONAL INGEST WORKER =====")
+	fmt.Printf("Source:                 %s\n", config.SourceID)
+	fmt.Printf("SingletonLock:          %s\n", singleton.Path())
+	fmt.Printf("PostgreSQLRetryInitial: %s\n", config.PostgreSQLRetryInitial)
+	fmt.Printf("PostgreSQLRetryMax:     %s\n", config.PostgreSQLRetryMax)
+	fmt.Printf("PollInterval:           %s\n", config.PollInterval)
+	fmt.Printf("ReadyRoot:              %s\n", config.ReadyRoot)
+	fmt.Printf("ReadyBatchSize:         %d\n", config.ReadyBatchSize)
+	fmt.Printf("RepairValidation:       %s\n", config.RepairInterval)
+	fmt.Printf("RepairCleanTarget:      %d\n", repairValidationCleanTarget)
+	fmt.Printf("RepairIntermediate:     %s\n", repairIntermediateInterval)
+	fmt.Printf("RepairSteady:           %s\n", repairSteadyInterval)
+	fmt.Printf("RetryAfter:             %s\n", config.RetryAfter)
+	fmt.Printf("RetryBatchSize:         %d\n", config.RetryBatchSize)
+	fmt.Printf("RetryState:             durable ingest journal\n")
+	fmt.Printf("Started:                %s\n", time.Now().Format(time.RFC3339))
+	fmt.Println()
+
+	var (
+		connectedOnce bool
+		totalAttempts uint64
+	)
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		connection, state, err :=
+			recordingest.OpenPostgreSQL(
+				ctx,
+				config.ConnectionString,
+			)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			if !recordingest.IsPostgreSQLUnavailable(err) {
+				return err
+			}
+
+			delay := backoff.Next()
+			fmt.Fprintf(
+				os.Stderr,
+				"POSTGRES UNAVAILABLE phase=connect retry_in=%s error=%v\n",
+				delay,
+				err,
+			)
+
+			if err := waitPostgreSQLRetry(ctx, delay); err != nil {
+				return err
+			}
+			continue
+		}
+
+		status := "CONNECTED"
+		if connectedOnce {
+			status = "RECONNECTED"
+		}
+		connectedOnce = true
+		backoff.Reset()
+
+		fmt.Printf(
+			"POSTGRES %s user=%s database=%s tables=%d time=%s\n",
+			status,
+			state.CurrentUser,
+			state.CurrentDatabase,
+			state.RelationalTables,
+			time.Now().Format(time.RFC3339),
+		)
+
+		sessionErr :=
+			runPostgreSQLSession(
+				ctx,
+				config,
+				connection,
+				&totalAttempts,
+			)
+
+		closeErr := connection.Close(context.Background())
+		if sessionErr == nil {
+			if closeErr != nil {
+				fmt.Fprintf(
+					os.Stderr,
+					"WARNING: close FI PostgreSQL session: %v\n",
+					closeErr,
+				)
+			}
+			return nil
+		}
+
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
+		if !recordingest.IsPostgreSQLUnavailable(sessionErr) {
+			return sessionErr
+		}
+
+		delay := backoff.Next()
+
+		fmt.Fprintf(
+			os.Stderr,
+			"POSTGRES CONNECTION LOST retry_in=%s error=%v\n",
+			delay,
+			sessionErr,
+		)
+		if closeErr != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"WARNING: close failed PostgreSQL session: %v\n",
+				closeErr,
+			)
+		}
+
+		if err := waitPostgreSQLRetry(ctx, delay); err != nil {
+			return err
+		}
+	}
+}
+
+func runPostgreSQLSession(
+	ctx context.Context,
+	config workerConfig,
+	connection *pgx.Conn,
+	totalAttempts *uint64,
+) error {
+	if connection == nil {
+		return errors.New(
+			"FI ingest worker PostgreSQL session connection is required",
+		)
+	}
+	if totalAttempts == nil {
+		return errors.New(
+			"FI ingest worker total-attempt counter is required",
+		)
+	}
 
 	db := postgresConnection{
 		connection: connection,
@@ -357,25 +525,12 @@ func runWorker(
 
 	repair := newRepairCadence(config.RepairInterval)
 
-	fmt.Println("===== FI RELATIONAL INGEST WORKER =====")
-	fmt.Printf("Source:               %s\n", config.SourceID)
-	fmt.Printf("PostgreSQLUser:       %s\n", state.CurrentUser)
-	fmt.Printf("PostgreSQLDatabase:   %s\n", state.CurrentDatabase)
-	fmt.Printf("RelationalTables:     %d\n", state.RelationalTables)
-	fmt.Printf("SingletonLock:        %s\n", singleton.Path())
-	fmt.Printf("PollInterval:         %s\n", config.PollInterval)
-	fmt.Printf("ReadyRoot:            %s\n", config.ReadyRoot)
-	fmt.Printf("ReadyBatchSize:       %d\n", config.ReadyBatchSize)
-	fmt.Printf("RepairMode:           %s\n", repair.Mode())
-	fmt.Printf("RepairValidation:     %s\n", repair.Interval())
-	fmt.Printf("RepairCleanTarget:    %d\n", repairValidationCleanTarget)
-	fmt.Printf("RepairIntermediate:   %s\n", repairIntermediateInterval)
-	fmt.Printf("RepairSteady:         %s\n", repairSteadyInterval)
-	fmt.Printf("RetryAfter:           %s\n", config.RetryAfter)
-	fmt.Printf("RetryBatchSize:       %d\n", config.RetryBatchSize)
-	fmt.Printf("RetryState:           durable ingest journal\n")
-	fmt.Printf("Started:              %s\n", time.Now().Format(time.RFC3339))
-	fmt.Println()
+	fmt.Printf(
+		"POSTGRES SESSION repair_mode=%s repair_interval=%s clean_count=%d\n",
+		repair.Mode(),
+		repair.Interval(),
+		repair.CleanCount(),
+	)
 
 	startupPlan, err :=
 		recordingest.PlanRecordedGenerationsForIngest(
@@ -400,18 +555,18 @@ func runWorker(
 		return err
 	}
 
-	var totalAttempts uint64
 	if err := processPlan(
 		ctx,
 		config,
 		db,
 		startupPlan,
 		false,
-		&totalAttempts,
+		totalAttempts,
 	); err != nil {
 		return err
 	}
-	if config.MaxAttempts != 0 && totalAttempts >= config.MaxAttempts {
+	if config.MaxAttempts != 0 &&
+		*totalAttempts >= config.MaxAttempts {
 		return nil
 	}
 
@@ -468,7 +623,7 @@ func runWorker(
 				db,
 				plan,
 				false,
-				&totalAttempts,
+				totalAttempts,
 			); err != nil {
 				return err
 			}
@@ -514,7 +669,7 @@ func runWorker(
 				db,
 				plan,
 				true,
-				&totalAttempts,
+				totalAttempts,
 			); err != nil {
 				return err
 			}
@@ -546,14 +701,14 @@ func runWorker(
 				db,
 				retryPlan,
 				false,
-				&totalAttempts,
+				totalAttempts,
 			); err != nil {
 				return err
 			}
 		}
 
 		if config.MaxAttempts != 0 &&
-			totalAttempts >= config.MaxAttempts {
+			*totalAttempts >= config.MaxAttempts {
 			return nil
 		}
 
