@@ -32,18 +32,18 @@ investigation.
 
 ## Current Development Focus
 
-FI is currently focused on **Phase 3 / Gate 3 — Ingest & Recorder**.
+FI has completed **Phase 3 / Gate 3 — Ingest & Recorder**. Phase 4 is the next planned development boundary.
 
 **Phase 1 / Gate 1: COMPLETE — PASS**
 
 **Phase 2 / Gate 2: COMPLETE — PASS**
 
-**Phase 3 / Gate 3: ACTIVE — ACCEPTANCE IN PROGRESS**
+**Phase 3 / Gate 3: COMPLETE — PASS**
 
-Phase 3 has moved beyond initial design. The relational PostgreSQL foundation,
-typed materialization path, recorder-aware reconciliation/inventory, and live
-sequential Go ingest worker are implemented and have passed the current
-correctness gates. Gate 3 is not yet closed.
+Phase 3 is closed. The relational PostgreSQL foundation, typed materialization
+path, recorder-aware reconciliation/inventory, permanent sequential Go ingest
+worker, failure/recovery behavior, and final authoritative reconciliation all
+completed Gate 3 acceptance.
 
 Current Phase 3 checkpoint:
 
@@ -64,12 +64,12 @@ Durable rejection retry ordering        PASS
 Host-local singleton protection         PASS
 Controlled restart/crash recovery       PASS
 Adaptive repair reconciliation          PASS
-Fresh 250K relational acceptance        IN PROGRESS
+Fresh 250K relational acceptance        PASS
 Authoritative record-kind proof         13/13 PASS
 USNContinuityGap receiver/DB proof      PASS
 PostgreSQL reconnect/backoff            PASS
 Permanent service packaging             PASS
-Gate 3                                  NOT YET CLOSED
+Gate 3                                  COMPLETE — PASS
 ```
 
 The major Phase 1 architecture is now established:

@@ -652,7 +652,7 @@ receipt and transfer identity.
 
 ## Current Phase 3 relational ingest and recorder materialization
 
-Phase 3 / Gate 3 is active. The current relational implementation is
+Phase 3 / Gate 3 is complete. The accepted relational implementation is
 `fi-postgresql-relational-ingest/0.2` and establishes a typed PostgreSQL
 materialization layer on top of the immutable Phase 2 recorder authority.
 
@@ -736,9 +736,10 @@ validation. READY-notified pending work and generations already governed by
 durable `SOURCE_RECORD_REJECTED` retry state do not count as repair anomalies.
 
 PostgreSQL reconnect/backoff and permanent Linux ingest-worker service
-packaging have completed controlled runtime acceptance. Gate 3 remains open
-for the final fresh-relational closeout, authoritative reconciliation, and
-final totals review.
+packaging completed controlled runtime acceptance. Final unfiltered
+authoritative reconciliation on 2026-09-24 reported 1,342 recorder receipts,
+1,342 accepted generations, zero pending, zero conflict, and zero READY
+markers. Phase 3 / Gate 3 is complete.
 
 Authoritative receiver/database proof is complete for all 13 current relational
 record kinds, including `USNContinuityGap`. See

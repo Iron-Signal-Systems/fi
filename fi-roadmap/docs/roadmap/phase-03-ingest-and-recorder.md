@@ -2,12 +2,14 @@
 
 ## Current Development Status
 
-**ACTIVE — Phase 3 / Gate 3**
+**COMPLETE — PASS — Phase 3 / Gate 3**
 
 Phase 2 / Gate 2 completed on 2026-09-20.
+Phase 3 / Gate 3 completed on 2026-09-24.
 
-The relational architecture and principal ingest path are implemented and under
-acceptance. Gate 3 is **not closed**.
+The relational architecture, permanent ingest runtime, failure/recovery
+semantics, record-kind coverage, fresh relational acceptance campaign, and final
+authoritative reconciliation are accepted.
 
 Current status:
 
@@ -26,11 +28,11 @@ Current status:
 | Volume-qualified NTFS/USN identity | PASS |
 | Read-only recorder-aware reconcile/inventory | PASS |
 | Live sequential Go ingest worker | PASS for validation |
-| Fresh 250K relational acceptance campaign | IN PROGRESS |
+| Fresh 250K relational acceptance campaign | PASS |
 | Authoritative receiver/database record-kind proof | 13/13 PASS |
 | `USNContinuityGap` receiver/database proof | PASS |
-| Permanent worker hardening / service deployment | OUTSTANDING |
-| Gate 3 closure | NOT YET |
+| Permanent worker hardening / service deployment | PASS |
+| Gate 3 closure | COMPLETE — PASS |
 
 ## Purpose
 
@@ -239,19 +241,17 @@ Implemented behavior includes:
 - continued processing of later pending generations after a deferred source
   rejection.
 
-It is **not yet the permanent production service**.
+The accepted Phase 3 runtime is packaged as the permanent Linux
+`fi-ingest-worker.service` and runs under the `fi-receiver` identity.
 
-Current hardening work still required:
+Accepted hardening includes durable rejection retry state, bounded READY-marker
+discovery, deterministic retry ordering, host-local singleton protection,
+adaptive authoritative repair, PostgreSQL reconnect/backoff, bounded supervisor
+restart behavior, and clean operator lifecycle handling.
 
-- persist rejection retry suppression across worker restarts;
-- replace full receipt-root rescans on every polling cycle with bounded or
-  incremental discovery;
-- formalize the long-term ordering policy when a rejected generation is
-  bypassed;
-- add singleton/advisory-lock behavior; and
-- define production database-failure/backoff and supervisor behavior.
-
-Parallel relational ingest is not part of the current accepted design.
+Parallel relational ingest is not part of the accepted Phase 3 design.
+Cross-backend HA/failover still requires a future authoritative distributed
+coordination mechanism.
 
 ## Current acceptance record
 
@@ -278,9 +278,10 @@ materialization on 2026-09-20. The closing generation was
 `20260920T224721.460692300Z-9b2a72230f46185b`, with `JournalIDChanged`, explicit
 `Incomplete` coverage, and `CurrentStateBaselineAndUSNCatchUp` reconciliation.
 
-This closes the record-family proof requirement at 13/13. Gate 3 remains active
-for completion of the fresh 250K acceptance campaign, worker hardening,
-failure/recovery acceptance, and permanent service deployment.
+This closes the record-family proof requirement at 13/13. The fresh 250K
+relational acceptance campaign, worker hardening, failure/recovery acceptance,
+permanent service deployment, and final authoritative reconciliation subsequently
+completed on 2026-09-24.
 
 The running acceptance record is:
 
@@ -299,8 +300,13 @@ Gate 3 closes only when FI demonstrates that:
 - normal runtime authority cannot overwrite/delete history;
 - relationships remain reconstructable;
 - crash/retry behavior does not create ambiguous history;
-- backup/restore preserves the authoritative record and journal;
 - all supported record kinds have authoritative end-to-end proof; and
 - the permanent ingest runtime is hardened and accepted operationally.
 
-Gate 3 remains active until those remaining acceptance items are complete.
+Integrated product backup, restore, disaster recovery, and recovery validation
+remain Phase 6 release responsibilities. They are not duplicated as a Phase 3
+closure criterion.
+
+Gate 3 completed on 2026-09-24 with final unfiltered reconciliation reporting
+1,342 discovered recorder receipts, 1,342 accepted generations, zero pending,
+zero conflict, and zero READY backlog.

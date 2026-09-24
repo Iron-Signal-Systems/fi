@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — Phase 3 / Gate 3**
+**COMPLETE — PASS — Phase 3 / Gate 3**
 
 This document records the fresh relational PostgreSQL acceptance campaign that
 began on 2026-09-20 using the active 250K FI corpus.
@@ -624,23 +624,14 @@ A mismatch is a `Conflict`; a missing authoritative generation is `Pending`.
 Inventory mode reopens only pending exact generations through the same FI custody
 loader and reports record-kind coverage. Both modes report zero database writes.
 
-## Remaining Gate 3 acceptance work
+## Gate 3 closeout
 
-The campaign is not complete until the following remaining work is closed:
+The fresh relational campaign, permanent runtime acceptance, final authoritative
+reconciliation, and final totals review are complete.
 
-- finish the fresh 250K relational ingest/catch-up closeout;
-- run the final authoritative reconcile with `Pending=0` and `Conflict=0`; and
-- compare final generation, batch, source-record, database-size, and journal
-  totals.
-
-The earlier durable-retry, bounded discovery, rejection ordering, host-local
-singleton, ordinary restart, durable-rejection restart, in-transaction crash
-recovery, adaptive repair, PostgreSQL reconnect/backoff, and permanent
-systemd-service packaging items are closed.
-
-Distributed backend locking is documented as a future HA/failover requirement,
-not a current Gate 3 blocker, because Phase 3 authorizes one active backend
-ingest-worker host per deployment.
+Distributed backend locking remains a future HA/failover requirement rather than
+a Gate 3 blocker because the accepted Phase 3 topology authorizes one active
+backend ingest-worker host per deployment.
 
 ## Acceptance rule
 
@@ -650,3 +641,98 @@ rows or the current worker is keeping up.
 Closure requires the authority chain, relational relationships, journal outcomes,
 recovery semantics, all supported record kinds, and the permanent ingest runtime
 to remain reconstructable and unambiguous under the accepted failure cases.
+
+## Final Gate 3 authoritative closeout
+
+Gate 3 closed on 2026-09-24 at the timestamped acceptance checkpoint:
+
+```text
+2026-09-24T17:56:27-04:00
+```
+
+The final read-only reconciliation was deliberately run without a source filter.
+It therefore compared all immutable recorder receipts visible to the accepted
+backend against PostgreSQL authority rather than assuming that only the current
+acceptance source existed.
+
+Final authoritative reconciliation:
+
+```text
+ReceiptsDiscovered: 1342
+AlreadyAccepted:    1342
+Pending:            0
+Conflict:           0
+```
+
+The database contained one recorded source at that checkpoint:
+
+```text
+iss-fs-01.iss.local=1342
+```
+
+Final relational totals:
+
+```text
+database_bytes       1,705,965,247
+recorded_generation  1,342
+source_batch          7,085
+source_record       512,022
+ingest_journal        2,688
+READY markers             0
+```
+
+Final source-record kind counts naturally present in the live relational
+campaign:
+
+```text
+CollectorIdentity=180
+DirectoryPrincipalSnapshot=179
+FileObservation=504067
+LocalPrincipalSnapshot=180
+NTFSCollectionError=1
+SMBShareSnapshot=180
+USNContinuityGap=1
+USNObjectObservation=2
+USNReadBoundary=1
+WindowsSecurityCoverage=6835
+WindowsSecurityEvent=396
+```
+
+Those counts sum exactly to `512022` source records. The two supported kinds not
+naturally present in this final live corpus,
+`SupportingSourceCollectionError` and `WindowsSecurityContinuityGap`, remain
+covered by the separate authoritative 13/13 record-kind acceptance proof and are
+not reclassified as missing support.
+
+Final ingest-journal outcomes:
+
+```text
+Accepted=1342
+AlreadyAccepted=1
+Incomplete=1344
+Rejected=1
+```
+
+Final ingest-journal stages:
+
+```text
+AttemptStarted=1344
+AuthoritativeRecord=1343
+IdentityCheck=1
+```
+
+The journal totals sum to `2688`. `AuthoritativeRecord=1343` is exactly the
+accepted plus rejected authoritative terminal history (`1342 + 1`). Earlier
+incomplete attempt history remains preserved rather than being overwritten by
+later successful recovery.
+
+The permanent service was active/running and enabled at closeout. The accepted
+service contract includes host-local singleton protection, preserved runtime-lock
+namespace, bounded systemd restart behavior, PostgreSQL in-process
+reconnect/backoff, fail-closed permanent database/configuration errors, and clean
+operator stop/start behavior.
+
+This final checkpoint closes the Phase 3 question: every immutable recorder
+receipt visible to the accepted backend was represented by unambiguous
+relational authority, with zero pending work, zero conflict, and zero READY
+backlog.
