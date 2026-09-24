@@ -97,3 +97,28 @@ func TestPublishRejectsNonReceiptBasename(t *testing.T) {
 		t.Fatal("non-basename ready name was accepted")
 	}
 }
+
+func TestReceiptNamePresent(t *testing.T) {
+	root := t.TempDir()
+	name := "generation-0123456789abcdef.record.json"
+
+	present, err := ReceiptNamePresent(root, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Fatal("missing ready marker reported present")
+	}
+
+	if _, err := Publish(root, name); err != nil {
+		t.Fatal(err)
+	}
+
+	present, err = ReceiptNamePresent(root, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !present {
+		t.Fatal("published ready marker reported missing")
+	}
+}

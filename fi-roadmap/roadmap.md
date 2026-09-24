@@ -59,10 +59,16 @@ Rejected-generation rollback            PASS
 Volume-qualified NTFS/USN identity      PASS
 Read-only reconcile/inventory           PASS
 Live Go ingest worker                   PASS for validation
+Bounded READY operational discovery     PASS
+Durable rejection retry ordering        PASS
+Host-local singleton protection         PASS
+Controlled restart/crash recovery       PASS
+Adaptive repair reconciliation          PASS
 Fresh 250K relational acceptance        IN PROGRESS
-Authoritative record-kind proof         12/13
-USNContinuityGap receiver/DB proof      OUTSTANDING
-Permanent worker hardening              OUTSTANDING
+Authoritative record-kind proof         13/13 PASS
+USNContinuityGap receiver/DB proof      PASS
+PostgreSQL reconnect/backoff            OUTSTANDING
+Permanent service packaging             OUTSTANDING
 Gate 3                                  NOT YET CLOSED
 ```
 
@@ -244,22 +250,36 @@ The implemented Phase 3 path now includes:
 - duplicate-safe `AlreadyAccepted` handling;
 - conflict detection and source-record rejection rollback;
 - volume-qualified NTFS/USN identity;
-- recorder-aware read-only reconciliation/inventory; and
-- a sequential Go live-ingest worker used for the current acceptance campaign.
+- recorder-aware read-only reconciliation/inventory;
+- bounded READY-marker operational discovery;
+- durable journal-driven rejected-generation retry ordering;
+- host-local singleton worker protection;
+- controlled restart and in-transaction crash recovery; and
+- adaptive authoritative operational repair reconciliation.
 
 Accepted, rejected, failed, incomplete, duplicate, and conflicting ingest
 actions leave journal history appropriate to their outcome.
 
 The remaining Gate 3 work is acceptance/hardening, not a relational redesign:
-finish the fresh 250K relational campaign, close authoritative
-`USNContinuityGap` receiver/database proof, harden the permanent ingest worker,
-and run the final controlled service/database interruption and recovery cases.
+finish the fresh 250K relational closeout, accept PostgreSQL reconnect/backoff
+behavior, package the permanent ingest worker, and run the final Gate 3
+reconciliation/closeout.
+
+The current singleton lock is explicitly host-local. Phase 3 supports one active
+backend ingest-worker host per deployment. This backend ownership boundary is
+independent of Windows source count; the current acceptance worker remains
+source-scoped through `-source`, and final multi-source backend topology is a
+separate deployment concern. Cross-backend HA/failover requires a future
+authoritative distributed lock or lease and is not implied by the host-local
+`flock()`.
 
 **Gate 3 — Authoritative Record & Journal Integrity:** prove authoritative FI
 history is write-once, reconstructable, and every material ingest outcome is
 preserved.
 
 [Phase 3 details](docs/roadmap/phase-03-ingest-and-recorder.md)
+
+[Phase 3 ingest-worker operating contract](../docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md)
 
 ---
 

@@ -166,6 +166,40 @@ func ReadReceiptNames(
 	return names, nil
 }
 
+// ReceiptNamePresent checks one exact ready-marker name without enumerating the
+// ready directory. A missing marker is not an error. If a path exists, it must
+// still satisfy the complete non-authoritative READY marker contract.
+func ReceiptNamePresent(
+	readyRoot string,
+	receiptName string,
+) (bool, error) {
+	if err := validateRoot(readyRoot); err != nil {
+		return false, err
+	}
+	if err := validateReceiptName(receiptName); err != nil {
+		return false, err
+	}
+
+	path := filepath.Join(readyRoot, receiptName)
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf(
+			"inspect FI generation ingest-ready marker %q: %w",
+			path,
+			err,
+		)
+	}
+
+	if err := validateMarker(path); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 // RemoveReceiptNames retires successfully consumed ready markers. The marker
 // queue is operational state only; immutable recorder receipts are untouched.
 func RemoveReceiptNames(

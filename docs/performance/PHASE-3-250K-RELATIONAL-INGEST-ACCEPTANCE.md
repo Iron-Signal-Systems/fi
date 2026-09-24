@@ -242,21 +242,58 @@ to:
 
 after the one-record generation committed.
 
-### Worker acceptance limits
+### Worker hardening status
 
-The worker is validated for the current campaign but is not yet the permanent
-production service.
+The worker remains under Phase 3 acceptance and is not yet the packaged permanent
+service, but the original runtime-hardening list has materially advanced.
 
-Known hardening items:
+Closed hardening items now include:
 
-1. source-record rejection cooldown is in memory and is lost on worker restart;
-2. `PlanRecordedGenerations` currently scans the recorded receipt root each
-   polling cycle rather than using bounded/incremental discovery;
-3. long-term ordering policy for bypassing a rejected generation still needs an
-   explicit product contract;
-4. singleton/advisory locking is not implemented; and
-5. database failure/backoff behavior still needs final production supervisor
-   treatment.
+- durable PostgreSQL-backed `SOURCE_RECORD_REJECTED` retry state across worker
+  restart;
+- bounded READY-marker discovery for normal operational ingest;
+- deterministic journal-driven rejected-generation retry ordering that does not
+  allow deferred markers to starve later READY work;
+- a hardened host-local singleton `flock()` acquired before PostgreSQL access;
+- hard process restart recovery with unchanged relational state;
+- durable rejected-generation reconstruction across independent worker
+  processes; and
+- controlled `SIGKILL` while a relational transaction was open, proving
+  PostgreSQL rollback, retained `AttemptStarted` crash history, rediscovery of
+  the immutable generation, and exactly-once later acceptance.
+
+The singleton is intentionally local to one backend host. Phase 3 supports one
+active backend ingest-worker host per deployment. This does not make Windows
+source count part of the singleton contract; the current acceptance worker
+remains explicitly source-scoped through `-source`, and final multi-source
+backend topology is separate work. Cross-backend HA/failover requires a future
+authoritative distributed lock or lease. PostgreSQL uniqueness is an integrity
+backstop, not a distributed election mechanism.
+
+The worker now also uses adaptive full operational repair reconciliation:
+six clean hourly sweeps, one clean 12-hour sweep, then 24-hour steady-state
+repair. Unexpected pending authority or conflict resets the cadence to hourly.
+READY-notified pending work and durable source-record rejection state do not
+reset repair confidence.
+
+PostgreSQL reconnect/backoff behavior and permanent service packaging remain
+open.
+
+See `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`.
+
+### Adaptive repair runtime proof
+
+The adaptive authoritative repair cadence completed isolated runtime acceptance on 2026-09-24 using the real ingest-worker candidate, isolated PostgreSQL instances, isolated custody roots, and exact immutable production generations.
+
+The first case reduced only the validation interval to 200ms for controlled testing. After startup accepted one authoritative generation, six consecutive clean full operational repair sweeps transitioned the worker from Validation mode to Intermediate mode with a 12-hour interval and clean_count=6.
+
+The second case established two clean validation sweeps and then introduced a second valid immutable recorder receipt and FIGT custody object without creating a READY marker. The full repair path reported discovered=2, accepted=1, pending=1, conflict=0, ready_notified=0, known_rejected=0, and unexpected_pending=1.
+
+That same repair sweep ingested the generation exactly once and reset repair confidence to Validation mode with clean_count=0.
+
+The production ingest worker, production PostgreSQL database, production custody, and production READY state were not modified by the test.
+
+The 12-hour Intermediate-to-24-hour Steady transition remains covered by the repair-cadence unit test; no test-only production configuration surface was added solely to compress that real interval.
 
 The campaign intentionally remains sequential. Parallel relational ingest is not
 yet authorized.
@@ -446,22 +483,24 @@ loader and reports record-kind coverage. Both modes report zero database writes.
 
 ## Remaining Gate 3 acceptance work
 
-The campaign is not complete until the following are closed:
+The campaign is not complete until the following remaining work is closed:
 
-- finish the fresh 250K relational ingest/catch-up run;
-- final reconcile: every discovered accepted corpus receipt accepted,
-  `Pending=0`, `Conflict=0`;
+- finish the fresh 250K relational ingest/catch-up closeout;
+- accept PostgreSQL reconnect/backoff behavior, including outage while receiver
+  custody continues and immediate authoritative reconciliation after reconnect;
+- package/deploy the permanent worker only after the remaining hardening gates
+  pass;
+- run the final authoritative reconcile with `Pending=0` and `Conflict=0`; and
 - compare final generation, batch, source-record, database-size, and journal
-  totals;
-- persist rejection retry suppression across worker restart;
-- implement bounded/incremental receipt discovery;
-- formalize rejected-generation ordering/bypass behavior;
-- add singleton/advisory locking;
-- accept production database failure/backoff behavior;
-- test PostgreSQL outage while receiver custody continues;
-- test worker restart during representative ingest;
-- test restart during a transaction and eventual catch-up; and
-- package/deploy the permanent worker only after those hardening gates pass.
+  totals.
+
+The earlier durable-retry, bounded discovery, rejection ordering, host-local
+singleton, ordinary restart, durable-rejection restart, and in-transaction crash
+recovery items are closed.
+
+Distributed backend locking is documented as a future HA/failover requirement,
+not a current Gate 3 blocker, because Phase 3 authorizes one active backend
+ingest-worker host per deployment.
 
 ## Acceptance rule
 

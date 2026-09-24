@@ -715,18 +715,33 @@ recorded generations through FI's custody loader and reports validated record-ki
 coverage without database writes.
 
 A sequential Go ingest worker now performs live receipt discovery and relational
-ingest for the Phase 3 acceptance campaign. It is a validation worker, not yet a
-finished production service. Current hardening still required before permanent
-service deployment includes durable rejection retry suppression across restarts,
-bounded/incremental receipt discovery rather than rescanning the full recorded
-receipt root every polling cycle, formalized rejected-generation bypass policy,
-singleton/advisory-lock behavior, and production supervisor/backoff handling.
+ingest for the Phase 3 acceptance campaign. The worker uses bounded READY-marker
+discovery for normal work, durable ingest-journal retry state for rejected
+generations, a host-local singleton lock, and adaptive authoritative repair
+reconciliation.
 
-The fresh 250K relational acceptance campaign remains in progress. Twelve of the
-thirteen supported record kinds have completed authoritative receiver/database
-proof; `USNContinuityGap` has completed controlled source-side proof but still
-requires the final receiver/relational proof. See
-`docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`.
+The Phase 3 singleton lock is intentionally host-local. The current operating
+contract supports one active backend ingest-worker host per deployment.
+Distributed ownership is independent of Windows source count; the current Phase
+3 acceptance worker itself remains source-scoped through `-source`. Final
+multi-source backend topology is a separate deployment concern. Multi-backend
+HA/failover requires a future authoritative distributed coordination mechanism
+such as a PostgreSQL advisory lock or database-backed lease before multiple
+backend hosts may contend for ingest ownership.
+
+The adaptive repair path starts conservatively after worker startup: six clean
+hourly full operational reconciliations, one clean 12-hour reconciliation, then
+24-hour steady-state repair. A repair anomaly returns the worker to hourly
+validation. READY-notified pending work and generations already governed by
+durable `SOURCE_RECORD_REJECTED` retry state do not count as repair anomalies.
+
+Database reconnect/backoff behavior and permanent service packaging remain open
+before Gate 3 closure.
+
+Authoritative receiver/database proof is complete for all 13 current relational
+record kinds, including `USNContinuityGap`. See
+`docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md` and
+`docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`.
 
 ---
 
@@ -853,10 +868,12 @@ validated during the 250K resilience campaign.
 
 Phase 3 has established the relational ingest foundation, typed projectors,
 recorder-aware reconciliation/inventory, volume-qualified NTFS/USN identity,
-and a live sequential Go ingest worker. The current checkpoint is implementation
-and acceptance work, not Gate 3 closure: the fresh 250K relational campaign,
-`USNContinuityGap` receiver/database proof, and permanent worker hardening remain
-open.
+all 13 current authoritative record-kind proofs, bounded READY-driven ingest,
+durable rejected-generation retry state, host-local singleton protection,
+controlled crash/restart recovery, and adaptive repair reconciliation. The
+current checkpoint is implementation and acceptance work, not Gate 3 closure:
+database reconnect/backoff behavior, permanent service packaging, the final
+250K relational closeout, and final Gate 3 reconciliation remain open.
 
 See:
 

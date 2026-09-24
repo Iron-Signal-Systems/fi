@@ -131,7 +131,7 @@ func main() {
 	repairInterval := flags.Duration(
 		"repair-interval",
 		time.Hour,
-		"interval between full authoritative receipt repair sweeps",
+		"validation interval for adaptive full authoritative receipt repair sweeps",
 	)
 
 	once := flags.Bool(
@@ -355,6 +355,8 @@ func runWorker(
 		connection: connection,
 	}
 
+	repair := newRepairCadence(config.RepairInterval)
+
 	fmt.Println("===== FI RELATIONAL INGEST WORKER =====")
 	fmt.Printf("Source:               %s\n", config.SourceID)
 	fmt.Printf("PostgreSQLUser:       %s\n", state.CurrentUser)
@@ -364,7 +366,11 @@ func runWorker(
 	fmt.Printf("PollInterval:         %s\n", config.PollInterval)
 	fmt.Printf("ReadyRoot:            %s\n", config.ReadyRoot)
 	fmt.Printf("ReadyBatchSize:       %d\n", config.ReadyBatchSize)
-	fmt.Printf("RepairInterval:       %s\n", config.RepairInterval)
+	fmt.Printf("RepairMode:           %s\n", repair.Mode())
+	fmt.Printf("RepairValidation:     %s\n", repair.Interval())
+	fmt.Printf("RepairCleanTarget:    %d\n", repairValidationCleanTarget)
+	fmt.Printf("RepairIntermediate:   %s\n", repairIntermediateInterval)
+	fmt.Printf("RepairSteady:         %s\n", repairSteadyInterval)
 	fmt.Printf("RetryAfter:           %s\n", config.RetryAfter)
 	fmt.Printf("RetryBatchSize:       %d\n", config.RetryBatchSize)
 	fmt.Printf("RetryState:           durable ingest journal\n")
@@ -411,7 +417,7 @@ func runWorker(
 
 	fmt.Println()
 
-	nextRepair := time.Now().Add(config.RepairInterval)
+	nextRepair := time.Now().Add(repair.Interval())
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -431,13 +437,29 @@ func runWorker(
 				return err
 			}
 
+			assessment, err :=
+				assessRepairPlan(
+					ctx,
+					config,
+					connection,
+					plan,
+				)
+			if err != nil {
+				return err
+			}
+
 			fmt.Printf(
-				"REPAIR PLAN time=%s discovered=%d accepted=%d pending=%d conflict=%d\n",
+				"REPAIR PLAN time=%s mode=%s interval=%s discovered=%d accepted=%d pending=%d conflict=%d ready_notified=%d known_rejected=%d unexpected_pending=%d\n",
 				now.Format(time.RFC3339),
+				repair.Mode(),
+				repair.Interval(),
 				plan.Discovered,
 				plan.Accepted,
 				plan.Pending,
 				plan.Conflict,
+				assessment.ReadyNotified,
+				assessment.KnownRejected,
+				assessment.UnexpectedPending,
 			)
 
 			if err := processPlan(
@@ -451,7 +473,22 @@ func runWorker(
 				return err
 			}
 
-			nextRepair = time.Now().Add(config.RepairInterval)
+			result := "Clean"
+			if !assessment.Clean() {
+				result = "Anomaly"
+			}
+
+			repair.Observe(assessment.Clean())
+
+			fmt.Printf(
+				"REPAIR CADENCE result=%s mode=%s interval=%s clean_count=%d\n",
+				result,
+				repair.Mode(),
+				repair.Interval(),
+				repair.CleanCount(),
+			)
+
+			nextRepair = time.Now().Add(repair.Interval())
 		} else {
 			plan, markerCount, err := readyPlan(
 				ctx,
