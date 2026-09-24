@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,54 @@ var (
 	ErrBatchSizeMismatch  = errors.New("FI batch byte count mismatch")
 	ErrRecordTooLarge     = errors.New("FI spool record exceeds maximum batch bytes")
 )
+
+var (
+	policyMu         sync.RWMutex
+	configuredPolicy Policy
+	policyConfigured bool
+)
+
+type Policy struct {
+	Directory        string
+	MaxBatchRecords  int
+	MaxRecordBytes   int64
+	TargetBatchBytes int64
+}
+
+func ConfigurePolicy(value Policy) error {
+	if value.Directory == "" {
+		return errors.New("FI spool policy directory is required")
+	}
+	if value.MaxBatchRecords <= 0 {
+		return errors.New("FI spool policy max batch records must be greater than zero")
+	}
+	if value.MaxRecordBytes <= 0 {
+		return errors.New("FI spool policy max record bytes must be greater than zero")
+	}
+	if value.TargetBatchBytes <= 0 {
+		return errors.New("FI spool policy target batch bytes must be greater than zero")
+	}
+
+	policyMu.Lock()
+	defer policyMu.Unlock()
+
+	if policyConfigured {
+		if configuredPolicy != value {
+			return errors.New("FI spool policy is already configured with different startup values")
+		}
+		return nil
+	}
+
+	configuredPolicy = value
+	policyConfigured = true
+	return nil
+}
+
+func currentPolicy() (Policy, bool) {
+	policyMu.RLock()
+	defer policyMu.RUnlock()
+	return configuredPolicy, policyConfigured
+}
 
 type CollectorIdentity struct {
 	ExecutablePath   string `json:"executable_path"`
@@ -94,6 +143,9 @@ type Writer struct {
 }
 
 func DefaultDir() (string, error) {
+	if value, ok := currentPolicy(); ok {
+		return value.Directory, nil
+	}
 	if value := os.Getenv("FI_SPOOL_DIR"); value != "" {
 		return value, nil
 	}
@@ -114,6 +166,22 @@ func NewWriter(dir string, batchSize int, collector CollectorIdentity) (*Writer,
 	if collector.ExecutablePath == "" || !validSHA256(collector.ExecutableSHA256) {
 		return nil, errors.New("collector executable identity is invalid")
 	}
+
+	targetBatchBytes := int64(DefaultTargetBatchBytes)
+	maxRecordBytes := int64(DefaultMaxBatchBytes)
+	if value, ok := currentPolicy(); ok {
+		batchSize = value.MaxBatchRecords
+		targetBatchBytes = value.TargetBatchBytes
+		maxRecordBytes = value.MaxRecordBytes
+		if dir != value.Directory {
+			return nil, fmt.Errorf(
+				"FI spool writer directory %q does not match configured directory %q",
+				dir,
+				value.Directory,
+			)
+		}
+	}
+
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -163,8 +231,8 @@ func NewWriter(dir string, batchSize int, collector CollectorIdentity) (*Writer,
 		dir:              publicationDir,
 		workDir:          workDir,
 		batchSize:        batchSize,
-		targetBatchBytes: DefaultTargetBatchBytes,
-		maxBatchBytes:    DefaultMaxBatchBytes,
+		targetBatchBytes: targetBatchBytes,
+		maxBatchBytes:    maxRecordBytes,
 		collector:        collector,
 		finalized:        []FinalizedBatch{},
 	}, nil

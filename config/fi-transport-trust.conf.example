@@ -1,0 +1,29 @@
+# FI Transport Trust Configuration
+# Config Version: 1.0
+#
+# Example only. Replace all trust fingerprints before deployment.
+# Cryptographic trust is intentionally separated from fi.conf.
+# Manual trust overrides fail closed unless explicitly authorized in fi.conf.
+
+version_id: 1.0
+
+
+######## Transport Root Trust ########
+
+trust.root_cert_sha256                   = 0000000000000000000000000000000000000000000000000000000000000000
+
+
+######## Transport Certificate Policy ########
+
+trust.transport_cert_sha256              = 1111111111111111111111111111111111111111111111111111111111111111
+trust.transport_issuer_sha256            = 2222222222222222222222222222222222222222222222222222222222222222
+
+
+######## Batch Signing Trust ########
+
+trust.batch_signing_cert_sha256          = 3333333333333333333333333333333333333333333333333333333333333333
+
+
+######## Revocation ########
+
+trust.transport_crl                      = C:\ProgramData\FI\pki\trust\fi-transport-ca.crl.pem

@@ -83,6 +83,9 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 	if err != nil {
 		return configuredRunSummary{}, err
 	}
+	if err := applyConfiguredSpoolPolicy(value); err != nil {
+		return configuredRunSummary{}, err
+	}
 	summary := configuredRunSummary{ConfigPath: configPath, VersionID: value.VersionID, ConfiguredRoots: len(value.GovernedRoots), Complete: true, Roots: make([]configuredRootSummary, 0, len(value.GovernedRoots)), Semantics: "FI processes Windows Security activity and each configured governed root as independent source observations. Major configured operations use append-only Started/Finished lifecycle journals so an unclosed operation is explicitly recovered as Interrupted after process restart. Interrupted FI spool artifacts are preserved separately and are never promoted into accepted batches or used to advance source checkpoints. Source facts, continuity gaps, checkpoints, spool recovery state, and operation lifecycle records remain separate records with separate meanings."}
 	spoolDir, err := spool.DefaultDir()
 	if err != nil {

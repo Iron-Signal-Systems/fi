@@ -58,26 +58,22 @@ func (source *fakeServiceWindowsSecuritySource) snapshot() (int, int) {
 	return source.calls, source.maxActive
 }
 
-func TestResolveServiceWindowsSecurityIntervalDefaultAndOverride(t *testing.T) {
-	t.Setenv(serviceWindowsSecurityIntervalEnvironment, "")
-	interval, err := resolveServiceWindowsSecurityInterval()
+func TestResolveServiceWindowsSecurityIntervalUsesConfiguredValue(t *testing.T) {
+	interval, err := resolveServiceWindowsSecurityInterval(time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if interval != time.Minute {
-		t.Fatalf("default interval = %s, want 1m", interval)
+		t.Fatalf("interval = %s, want 1m", interval)
 	}
+	if got := currentServiceWindowsSecurityInterval(); got != "1m0s" {
+		t.Fatalf("current interval = %q, want 1m0s", got)
+	}
+}
 
-	t.Setenv(serviceWindowsSecurityIntervalEnvironment, "15s")
-	interval, err = resolveServiceWindowsSecurityInterval()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if interval != 15*time.Second {
-		t.Fatalf("override interval = %s, want 15s", interval)
-	}
-	if got := currentServiceWindowsSecurityInterval(); got != "15s" {
-		t.Fatalf("current interval = %q, want 15s", got)
+func TestResolveServiceWindowsSecurityIntervalRejectsNonPositiveValue(t *testing.T) {
+	if _, err := resolveServiceWindowsSecurityInterval(0); err == nil {
+		t.Fatal("resolveServiceWindowsSecurityInterval(0) error = nil")
 	}
 }
 

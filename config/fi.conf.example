@@ -1,11 +1,73 @@
-# FI configuration
-version_id: 1.0
+# FI Configuration
+# Config Version: 1.1
+#
+# Example only. Replace site-specific values before deployment.
+# Operational configuration is authoritative.
+# Manual operational overrides fail closed unless explicitly enabled below.
+
+version_id: 1.1
 
 
+######## Governed Paths ########
 
-# Finance data
+# Example departmental data
+governed_root: C:\Data\DepartmentA
 
-governed_root: D:\Shares\Finance
-# HR
+# Example shared data volume
+governed_root: D:\SharedData
 
-governed_root: D:\Shares\HR
+
+######## Collector Settings ########
+
+collector.collection_every               = 1m
+collector.supporting_refresh_every        = 30m
+collector.usn_every                        = 10m
+collector.windows_security_every           = 1m
+
+
+######## Spool Settings ########
+
+spool.target_batch_bytes                  = 33554432       # 32 MiB
+spool.max_record_bytes                    = 67108864       # 64 MiB
+spool.max_batch_records                   = 262144
+
+
+######## Local Storage Settings ########
+
+storage.spool_dir                         = D:\FI\spool
+storage.stage_dir                         = C:\ProgramData\FI\transport\stage
+storage.state_dir                         = C:\ProgramData\FI\state
+
+
+######## Source Identity ########
+
+source.id                                 = file-server-01.example.local
+
+
+######## Transport Sender Settings ########
+
+sender.poll_interval                      = 5s
+sender.retry_backoff                      = 5s
+sender.generation_interval                = 10m
+sender.generation_max_encoded_bytes       = 68719476736    # 64 GiB
+sender.generation_transfer_timeout        = 2h
+
+# Adaptive recovery remains disabled at zero.
+sender.recovery_threshold_bytes           = 0
+sender.recovery_timeout                   = 2h
+
+
+######## Receiver Destination ########
+
+receiver.address                          = 10.0.0.50:8443
+receiver.name                             = fi-receiver-01.example.local
+receiver.timeout                          = 30s
+
+
+######## Troubleshooting Settings ########
+
+troubleshoot.enabled                      = false
+troubleshoot.allow_collector_cli_override = false
+troubleshoot.allow_sender_cli_override    = false
+troubleshoot.allow_storage_cli_override   = false
+troubleshoot.allow_trust_cli_override     = false

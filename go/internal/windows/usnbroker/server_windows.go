@@ -16,7 +16,6 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnraw"
 	"golang.org/x/sys/windows"
 )
@@ -36,12 +35,86 @@ var (
 	procImpersonateNamedPipeClient = advapi32.NewProc("ImpersonateNamedPipeClient")
 )
 
+type authoritySnapshot struct {
+	governedRoots []string
+	volumes       []string
+}
+
+func newAuthoritySnapshot(governedRoots []string) (authoritySnapshot, error) {
+	if len(governedRoots) == 0 {
+		return authoritySnapshot{}, errors.New("at least one FI governed root is required")
+	}
+
+	value := authoritySnapshot{
+		governedRoots: make([]string, 0, len(governedRoots)),
+		volumes:       make([]string, 0, len(governedRoots)),
+	}
+	seenVolumes := make(map[string]struct{})
+
+	for _, governedRoot := range governedRoots {
+		normalized := normalizedGovernedRoot(governedRoot)
+		if strings.TrimSpace(normalized) == "" {
+			return authoritySnapshot{}, errors.New("FI governed root is empty")
+		}
+
+		drive, err := usnraw.DriveForRoot(governedRoot)
+		if err != nil {
+			return authoritySnapshot{}, fmt.Errorf(
+				"resolve FI governed-root volume %q: %w",
+				governedRoot,
+				err,
+			)
+		}
+
+		value.governedRoots = append(value.governedRoots, normalized)
+
+		key := strings.ToLower(drive)
+		if _, exists := seenVolumes[key]; exists {
+			continue
+		}
+		seenVolumes[key] = struct{}{}
+		value.volumes = append(value.volumes, drive)
+	}
+
+	return value, nil
+}
+
+func (value authoritySnapshot) allowsGovernedRoot(governedRoot string) bool {
+	requested := normalizedGovernedRoot(governedRoot)
+	for _, configuredRoot := range value.governedRoots {
+		if strings.EqualFold(configuredRoot, requested) {
+			return true
+		}
+	}
+	return false
+}
+
+func (value authoritySnapshot) allowsVolume(governedRoot string) (bool, error) {
+	requestedDrive, err := usnraw.DriveForRoot(governedRoot)
+	if err != nil {
+		return false, err
+	}
+
+	for _, configuredDrive := range value.volumes {
+		if strings.EqualFold(configuredDrive, requestedDrive) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Serve accepts local FICollector requests until ctx is canceled. Every client
 // must carry the FICollector service SID; ordinary processes using the same
-// account do not satisfy that check.
-func Serve(ctx context.Context) error {
+// account do not satisfy that check. Governed-root authority is captured once
+// at FIUSNReader startup and is not reloaded while the service is running.
+func Serve(ctx context.Context, governedRoots []string) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	authority, err := newAuthoritySnapshot(governedRoots)
+	if err != nil {
+		return err
 	}
 
 	collectorSID, _, _, err := windows.LookupSID("", `NT SERVICE\`+CollectorServiceName)
@@ -77,7 +150,7 @@ func Serve(ctx context.Context) error {
 			return nil
 		}
 
-		connectionErr := handleConnection(handle, collectorSID)
+		connectionErr := handleConnection(handle, collectorSID, authority)
 		if connectionErr == nil {
 			// Named-pipe writes may still be buffered when writeResponse returns.
 			// Flush before disconnecting so the client can consume the complete
@@ -108,42 +181,6 @@ func Wake() {
 	if err == nil {
 		_ = windows.CloseHandle(handle)
 	}
-}
-
-func allowedGovernedRoot(governedRoot string) (bool, error) {
-	value, _, err := config.LoadDefault()
-	if err != nil {
-		return false, err
-	}
-	requested := normalizedGovernedRoot(governedRoot)
-	for _, configuredRoot := range value.GovernedRoots {
-		if strings.EqualFold(normalizedGovernedRoot(configuredRoot), requested) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func allowedVolume(governedRoot string) (bool, error) {
-	requestedDrive, err := usnraw.DriveForRoot(governedRoot)
-	if err != nil {
-		return false, err
-	}
-
-	value, _, err := config.LoadDefault()
-	if err != nil {
-		return false, err
-	}
-	for _, configuredRoot := range value.GovernedRoots {
-		drive, err := usnraw.DriveForRoot(configuredRoot)
-		if err != nil {
-			return false, err
-		}
-		if strings.EqualFold(drive, requestedDrive) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func authorizeClient(handle windows.Handle, expectedSID *windows.SID) (bool, error) {
@@ -236,7 +273,11 @@ func createServerPipe(securityAttributes *windows.SecurityAttributes) (windows.H
 	return handle, nil
 }
 
-func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
+func handleConnection(
+	handle windows.Handle,
+	collectorSID *windows.SID,
+	authority authoritySnapshot,
+) error {
 	stream := handleIO{handle: handle}
 
 	// ImpersonateNamedPipeClient uses the security context of the last message
@@ -257,7 +298,7 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 
 	switch value.Operation {
 	case operationQuery:
-		allowed, err := allowedVolume(value.GovernedRoot)
+		allowed, err := authority.allowsVolume(value.GovernedRoot)
 		if err != nil {
 			return writeFailure(stream, err)
 		}
@@ -272,7 +313,7 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 		return writeResponse(stream, response{Journal: brokerJournal(journal)})
 
 	case operationRead:
-		allowed, err := allowedVolume(value.GovernedRoot)
+		allowed, err := authority.allowsVolume(value.GovernedRoot)
 		if err != nil {
 			return writeFailure(stream, err)
 		}
@@ -290,11 +331,7 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 		})
 
 	case operationContainment:
-		allowed, err := allowedGovernedRoot(value.GovernedRoot)
-		if err != nil {
-			return writeFailure(stream, err)
-		}
-		if !allowed {
+		if !authority.allowsGovernedRoot(value.GovernedRoot) {
 			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested governed root is not configured for FI")
 		}
 
@@ -313,11 +350,7 @@ func handleConnection(handle windows.Handle, collectorSID *windows.SID) error {
 		return writeResponse(stream, response{Data: []byte{byte(result)}})
 
 	case operationSACL:
-		allowed, err := allowedGovernedRoot(value.GovernedRoot)
-		if err != nil {
-			return writeFailure(stream, err)
-		}
-		if !allowed {
+		if !authority.allowsGovernedRoot(value.GovernedRoot) {
 			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested governed root is not configured for FI")
 		}
 

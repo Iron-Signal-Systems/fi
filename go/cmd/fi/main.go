@@ -168,23 +168,17 @@ func main() {
 			printUsage()
 			os.Exit(2)
 		}
-		collectionInterval, err := parseServiceInterval(
-			"service-collection-every",
-			*serviceCollectionEvery,
-		)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "ERROR:", err)
-			os.Exit(2)
-		}
-		supportingRefreshInterval, err := parseServiceInterval(
-			"service-supporting-refresh-every",
-			*serviceSupportingRefreshEvery,
-		)
+		snapshot, collectionInterval, supportingRefreshInterval, err :=
+			resolveServiceConfiguration(
+				*serviceCollectionEvery,
+				*serviceSupportingRefreshEvery,
+			)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "ERROR:", err)
 			os.Exit(2)
 		}
 		if err := runWindowsService(
+			snapshot,
 			collectionInterval,
 			supportingRefreshInterval,
 		); err != nil {
@@ -192,7 +186,6 @@ func main() {
 			os.Exit(1)
 		}
 		return
-
 	case *supportingRefreshMode:
 		if flag.NArg() != 0 {
 			printUsage()
