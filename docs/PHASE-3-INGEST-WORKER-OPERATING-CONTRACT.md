@@ -181,3 +181,75 @@ It does not replace:
 - explicit conflict handling.
 
 Loss of cadence state changes only how soon the next safety sweep occurs.
+
+## Permanent Linux service packaging
+
+The Phase 3 permanent ingest worker is a systemd-managed Linux service running as
+`fi-receiver`.
+
+The service owns process lifecycle; the worker continues to own PostgreSQL
+availability and authoritative ingest recovery.
+
+The permanent service contract is:
+
+```text
+service user/group             fi-receiver
+runtime directory              /run/fi
+runtime directory mode         0700
+worker binary                  /opt/fi/bin/fi-ingest-worker
+site configuration             /etc/fi/fi-ingest-worker.env
+process restart                on-failure
+restart delay                  5 seconds
+restart-storm window           60 seconds
+restart-storm burst            3
+```
+
+`/run/fi` is created by systemd through `RuntimeDirectory=fi`. Manual runtime
+directory creation is not part of permanent operation.
+
+The unit must not use a hard PostgreSQL lifecycle dependency such as
+`Requires=postgresql...` or `BindsTo=postgresql...`. A database outage must not
+cause systemd to stop/restart an otherwise healthy ingest worker. The worker's
+accepted internal reconnect/backoff path retains the host-local singleton while
+PostgreSQL is unavailable.
+
+The service filesystem boundary keeps immutable generation custody and recorder
+receipts read-only to the worker and grants write access only to the
+non-authoritative READY root plus the worker runtime directory.
+
+An unexpected worker-process failure may be restarted by systemd. A permanent
+configuration, runtime-identity, database-identity, schema/foundation,
+privilege-boundary, or other fail-closed startup error must not create an
+unrestricted restart storm.
+
+Phase 3 service acceptance must prove the installed unit, systemd-created runtime
+directory, singleton behavior, normal startup reconciliation, bounded crash
+restart, bounded permanent-failure behavior, and clean operator-requested stop.
+The already accepted PostgreSQL reconnect campaign remains the authority for
+same-process database-loss/reconnect semantics.
+
+
+### Accepted service-runtime behavior
+
+The permanent service completed controlled runtime acceptance on 2026-09-24.
+
+The accepted behavior includes:
+
+```text
+manual-to-systemd cutover with an explicit ownership gap
+systemd-owned /run/fi at mode 0700
+RuntimeDirectoryPreserve=yes for stable lock-path/inode ownership
+unexpected SIGKILL followed by bounded systemd restart
+same lock inode across failure/restart
+PostgreSQL-unavailable startup handled in-process without systemd restart
+bounded permanent PostgreSQL/authentication failure reaching start-limit-hit
+clean operator stop with no Restart=on-failure restart
+explicit operator start returning to authoritative startup reconciliation
+```
+
+The first cutover attempt is retained as failed acceptance history. It exposed
+that deleting `/run/fi` after a singleton-conflict exit could unlink the lock
+file while another process still held the original inode, allowing a later
+service restart to create a different lock inode. `RuntimeDirectoryPreserve=yes`
+is therefore part of the accepted host-local singleton operating contract, not a
+cosmetic packaging setting.

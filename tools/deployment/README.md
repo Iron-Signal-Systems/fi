@@ -1,4 +1,9 @@
-# FI Phase 1 Data ACL Hardening
+# FI Deployment Tooling
+
+This directory contains explicit administrator-run deployment actions. Deployment
+tooling is not normal FI collector/runtime remediation authority.
+
+## Windows Phase 1 data ACL hardening
 
 `Harden-FI-Data-ACL.ps1` is an **administrator-run deployment action** for the
 FI-owned runtime directories:
@@ -23,7 +28,7 @@ local Administrator on the validated Server 2016 design, so this is a runtime
 responsibility boundary rather than a claim that Windows ACLs can sandbox a
 local Administrator.
 
-## Why the script normalizes populated children
+### Why the script normalizes populated children
 
 On a populated FI directory, simply removing inheritance from the parent and
 then granting the new parent ACEs is not sufficient. Existing children can lose
@@ -46,7 +51,7 @@ inaccessible FI-owned child or an unexpected explicit ACE on the state/spool
 root. It does not silently take ownership of customer data or overwrite an
 unreviewed custom ACL.
 
-## Run
+### Run
 
 From elevated Windows PowerShell on the FI file server:
 
@@ -65,3 +70,16 @@ A successful Test 07 must include a clean recursive ACL traversal for both
 `state` and `spool`. `icacls /T /C` process exit code alone is not accepted as
 proof because Windows Server 2016 can return exit code `0` while still reporting
 individual `Access is denied` failures in its output.
+
+## Linux Phase 3 ingest-worker packaging
+
+Permanent Linux relational ingest-worker service packaging lives under:
+
+```text
+tools/deployment/linux/
+```
+
+That subtree owns the Phase 3 systemd unit, installer, package validation, and
+operator instructions for the permanent ingest worker.
+
+It does not replace Phase 6 integrated installation/release packaging.

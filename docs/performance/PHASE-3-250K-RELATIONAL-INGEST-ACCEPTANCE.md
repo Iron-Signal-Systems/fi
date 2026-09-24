@@ -277,9 +277,122 @@ READY-notified pending work and durable source-record rejection state do not
 reset repair confidence.
 
 PostgreSQL reconnect/backoff behavior has completed controlled runtime
-acceptance. Permanent service packaging remains open.
+acceptance. Permanent Linux ingest-worker service packaging has also completed
+controlled runtime acceptance.
 
 See `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`.
+
+### Permanent systemd service runtime proof
+
+Permanent Linux ingest-worker service packaging completed controlled runtime
+acceptance on 2026-09-24 on `fi-receiver-a`.
+
+The accepted service runs as `fi-receiver`, uses
+`/opt/fi/bin/fi-ingest-worker`, receives its source ID from
+`/etc/fi/fi-ingest-worker.env`, and uses a systemd-owned `/run/fi` runtime
+directory with mode `0700`. The unit is enabled for boot and uses
+`Restart=on-failure`, a five-second restart delay, and a bounded systemd start
+limit. PostgreSQL availability remains owned by the worker's internal reconnect
+state machine rather than by a hard systemd database dependency.
+
+The first controlled manual-to-systemd cutover intentionally remains part of the
+acceptance history because it exposed a real lock-namespace lifecycle defect.
+The original manually launched worker still held
+`/run/fi/fi-ingest-worker.lock`. The first systemd service start correctly
+failed on the host-local singleton, but the failed unit then removed
+`RuntimeDirectory=/run/fi`. The manual worker continued holding the now-unlinked
+lock inode. A subsequent systemd restart recreated `/run/fi`, acquired a new
+pathname/inode, connected to PostgreSQL, and reconciled successfully while the
+old manual worker still existed.
+
+No READY work was present during that overlap, and the systemd worker reported
+`discovered=1280 accepted=1280 pending=0 conflict=0`, but the event proved that
+runtime-directory deletion could defeat the pathname-based same-host singleton
+boundary.
+
+The service contract was corrected with:
+
+```text
+RuntimeDirectory=fi
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+```
+
+The corrected cutover then stopped the manual worker with the required service
+identity/root authority, proved no ingest worker remained during the ownership
+gap, and started the permanent systemd worker. The service created the expected
+`fi-receiver:fi-receiver` `0700` runtime directory, acquired the singleton,
+validated the 49-table PostgreSQL foundation, entered Validation repair mode,
+and reported:
+
+```text
+discovered=1280
+accepted=1280
+pending=0
+conflict=0
+```
+
+A real generation arriving immediately after corrected cutover was accepted once
+with 11 records committed and the READY queue returned to zero.
+
+Unexpected-process-death acceptance killed the permanent worker with `SIGKILL`.
+Systemd recorded the signal failure, waited five seconds, restarted the worker,
+and incremented the restart counter exactly once. The lock-file inode remained
+stable at `8122` across the crash/restart. The replacement worker revalidated
+PostgreSQL, reset repair confidence to Validation, and reported:
+
+```text
+discovered=1281
+accepted=1281
+pending=0
+conflict=0
+```
+
+PostgreSQL-unavailable startup acceptance used a temporary service override
+pointing the worker at a closed local TCP port while the real FI PostgreSQL
+instance remained untouched. The same worker PID stayed active, systemd restart
+count remained zero, the lock inode remained `8122`, and the worker's internal
+availability backoff progressed through 1, 2, 4, and 8 seconds. This proved that
+systemd owns process failure while the worker owns database availability.
+
+Permanent-failure acceptance used a temporary invalid PostgreSQL configuration.
+The actual observed PostgreSQL failure was authentication SQLSTATE `28000`; it
+remained fail-closed and did not enter the availability retry loop. Systemd
+performed three bounded restart attempts and then reached
+`Result=start-limit-hit`. The lock inode remained `8122`, and the real FI
+database remained healthy.
+
+After the temporary failure override was removed, the permanent worker returned
+to the real PostgreSQL database and reconciled:
+
+```text
+discovered=1341
+accepted=1341
+pending=0
+conflict=0
+```
+
+Finally, an explicit operator `systemctl stop` exited cleanly with no automatic
+restart. The runtime lock inode remained `8122` while the service was stopped.
+A later explicit `systemctl start` created a new worker PID without changing the
+lock inode, revalidated PostgreSQL, and again reported
+`discovered=1341 accepted=1341 pending=0 conflict=0`.
+
+At the end of permanent-service acceptance:
+
+```text
+service state         active/running
+service enabled       yes
+database_bytes        1,705,948,863
+recorded_generation   1,341
+source_batch           7,073
+source_record        512,010
+ingest_journal         2,686
+READY markers              0
+```
+
+These are live acceptance checkpoint values, not the final Gate 3 relational
+totals.
 
 ### Adaptive repair runtime proof
 
@@ -516,15 +629,14 @@ loader and reports record-kind coverage. Both modes report zero database writes.
 The campaign is not complete until the following remaining work is closed:
 
 - finish the fresh 250K relational ingest/catch-up closeout;
-- package/deploy the permanent worker only after the remaining hardening gates
-  pass;
 - run the final authoritative reconcile with `Pending=0` and `Conflict=0`; and
 - compare final generation, batch, source-record, database-size, and journal
   totals.
 
 The earlier durable-retry, bounded discovery, rejection ordering, host-local
 singleton, ordinary restart, durable-rejection restart, in-transaction crash
-recovery, adaptive repair, and PostgreSQL reconnect/backoff items are closed.
+recovery, adaptive repair, PostgreSQL reconnect/backoff, and permanent
+systemd-service packaging items are closed.
 
 Distributed backend locking is documented as a future HA/failover requirement,
 not a current Gate 3 blocker, because Phase 3 authorizes one active backend
