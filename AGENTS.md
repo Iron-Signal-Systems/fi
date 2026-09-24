@@ -15,6 +15,8 @@ as applicable:
 - `fi-roadmap/roadmap.md`
 - `fi-roadmap/docs/roadmap/phase-01-windows-file-and-identity-intelligence.md`
 - `fi-roadmap/docs/roadmap/phase-02-secure-record-transport.md`
+- `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`
+- `docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
 - `docs/COLLECTOR-CONTRACT.md`
 - `docs/LOCAL-SPOOL-INTEGRITY.md`
 - `docs/GATE-1-RESULT-RECORD.md`
@@ -145,13 +147,50 @@ local retirement after durable downstream custody
 Phase 2 must not retroactively weaken Phase 1 local durability or source-truth
 semantics.
 
+### Phase 3 — Relational Ingest & Recorder
+
+Phase 3 begins after durable receiver generation custody and the immutable
+semantic recorder receipt exist.
+
+Phase 3 owns:
+
+```text
+immutable recorder receipt discovery
+exact FIGT custody loading
+PostgreSQL relational authority
+typed relational projection
+generation-atomic ingest
+duplicate-safe identity checks
+conflict detection
+append-only ingest attempt history
+durable source-record rejection retry state
+bounded READY-marker operational discovery
+authoritative operational reconciliation / repair
+explicit deep reconciliation / audit
+host-local ingest-worker singleton protection
+adaptive repair cadence
+PostgreSQL availability reconnect / backoff
+worker restart and transaction-crash recovery
+```
+
+The immutable recorder receipt is the authoritative generation-discovery source.
+READY markers are bounded operational notifications only.
+
+The append-only ingest journal preserves attempt history. A later success does
+not erase an earlier rejection, failure, or incomplete attempt.
+
+Phase 3 currently authorizes one active backend ingest-worker host per deployment.
+The current acceptance worker remains source-scoped through `-source`; that does
+not define the final multi-source backend topology.
+
 ### Later phases
 
-Later phases may own recorder/system-of-record work, classification/enrichment,
-projections/query, UX, and integrated release behavior.
+Later phases may own classification/enrichment, cross-source correlation and
+derivation, higher-order projections/query, UX, and integrated release behavior.
 
-Do not pull later-phase responsibilities into the Windows source collector merely
-because implementation there appears convenient.
+Do not pull later-phase responsibilities into the Windows source collector,
+transport path, or Phase 3 recorder merely because implementation there appears
+convenient.
 
 ---
 
@@ -368,9 +407,13 @@ PowerShell test convenience must not silently define the production architecture
 
 ## Platform Targeting Rules
 
-Code should target the platform it actually lives on.
+Code must target the platform it actually lives on.
 
-Use Go platform files when behavior is platform-specific:
+Platform support is part of the product contract, not merely a compiler
+implementation detail.
+
+Use Go platform files when behavior or the supported deployment contract is
+platform-specific:
 
 ```text
 *_windows.go
@@ -378,16 +421,375 @@ Use Go platform files when behavior is platform-specific:
 *_freebsd.go
 ```
 
+Platform-specific Go implementation files and tests must also carry the explicit
+Go build constraint for that platform:
+
+```go
+//go:build windows
+```
+
+```go
+//go:build linux
+```
+
+```go
+//go:build freebsd
+```
+
+Do not rely only on the developer's current operating system, package import
+graph, CI job selection, filename convention, or accidental compiler behavior to
+establish a platform boundary.
+
+A platform-specific implementation must be excluded explicitly from unsupported
+platform builds.
+
+Do not place code in an unconstrained generic `.go` file when that code depends
+on platform-specific:
+
+```text
+syscalls
+filesystem semantics
+service-management behavior
+privilege models
+runtime paths
+socket / IPC behavior
+operating-system APIs
+platform-only types
+platform-only implementation files
+deployment assumptions
+backend support contracts
+```
+
+This includes implementation that may technically compile on another operating
+system but is not part of FI's supported deployment contract.
+
+For example:
+
+```text
+generic postgres.go
+    references Linux-only backend behavior
+    compiles on the developer's Linux host
+    is attempted by Windows CI
+```
+
+is a platform-boundary defect.
+
+The correct boundary is:
+
+```text
+Linux backend implementation
+    -> Linux-constrained source files
+
+Windows source implementation
+    -> Windows-constrained source files
+
+portable contract / validation logic
+    -> unconstrained shared source files
+```
+
 Do not hide fundamentally different operating-system semantics behind a generic
 abstraction merely to make the source tree look portable.
 
 If a component lives on Windows, implement Windows semantics.
 
-If a later backend component lives on Linux or FreeBSD, implement that platform's
-semantics rather than emulating Windows assumptions.
+If a component lives on Linux, implement Linux semantics.
 
-Shared packages are appropriate for genuinely shared records, validation,
-cryptography, serialization, protocol contracts, and deterministic logic.
+If a future component is intentionally supported on FreeBSD, implement and test
+FreeBSD semantics rather than assuming Linux behavior is portable.
+
+Shared packages are appropriate only for genuinely shared:
+
+```text
+record contracts
+schema-neutral data structures
+deterministic validation
+serialization
+cryptography
+protocol contracts
+encoding
+platform-independent state machines
+pure transformation logic
+```
+
+A shared file must not acquire a platform-specific dependency merely because doing
+so is convenient.
+
+### Current FI Pilot Platform Contract
+
+For the current FI pilot path, the supported platform boundary is:
+
+```text
+Windows
+    FI source collector
+    FI Windows service runtime
+    NTFS source work
+    USN source work
+    Windows Security source work
+    SMB source work
+    Active Directory source work
+    FIUSNReader privileged helper
+
+Linux
+    FI receiver
+    durable backend generation custody
+    generation recorder runtime
+    PostgreSQL relational backend
+    relational ingest worker
+    relational reconciliation / repair runtime
+```
+
+FreeBSD is not currently part of the FI pilot support contract.
+
+FreeBSD may be evaluated as a later backend portability target, but code must not
+claim or imply FreeBSD support until that platform has its own implementation,
+validation, packaging, and operational acceptance.
+
+Do not broaden the supported platform contract merely because Go code happens to
+compile there.
+
+---
+
+## Phase 3 Backend Authority and Runtime Rules
+
+Phase 3 backend code must preserve the distinction between authoritative state,
+operational notification, repair confidence, and process/runtime state.
+
+### Recorder and READY authority
+
+The immutable semantic recorder receipt is authoritative for generation
+discovery. Exact FIGT custody is the corresponding immutable generation payload
+boundary.
+
+READY state is operational and non-authoritative:
+
+```text
+immutable recorder receipt
+        |
+        v
+READY marker
+        |
+        v
+bounded READY discovery
+        |
+        v
+cheap relational identity check
+        |
+        v
+ingest if pending
+        |
+        v
+retire READY marker
+```
+
+Do not treat:
+
+```text
+READY missing             == generation missing
+READY present             == generation valid
+READY retired             == authority deleted
+READY queue empty         == recorder fully reconciled
+```
+
+The normal steady-state path must remain bounded. Do not return to rescanning
+every recorded receipt on every polling pass merely because it is simpler.
+
+### Ingest journal and retry authority
+
+The ingest journal is append-only attempt history and durable retry authority.
+
+Preserve:
+
+```text
+AttemptStarted
+terminal outcome where one was durably established
+historical rejection/failure
+later retry as a separate attempt
+```
+
+Do not fabricate a terminal outcome after an ambiguous connection loss or
+process crash.
+
+A source-record rejection governed by durable journal retry state is not a READY
+failure. Due retries are selected from journal authority with bounded,
+deterministic ordering.
+
+A successful retry does not erase the earlier rejection.
+
+### Singleton ownership
+
+The current Phase 3 singleton lock is host-local `flock()` protection.
+
+It prevents duplicate ingest-worker processes on one backend host. It is not a
+distributed election or lease.
+
+Phase 3 currently supports:
+
+```text
+one active backend ingest-worker host per deployment
+```
+
+PostgreSQL uniqueness and relational constraints are integrity backstops, not a
+distributed singleton mechanism.
+
+Before more than one backend host may contend for ingest ownership, add an
+authoritative distributed coordination mechanism such as a PostgreSQL advisory
+lock or database-backed lease.
+
+The host-local `flock()` should remain even after distributed coordination is
+added because the two controls solve different problems.
+
+### Adaptive authoritative repair
+
+Every worker start performs an immediate full authoritative operational
+reconciliation before normal READY/retry processing settles into steady state.
+
+The accepted adaptive repair cadence is:
+
+```text
+Validation
+    1 hour x 6 clean repair sweeps
+        |
+        v
+Intermediate
+    12 hours x 1 clean repair sweep
+        |
+        v
+Steady
+    24-hour repair sweeps
+```
+
+Any repair anomaly resets confidence to Validation with a zero clean count.
+
+Expected pending states do not by themselves reset repair confidence when the
+pending generation has:
+
+```text
+the exact valid READY notification
+or
+durable SOURCE_RECORD_REJECTED retry state
+```
+
+A pending authoritative generation with neither explanation is an anomaly even
+if the repair sweep safely ingests it.
+
+Repair cadence state is non-authoritative and intentionally in memory. Losing
+cadence state changes only how soon the next safety sweep occurs.
+
+The explicit deep reconciliation/audit path remains separate from operational
+repair. Do not make the normal worker perform deep reconciliation every cycle.
+
+### PostgreSQL availability and reconnect
+
+The ingest worker keeps its host-local singleton lock while PostgreSQL is
+temporarily unavailable.
+
+Availability retry uses bounded exponential backoff with current defaults:
+
+```text
+1s -> 2s -> 4s -> 8s -> 16s -> 30s -> 30s ...
+```
+
+Only PostgreSQL availability/connectivity failures are retryable.
+
+Authentication, wrong database/runtime identity, malformed connection
+configuration, schema/foundation mismatch, privilege-boundary violation,
+relational conflict, and ordinary non-availability SQL failures remain
+fail-closed.
+
+A successful PostgreSQL connection or reconnect must re-run the existing runtime
+boundary validation before ingest resumes. The current Phase 3 validation
+includes:
+
+```text
+runtime user is fi_ingest
+runtime database is fi
+expected relational foundation exists
+required core tables exist
+JSON / JSONB / XML storage shortcuts are absent
+fi.source_record remains append-only to the ingest identity
+```
+
+After successful reconnect:
+
+```text
+revalidate PostgreSQL boundary
+        |
+        v
+reset repair confidence to Validation
+        |
+        v
+immediate authoritative operational reconcile
+        |
+        v
+resume READY / durable retry processing
+```
+
+Do not resume READY processing before that authoritative reconciliation.
+
+SIGINT/SIGTERM/context cancellation must interrupt reconnect backoff promptly.
+
+### Ambiguous database loss during ingest
+
+A connection loss during relational ingest may occur before, during, or after a
+database commit boundary.
+
+Do not blindly replay the same in-flight operation and do not manufacture a
+terminal journal result merely because the connection disappeared.
+
+The recovery rule is:
+
+```text
+reconnect
+    -> revalidate PostgreSQL boundary
+    -> authoritative operational reconcile
+    -> determine Accepted / Pending / Conflict from durable authority
+    -> continue from that result
+```
+
+An incomplete `AttemptStarted` record after a crash or connection loss is valid
+historical state when no terminal outcome was durably established.
+
+### Phase 3 backend review rule
+
+For any material Phase 3 backend change, ask:
+
+```text
+Did recorder authority change?
+Did READY become authoritative by accident?
+Did retry ownership move out of the journal?
+Can two workers now contend on one host?
+Did we accidentally imply distributed locking exists?
+Can PostgreSQL loss terminate the worker unnecessarily?
+Can a reconnect skip runtime-boundary validation?
+Can READY/retry work run before reconnect reconciliation?
+Can an ambiguous commit be replayed without reconciliation?
+Can a later success erase an earlier failed/incomplete attempt?
+Did operational repair accidentally become deep reconciliation?
+```
+
+If any answer is unclear, stop and resolve the ownership boundary before coding.
+
+### Platform Boundary Review Rule
+
+Whenever a new Go file is added or materially changed, review whether it introduces
+a platform assumption.
+
+Ask:
+
+```text
+Does this file depend on one operating system?
+Does it depend on another platform-specific Go file?
+Does it rely on platform-specific filesystem or process semantics?
+Does it assume Linux paths, sockets, permissions, systemd, or PostgreSQL deployment?
+Does it assume Windows services, NTFS, USN, registry, Event Log, or Win32 behavior?
+Is this implementation actually supported on every platform on which the compiler
+will attempt to build it?
+```
+
+If the answer establishes a platform-specific implementation, constrain the file
+at the source boundary.
+
+Do not wait for another platform's CI job to discover the boundary accidentally.
 
 ---
 
@@ -588,9 +990,9 @@ one test host result                      != universal sizing limit
 100K campaign                             != maximum supported dataset
 1-minute acceptance configuration         != universal production cadence
 PowerShell test harness behavior          != production collector architecture
-configured collection cadence                != independent USN cadence
-missing USN checkpoint                        != permission for background USN to create a baseline
-generation recorder receipt                   != full Phase 3 System of Record
+configured collection cadence             != independent USN cadence
+missing USN checkpoint                    != permission for background USN to create a baseline
+generation recorder receipt               != full Phase 3 System of Record
 successful lab workaround                 != supported product behavior
 Windows 2025 behavior                     != Windows 2022 behavior
 adjacent Windows build                    != automatically accepted build
@@ -601,6 +1003,14 @@ local spool integrity hash                != cryptographic authenticity
 SHA-256 manifest digest                   != digital signature
 historical failure                        != current failure
 current success                           != historical failure erased
+READY marker                              != immutable recorder receipt
+READY queue empty                         != authoritative recorder reconciliation
+PostgreSQL row present                    != distributed worker ownership
+PostgreSQL uniqueness                     != distributed singleton
+AttemptStarted                            != terminal ingest outcome
+PostgreSQL reconnect                      != permission to skip reconciliation
+repair cadence state                      != FI authority
+pending generation                        != failed generation discovery
 ```
 
 ---
@@ -881,6 +1291,86 @@ report-formatting defect when existing raw results are sufficient.
 
 Do rerun when the actual behavior under acceptance changed in a way that makes
 the prior result no longer representative.
+
+### Phase 3 backend failure acceptance
+
+Backend runtime behavior that depends on PostgreSQL availability, singleton
+ownership, or authoritative reconciliation requires platform-representative
+failure testing, not only unit tests.
+
+Relevant acceptance should prove, as applicable:
+
+```text
+worker starts while PostgreSQL is unavailable
+worker retains the host-local singleton during database outage
+a second same-host worker remains rejected
+bounded reconnect backoff occurs
+the same worker process can survive a live PostgreSQL session loss
+successful reconnect revalidates the PostgreSQL runtime/foundation boundary
+repair confidence resets to Validation after reconnect
+authoritative operational reconciliation runs before READY/retry processing resumes
+generations arriving during outage are accepted exactly once
+stale READY markers retire only after relational identity is established
+production authority/state is not modified by isolated acceptance harnesses
+```
+
+Use isolated PostgreSQL clusters, custody roots, READY roots, and lock paths for
+failure injection unless the governing acceptance plan explicitly calls for a
+production-impacting exercise.
+
+### Cross-Platform Build Boundaries
+
+Supported-platform CI must verify that platform boundaries remain correct.
+
+FI currently has meaningful Windows and Linux code in the same Go module.
+Therefore:
+
+```text
+Linux CI
+    must compile and test Linux backend implementation
+
+Windows CI
+    must compile and test Windows source implementation
+
+Windows CI
+    must not attempt to compile Linux-only backend implementation
+
+Linux CI
+    must not accidentally substitute Linux behavior for required Windows semantics
+```
+
+Platform-specific implementation should disappear cleanly from unsupported builds
+through Go build constraints.
+
+A Windows build failure caused by an unconstrained Linux implementation file is a
+source-boundary defect, not a reason to weaken or skip Windows CI.
+
+Likewise, CI exclusions must not be used to hide incorrectly scoped source files.
+
+Portable packages should continue to compile and test across applicable platforms
+when their contracts are genuinely platform-independent.
+
+For a change involving platform boundaries, validation should include the
+applicable native tests plus cross-compilation or native CI sufficient to prove
+that unsupported implementation is excluded.
+
+For the current FI repository, relevant validation includes:
+
+```text
+Linux:
+    go vet ./...
+    go test ./...
+
+Windows:
+    go test ./...
+
+Targeted cross-build checks where appropriate:
+    GOOS=windows GOARCH=amd64 go build ./...
+```
+
+Do not interpret successful cross-compilation as proof of runtime support on a
+platform. Runtime support requires platform-representative validation and an
+explicit FI support contract.
 
 ### Preserve failed tests
 
@@ -1214,6 +1704,10 @@ When fixing a narrow defect:
 5. update the governing documentation;
 6. run the relevant validation.
 
+A platform annotation correction should constrain the smallest correct
+implementation boundary; do not mark genuinely portable contracts
+platform-specific merely to make CI pass.
+
 Do not redesign the subsystem merely because a small bug exposed one race.
 
 The Gate 1 spool-publication correction is the model:
@@ -1249,6 +1743,10 @@ Did spool custody change?
 Can a failure now be mistaken for success?
 Can unknown now be mistaken for absent?
 Did we introduce a new platform assumption?
+Is every platform-specific Go implementation explicitly constrained at the source-file boundary?
+Did recorder authority, READY semantics, retry authority, or worker ownership change?
+Can PostgreSQL reconnect resume work before authoritative reconciliation?
+Can an ambiguous database outcome be mistaken for a terminal ingest result?
 Did we call a logical measurement physical?
 Did we turn one lab result into a universal claim?
 Did we preserve historical failures?
