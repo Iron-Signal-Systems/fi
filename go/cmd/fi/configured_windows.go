@@ -8,16 +8,14 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/scopeidentity"
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
@@ -308,13 +306,7 @@ func configuredUSNPassesPartial(passes []usnSpoolNextSummary) bool {
 }
 
 func configuredScopeID(governedRoot string) string {
-	canonical := strings.TrimRight(strings.TrimSpace(governedRoot), `\`)
-	if len(canonical) == 2 && canonical[1] == ':' {
-		canonical += `\`
-	}
-	canonical = strings.ToLower(canonical)
-	digest := sha256.Sum256([]byte(canonical))
-	return "root-" + hex.EncodeToString(digest[:16])
+	return scopeidentity.GovernedRootScopeID(governedRoot)
 }
 
 func compareUSN(left, right string) (int, error) {
