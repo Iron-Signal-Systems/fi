@@ -330,12 +330,19 @@ FICollector
     non-admin
 ```
 
-The bounded privileged helper is:
+FI keeps privileged Windows responsibilities split across two helpers with
+different authority:
 
 ```text
 FIUSNReader
     separate per-host gMSA
     local Administrator on that host where required
+
+FIObjReader
+    separate per-host gMSA
+    non-admin
+    SeBackupPrivilege
+    SeSecurityPrivilege
 ```
 
 `FIUSNReader` exposes only the narrow operations defined by the accepted design:
@@ -346,6 +353,30 @@ ReadJournal
 CheckContainment
 ReadSACL
 ```
+
+`FIObjReader` exposes only:
+
+```text
+ObserveObject
+```
+
+`FIObjReader` is entered only when the normal collector's initial exact NTFS
+`OpenFileById` fails with Windows Access Denied. Successful object-reader
+observations retain explicit provenance:
+
+```text
+collection_entry_method = NTFSFileID
+collection_method       = BackupAuthorityWindowsNTFS
+```
+
+Ordinary collection remains:
+
+```text
+collection_method = DirectWindowsNTFS
+```
+
+Do not merge `FIObjReader` into `FIUSNReader`. Raw-volume USN authority and
+governed-object backup-authority reads are separate security problems.
 
 Do not turn `FIUSNReader` into:
 
@@ -360,15 +391,29 @@ service-control helper
 remote administration endpoint
 ```
 
-The helper independently validates/authorizes bounded requests.
+Do not turn `FIObjReader` into:
 
-Parsing, governed-root policy, record construction, hashing, spool ownership,
-checkpoints, SMB/local/AD collection, and broad operation logic remain outside the
-privileged helper.
+```text
+arbitrary ReadFile/OpenPath service
+generic filesystem proxy
+generic FSCTL proxy
+raw-byte download service
+command runner
+PowerShell host
+ACL/ownership modification service
+remote administration endpoint
+```
 
-Windows protected-object fallbacks must remain exact-build and behavior-gated
-where required. Do not generalize a Windows-version workaround merely because it
-worked on one build.
+Each helper independently validates and authorizes its bounded requests.
+
+`FICollector` retains FI configuration policy, governed-root policy, USN
+parsing, spool/checkpoint ownership, supporting-source collection, and broad
+operation logic. `FIObjReader` may perform only the bounded exact-object
+structural observation and content hashing required by its fixed protocol.
+
+Windows protected-object behavior must remain explicitly characterized. Do not
+generalize a result from one Windows release/build to another without separate
+validation.
 
 ---
 

@@ -45,7 +45,10 @@ release name is the same.
 
 ## Common split-privilege architecture
 
-Every monitored Windows file server uses two service identities:
+The accepted Gate 1 USN boundary uses the two service identities below.
+`FIObjReader`, where deployed, adds a third separate per-host identity for
+protected governed-object observation; it does not broaden the FIUSNReader
+identity or protocol:
 
 ```text
 FICollector
@@ -380,6 +383,190 @@ Production acceptance established:
   the exact pre-reboot change.
 
 ---
+
+## FIObjReader protected-object characterization
+
+`FIObjReader` is a separate service and privilege boundary from `FIUSNReader`.
+
+Its bounded path is:
+
+```text
+USN changed-object identity
+        |
+        v
+FICollector exact File-ID observation
+        |
+        +-- success
+        |      -> DirectWindowsNTFS
+        |
+        +-- initial OpenFileById Access Denied
+               |
+               v
+        FIObjReader ObserveObject
+               |
+               +-- exact configured-root authorization
+               +-- exact FRN / sequence validation
+               +-- scoped SeBackupPrivilege
+               +-- scoped SeSecurityPrivilege for SACL
+               +-- bounded structured NTFS observation
+               +-- BackupAuthorityWindowsNTFS provenance
+```
+
+The fallback is limited to the collector's initial exact
+`OpenFileById = ERROR_ACCESS_DENIED` condition. It is not a generic retry path for
+later metadata, security, hashing, consistency, path, identity, scope, or
+context failures.
+
+### Windows Server 2016 result
+
+On 2026-09-25, Windows Server 2016 build `10.0.14393` was characterized on
+`ISS-FS-01` with:
+
+```text
+FICollector: ISS\gFI-FS01$
+FIObjReader: ISS\gFI-OBJ-FS01$
+```
+
+The FIObjReader gMSA was not a local Administrator and was not a member of
+Backup Operators.
+
+The characterized rights were:
+
+```text
+SeServiceLogonRight
+SeBackupPrivilege
+SeSecurityPrivilege
+```
+
+The account did not require:
+
+```text
+SeRestorePrivilege
+SeManageVolumePrivilege
+```
+
+The live FIObjReader token showed `SeBackupPrivilege` and
+`SeSecurityPrivilege` disabled at steady state. After the successful
+backup-authority observation both privileges were again disabled.
+
+The controlled target remained the same NTFS identity:
+
+```text
+Volume:
+\\?\Volume{0eafbd57-0000-0000-0000-100000000000}\
+
+File Reference Number: 270203
+Sequence Number:        1070
+```
+
+An explicit read/read-execute deny was applied to the normal collector identity.
+
+FI preserved:
+
+```text
+ACE 0  AccessDenied   ISS\gFI-FS01$
+ACE 1  AccessAllowed  ISS\gFI-FS01$  inherited
+```
+
+while FIObjReader returned complete observations with:
+
+```text
+collection_entry_method = NTFSFileID
+collection_method       = BackupAuthorityWindowsNTFS
+observation_status      = Complete
+warnings                = none
+```
+
+The object retained:
+
+```text
+logical size    33230
+allocated size  36864
+SHA-256         120cb326d97a9ef5f4d53a07d361ed1145a5bed4e7d4c65dcd80023faaf898a9
+SACL state      Present
+SACL ACL state  Null
+```
+
+The first protected observation followed the DACL `SecurityChange`.
+
+A timestamp-only controlled operation then generated `BasicInfoChange` while the
+content hash remained unchanged, and FI again used
+`BackupAuthorityWindowsNTFS`.
+
+After the original ACL was restored, the next `SecurityChange` was followed by a
+new observation of the same FRN/sequence using:
+
+```text
+collection_method = DirectWindowsNTFS
+```
+
+The explicit deny was absent and the DACL size returned from 148 bytes to 112
+bytes.
+
+This establishes that collection authority is an observation property, not a
+permanent property of the NTFS object.
+
+### Exact artifact provenance
+
+The characterized source commit was:
+
+```text
+b5e5f7ed0648f392dd54a1777f1671aab619893d
+```
+
+Validated deployed SHA-256 values were:
+
+```text
+FICollector
+b8a0ada73a065356d263e24ae4a3c3108d5badd938ecb8662b35d329671c6400
+
+FIObjReader
+1b8311f7f51bcfa020a048c1ea6be979804baecc148f29594845921377e21e46
+```
+
+Both matched binaries built from that commit.
+
+### Receiver compatibility result
+
+The first immutable generation carrying `BackupAuthorityWindowsNTFS` reached an
+older strict relational worker that did not recognize the new semantic value.
+
+That worker failed closed with:
+
+```text
+SOURCE_RECORD_REJECTED
+UnsupportedValue: collection_method
+```
+
+and committed zero relational source records for the rejected attempt.
+
+The immutable generation and append-only retry history remained intact.
+
+After deploying a compatible ingest worker built from the characterized commit,
+the same generation retried through durable journal state and completed:
+
+```text
+records_seen      20
+records_committed 20
+outcome           Accepted
+```
+
+The earlier rejection remained in ingest history.
+
+A producer change that introduces a new enumerated semantic value therefore
+requires explicit compatibility coverage and rollout ordering for each
+downstream strict decoder or validator.
+
+Unknown semantic values must continue to fail closed rather than being silently
+coerced.
+
+### Support boundary
+
+This result characterizes FIObjReader on Windows Server 2016 build `14393`.
+
+It does not automatically establish equivalent FIObjReader behavior on Windows
+Server 2019, 2022, 2025, or future releases/builds. Those releases require
+independent characterization.
 
 ## Security Event Log validation
 
