@@ -15,7 +15,13 @@ as applicable:
 - `fi-roadmap/roadmap.md`
 - `fi-roadmap/docs/roadmap/phase-01-windows-file-and-identity-intelligence.md`
 - `fi-roadmap/docs/roadmap/phase-02-secure-record-transport.md`
+- `fi-roadmap/docs/roadmap/phase-03-ingest-and-recorder.md`
+- `fi-roadmap/docs/roadmap/phase-04-classification-and-enrichment.md`
+- `fi-roadmap/docs/roadmap/phase-05-projection-query-and-user-experience.md`
+- `fi-roadmap/docs/roadmap/phase-06-integrated-deployment-and-release.md`
 - `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`
+- `docs/PUBLISHED-FI-PROJECTION-CONTRACT.md`
+- `docs/architecture/ADR-0001-FREEBSD-BACKEND.md`
 - `docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
 - `docs/COLLECTOR-CONTRACT.md`
 - `docs/LOCAL-SPOOL-INTEGRITY.md`
@@ -112,8 +118,9 @@ bounded FIUSNReader operations
 independent service USN catch-up after checkpoint establishment
 ```
 
-Phase 1 is complete for Gate 1, but defect correction, supported-build
-characterization, and pilot hardening remain valid work.
+Phase 1 / Gate 1 is complete. Post-Gate-1 defect correction, pilot
+hardening, and characterization of future Windows builds remain valid work
+without reopening the accepted Gate 1 result.
 
 ### Phase 2 — Secure Record Transport
 
@@ -133,7 +140,7 @@ retry / resume
 duplicate handling
 replay handling
 conflicting duplicate handling
-sequence handling
+generation-identity conflict handling
 backlog / catch-up
 restart / recovery behavior
 generation freezing / canonicalization / zstd encoding
@@ -183,14 +190,18 @@ The accepted Phase 3 topology authorizes one active backend ingest-worker host
 per deployment. The accepted worker is source-scoped through `-source`; that does
 not define the final multi-source backend topology.
 
-### Later phases
+### Phase 4 through Phase 6 boundaries
 
-Later phases may own classification/enrichment, cross-source correlation and
-derivation, higher-order projections/query, UX, and integrated release behavior.
+Phase 4 owns classification/enrichment and the Separate Protected Classification
+Stream. Phase 5 owns Published FI Projections, query/API behavior, and protected
+user experience. Phase 6 owns integrated deployment, release, backup/recovery,
+upgrade/rollback, and the supported backend deployment profile.
 
-Do not pull later-phase responsibilities into the Windows source collector,
-transport path, or Phase 3 recorder merely because implementation there appears
-convenient.
+These are accepted roadmap/design boundaries, not claims that Phase 4 through
+Phase 6 implementation or acceptance is complete.
+
+Do not pull those responsibilities into the Windows source collector, transport
+path, or Phase 3 recorder merely because implementation there appears convenient.
 
 ---
 
@@ -538,11 +549,17 @@ Linux
     relational reconciliation / repair runtime
 ```
 
-FreeBSD is not currently part of the FI pilot support contract.
+FreeBSD is not currently part of the accepted FI pilot support contract.
+The accepted Gate 3 backend/runtime remains Linux.
 
-FreeBSD may be evaluated as a later backend portability target, but code must not
-claim or imply FreeBSD support until that platform has its own implementation,
-validation, packaging, and operational acceptance.
+`docs/architecture/ADR-0001-FREEBSD-BACKEND.md` records FreeBSD with VNET jails,
+PF, and ZFS as the **proposed Phase 6 target backend profile**. The ADR remains
+`Proposed`; this is an architectural direction, not a claim of implemented or
+supported FreeBSD runtime behavior.
+
+Code must not claim or imply FreeBSD support until that platform has its own
+implementation, CI/build coverage, validation, packaging, migration proof, and
+operational acceptance.
 
 Do not broaden the supported platform contract merely because Go code happens to
 compile there.

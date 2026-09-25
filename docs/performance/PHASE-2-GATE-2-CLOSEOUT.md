@@ -6,7 +6,11 @@ Phase 2 status: **COMPLETE — PASS**
 
 Gate 2 status: **COMPLETE — PASS**
 
-Phase 3 / Gate 3: **ACTIVE**
+Phase 3 / Gate 3 at this closeout checkpoint: **ACTIVE**
+
+> **Later status update — 2026-09-24:** Phase 3 / Gate 3 subsequently completed
+> **COMPLETE — PASS**. The `ACTIVE` state above is retained as the dated
+> 2026-09-20 Gate 2 closeout context.
 
 Repository baseline at closeout preparation:
 
@@ -349,5 +353,5 @@ Final decision:
 ```text
 Phase 2 — Secure Record Transport:       COMPLETE — PASS
 Gate 2 — Secure Durable Record Transfer: COMPLETE — PASS
-Phase 3 — Ingest & Recorder:             ACTIVE
+Phase 3 — Ingest & Recorder on 2026-09-20: ACTIVE (historical checkpoint)
 ```

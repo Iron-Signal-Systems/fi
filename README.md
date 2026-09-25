@@ -659,8 +659,10 @@ receipt and transfer identity.
 ## Accepted Phase 3 relational ingest and recorder materialization
 
 Phase 3 / Gate 3 is complete. The accepted relational implementation is
-`fi-postgresql-relational-ingest/0.2` and establishes a typed PostgreSQL
-materialization layer on top of the immutable Phase 2 recorder authority.
+`fi-postgresql-relational-ingest/0.2` and establishes the authoritative typed
+PostgreSQL FI System of Record from the immutable Phase 2 recorder authority.
+Recorder custody remains the accepted source representation and authorization
+basis for each generation.
 
 The implemented path is:
 

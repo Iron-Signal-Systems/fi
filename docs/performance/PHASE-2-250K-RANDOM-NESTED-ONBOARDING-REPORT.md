@@ -573,6 +573,9 @@ Windows Security scheduler remediation:   PASS (source-side)
 A later clean 250K rerun may be used for a clean scale datapoint. It does not
 replace this report.
 
-This campaign contributes substantial live Gate 2 validation but is not itself
-Gate 2 closeout. Remaining closure work is tracked in
-`PHASE-2-GATE-2-CLOSURE-CHECKLIST.md`.
+This campaign contributed substantial live Gate 2 validation but was not
+itself Gate 2 closeout. At this campaign checkpoint, remaining closure work was
+tracked in `PHASE-2-GATE-2-CLOSURE-CHECKLIST.md`.
+
+Gate 2 subsequently closed **COMPLETE — PASS** on 2026-09-20. This report
+preserves the campaign state rather than rewriting the earlier checkpoint.

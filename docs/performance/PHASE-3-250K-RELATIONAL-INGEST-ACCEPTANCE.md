@@ -107,9 +107,9 @@ The largest of those early generations contained three batches, approximately
 After the initial eight generations, read-only reconciliation reported the eight
 recorder receipts as accepted with no conflict.
 
-No PostgreSQL tuning conclusion is drawn from this early timing. The campaign is
-currently validating correctness, authority, recovery, and representative
-behavior before deciding whether database tuning is necessary.
+No PostgreSQL tuning conclusion is drawn from this early timing. At this early
+checkpoint, the campaign was validating correctness, authority, recovery, and
+representative behavior before deciding whether database tuning was necessary.
 
 ## ContentPrefix rejection and correction
 
@@ -207,7 +207,7 @@ count, and no observed prefix length disagreed with its decoded byte length.
 
 The temporary shell consumer used during early diagnostics was retired.
 
-The current live acceptance consumer is the Go command:
+At this checkpoint, the live acceptance consumer was the Go command:
 
 ```text
 go/cmd/fi-ingest-worker

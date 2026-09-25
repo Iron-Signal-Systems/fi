@@ -240,7 +240,7 @@ lose FI history across failures, retries, restarts, or network interruption.
 ## Phase 3 — Ingest & Recorder
 
 Verify transported FI material and write the resulting typed historical records
-to the FI relational System-of-Record materialization while preserving the
+to the authoritative relational FI System of Record while preserving the
 immutable Phase 2 recorder authority that authorized the generation.
 
 The implemented Phase 3 path now includes:
