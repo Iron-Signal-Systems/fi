@@ -72,7 +72,10 @@ func ValidateObservation(observation Observation) error {
 	default:
 		return &records.ValidationError{Code: "UnsupportedValue", Field: "collection_entry_method"}
 	}
-	if observation.CollectionMethod != records.CollectionDirectWindowsNTFS {
+	switch observation.CollectionMethod {
+	case records.CollectionBackupAuthorityWindowsNTFS,
+		records.CollectionDirectWindowsNTFS:
+	default:
 		return &records.ValidationError{Code: "UnsupportedValue", Field: "collection_method"}
 	}
 	if err := records.ValidateObservationStatus(observation.ObservationStatus); err != nil {

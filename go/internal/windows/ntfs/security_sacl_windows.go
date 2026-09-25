@@ -19,6 +19,9 @@ import (
 const (
 	saclPrivilegeUnavailable = "SACLPrivilegeUnavailable"
 	saclDescriptorReadFailed = "SACLDescriptorReadFailed"
+
+	saclWindowsErrorNotAllAssigned   syscall.Errno = 1300
+	saclWindowsErrorPrivilegeNotHeld syscall.Errno = 1314
 )
 
 // SACLDescriptorReader retrieves the raw SACL security descriptor for one
@@ -120,16 +123,9 @@ func querySACLDescriptorWithReader(
 		uint16(sequenceNumber),
 	)
 	if err != nil {
-		return nil, &saclQueryError{ReasonCode: saclBrokerReasonCode(err), Err: err}
+		return nil, &saclQueryError{ReasonCode: saclReaderReasonCode(err), Err: err}
 	}
 	return raw, nil
-}
-
-func saclBrokerReasonCode(err error) string {
-	if errors.Is(err, usnbroker.ErrSACLPrivilegeUnavailable) {
-		return saclPrivilegeUnavailable
-	}
-	return saclDescriptorReadFailed
 }
 
 func saclQueryReasonCode(err error) string {
@@ -137,5 +133,22 @@ func saclQueryReasonCode(err error) string {
 	if errors.As(err, &queryErr) && queryErr.ReasonCode != "" {
 		return queryErr.ReasonCode
 	}
+	return saclDescriptorReadFailed
+}
+
+func saclReaderReasonCode(err error) string {
+	if errors.Is(err, usnbroker.ErrSACLPrivilegeUnavailable) {
+		return saclPrivilegeUnavailable
+	}
+
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case saclWindowsErrorNotAllAssigned,
+			saclWindowsErrorPrivilegeNotHeld:
+			return saclPrivilegeUnavailable
+		}
+	}
+
 	return saclDescriptorReadFailed
 }

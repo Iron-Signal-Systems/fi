@@ -8,20 +8,35 @@ package ntfs
 
 import (
 	"fmt"
+	"syscall"
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnbroker"
 )
 
-func TestSACLBrokerReasonCodeDefaultsToReadFailure(t *testing.T) {
-	if got := saclBrokerReasonCode(fmt.Errorf("broker unavailable")); got != saclDescriptorReadFailed {
+func TestSACLReaderReasonCodeDefaultsToReadFailure(t *testing.T) {
+	if got := saclReaderReasonCode(fmt.Errorf("reader unavailable")); got != saclDescriptorReadFailed {
 		t.Fatalf("reason code = %q, want %q", got, saclDescriptorReadFailed)
 	}
 }
 
-func TestSACLBrokerReasonCodeMapsPrivilegeUnavailable(t *testing.T) {
+func TestSACLReaderReasonCodeMapsBrokerPrivilegeUnavailable(t *testing.T) {
 	err := fmt.Errorf("wrapped: %w", usnbroker.ErrSACLPrivilegeUnavailable)
-	if got := saclBrokerReasonCode(err); got != saclPrivilegeUnavailable {
+	if got := saclReaderReasonCode(err); got != saclPrivilegeUnavailable {
+		t.Fatalf("reason code = %q, want %q", got, saclPrivilegeUnavailable)
+	}
+}
+
+func TestSACLReaderReasonCodeMapsNotAllAssigned(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", syscall.Errno(1300))
+	if got := saclReaderReasonCode(err); got != saclPrivilegeUnavailable {
+		t.Fatalf("reason code = %q, want %q", got, saclPrivilegeUnavailable)
+	}
+}
+
+func TestSACLReaderReasonCodeMapsPrivilegeNotHeld(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", syscall.Errno(1314))
+	if got := saclReaderReasonCode(err); got != saclPrivilegeUnavailable {
 		t.Fatalf("reason code = %q, want %q", got, saclPrivilegeUnavailable)
 	}
 }

@@ -13,7 +13,8 @@ package records
 type CollectionMethod string
 
 const (
-	CollectionDirectWindowsNTFS CollectionMethod = "DirectWindowsNTFS"
+	CollectionBackupAuthorityWindowsNTFS CollectionMethod = "BackupAuthorityWindowsNTFS"
+	CollectionDirectWindowsNTFS          CollectionMethod = "DirectWindowsNTFS"
 )
 
 // ObservationState describes a sub-observation that can fail without making the

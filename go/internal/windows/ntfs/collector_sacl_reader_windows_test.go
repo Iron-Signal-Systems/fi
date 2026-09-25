@@ -188,3 +188,32 @@ func TestCollectFileReferenceWithSACLReaderUsesInjectedReader(t *testing.T) {
 		)
 	}
 }
+
+func TestValidateObservationAcceptsBackupAuthorityCollectionMethod(t *testing.T) {
+	rootPath := t.TempDir()
+	targetPath := filepath.Join(rootPath, "backup-authority-method.txt")
+
+	if err := os.WriteFile(
+		targetPath,
+		[]byte("FI backup-authority collection method test"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	observation, err := CollectPath(
+		context.Background(),
+		"backup-authority-method-test",
+		rootPath,
+		targetPath,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	observation.CollectionMethod = records.CollectionBackupAuthorityWindowsNTFS
+
+	if err := ValidateObservation(observation); err != nil {
+		t.Fatalf("backup-authority observation validation failed: %v", err)
+	}
+}
