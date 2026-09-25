@@ -266,8 +266,8 @@ Closed hardening items now include:
 
 The singleton is intentionally local to one backend host. Phase 3 supports one
 active backend ingest-worker host per deployment. This does not make Windows
-source count part of the singleton contract; the current acceptance worker
-remains explicitly source-scoped through `-source`, and final multi-source
+source count part of the singleton contract; the worker used for this acceptance
+remained explicitly source-scoped through `-source`, and final multi-source
 backend topology is separate work. Cross-backend HA/failover requires a future
 authoritative distributed lock or lease. PostgreSQL uniqueness is an integrity
 backstop, not a distributed election mechanism.

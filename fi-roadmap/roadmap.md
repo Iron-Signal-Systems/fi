@@ -45,7 +45,7 @@ path, recorder-aware reconciliation/inventory, permanent sequential Go ingest
 worker, failure/recovery behavior, and final authoritative reconciliation all
 completed Gate 3 acceptance.
 
-Current Phase 3 checkpoint:
+Final Phase 3 / Gate 3 closeout state:
 
 ```text
 49-table relational foundation          PASS
@@ -58,7 +58,7 @@ Duplicate-safe AlreadyAccepted          PASS
 Rejected-generation rollback            PASS
 Volume-qualified NTFS/USN identity      PASS
 Read-only reconcile/inventory           PASS
-Live Go ingest worker                   PASS for validation
+Permanent Go ingest worker              PASS
 Bounded READY operational discovery     PASS
 Durable rejection retry ordering        PASS
 Host-local singleton protection         PASS
@@ -265,17 +265,16 @@ packaging/runtime acceptance, PostgreSQL reconnect/backoff proof, and final
 authoritative reconciliation are accepted Phase 3 results rather than remaining
 work.
 
-The current singleton lock is explicitly host-local. Phase 3 supports one active
-backend ingest-worker host per deployment. This backend ownership boundary is
-independent of Windows source count; the current acceptance worker remains
-source-scoped through `-source`, and final multi-source backend topology is a
-separate deployment concern. Cross-backend HA/failover requires a future
-authoritative distributed lock or lease and is not implied by the host-local
-`flock()`.
+The accepted singleton lock is explicitly host-local. Phase 3 supports one
+active backend ingest-worker host per deployment. This backend ownership boundary
+is independent of Windows source count; the accepted worker is source-scoped
+through `-source`, and final multi-source backend topology is a separate
+deployment concern. Cross-backend HA/failover requires a future authoritative
+distributed lock or lease and is not implied by the host-local `flock()`.
 
-**Gate 3 — Authoritative Record & Journal Integrity:** prove authoritative FI
-history is write-once, reconstructable, and every material ingest outcome is
-preserved.
+**Gate 3 — Authoritative Record & Journal Integrity: COMPLETE — PASS.**
+Accepted proof establishes that authoritative FI history is write-once,
+reconstructable, and every material ingest outcome is preserved.
 
 [Phase 3 details](docs/roadmap/phase-03-ingest-and-recorder.md)
 

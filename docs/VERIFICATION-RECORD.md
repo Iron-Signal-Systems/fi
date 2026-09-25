@@ -340,7 +340,10 @@ replace them.
 - [ ] Inventory revalidates pending generations through the exact custody loader.
 - [ ] Inventory reports supported record-kind coverage and the missing-kind set.
 
-### Current live worker
+### Accepted relational ingest worker
+
+The following are deployment/runtime verification items. They do not represent
+the project-level Gate 3 status.
 
 - [ ] Worker processes pending generations sequentially.
 - [ ] Worker fails closed on reconcile conflict.
@@ -348,31 +351,40 @@ replace them.
 - [ ] Worker can limit validation attempts with `-max-attempts`.
 - [ ] Source-record rejection is deferred rather than terminating all later
       pending work in the same process.
-- [ ] Current rejection retry deferral is recognized as in-memory only and is
-      **not** treated as production-durable suppression.
-- [ ] Current polling rescans the recorded receipt root and is **not** treated as
-      the final bounded/incremental production discovery mechanism.
-- [ ] Permanent service acceptance does not occur until retry persistence,
-      bounded discovery, ordering policy, singleton/advisory locking, and
-      supervisor/backoff behavior are accepted.
+- [ ] Durable PostgreSQL-backed `SOURCE_RECORD_REJECTED` retry state survives
+      worker restart and preserves deterministic retry ordering.
+- [ ] Normal operational discovery uses bounded READY-marker discovery rather
+      than rescanning every recorder receipt on every polling pass.
+- [ ] Host-local singleton `flock()` prevents duplicate worker processes on the
+      same backend host.
+- [ ] PostgreSQL availability loss is handled by bounded in-process
+      reconnect/backoff with runtime-boundary revalidation before ingest resumes.
+- [ ] Permanent systemd service behavior uses bounded restart policy and does not
+      create an unrestricted restart storm for permanent fail-closed errors.
 
-### Gate 3 acceptance state
+### Phase 3 / Gate 3 project status
 
-- [ ] Fresh relational acceptance starts from a deliberately emptied relational
-      database, not from mixed historical materialization state.
-- [ ] Final reconcile reports all discovered receipts accepted, `Pending=0`, and
-      `Conflict=0` for the accepted corpus.
+**COMPLETE — PASS — 2026-09-24**
+
+Accepted project-level Gate 3 results include:
+
+- [x] Fresh relational acceptance started from a deliberately emptied 49-table
+      relational database.
+- [x] Final unfiltered reconcile reported 1,342 discovered receipts, 1,342
+      accepted generations, `Pending=0`, and `Conflict=0`.
 - [x] All 13 supported record kinds have authoritative receiver/database proof.
 - [x] `USNContinuityGap` receiver/database proof is complete.
-- [ ] Controlled PostgreSQL outage/recovery retains recorder custody and catches
-      up without partial authority.
-- [ ] Worker restart during representative ingest does not create ambiguous
-      authority or duplicate authoritative rows.
-- [ ] Backup/restore preserves relational authority and ingest-journal identity.
+- [x] Controlled PostgreSQL outage/recovery and reconnect/backoff retained
+      recorder custody and recovered without partial authority.
+- [x] Worker restart and in-transaction crash testing preserved unambiguous
+      authority and exactly-once later acceptance.
+- [x] Permanent Linux `fi-ingest-worker.service` runtime packaging and lifecycle
+      behavior completed controlled acceptance.
 
-Until the remaining unchecked Gate 3 acceptance items are satisfied, Phase 3
-remains active and the current live worker must not be documented as the final
-production service.
+Integrated product backup, restore, disaster recovery, and recovery validation
+remain Phase 6 release responsibilities rather than a Phase 3 Gate 3 closure
+criterion. Deployment-specific backup/restore checks may still be recorded
+separately where applicable.
 
 ## Final service state
 

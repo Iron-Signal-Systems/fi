@@ -8,20 +8,21 @@ ingest worker.
 The singleton boundary is a backend-host concern, not a Windows-source-count
 limit.
 
-The current Phase 3 acceptance worker is source-scoped through `-source`; that
-does not define the final multi-source backend topology. A later deployment may
-aggregate multiple Windows sources into one worker or use another explicitly
-coordinated local model.
+The accepted Phase 3 worker is source-scoped through `-source`; that does not
+define the final multi-source backend topology. A later deployment may aggregate
+multiple Windows sources into one worker or use another explicitly coordinated
+local model.
 
 Regardless of that local source topology, distributed coordination becomes
 necessary only when more than one backend host can contend for active ingest
 ownership.
 
-## Current active-worker model
+## Accepted active-worker model
 
-Phase 3 supports one active relational ingest-worker host per backend deployment.
+The accepted Phase 3 topology supports one active relational ingest-worker host
+per backend deployment.
 
-The current worker acquires:
+The accepted worker acquires:
 
 ```text
 /run/fi/fi-ingest-worker.lock
@@ -34,7 +35,7 @@ Linux host.
 
 It does not provide distributed coordination across backend hosts.
 
-For example, this is outside the current Phase 3 operating contract:
+For example, this is outside the accepted Phase 3 operating contract:
 
 ```text
 receiver-a                         receiver-b
@@ -222,11 +223,11 @@ configuration, runtime-identity, database-identity, schema/foundation,
 privilege-boundary, or other fail-closed startup error must not create an
 unrestricted restart storm.
 
-Phase 3 service acceptance must prove the installed unit, systemd-created runtime
+Phase 3 service acceptance proved the installed unit, systemd-created runtime
 directory, singleton behavior, normal startup reconciliation, bounded crash
 restart, bounded permanent-failure behavior, and clean operator-requested stop.
-The already accepted PostgreSQL reconnect campaign remains the authority for
-same-process database-loss/reconnect semantics.
+The accepted PostgreSQL reconnect campaign remains the authority for same-process
+database-loss/reconnect semantics.
 
 
 ### Accepted service-runtime behavior

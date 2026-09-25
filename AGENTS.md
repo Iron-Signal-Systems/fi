@@ -179,8 +179,8 @@ READY markers are bounded operational notifications only.
 The append-only ingest journal preserves attempt history. A later success does
 not erase an earlier rejection, failure, or incomplete attempt.
 
-Phase 3 currently authorizes one active backend ingest-worker host per deployment.
-The current acceptance worker remains source-scoped through `-source`; that does
+The accepted Phase 3 topology authorizes one active backend ingest-worker host
+per deployment. The accepted worker is source-scoped through `-source`; that does
 not define the final multi-source backend topology.
 
 ### Later phases
@@ -617,12 +617,12 @@ A successful retry does not erase the earlier rejection.
 
 ### Singleton ownership
 
-The current Phase 3 singleton lock is host-local `flock()` protection.
+The accepted Phase 3 singleton lock is host-local `flock()` protection.
 
 It prevents duplicate ingest-worker processes on one backend host. It is not a
 distributed election or lease.
 
-Phase 3 currently supports:
+The accepted Phase 3 topology supports:
 
 ```text
 one active backend ingest-worker host per deployment
@@ -697,7 +697,7 @@ relational conflict, and ordinary non-availability SQL failures remain
 fail-closed.
 
 A successful PostgreSQL connection or reconnect must re-run the existing runtime
-boundary validation before ingest resumes. The current Phase 3 validation
+boundary validation before ingest resumes. The accepted Phase 3 validation
 includes:
 
 ```text
