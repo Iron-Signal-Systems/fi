@@ -21,7 +21,14 @@ const (
 	saclDescriptorReadFailed = "SACLDescriptorReadFailed"
 )
 
-type saclDescriptorReader func(
+// SACLDescriptorReader retrieves the raw SACL security descriptor for one
+// exact NTFS object identity inside a governed root.
+//
+// The caller owns the authority used to perform the read. FICollector normally
+// supplies the FIUSNReader broker-backed implementation. FIObjReader can supply
+// a local privileged implementation without changing the NTFS observation
+// engine.
+type SACLDescriptorReader func(
 	context.Context,
 	string,
 	uint64,
@@ -41,6 +48,20 @@ func (e *saclQueryError) Unwrap() error {
 	return e.Err
 }
 
+func defaultSACLDescriptorReader(
+	ctx context.Context,
+	governedRoot string,
+	fileReferenceNumber uint64,
+	sequenceNumber uint16,
+) ([]byte, error) {
+	return usnbroker.ReadSACL(
+		ctx,
+		governedRoot,
+		fileReferenceNumber,
+		sequenceNumber,
+	)
+}
+
 // querySACLDescriptor asks the privileged FIUSNReader boundary to retrieve the
 // raw SACL for the exact object identity derived from the already-proven FI
 // handle. FICollector remains responsible for parsing and recording the returned
@@ -50,19 +71,24 @@ func querySACLDescriptor(
 	root governedRootContext,
 	handle syscall.Handle,
 ) ([]byte, error) {
-	return querySACLDescriptorWithReader(ctx, root, handle, usnbroker.ReadSACL)
+	return querySACLDescriptorWithReader(
+		ctx,
+		root,
+		handle,
+		defaultSACLDescriptorReader,
+	)
 }
 
 func querySACLDescriptorWithReader(
 	ctx context.Context,
 	root governedRootContext,
 	handle syscall.Handle,
-	readSACL saclDescriptorReader,
+	readSACL SACLDescriptorReader,
 ) ([]byte, error) {
 	if readSACL == nil {
 		return nil, &saclQueryError{
 			ReasonCode: saclDescriptorReadFailed,
-			Err:        errors.New("SACL broker reader is required"),
+			Err:        errors.New("SACL reader is required"),
 		}
 	}
 
