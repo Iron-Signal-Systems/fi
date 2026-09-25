@@ -571,4 +571,8 @@ cadence remains deployment-specific and measurement-driven.
 
 **Phase 1: COMPLETE**
 
-**Phase 2 / Gate 2: ACTIVE**
+**Phase 2 / Gate 2 at this 2026-09-09 checkpoint: ACTIVE**
+
+> **Later status update — 2026-09-20:** Phase 2 / Gate 2 subsequently completed
+> **COMPLETE — PASS**. This record preserves the Gate 1 closeout state as it
+> existed on 2026-09-09.

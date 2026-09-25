@@ -6,7 +6,11 @@ Phase 1 status: **COMPLETE — PASS**
 
 Gate 1 status: **COMPLETE — PASS**
 
-Phase 2 / Gate 2: **ACTIVE**
+Phase 2 / Gate 2 at this closeout checkpoint: **ACTIVE**
+
+> **Later status update — 2026-09-20:** Phase 2 / Gate 2 subsequently completed
+> **COMPLETE — PASS**. The `ACTIVE` state above is retained as the dated
+> 2026-09-09 Phase 1 closeout context.
 
 ## Final FICollector identity
 
@@ -83,4 +87,4 @@ cadence remains deployment-specific and measurement-driven.
 
 **Phase 1: COMPLETE**
 
-**Phase 2 / Gate 2: ACTIVE**
+**Phase 2 / Gate 2 at this 2026-09-09 checkpoint: ACTIVE**

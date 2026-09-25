@@ -307,7 +307,7 @@ It does not:
 Those actions need to remain reviewable deployment steps rather than hidden side
 effects of gMSA creation.
 
-The Windows service runtime itself is implemented in FI. Remaining Phase 1 work
-is deployment hardening, reproducibility, broader operational/failure testing,
-activity validation, performance measurement, and supported-version
-characterization.
+The Windows service runtime itself is implemented in FI, and Phase 1 / Gate 1
+is complete. Deployment automation, pilot hardening, broader operational/failure
+testing, future-build characterization, and release packaging may continue
+without being described as remaining Phase 1 closure work.

@@ -121,8 +121,9 @@ total disagreement, incomplete child rows, or missing typed projections.
 
 ## Phase 3 relational administrative surfaces
 
-The current Phase 3 administrative commands are engineering/acceptance surfaces.
-They are not yet a finished production operator experience.
+The accepted Phase 3 administrative commands are engineering and operational
+surfaces. They remain technical administrative interfaces rather than the
+finished product/query user experience.
 
 ### `fi-ingest`
 
@@ -179,7 +180,7 @@ The reconcile tool deliberately does not expose a write/reconcile mode.
 
 ### `fi-ingest-worker`
 
-The current worker is a sequential live consumer for Phase 3 acceptance. Useful
+The accepted worker is the permanent sequential live Phase 3 consumer. Useful
 administrative output includes:
 
 - polling time;
@@ -190,20 +191,34 @@ administrative output includes:
 - elapsed ingest time; and
 - terminal outcome.
 
-The current implementation has known pre-production limits that administrative
-documentation must not hide:
+The accepted runtime properties that administrative documentation must expose
+include:
 
-- source-record rejection cooldown is held in memory and is lost on restart;
-- each polling pass currently replans from the recorded receipt root rather than
-  using a bounded/incremental discovery cursor;
-- reconcile conflict fails the worker closed;
-- non-rejection ingest/database failures terminate the worker for supervisor
-  handling;
-- singleton/advisory locking is not yet implemented; and
-- production supervisor/backoff semantics remain to be finalized.
+- durable PostgreSQL-backed `SOURCE_RECORD_REJECTED` retry state across worker
+  restart;
+- bounded READY-marker discovery for normal operational ingest rather than
+  full-receipt-root scanning on every polling pass;
+- deterministic journal-driven rejected-generation retry ordering;
+- reconcile conflict that fails the worker closed;
+- host-local singleton `flock()` protection acquired before PostgreSQL access;
+- PostgreSQL availability reconnect/backoff with runtime-boundary revalidation
+  before ingest resumes;
+- adaptive authoritative operational repair reconciliation; and
+- permanent systemd service packaging with bounded restart behavior and
+  fail-closed permanent configuration/database-boundary errors.
 
-These limits are acceptance/hardening work. They are not permission to bypass the
-recorder authority path or to introduce ad-hoc filesystem discovery.
+The accepted Phase 3 topology still has deliberate deployment boundaries that
+administrative documentation must not hide:
+
+- one active backend ingest-worker host per deployment;
+- the accepted worker remains source-scoped through `-source`;
+- cross-backend HA/failover requires a future authoritative distributed lock or
+  lease before multiple backend hosts may contend for ingest ownership; and
+- the administrative commands remain technical operating surfaces rather than
+  the final product/query UX.
+
+These boundaries are not permission to bypass the recorder authority path or to
+introduce ad-hoc filesystem discovery.
 
 ---
 

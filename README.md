@@ -565,8 +565,14 @@ observation. Subsequent observations add history.
 
 Material changes create new records rather than silently rewriting prior history.
 
-Historical records are authoritative. Current-state, operational, reporting, and
-role-oriented backend views are rebuildable representations of that history.
+The PostgreSQL FI System of Record is the authoritative relational
+representation of accepted FI history.
+
+Current-state, operational, reporting, search, and role-oriented
+representations are **Published FI Projections**: validated, rebuildable,
+query-optimized representations of authoritative history through an explicit
+publication boundary. A Published FI Projection is not a second source of
+truth.
 
 ---
 
@@ -650,11 +656,13 @@ receipt and transfer identity.
 
 ---
 
-## Current Phase 3 relational ingest and recorder materialization
+## Accepted Phase 3 relational ingest and recorder materialization
 
 Phase 3 / Gate 3 is complete. The accepted relational implementation is
-`fi-postgresql-relational-ingest/0.2` and establishes a typed PostgreSQL
-materialization layer on top of the immutable Phase 2 recorder authority.
+`fi-postgresql-relational-ingest/0.2` and establishes the authoritative typed
+PostgreSQL FI System of Record from the immutable Phase 2 recorder authority.
+Recorder custody remains the accepted source representation and authorization
+basis for each generation.
 
 The implemented path is:
 
@@ -714,20 +722,20 @@ recorder receipts to PostgreSQL state; inventory mode reopens only pending exact
 recorded generations through FI's custody loader and reports validated record-kind
 coverage without database writes.
 
-A sequential Go ingest worker now performs live receipt discovery and relational
-ingest for the Phase 3 acceptance campaign. The worker uses bounded READY-marker
-discovery for normal work, durable ingest-journal retry state for rejected
-generations, a host-local singleton lock, and adaptive authoritative repair
-reconciliation.
+The permanent sequential Go ingest worker performs live receipt discovery and
+relational ingest for the accepted Phase 3 runtime. The worker uses bounded
+READY-marker discovery for normal work, durable ingest-journal retry state for
+rejected generations, a host-local singleton lock, and adaptive authoritative
+repair reconciliation.
 
-The Phase 3 singleton lock is intentionally host-local. The current operating
+The Phase 3 singleton lock is intentionally host-local. The accepted operating
 contract supports one active backend ingest-worker host per deployment.
-Distributed ownership is independent of Windows source count; the current Phase
-3 acceptance worker itself remains source-scoped through `-source`. Final
-multi-source backend topology is a separate deployment concern. Multi-backend
-HA/failover requires a future authoritative distributed coordination mechanism
-such as a PostgreSQL advisory lock or database-backed lease before multiple
-backend hosts may contend for ingest ownership.
+Distributed ownership is independent of Windows source count; the accepted
+Phase 3 worker is source-scoped through `-source`. Final multi-source backend
+topology is a separate deployment concern. Multi-backend HA/failover requires a
+future authoritative distributed coordination mechanism such as a PostgreSQL
+advisory lock or database-backed lease before multiple backend hosts may contend
+for ingest ownership.
 
 The adaptive repair path starts conservatively after worker startup: six clean
 hourly full operational reconciliations, one clean 12-hour reconciliation, then
@@ -967,26 +975,38 @@ file's identity or history.**
              Phase 3 Relational Ingest
                          |
                          v
-         PostgreSQL Typed Materialization
+          PostgreSQL FI System of Record
+                     AUTHORITATIVE
                          |
-              +----------+----------+
-              |                     |
-              v                     v
-        Historical Records      Correlation
-                                    |
-                                    v
-                             PostgreSQL Views
-                                    |
-                                    v
-                             Query / UI / API
+                         | read only
+                         v
+                 Correlation / Projector
+                         |
+                         v
+                Candidate FI Projection
+                         |
+                     validation
+                         |
+                         v
+                Published FI Projection
+                   REBUILDABLE / QUERY
+                         |
+                         v
+                    Query / API
+                         |
+                         v
+                         UX
 ```
 
 The collector observes.
 
-The backend preserves and correlates.
+The authoritative backend preserves accepted FI history.
 
-Views present the same underlying information for different operational
-questions.
+Published FI Projections present validated, rebuildable, query-optimized
+representations of that history without becoming a second source of truth.
+
+See [`docs/PUBLISHED-FI-PROJECTION-CONTRACT.md`](docs/PUBLISHED-FI-PROJECTION-CONTRACT.md)
+for the publication, freshness, rebuild, and authority contract.
 
 FI remains non-remediating toward the systems it observes.
 

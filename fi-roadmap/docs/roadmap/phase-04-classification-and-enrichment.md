@@ -80,7 +80,7 @@ unknown binary content, or other governed categories.
 
 ## Content Persistence Rule
 
-The Linux FI system may transiently process bounded source-content buffers.
+The FI backend may transiently process bounded source-content buffers.
 
 It does not persist source content as:
 
@@ -109,6 +109,30 @@ Every classification attempt also produces journal state.
 
 ---
 
+## Classification and Projection Freshness
+
+Classification may advance independently from base file/history ingest.
+
+A slower classifier must not invalidate or unnecessarily block publication of
+newer base historical state.
+
+Published FI Projections must not silently represent older classification as if
+it were current. Where classification or another enrichment pipeline trails the
+base FI System of Record, the query surface must preserve the applicable
+freshness/completeness distinction.
+
+Conceptually:
+
+```text
+base FI history represented through:  source cut A
+classification represented through:   source cut B
+```
+
+The exact source-cut representation is owned by Phase 5 and the
+`docs/PUBLISHED-FI-PROJECTION-CONTRACT.md` contract.
+
+---
+
 ## Gate 4 — Protected Classification & Enrichment
 
 Gate 4 proves:
@@ -117,8 +141,10 @@ Gate 4 proves:
 - bounded protected content access;
 - safe cancellation and failure;
 - bounded recursive/container inspection;
-- no persistent Linux copy of customer source content;
+- no persistent backend copy of customer source content;
 - classifier/policy versioning;
 - immutable classification results;
-- classification journaling; and
+- classification journaling;
+- classification freshness can be represented without overstating completeness;
+  and
 - classification failure does not invalidate the base FI observation.

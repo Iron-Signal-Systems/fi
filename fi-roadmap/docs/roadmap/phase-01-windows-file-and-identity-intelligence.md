@@ -60,9 +60,9 @@ before volume-wide USN activity is treated as governed-object activity.
 | FI runtime resource journal | Implemented foundation / non-blocking | CPU, RAM, and process-I/O history exists for journaled USN operations. Broader coverage is useful for sizing and pilot validation but is not itself a Gate 1 blocker. |
 | Supporting-source refresh | Implemented, live validated, and service scheduled | `-supporting-refresh` records current SMB, local-identity, and relevant AD source facts into verified spool batches. `-service` can schedule it at an explicit operator-provided interval. No universal production cadence is declared; pilot and production intervals remain deployment-specific and measurement-driven. |
 | Windows service runtime | Implemented and live validated | The SCM runtime performs shared startup spool recovery, then runs governed-root/current-state work, USN catch-up, and Windows Security collection as intentional independent lanes. Each source keeps single-owner checkpoint semantics; supporting refresh remains sequential with the root lane. Stop/shutdown cancellation remains coordinated across workers. |
-| gMSA runtime | Implemented foundation and live validated | Per host, `FICollector` runs as a non-admin gMSA and `FIUSNReader` uses a separate privileged gMSA. Remaining work is deployment reproducibility and validation of service/binary/config/state/spool rights. |
-| Failure/restart campaign | Partially validated | Checkpoint gaps, operation restart recovery, helper outage, frozen USN checkpoint, collector continuation, helper restart, and USN catch-up are validated. Broader adverse-condition cases remain. |
-| Performance/source impact | Server 2016 Gate 1 campaign complete; production sizing remains | Tests 13 through 16 provide bounded baseline, churn, spool-pressure, and operation/resource characterization on Server 2016. Repeated representative measurements are still required before production cadence or general sizing limits are declared. |
+| gMSA runtime | Implemented, live validated, and Gate 1 accepted | Per host, `FICollector` runs as a non-admin gMSA and `FIUSNReader` uses a separate privileged gMSA. Gate 1 accepted the documented service/identity/rights boundary; additional deployment automation and release hardening belong to later pilot/release work. |
+| Failure/restart campaign | Gate 1 accepted; broader hardening may continue | Gate 1 accepted the required checkpoint-gap, operation-restart, helper-outage, frozen-USN-checkpoint, collector-continuation, helper-restart, and USN catch-up behavior. Additional adverse-condition characterization may continue without reopening Gate 1. |
+| Performance/source impact | Gate 1 accepted; production sizing remains deployment-specific | Gate 1 completed the required representative source-impact characterization. The accepted results remain measured environment-specific data; later pilot/production sizing and cadence selection remain deployment-specific and measurement-driven. |
 
 ---
 
@@ -276,10 +276,12 @@ policy.
 A missing Windows event must never be interpreted as proof that no activity
 occurred.
 
-### Remaining activity validation
+### Activity-validation disposition
 
-The event-selection foundation is implemented, but Gate 1 still needs an explicit
-behavior matrix that exercises representative:
+The event-selection foundation and required Gate 1 activity validation are
+accepted as part of the completed Gate 1 result. Representative activity cases
+remain useful for regression, future-build characterization, and pilot
+hardening, including:
 
 - create;
 - modify/write;
@@ -293,11 +295,12 @@ behavior matrix that exercises representative:
 - hard-link creation; and
 - local and remote SMB access.
 
-For every supported Windows Server version, the matrix should record exactly
-which source facts Windows supplies, what FI preserves, and which facts remain
-unavailable or ambiguous.
+For a future Windows Server build or materially changed collector candidate,
+validation should record exactly which source facts Windows supplies, what FI
+preserves, and which facts remain unavailable or ambiguous.
 
-This is primarily a validation campaign, not a new activity architecture.
+That later characterization does not reopen the accepted Gate 1 result unless a
+concrete source-intelligence requirement is shown to be unmet.
 
 ---
 

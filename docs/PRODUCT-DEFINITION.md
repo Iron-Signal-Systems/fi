@@ -156,11 +156,19 @@ directly. Internal path encodings such as UTF-16LE `bytea`, hexadecimal
 representations, relational joins, and database implementation details are owned
 by FI's query layer rather than exposed as prerequisites for ordinary use.
 
+Normal user-query workload operates against a **Published FI Projection** rather
+than competing directly with authoritative ingest. A Published FI Projection is
+a validated, rebuildable, query-optimized representation of FI System-of-Record
+history through an explicit authoritative source cut. It is not a second source
+of truth.
+
 That abstraction must not create a second or simplified truth. User-facing
 answers remain traceable to the same authoritative FI history, and users with
 appropriate access must be able to drill into the relationships and source facts
 supporting an answer. `Observed`, `Derived`, `Classified`, `Unknown`, and
 `Incomplete` remain distinct at every presentation depth.
+
+See [Published FI Projection Contract](PUBLISHED-FI-PROJECTION-CONTRACT.md).
 
 Administrative and diagnostic interfaces have a different responsibility. A
 professional operating FI locally, validating deployment, or troubleshooting its
@@ -252,13 +260,18 @@ Windows / File / Identity Sources
      Preserve Source Facts
               |
               v
-      Historical Records
+  FI System of Record
+       AUTHORITATIVE
               |
               v
-          Correlate
+      Correlate / Project
               |
               v
-       Query / Views / API
+  Published FI Projection
+        REBUILDABLE
+              |
+              v
+       Query / API / UX
               |
               v
         Useful Answers
@@ -266,8 +279,10 @@ Windows / File / Identity Sources
 
 Collectors should remain source-focused and simple.
 
-The backend owns historical preservation, cross-source correlation, derived
-relationships, and higher-level interpretation.
+The authoritative backend owns historical preservation. Cross-source correlation,
+derived relationships, search-oriented structures, and higher-level
+interpretation may be materialized into Published FI Projections without
+rewriting or replacing authoritative FI history.
 
 The query and user-experience layers present that knowledge in forms appropriate
 to the professional asking the question.
