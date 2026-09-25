@@ -1,0 +1,56 @@
+[Unit]
+Description=FI Relational Ingest Worker
+After=local-fs.target
+StartLimitIntervalSec=60s
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=fi-receiver
+Group=fi-receiver
+UMask=0077
+
+EnvironmentFile=/etc/fi/fi-ingest-worker.env
+
+RuntimeDirectory=fi
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+
+ExecStart=/opt/fi/bin/fi-ingest-worker \
+    -source ${FI_SOURCE_ID} \
+    -generation-custody-root /var/lib/fi/custody/generation \
+    -generation-recorded-root /var/lib/fi/custody/recorded \
+    -generation-ready-root /var/lib/fi/custody/ready \
+    -ready-batch-size 64 \
+    -retry-batch-size 64 \
+    -repair-interval 1h \
+    -poll-interval 2s \
+    -retry-after 15m \
+    -postgres-retry-initial 1s \
+    -postgres-retry-max 30s
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+ReadOnlyPaths=/var/lib/fi/custody/generation
+ReadOnlyPaths=/var/lib/fi/custody/recorded
+ReadWritePaths=/var/lib/fi/custody/ready
+ReadWritePaths=/run/fi
+
+[Install]
+WantedBy=multi-user.target

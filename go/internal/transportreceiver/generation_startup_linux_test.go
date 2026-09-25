@@ -9,6 +9,7 @@ package transportreceiver
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -57,9 +58,12 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 
 	if first.Discovered != 1 ||
 		first.RecordedNew != 1 ||
-		first.AlreadyRecorded != 0 {
+		first.AlreadyRecorded != 0 ||
+		first.ReadyPublished != 1 ||
+		first.ReadyWarnings != 0 ||
+		first.ReadyWarning != "" {
 		t.Fatalf(
-			"first startup result = %#v, want discovered=1 new=1 already=0",
+			"first startup result = %#v, want discovered=1 new=1 already=0 ready=1 warnings=0",
 			first,
 		)
 	}
@@ -69,6 +73,25 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 			"startup recording removed durable custody: %v",
 			err,
 		)
+	}
+
+	readyEntries, err := os.ReadDir(config.GenerationReadyRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readyEntries) != 1 {
+		t.Fatalf(
+			"first startup ready entry count = %d, want 1",
+			len(readyEntries),
+		)
+	}
+	if err := os.Remove(
+		filepath.Join(
+			config.GenerationReadyRoot,
+			readyEntries[0].Name(),
+		),
+	); err != nil {
+		t.Fatal(err)
 	}
 
 	second, err := RecoverGenerationStartup(
@@ -81,10 +104,51 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 
 	if second.Discovered != 1 ||
 		second.RecordedNew != 0 ||
-		second.AlreadyRecorded != 1 {
+		second.AlreadyRecorded != 1 ||
+		second.ReadyPublished != 0 ||
+		second.ReadyWarnings != 0 {
 		t.Fatalf(
-			"second startup result = %#v, want discovered=1 new=0 already=1",
+			"second startup result = %#v, want discovered=1 new=0 already=1 ready=0",
 			second,
+		)
+	}
+
+	readyEntries, err = os.ReadDir(config.GenerationReadyRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readyEntries) != 0 {
+		t.Fatalf(
+			"already-recorded startup republished %d ready entries",
+			len(readyEntries),
+		)
+	}
+}
+
+func TestRecoverGenerationStartupReadyFailureIsWarningOnly(
+	t *testing.T,
+) {
+	fixture := newGenerationTransactionFixture(t, false)
+	config := listenerGenerationConfigFromFixture(t, fixture)
+	config.GenerationReadyRoot = filepath.Join(t.TempDir(), "missing")
+
+	writeStartupGenerationCustody(t, fixture)
+
+	result, err := RecoverGenerationStartup(
+		config,
+		fixture.config.Custody.Receive.CurrentTime,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.RecordedNew != 1 ||
+		result.ReadyPublished != 0 ||
+		result.ReadyWarnings != 1 ||
+		result.ReadyWarning == "" {
+		t.Fatalf(
+			"startup ready failure result = %#v, want recorded new with one warning",
+			result,
 		)
 	}
 }
@@ -130,6 +194,17 @@ func TestRecoverGenerationStartupSemanticFailureBlocksStartup(
 		t.Fatalf(
 			"semantic startup failure published %d recorder entries",
 			len(entries),
+		)
+	}
+
+	readyEntries, readErr := os.ReadDir(config.GenerationReadyRoot)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(readyEntries) != 0 {
+		t.Fatalf(
+			"semantic startup failure published %d ready entries",
+			len(readyEntries),
 		)
 	}
 }

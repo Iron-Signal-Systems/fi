@@ -85,6 +85,13 @@ func TestReceiveAuthenticatedApplicationDispatchesGeneration(
 		)
 	}
 
+	if result.GenerationReadyWarning != "" {
+		t.Fatalf(
+			"generation ready warning = %q, want empty",
+			result.GenerationReadyWarning,
+		)
+	}
+
 	if result.GenerationAcknowledgement !=
 		transportgeneration.AcknowledgementOutcomeRecorded {
 		t.Fatalf(
@@ -326,6 +333,8 @@ func TestValidateGenerationListenerConfig(
 		t.TempDir()
 	configuredWithoutEnable.GenerationRecordedRoot =
 		t.TempDir()
+	configuredWithoutEnable.GenerationReadyRoot =
+		t.TempDir()
 	configuredWithoutEnable.GenerationMaxCanonicalBytes =
 		64 << 20
 	configuredWithoutEnable.GenerationMaxEncodedBytes =
@@ -352,6 +361,8 @@ func TestValidateGenerationListenerConfig(
 	valid.GenerationCustodyRoot =
 		t.TempDir()
 	valid.GenerationRecordedRoot =
+		t.TempDir()
+	valid.GenerationReadyRoot =
 		t.TempDir()
 	valid.GenerationMaxCanonicalBytes =
 		64 << 20
@@ -389,7 +400,15 @@ func TestValidateGenerationListenerConfig(
 					value.GenerationRecordedRoot =
 						value.GenerationCustodyRoot
 				},
-				want: "custody and recorder roots must be distinct",
+				want: "custody, recorder, and ready roots must be distinct",
+			},
+			{
+				name: "ready shares recorder root",
+				mutate: func(value *Config) {
+					value.GenerationReadyRoot =
+						value.GenerationRecordedRoot
+				},
+				want: "custody, recorder, and ready roots must be distinct",
 			},
 			{
 				name: "shares batch custody root",
@@ -468,6 +487,8 @@ func listenerGenerationConfigFromFixture(
 		fixture.config.Custody.RootDir
 	config.GenerationRecordedRoot =
 		fixture.config.Recorder.RootDir
+	config.GenerationReadyRoot =
+		fixture.config.ReadyRoot
 	config.GenerationMaxCanonicalBytes =
 		fixture.config.Custody.Receive.MaxCanonicalBytes
 	config.GenerationMaxEncodedBytes =

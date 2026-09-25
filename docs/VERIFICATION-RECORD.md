@@ -272,6 +272,108 @@ runtime.
 - [ ] Startup recovery preserves or resumes interrupted generation state.
 - [ ] Acknowledged-generation reclamation does not touch active generations.
 
+## Phase 3 / Gate 3 relational ingest verification
+
+These checks apply to the Linux receiver/PostgreSQL materialization boundary.
+They supplement the Windows and Phase 2 transport checks above; they do not
+replace them.
+
+### Database/runtime boundary
+
+- [ ] PostgreSQL runtime identity is `fi_ingest`.
+- [ ] Database is `fi` through the intended local PostgreSQL socket boundary.
+- [ ] Exactly 49 FI relational tables are present.
+- [ ] FI relational tables contain no JSON, JSONB, or XML storage columns.
+- [ ] `fi_ingest` has no `UPDATE`, `DELETE`, or `TRUNCATE` authority over
+      `fi.source_record`.
+- [ ] The active ingest version is
+      `fi-postgresql-relational-ingest/0.2`.
+
+### Recorder authority and generation identity
+
+- [ ] Ingest starts from an immutable deterministic recorder receipt.
+- [ ] Pending generation load reopens the exact durable FIGT custody object
+      through FI's generation loader.
+- [ ] PostgreSQL `recorded_generation` stores the immutable receipt SHA-256.
+- [ ] PostgreSQL `recorded_generation` stores the exact FIGT transfer SHA-256.
+- [ ] Reconcile detects a receipt/transfer identity mismatch as `Conflict`.
+- [ ] Declared batch/data-byte/record totals agree with the immutable receipt.
+- [ ] Actual relational child totals agree with the declared totals.
+- [ ] An exact previously accepted generation returns `AlreadyAccepted` without
+      duplicating authoritative rows.
+
+### Source records and typed projections
+
+- [ ] Source lineage hashes the exact LF-terminated source-record bytes.
+- [ ] Only `fi-spool-record/0.1` source records are accepted.
+- [ ] All 13 current collector-emitted record kinds are supported.
+- [ ] Every authoritative `source_record` has its required typed relational
+      projection.
+- [ ] Missing typed projection causes the generation to fail closed.
+- [ ] A source-record rejection rolls the generation transaction back.
+- [ ] A rejected generation reports zero authoritative records committed.
+- [ ] Valid `Present` content-prefix state permits zero observed bytes with an
+      empty prefix.
+- [ ] Content-prefix byte count must equal the decoded prefix length.
+- [ ] NTFS object identity is volume-qualified.
+- [ ] USN object observations bind to both the typed NTFS object and their
+      `USNReadBoundary` source record.
+
+### Ingest journal and atomicity
+
+- [ ] Attempt start is visible as an `Incomplete` / `AttemptStarted` journal
+      event.
+- [ ] Accepted generation and `Accepted` terminal journal event commit in the
+      same PostgreSQL transaction.
+- [ ] `Rejected`, `Failed`, `Conflict`, and `AlreadyAccepted` outcomes are
+      distinguishable in the journal.
+- [ ] Started attempts and terminal outcomes reconcile without orphaned partial
+      authority after the tested run.
+
+### Reconcile/inventory
+
+- [ ] `fi-ingest-reconcile -plan` performs no database writes.
+- [ ] `fi-ingest-reconcile -inventory` performs no database writes.
+- [ ] Reconcile reads only immutable recorder receipts rather than guessing
+      source-file names under custody storage.
+- [ ] Reconcile reports `Accepted`, `Pending`, and `Conflict` explicitly.
+- [ ] Inventory revalidates pending generations through the exact custody loader.
+- [ ] Inventory reports supported record-kind coverage and the missing-kind set.
+
+### Current live worker
+
+- [ ] Worker processes pending generations sequentially.
+- [ ] Worker fails closed on reconcile conflict.
+- [ ] Worker can run one bounded pass with `-once`.
+- [ ] Worker can limit validation attempts with `-max-attempts`.
+- [ ] Source-record rejection is deferred rather than terminating all later
+      pending work in the same process.
+- [ ] Current rejection retry deferral is recognized as in-memory only and is
+      **not** treated as production-durable suppression.
+- [ ] Current polling rescans the recorded receipt root and is **not** treated as
+      the final bounded/incremental production discovery mechanism.
+- [ ] Permanent service acceptance does not occur until retry persistence,
+      bounded discovery, ordering policy, singleton/advisory locking, and
+      supervisor/backoff behavior are accepted.
+
+### Gate 3 acceptance state
+
+- [ ] Fresh relational acceptance starts from a deliberately emptied relational
+      database, not from mixed historical materialization state.
+- [ ] Final reconcile reports all discovered receipts accepted, `Pending=0`, and
+      `Conflict=0` for the accepted corpus.
+- [x] All 13 supported record kinds have authoritative receiver/database proof.
+- [x] `USNContinuityGap` receiver/database proof is complete.
+- [ ] Controlled PostgreSQL outage/recovery retains recorder custody and catches
+      up without partial authority.
+- [ ] Worker restart during representative ingest does not create ambiguous
+      authority or duplicate authoritative rows.
+- [ ] Backup/restore preserves relational authority and ingest-journal identity.
+
+Until the remaining unchecked Gate 3 acceptance items are satisfied, Phase 3
+remains active and the current live worker must not be documented as the final
+production service.
+
 ## Final service state
 
 - [ ] FICollector is Running.

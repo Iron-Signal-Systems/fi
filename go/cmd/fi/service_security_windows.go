@@ -10,25 +10,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/securityevent"
-)
-
-const (
-	serviceWindowsSecurityIntervalEnvironment = "FI_SERVICE_WINDOWS_SECURITY_EVERY"
-	serviceWindowsSecurityIntervalDefault     = "1m"
+	"strconv"
+	"sync"
+	"time"
 )
 
 var (
 	serviceWindowsSecurityIntervalMu sync.RWMutex
-	serviceWindowsSecurityInterval   = serviceWindowsSecurityIntervalDefault
+	serviceWindowsSecurityInterval   string
 )
 
 type serviceWindowsSecurityCycleSummary struct {
@@ -52,26 +43,22 @@ type serviceWindowsSecuritySource interface {
 	Collect(context.Context) (serviceWindowsSecurityCycleSummary, error)
 }
 
-type liveServiceWindowsSecuritySource struct{}
-
-func (liveServiceWindowsSecuritySource) Collect(
-	ctx context.Context,
-) (serviceWindowsSecurityCycleSummary, error) {
-	return writeServiceWindowsSecurity(ctx)
+type liveServiceWindowsSecuritySource struct {
+	operationalSnapshot serviceOperationalSnapshot
 }
 
-func resolveServiceWindowsSecurityInterval() (time.Duration, error) {
-	value := strings.TrimSpace(os.Getenv(serviceWindowsSecurityIntervalEnvironment))
-	if value == "" {
-		value = serviceWindowsSecurityIntervalDefault
-	}
-
-	interval, err := parseServiceInterval(
-		serviceWindowsSecurityIntervalEnvironment,
-		value,
+func (source liveServiceWindowsSecuritySource) Collect(
+	ctx context.Context,
+) (serviceWindowsSecurityCycleSummary, error) {
+	return writeServiceWindowsSecurity(
+		ctx,
+		source.operationalSnapshot,
 	)
-	if err != nil {
-		return 0, err
+}
+
+func resolveServiceWindowsSecurityInterval(interval time.Duration) (time.Duration, error) {
+	if interval <= 0 {
+		return 0, errors.New("service Windows Security interval must be greater than zero")
 	}
 
 	serviceWindowsSecurityIntervalMu.Lock()
@@ -172,16 +159,13 @@ func runServiceWindowsSecurityLoop(
 
 func writeServiceWindowsSecurity(
 	ctx context.Context,
+	snapshot serviceOperationalSnapshot,
 ) (serviceWindowsSecurityCycleSummary, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	value, _, err := config.LoadDefault()
-	if err != nil {
-		return serviceWindowsSecurityCycleSummary{}, err
-	}
-	scopes := configuredSecurityScopes(value.GovernedRoots)
+	scopes := configuredSecurityScopes(snapshot.GovernedRoots)
 
 	prepared, err := prepareConfiguredSecurity()
 	if err != nil {

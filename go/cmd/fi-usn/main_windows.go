@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnbroker"
 	"golang.org/x/sys/windows/svc"
 )
@@ -29,12 +30,18 @@ func (service *fiUSNReaderService) Execute(
 ) (bool, uint32) {
 	statuses <- svc.Status{State: svc.StartPending}
 
+	value, _, err := config.LoadDefault()
+	if err != nil || value.VersionID != config.Version11 {
+		return false, 1
+	}
+	governedRoots := append([]string(nil), value.GovernedRoots...)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	done := make(chan error, 1)
 	go func() {
-		done <- usnbroker.Serve(ctx)
+		done <- usnbroker.Serve(ctx, governedRoots)
 	}()
 
 	running := svc.Status{

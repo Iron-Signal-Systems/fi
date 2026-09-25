@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/generationready"
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
 )
@@ -30,8 +31,9 @@ var (
 // independently validated from the signed metadata during custody intake and
 // again when the recorder reopens durable custody.
 type GenerationReceiveConfig struct {
-	Custody  transportgeneration.CustodyConfig
-	Recorder generationrecorder.DurableConfig
+	Custody   transportgeneration.CustodyConfig
+	ReadyRoot string
+	Recorder  generationrecorder.DurableConfig
 }
 
 // GenerationReceiveResult captures the complete receiver-side generation
@@ -47,6 +49,8 @@ type GenerationReceiveResult struct {
 	Decision        transportgeneration.Decision
 	Custody         transportgeneration.CustodyResult
 	Recorder        generationrecorder.DurableResult
+	ReadyPath       string
+	ReadyWarning    string
 	Acknowledgement transportgeneration.Acknowledgement
 }
 
@@ -59,11 +63,15 @@ type GenerationReceiveResult struct {
 //  2. apply source/capacity admission and write FIGD0001 decision;
 //  3. receive and durably publish the exact FIGT0001 transfer;
 //  4. reopen custody, revalidate current signing trust, and durably record all
-//     collector batch semantics; and
-//  5. only then write FIGA0001 recorded/already_recorded.
+//     collector batch semantics;
+//  5. best-effort publish a non-authoritative ingest-ready hint after the
+//     immutable recorder receipt is durable; and
+//  6. only then write FIGA0001 recorded/already_recorded.
 //
 // No success acknowledgement is written for custody, trust, semantic, or
-// recorder failure. This function never retires sender-side state.
+// recorder failure. Ingest-ready publication failure is returned as warning
+// state and does not suppress FIGA because the immutable recorder receipt
+// remains authoritative. This function never retires sender-side state.
 func ReceiveGenerationAndAcknowledge(
 	reader io.Reader,
 	writer io.Writer,
@@ -152,6 +160,12 @@ func ReceiveGenerationAndAcknowledge(
 	}
 
 	result.Recorder = recorded
+
+	result.ReadyPath, result.ReadyWarning =
+		publishGenerationReady(
+			config.ReadyRoot,
+			recorded,
+		)
 
 	acknowledgement, err := generationAcknowledgementFromRecorded(
 		custody,
@@ -271,6 +285,21 @@ func generationAcknowledgementFromRecorded(
 	return acknowledgement, nil
 }
 
+func publishGenerationReady(
+	readyRoot string,
+	recorded generationrecorder.DurableResult,
+) (string, string) {
+	ready, err := generationready.Publish(
+		readyRoot,
+		filepath.Base(recorded.ReceiptPath),
+	)
+	if err != nil {
+		return "", err.Error()
+	}
+
+	return ready.Path, ""
+}
+
 func receiveAuthenticatedGeneration(
 	reader io.Reader,
 	writer io.Writer,
@@ -349,6 +378,7 @@ func generationReceiveConfigFromListener(
 			},
 			RootDir: config.GenerationCustodyRoot,
 		},
+		ReadyRoot: config.GenerationReadyRoot,
 		Recorder: generationrecorder.DurableConfig{
 			RootDir: config.GenerationRecordedRoot,
 			Semantic: generationrecorder.Config{
@@ -363,6 +393,7 @@ func validateGenerationListenerConfig(
 ) error {
 	configured :=
 		config.GenerationCustodyRoot != "" ||
+			config.GenerationReadyRoot != "" ||
 			config.GenerationRecordedRoot != "" ||
 			config.GenerationMaxCanonicalBytes != 0 ||
 			config.GenerationMaxEncodedBytes != 0 ||
@@ -379,6 +410,7 @@ func validateGenerationListenerConfig(
 	}
 
 	if config.GenerationCustodyRoot == "" ||
+		config.GenerationReadyRoot == "" ||
 		config.GenerationRecordedRoot == "" ||
 		config.GenerationMaxCanonicalBytes == 0 ||
 		config.GenerationMaxEncodedBytes == 0 ||
@@ -389,24 +421,29 @@ func validateGenerationListenerConfig(
 	}
 
 	if !filepath.IsAbs(config.GenerationCustodyRoot) ||
+		!filepath.IsAbs(config.GenerationReadyRoot) ||
 		!filepath.IsAbs(config.GenerationRecordedRoot) {
 		return errors.New(
-			"FI generation listener custody and recorder roots must be absolute",
+			"FI generation listener custody, recorder, and ready roots must be absolute",
 		)
 	}
 
-	if filepath.Clean(config.GenerationCustodyRoot) ==
-		filepath.Clean(config.GenerationRecordedRoot) {
+	custodyRoot := filepath.Clean(config.GenerationCustodyRoot)
+	readyRoot := filepath.Clean(config.GenerationReadyRoot)
+	recordedRoot := filepath.Clean(config.GenerationRecordedRoot)
+
+	if custodyRoot == recordedRoot ||
+		custodyRoot == readyRoot ||
+		recordedRoot == readyRoot {
 		return errors.New(
-			"FI generation custody and recorder roots must be distinct",
+			"FI generation custody, recorder, and ready roots must be distinct",
 		)
 	}
 
 	if config.CustodyRoot != "" &&
-		(filepath.Clean(config.GenerationCustodyRoot) ==
-			filepath.Clean(config.CustodyRoot) ||
-			filepath.Clean(config.GenerationRecordedRoot) ==
-				filepath.Clean(config.CustodyRoot)) {
+		(custodyRoot == filepath.Clean(config.CustodyRoot) ||
+			recordedRoot == filepath.Clean(config.CustodyRoot) ||
+			readyRoot == filepath.Clean(config.CustodyRoot)) {
 		return errors.New(
 			"FI generation roots must be distinct from batch/recovery custody root",
 		)
@@ -458,6 +495,23 @@ func validateGenerationReceiveConfig(
 	if config.Recorder.RootDir == "" {
 		return errors.New(
 			"FI generation recorder root directory is required",
+		)
+	}
+
+	if config.ReadyRoot == "" {
+		return errors.New(
+			"FI generation ingest-ready root directory is required",
+		)
+	}
+	if !filepath.IsAbs(config.ReadyRoot) {
+		return errors.New(
+			"FI generation ingest-ready root directory must be absolute",
+		)
+	}
+	if filepath.Clean(config.ReadyRoot) == filepath.Clean(config.Custody.RootDir) ||
+		filepath.Clean(config.ReadyRoot) == filepath.Clean(config.Recorder.RootDir) {
+		return errors.New(
+			"FI generation ingest-ready root must be distinct from custody and recorder roots",
 		)
 	}
 

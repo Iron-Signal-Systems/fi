@@ -8,50 +8,52 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestResolveServiceUSNIntervalDefaultsToTenMinutes(
-	t *testing.T,
-) {
-	t.Setenv(
-		serviceUSNIntervalEnvironment,
-		"",
-	)
-
-	got, err := resolveServiceUSNInterval()
+func TestResolveServiceUSNIntervalUsesConfiguredValue(t *testing.T) {
+	got, err := resolveServiceUSNInterval(10 * time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if got != 10*time.Minute {
-		t.Fatalf(
-			"USN interval = %s, want 10m",
-			got,
-		)
+		t.Fatalf("USN interval = %s, want 10m", got)
+	}
+	if currentServiceUSNInterval() != "10m0s" {
+		t.Fatalf("current USN interval = %q", currentServiceUSNInterval())
 	}
 }
 
-func TestResolveServiceUSNIntervalAcceptsOverride(
-	t *testing.T,
-) {
-	t.Setenv(
-		serviceUSNIntervalEnvironment,
-		"15m",
-	)
-
-	got, err := resolveServiceUSNInterval()
-	if err != nil {
-		t.Fatal(err)
+func TestResolveServiceUSNIntervalRejectsNonPositiveValue(t *testing.T) {
+	if _, err := resolveServiceUSNInterval(0); err == nil {
+		t.Fatal("resolveServiceUSNInterval(0) error = nil")
 	}
+}
 
-	if got != 15*time.Minute {
-		t.Fatalf(
-			"USN interval = %s, want 15m",
-			got,
-		)
+func TestWriteServiceUSNCatchUpUsesStartupSnapshotWithoutConfigReload(t *testing.T) {
+	t.Setenv("ProgramData", t.TempDir())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	summary, err := writeServiceUSNCatchUp(
+		ctx,
+		serviceOperationalSnapshot{
+			GovernedRoots: []string{
+				`C:\Data\A`,
+				`D:\Data\B`,
+			},
+		},
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if summary.ConfiguredRoots != 2 {
+		t.Fatalf("configured roots = %d, want 2", summary.ConfiguredRoots)
 	}
 }
 

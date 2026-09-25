@@ -384,9 +384,11 @@ Security log returned to 20 MiB. During sampled operation every checkpoint
 remained inside the retained log window; the largest observed head lag was 584
 EventRecordIDs. A controlled File System audit-policy toggle produced two real
 Event ID 4719 records (185819888 and 185819899); FI selected both, durably
-verified their batch, and advanced the Security checkpoint to 185820374. This is
-source-side validation; receiver/relational proof for those exact two records is
-tracked separately.
+verified their batch, and advanced the Security checkpoint to 185820374. This
+source-side result was subsequently carried through the Phase 3 receiver and
+relational materialization path as real `WindowsSecurityEvent` input, closing the
+record-family receiver/database proof while the broader Phase 3 acceptance
+campaign remained active.
 
 ---
 
@@ -641,7 +643,108 @@ generation identity with conflicting bytes fails closed. Phase 2 does not use a
 separate monotonic security sequence.
 
 The durable generation receipt used at this boundary is a Phase 2 custody and
-acknowledgement fact. It is not yet the complete Phase 3 FI System of Record.
+acknowledgement fact. It is not by itself the complete Phase 3 FI System of
+Record. Phase 3 now consumes that immutable receipt and reopens the exact durable
+FIGT object to produce typed relational materialization bound back to the same
+receipt and transfer identity.
+
+---
+
+## Current Phase 3 relational ingest and recorder materialization
+
+Phase 3 / Gate 3 is complete. The accepted relational implementation is
+`fi-postgresql-relational-ingest/0.2` and establishes a typed PostgreSQL
+materialization layer on top of the immutable Phase 2 recorder authority.
+
+The implemented path is:
+
+```text
+immutable generation recorder receipt
+        |
+        v
+exact durable FIGT custody
+        |
+        v
+revalidate custody + trust + transfer + collector semantics
+        |
+        v
+single-generation PostgreSQL transaction
+        |
+        +-- recorded_generation
+        +-- source_batch
+        +-- source_record
+        +-- typed relational projections
+        +-- append-only ingest_journal terminal outcome
+```
+
+The current database boundary verifies:
+
+- exactly 49 FI relational tables;
+- no JSON, JSONB, or XML relational storage columns;
+- the `fi_ingest` runtime identity;
+- no normal `UPDATE`, `DELETE`, or `TRUNCATE` authority over
+  `fi.source_record`;
+- exact receipt and FIGT transfer SHA-256 binding;
+- declared and actual batch/data-byte/record totals;
+- typed-projection completeness; and
+- duplicate-safe `AlreadyAccepted` behavior for an exact authoritative
+  generation.
+
+The relational ingester accepts the complete current collector-emitted set of 13
+record kinds:
+
+```text
+CollectorIdentity
+DirectoryPrincipalSnapshot
+FileObservation
+LocalPrincipalSnapshot
+NTFSCollectionError
+SMBShareSnapshot
+SupportingSourceCollectionError
+USNContinuityGap
+USNObjectObservation
+USNReadBoundary
+WindowsSecurityContinuityGap
+WindowsSecurityCoverage
+WindowsSecurityEvent
+```
+
+`fi-ingest-reconcile` is deliberately read-only. Its plan mode compares immutable
+recorder receipts to PostgreSQL state; inventory mode reopens only pending exact
+recorded generations through FI's custody loader and reports validated record-kind
+coverage without database writes.
+
+A sequential Go ingest worker now performs live receipt discovery and relational
+ingest for the Phase 3 acceptance campaign. The worker uses bounded READY-marker
+discovery for normal work, durable ingest-journal retry state for rejected
+generations, a host-local singleton lock, and adaptive authoritative repair
+reconciliation.
+
+The Phase 3 singleton lock is intentionally host-local. The current operating
+contract supports one active backend ingest-worker host per deployment.
+Distributed ownership is independent of Windows source count; the current Phase
+3 acceptance worker itself remains source-scoped through `-source`. Final
+multi-source backend topology is a separate deployment concern. Multi-backend
+HA/failover requires a future authoritative distributed coordination mechanism
+such as a PostgreSQL advisory lock or database-backed lease before multiple
+backend hosts may contend for ingest ownership.
+
+The adaptive repair path starts conservatively after worker startup: six clean
+hourly full operational reconciliations, one clean 12-hour reconciliation, then
+24-hour steady-state repair. A repair anomaly returns the worker to hourly
+validation. READY-notified pending work and generations already governed by
+durable `SOURCE_RECORD_REJECTED` retry state do not count as repair anomalies.
+
+PostgreSQL reconnect/backoff and permanent Linux ingest-worker service
+packaging completed controlled runtime acceptance. Final unfiltered
+authoritative reconciliation on 2026-09-24 reported 1,342 recorder receipts,
+1,342 accepted generations, zero pending, zero conflict, and zero READY
+markers. Phase 3 / Gate 3 is complete.
+
+Authoritative receiver/database proof is complete for all 13 current relational
+record kinds, including `USNContinuityGap`. See
+`docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md` and
+`docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`.
 
 ---
 
@@ -677,7 +780,8 @@ Phase 1 writes finalized JSONL batches and manifests locally.
 The spool verifies record count, data byte count, and SHA-256 before a batch is
 accepted as the local durable boundary.
 
-Finalized batches remain on the source until Phase 2 transport exists.
+Finalized batches remain on the source until Phase 2 establishes the exact
+durable downstream custody and acknowledgement required for retirement.
 
 FI does not use:
 
@@ -696,7 +800,7 @@ manifest.
 
 ---
 
-## Phase 1 closeout and current Phase 2 focus
+## Phase 1 and Phase 2 closeout; current Phase 3 focus
 
 Phase 1 / Gate 1 is complete for the accepted source-intelligence boundary.
 
@@ -765,10 +869,20 @@ exact acknowledgement-before-retirement, retry/duplicate/conflict safety,
 receiver and sender interruption recovery, and the root-isolation remediation
 validated during the 250K resilience campaign.
 
+Phase 3 has established the relational ingest foundation, typed projectors,
+recorder-aware reconciliation/inventory, volume-qualified NTFS/USN identity,
+all 13 current authoritative record-kind proofs, bounded READY-driven ingest,
+durable rejected-generation retry state, host-local singleton protection,
+controlled crash/restart recovery, and adaptive repair reconciliation. The
+current checkpoint is implementation and acceptance work, not Gate 3 closure:
+permanent service packaging, the final 250K relational closeout, and final
+Gate 3 reconciliation remain open.
+
 See:
 
 - `docs/performance/PHASE-2-250K-RANDOM-NESTED-ONBOARDING-REPORT.md`
 - `docs/performance/PHASE-2-GATE-2-CLOSEOUT.md`
+- `docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
 
 No additional Phase 1 or Phase 2 subsystem should be added unless a concrete
 accepted requirement demonstrates that the corresponding boundary is incomplete.
@@ -841,10 +955,16 @@ file's identity or history.**
                   Secure Transport
                          |
                          v
-                      Ingest
+              Durable FIGT Custody
                          |
                          v
-                 PostgreSQL Recorder
+           Immutable Recorder Receipt
+                         |
+                         v
+             Phase 3 Relational Ingest
+                         |
+                         v
+         PostgreSQL Typed Materialization
                          |
               +----------+----------+
               |                     |

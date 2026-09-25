@@ -10,8 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
 
@@ -20,18 +18,14 @@ import (
 // intentionally not prepared or finished here.
 func writeServiceRootCollector(
 	ctx context.Context,
+	snapshot serviceOperationalSnapshot,
 ) (configuredRunSummary, error) {
-	value, configPath, err := config.LoadDefault()
-	if err != nil {
-		return configuredRunSummary{}, err
-	}
-
 	summary := configuredRunSummary{
-		ConfigPath:      configPath,
-		VersionID:       value.VersionID,
-		ConfiguredRoots: len(value.GovernedRoots),
+		ConfigPath:      snapshot.ConfigPath,
+		VersionID:       snapshot.VersionID,
+		ConfiguredRoots: len(snapshot.GovernedRoots),
 		Complete:        true,
-		Roots:           make([]configuredRootSummary, 0, len(value.GovernedRoots)),
+		Roots:           make([]configuredRootSummary, 0, len(snapshot.GovernedRoots)),
 		Semantics: "FI service mode collects governed-root current state independently from the Windows Security Event Log stream. " +
 			"Root checkpoint ownership remains serialized per governed root while Windows Security owns only its Security-channel checkpoint.",
 	}
@@ -64,7 +58,7 @@ func writeServiceRootCollector(
 
 	var runErr error
 
-	for _, governedRoot := range value.GovernedRoots {
+	for _, governedRoot := range snapshot.GovernedRoots {
 		if err := ctx.Err(); err != nil {
 			summary.Complete = false
 			runErr = errors.Join(runErr, err)

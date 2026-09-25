@@ -155,6 +155,11 @@ func runTransportCommand() {
 		"",
 		"durable FI generation recorded-receipt root; requires -generation-enable",
 	)
+	generationReadyRoot := flags.String(
+		"generation-ready-root",
+		"",
+		"non-authoritative FI generation ingest-ready root; requires -generation-enable",
+	)
 	generationMaxCanonicalBytes := flags.Uint64(
 		"generation-max-canonical-bytes",
 		0,
@@ -209,6 +214,7 @@ func runTransportCommand() {
 		MaxCanonicalBytes: *generationMaxCanonicalBytes,
 		MaxEncodedBytes:   *generationMaxEncodedBytes,
 		MaxManifestBytes:  *generationMaxManifestBytes,
+		ReadyRoot:         *generationReadyRoot,
 		RecordedRoot:      *generationRecordedRoot,
 	}
 
@@ -340,12 +346,21 @@ func runTransportCommand() {
 		}
 
 		fmt.Printf(
-			"GenerationStartup: discovered=%d new=%d already_recorded=%d removed_provisional=%d\n",
+			"GenerationStartup: discovered=%d new=%d already_recorded=%d ready_published=%d ready_warnings=%d removed_provisional=%d\n",
 			startup.Discovered,
 			startup.RecordedNew,
 			startup.AlreadyRecorded,
+			startup.ReadyPublished,
+			startup.ReadyWarnings,
 			startup.RemovedProvisional,
 		)
+		if startup.ReadyWarning != "" {
+			fmt.Fprintf(
+				os.Stderr,
+				"WARNING: FI generation startup ingest-ready publication: %s\n",
+				startup.ReadyWarning,
+			)
+		}
 	}
 
 	result, err := transportreceiver.ListenOnce(
@@ -373,6 +388,13 @@ func runTransportCommand() {
 		fmt.Printf("RecordedState: %s\n", result.GenerationRecordedState)
 		fmt.Printf("GenerationACK: %s\n", result.GenerationAcknowledgement)
 		fmt.Printf("TransferSHA256:%s\n", result.GenerationTransferSHA256)
+		if result.GenerationReadyWarning != "" {
+			fmt.Fprintf(
+				os.Stderr,
+				"WARNING: FI generation ingest-ready publication: %s\n",
+				result.GenerationReadyWarning,
+			)
+		}
 	} else if result.Recovery {
 		fmt.Printf("RecoveryID:    %s\n", result.RecoveryID)
 		fmt.Printf("Members:       %d\n", result.RecoveryMembers)

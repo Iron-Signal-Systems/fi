@@ -64,6 +64,7 @@ type serviceSupportingRefreshFunc func(context.Context) (supportingSourceRefresh
 type serviceAppendRecordFunc func(serviceRuntimeRecord) error
 
 type fiWindowsService struct {
+	operationalSnapshot       serviceOperationalSnapshot
 	collectionInterval        time.Duration
 	usnInterval               time.Duration
 	securityInterval          time.Duration
@@ -87,6 +88,7 @@ func parseServiceInterval(name string, value string) (time.Duration, error) {
 }
 
 func runWindowsService(
+	operationalSnapshot serviceOperationalSnapshot,
 	collectionInterval time.Duration,
 	supportingRefreshInterval time.Duration,
 ) error {
@@ -97,11 +99,11 @@ func runWindowsService(
 		return errors.New("service supporting-refresh interval must be greater than zero")
 	}
 
-	usnInterval, err := resolveServiceUSNInterval()
+	usnInterval, err := resolveServiceUSNInterval(operationalSnapshot.USNInterval)
 	if err != nil {
 		return err
 	}
-	securityInterval, err := resolveServiceWindowsSecurityInterval()
+	securityInterval, err := resolveServiceWindowsSecurityInterval(operationalSnapshot.WindowsSecurityInterval)
 	if err != nil {
 		return err
 	}
@@ -109,6 +111,7 @@ func runWindowsService(
 	return svc.Run(
 		windowsServiceName,
 		&fiWindowsService{
+			operationalSnapshot:       operationalSnapshot,
 			collectionInterval:        collectionInterval,
 			usnInterval:               usnInterval,
 			securityInterval:          securityInterval,
@@ -137,15 +140,27 @@ func (service *fiWindowsService) Execute(
 	const workerCount = 3
 	done := make(chan error, workerCount)
 
+	appendRecord := func(record serviceRuntimeRecord) error {
+		return appendServiceRuntimeRecordAt(
+			service.operationalSnapshot.StateDir,
+			record,
+		)
+	}
+
 	go func() {
 		done <- runServiceLoop(
 			ctx,
 			service.collectionInterval,
 			service.supportingRefreshInterval,
 			func() error { return nil },
-			writeServiceRootCollector,
+			func(ctx context.Context) (configuredRunSummary, error) {
+				return writeServiceRootCollector(
+					ctx,
+					service.operationalSnapshot,
+				)
+			},
 			writeSupportingSourceRefresh,
-			appendServiceRuntimeRecord,
+			appendRecord,
 		)
 	}()
 
@@ -153,8 +168,13 @@ func (service *fiWindowsService) Execute(
 		done <- runServiceUSNLoop(
 			ctx,
 			service.usnInterval,
-			writeServiceUSNCatchUp,
-			appendServiceRuntimeRecord,
+			func(ctx context.Context) (serviceUSNCatchUpSummary, error) {
+				return writeServiceUSNCatchUp(
+					ctx,
+					service.operationalSnapshot,
+				)
+			},
+			appendRecord,
 		)
 	}()
 
@@ -162,8 +182,8 @@ func (service *fiWindowsService) Execute(
 		done <- runServiceWindowsSecurityLoop(
 			ctx,
 			service.securityInterval,
-			liveServiceWindowsSecuritySource{},
-			appendServiceRuntimeRecord,
+			liveServiceWindowsSecuritySource{operationalSnapshot: service.operationalSnapshot},
+			appendRecord,
 		)
 	}()
 
@@ -393,6 +413,14 @@ func appendServiceStopped(appendRecord serviceAppendRecordFunc) error {
 }
 
 func appendServiceRuntimeRecord(record serviceRuntimeRecord) error {
+	path, err := serviceRuntimeLogPath()
+	if err != nil {
+		return err
+	}
+	return appendServiceRuntimeRecordAt(filepath.Dir(path), record)
+}
+
+func appendServiceRuntimeRecordAt(stateDir string, record serviceRuntimeRecord) error {
 	serviceRuntimeLogMu.Lock()
 	defer serviceRuntimeLogMu.Unlock()
 
@@ -402,11 +430,11 @@ func appendServiceRuntimeRecord(record serviceRuntimeRecord) error {
 	if record.RecordKind == "" || record.ObservedAt == "" {
 		return errors.New("invalid service runtime record")
 	}
-
-	path, err := serviceRuntimeLogPath()
-	if err != nil {
-		return err
+	if strings.TrimSpace(stateDir) == "" {
+		return errors.New("service runtime state directory is required")
 	}
+
+	path := filepath.Join(stateDir, serviceRuntimeLogName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

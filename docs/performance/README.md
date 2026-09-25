@@ -171,3 +171,54 @@ See:
 - `PHASE-2-250K-RANDOM-NESTED-ONBOARDING-REPORT.md`
 - `PHASE-2-WINDOWS-SECURITY-WORKER-VALIDATION.md`
 - `PHASE-2-GATE-2-CLOSEOUT.md`
+
+## Phase 3 fresh relational 250K acceptance campaign
+
+Phase 3 uses the active 250K corpus for a **separate backend acceptance
+campaign**. This does not convert the interrupted Phase 2 source-side campaign
+into a clean onboarding PASS.
+
+The Phase 3 campaign deliberately emptied the 49-table relational PostgreSQL
+schema and then re-materialized immutable recorder-authorized generations through
+the new typed relational ingest path.
+
+The campaign is currently **IN PROGRESS**. It is being used to measure and prove:
+
+- generation-atomic relational ingest;
+- exact receipt/FIGT identity binding;
+- batch, byte, and record total reconciliation;
+- typed-projection completeness;
+- append-only ingest-journal balance;
+- duplicate-safe `AlreadyAccepted` behavior;
+- rejected-generation rollback;
+- real-file relationship reconstruction;
+- valid zero-byte `ContentPrefix` handling;
+- all 13 supported record kinds; and
+- live sequential Go worker catch-up behavior.
+
+A recorded checkpoint on 2026-09-20 showed:
+
+```text
+recorded_generation    105
+source_batch            167
+source_record        93,195
+database_bytes     340,326,079
+```
+
+At that checkpoint the ingest journal contained 107 started attempts and 107
+terminal outcomes, including 105 `Accepted`, one idempotent `AlreadyAccepted`,
+and one known pre-fix source-record `Rejected` attempt. No partial relational
+authority remained from the rejected generation.
+
+A real formerly failing generation was re-run after the content-prefix correction
+and committed 7,167 / 7,167 records successfully. The database then contained a
+real `Present` content-prefix observation with zero bytes observed and an empty
+prefix, and zero observed prefix-length mismatches.
+
+Authoritative receiver/database record-kind proof is currently 12/13. The only
+remaining kind is `USNContinuityGap`; its controlled source-side gap/baseline/
+catch-up behavior has already been proven, but the final receiver/relational
+materialization proof remains outstanding.
+
+See `PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md` for the running Gate 3
+acceptance record.

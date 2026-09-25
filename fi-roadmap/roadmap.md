@@ -32,11 +32,45 @@ investigation.
 
 ## Current Development Focus
 
-FI is currently focused on **Phase 3 / Gate 3 — Ingest & Recorder**.
+FI has completed **Phase 3 / Gate 3 — Ingest & Recorder**. Phase 4 is the next planned development boundary.
 
 **Phase 1 / Gate 1: COMPLETE — PASS**
 
 **Phase 2 / Gate 2: COMPLETE — PASS**
+
+**Phase 3 / Gate 3: COMPLETE — PASS**
+
+Phase 3 is closed. The relational PostgreSQL foundation, typed materialization
+path, recorder-aware reconciliation/inventory, permanent sequential Go ingest
+worker, failure/recovery behavior, and final authoritative reconciliation all
+completed Gate 3 acceptance.
+
+Current Phase 3 checkpoint:
+
+```text
+49-table relational foundation          PASS
+No JSON/JSONB/XML storage shortcut      PASS
+13 typed record-kind projectors         PASS
+Generation-atomic ingest                PASS
+Receipt/transfer identity binding       PASS
+Typed-projection completeness           PASS
+Duplicate-safe AlreadyAccepted          PASS
+Rejected-generation rollback            PASS
+Volume-qualified NTFS/USN identity      PASS
+Read-only reconcile/inventory           PASS
+Live Go ingest worker                   PASS for validation
+Bounded READY operational discovery     PASS
+Durable rejection retry ordering        PASS
+Host-local singleton protection         PASS
+Controlled restart/crash recovery       PASS
+Adaptive repair reconciliation          PASS
+Fresh 250K relational acceptance        PASS
+Authoritative record-kind proof         13/13 PASS
+USNContinuityGap receiver/DB proof      PASS
+PostgreSQL reconnect/backoff            PASS
+Permanent service packaging             PASS
+Gate 3                                  COMPLETE — PASS
+```
 
 The major Phase 1 architecture is now established:
 
@@ -132,9 +166,10 @@ moved to its own sequential service worker so a multi-hour root operation cannot
 strand the Security checkpoint. On 2026-09-20 the Security worker remained inside
 the retained Server 2016 Security-log window with the lab log returned to 20 MiB
 and durably selected a controlled pair of Event ID 4719 records before advancing
-its checkpoint. This is post-Gate-1 resilience characterization, not a revision
-of the original Gate 1 acceptance result and not a universal Security-log sizing
-claim.
+its checkpoint. The same real controlled source record family was subsequently
+accepted by the Phase 3 receiver/relational path. This remains post-Gate-1
+resilience characterization, not a revision of the original Gate 1 acceptance
+result and not a universal Security-log sizing claim.
 
 Replay at the Phase 2 boundary is defined as exact generation re-delivery:
 identical durable state is idempotent / `already_recorded`, while conflicting
@@ -198,17 +233,52 @@ lose FI history across failures, retries, restarts, or network interruption.
 
 ## Phase 3 — Ingest & Recorder
 
-Verify transported FI material and write the resulting history to the FI System
-of Record.
+Verify transported FI material and write the resulting typed historical records
+to the FI relational System-of-Record materialization while preserving the
+immutable Phase 2 recorder authority that authorized the generation.
 
-Accepted, rejected, failed, interrupted, and conflicting ingest actions leave
-immutable journal history.
+The implemented Phase 3 path now includes:
+
+- a 49-table typed PostgreSQL foundation;
+- zero JSON/JSONB/XML database-storage shortcuts;
+- the append-only `fi_ingest` runtime boundary;
+- typed projectors for all 13 current collector record kinds;
+- generation-atomic ingest;
+- receipt/transfer/batch/record reconciliation;
+- typed-projection completeness checks;
+- append-only ingest-journal outcomes;
+- duplicate-safe `AlreadyAccepted` handling;
+- conflict detection and source-record rejection rollback;
+- volume-qualified NTFS/USN identity;
+- recorder-aware read-only reconciliation/inventory;
+- bounded READY-marker operational discovery;
+- durable journal-driven rejected-generation retry ordering;
+- host-local singleton worker protection;
+- controlled restart and in-transaction crash recovery; and
+- adaptive authoritative operational repair reconciliation.
+
+Accepted, rejected, failed, incomplete, duplicate, and conflicting ingest
+actions leave journal history appropriate to their outcome.
+
+The remaining Gate 3 work is acceptance/hardening, not a relational redesign:
+finish the fresh 250K relational closeout, package the permanent ingest worker,
+and run the final Gate 3 reconciliation/closeout.
+
+The current singleton lock is explicitly host-local. Phase 3 supports one active
+backend ingest-worker host per deployment. This backend ownership boundary is
+independent of Windows source count; the current acceptance worker remains
+source-scoped through `-source`, and final multi-source backend topology is a
+separate deployment concern. Cross-backend HA/failover requires a future
+authoritative distributed lock or lease and is not implied by the host-local
+`flock()`.
 
 **Gate 3 — Authoritative Record & Journal Integrity:** prove authoritative FI
 history is write-once, reconstructable, and every material ingest outcome is
 preserved.
 
 [Phase 3 details](docs/roadmap/phase-03-ingest-and-recorder.md)
+
+[Phase 3 ingest-worker operating contract](../docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md)
 
 ---
 

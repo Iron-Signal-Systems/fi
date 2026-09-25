@@ -59,6 +59,15 @@ and should expose technical information such as:
   history was immediately available;
 - generation identity, canonical/encoded byte counts and hashes, FIGT transfer
   byte count/hash, recorder disposition, and acknowledgement outcome;
+- recorder receipt SHA-256 and exact transfer SHA-256 used by Phase 3 relational
+  identity checks;
+- relational ingest attempt ID, stage, terminal outcome, record counts, and
+  recorded-generation identity where available;
+- relational reconcile counts for discovered, accepted, pending, and conflicting
+  recorder receipts;
+- relational inventory record-kind coverage and missing-kind set;
+- PostgreSQL runtime user/database and expected relational-table count;
+- relational ingest version;
 - record count, byte count, and integrity verification status;
 - continuity and reconciliation status;
 - Windows error code and the operation that produced it;
@@ -98,6 +107,104 @@ A spool failure should identify the affected batch or finalization boundary and
 must not imply that a checkpoint advanced when the applicable durable boundary
 was not satisfied.
 
+A Phase 3 relational failure should identify the immutable recorder source and
+generation identity, attempt ID, stage, terminal journal outcome, and whether the
+failure occurred before authoritative commit. A source-record rejection must not
+be presented as a partially accepted generation when the transaction was rolled
+back.
+
+A relational conflict should expose the conflicting source/generation identity
+and bounded reason, such as receipt/transfer identity disagreement, generation
+total disagreement, incomplete child rows, or missing typed projections.
+
+---
+
+## Phase 3 relational administrative surfaces
+
+The current Phase 3 administrative commands are engineering/acceptance surfaces.
+They are not yet a finished production operator experience.
+
+### `fi-ingest`
+
+`fi-ingest` can verify the PostgreSQL relational boundary and ingest one exact
+recorded generation.
+
+The database check should expose:
+
+```text
+PostgreSQLUser
+PostgreSQLDatabase
+RelationalTables
+SupportedRecordKinds
+IngestVersion
+RelationalFoundation
+GenerationIngest
+```
+
+A generation ingest should expose bounded identity and outcome facts such as:
+
+```text
+AttemptID
+Source
+GenerationID
+TransferSHA256
+ReceiptSHA256
+Batches
+DataBytes
+RecordsSeen
+RecordsCommitted
+RecordedGenerationID
+Outcome
+```
+
+### `fi-ingest-reconcile`
+
+`-plan` is read-only and reports recorder/database state:
+
+```text
+ReceiptsDiscovered
+AlreadyAccepted
+Pending
+Conflict
+```
+
+`-inventory` is also read-only. It may reopen pending exact recorded generations
+through the FI custody loader to report record-kind coverage, but it must report:
+
+```text
+DatabaseWrites: 0
+```
+
+The reconcile tool deliberately does not expose a write/reconcile mode.
+
+### `fi-ingest-worker`
+
+The current worker is a sequential live consumer for Phase 3 acceptance. Useful
+administrative output includes:
+
+- polling time;
+- discovered / accepted / pending / conflict counts;
+- deferred rejection count;
+- generation start/finish identity;
+- records seen/committed;
+- elapsed ingest time; and
+- terminal outcome.
+
+The current implementation has known pre-production limits that administrative
+documentation must not hide:
+
+- source-record rejection cooldown is held in memory and is lost on restart;
+- each polling pass currently replans from the recorded receipt root rather than
+  using a bounded/incremental discovery cursor;
+- reconcile conflict fails the worker closed;
+- non-rejection ingest/database failures terminate the worker for supervisor
+  handling;
+- singleton/advisory locking is not yet implemented; and
+- production supervisor/backoff semantics remain to be finalized.
+
+These limits are acceptance/hardening work. They are not permission to bypass the
+recorder authority path or to introduce ad-hoc filesystem discovery.
+
 ---
 
 ## No False Simplicity
@@ -110,7 +217,9 @@ Administrative interfaces must not hide:
 - degraded source coverage;
 - privilege-boundary failures;
 - source-specific ambiguity;
-- operating-system errors that materially explain a failure; or
+- relational pending/conflict/rejection state;
+- missing typed projections;
+- operating-system or database errors that materially explain a failure; or
 - FI's own recovery or reconciliation actions.
 
 A simplified summary may be shown first, but the underlying technical state must
@@ -136,8 +245,8 @@ different levels of detail, but they do not maintain separate truths.
   What happened?               What source was used?
   Why?                         What checkpoint advanced?
   Who has access?              What Windows operation failed?
-  What changed?                What spool batch was accepted?
-           |                         |
+  What changed?                What generation was materialized?
+           |                   What receipt/transfer identity bound it?
            +------------+------------+
                         |
                   SAME FI TRUTH

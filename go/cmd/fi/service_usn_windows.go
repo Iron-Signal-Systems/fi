@@ -10,27 +10,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
-	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
-)
-
-const (
-	serviceUSNIntervalEnvironment = "FI_SERVICE_USN_EVERY"
-	serviceUSNIntervalDefault     = "10m"
+	"sync"
+	"time"
 )
 
 var (
 	serviceRuntimeLogMu  sync.Mutex
 	serviceUSNIntervalMu sync.RWMutex
-	serviceUSNInterval   = serviceUSNIntervalDefault
+	serviceUSNInterval   string
 	serviceRootLocks     = newServiceRootLockSet()
 )
 
@@ -79,20 +69,9 @@ func (set *serviceRootLockSet) lockFor(scopeID string) *sync.Mutex {
 	return lock
 }
 
-func resolveServiceUSNInterval() (time.Duration, error) {
-	value := strings.TrimSpace(
-		os.Getenv(serviceUSNIntervalEnvironment),
-	)
-	if value == "" {
-		value = serviceUSNIntervalDefault
-	}
-
-	interval, err := parseServiceInterval(
-		serviceUSNIntervalEnvironment,
-		value,
-	)
-	if err != nil {
-		return 0, err
+func resolveServiceUSNInterval(interval time.Duration) (time.Duration, error) {
+	if interval <= 0 {
+		return 0, errors.New("service USN interval must be greater than zero")
 	}
 
 	serviceUSNIntervalMu.Lock()
@@ -224,18 +203,14 @@ func runServiceUSNCycle(
 
 func writeServiceUSNCatchUp(
 	ctx context.Context,
+	snapshot serviceOperationalSnapshot,
 ) (serviceUSNCatchUpSummary, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	value, _, err := config.LoadDefault()
-	if err != nil {
-		return serviceUSNCatchUpSummary{}, err
-	}
-
 	summary := serviceUSNCatchUpSummary{
-		ConfiguredRoots: len(value.GovernedRoots),
+		ConfiguredRoots: len(snapshot.GovernedRoots),
 	}
 
 	var runErr error
@@ -248,12 +223,12 @@ func writeServiceUSNCatchUp(
 
 	outcomes := make(
 		chan rootOutcome,
-		len(value.GovernedRoots),
+		len(snapshot.GovernedRoots),
 	)
 
 	var roots sync.WaitGroup
 
-	for _, governedRoot := range value.GovernedRoots {
+	for _, governedRoot := range snapshot.GovernedRoots {
 		if err := ctx.Err(); err != nil {
 			return summary, errors.Join(runErr, err)
 		}
@@ -410,165 +385,4 @@ func writeServiceUSNRoot(
 			passes,
 		),
 	}, nil
-}
-
-// writeServiceConfiguredCollector keeps the configured/full collection lane
-// independent from the 10-minute USN lane while serializing checkpoint-owning
-// work only within the same governed root.
-//
-// Root synchronization is keyed by governed-root scope ID. A long operation on
-// one root therefore cannot block an unrelated root's independent USN pass.
-// Shared spool publication/recovery uses the spool publication boundary instead
-// of a root lock.
-func writeServiceConfiguredCollector(
-	ctx context.Context,
-) (configuredRunSummary, error) {
-	value, configPath, err := config.LoadDefault()
-	if err != nil {
-		return configuredRunSummary{}, err
-	}
-
-	summary := configuredRunSummary{
-		ConfigPath:      configPath,
-		VersionID:       value.VersionID,
-		ConfiguredRoots: len(value.GovernedRoots),
-		Complete:        true,
-		Roots:           make([]configuredRootSummary, 0, len(value.GovernedRoots)),
-		Semantics:       "FI processes Windows Security activity and each configured governed root as independent source observations. Major configured operations use append-only Started/Finished lifecycle journals so an unclosed operation is explicitly recovered as Interrupted after process restart. Interrupted FI spool artifacts are preserved separately and are never promoted into accepted batches or used to advance source checkpoints. Source facts, continuity gaps, checkpoints, spool recovery state, and operation lifecycle records remain separate records with separate meanings.",
-	}
-
-	spoolDir, err := spool.DefaultDir()
-	if err != nil {
-		summary.Complete = false
-		return summary, err
-	}
-
-	// Interrupted-artifact recovery is a spool-publication concern, not a
-	// governed-root checkpoint concern. Use the existing short-lived,
-	// process-safe publication boundary so recovery never serializes unrelated
-	// roots for the duration of a filesystem baseline.
-	boundary, boundaryErr := spool.AcquirePublishBoundary()
-	if boundaryErr != nil {
-		summary.Complete = false
-		return summary, fmt.Errorf(
-			"acquire FI spool publish boundary for interrupted recovery: %w",
-			boundaryErr,
-		)
-	}
-
-	spoolRecovery, recoveryErr := spool.PreserveInterruptedArtifacts(
-		spoolDir,
-	)
-	recoveryErr = errors.Join(recoveryErr, boundary.Close())
-
-	summary.SpoolRecovery = spoolRecovery
-
-	if recoveryErr != nil {
-		summary.Complete = false
-		return summary, fmt.Errorf(
-			"preserve interrupted spool artifacts: %w",
-			recoveryErr,
-		)
-	}
-
-	var runErr error
-
-	securityPrepared, securityPrepareErr := prepareConfiguredSecurity()
-	if securityPrepareErr != nil {
-		securityPrepared.Summary.Status = configuredSecurityFailed
-		securityPrepared.Summary.Error = securityPrepareErr.Error()
-		summary.WindowsSecurity = securityPrepared.Summary
-		summary.Complete = false
-		runErr = errors.Join(
-			runErr,
-			fmt.Errorf(
-				"Windows Security source: %w",
-				securityPrepareErr,
-			),
-		)
-	}
-
-	for _, governedRoot := range value.GovernedRoots {
-		if err := ctx.Err(); err != nil {
-			summary.Complete = false
-			runErr = errors.Join(runErr, err)
-			break
-		}
-
-		scopeID := configuredScopeID(
-			governedRoot,
-		)
-		rootLock := serviceRootLocks.lockFor(
-			scopeID,
-		)
-
-		rootLock.Lock()
-		rootSummary, rootErr := writeConfiguredRoot(
-			ctx,
-			governedRoot,
-		)
-		rootLock.Unlock()
-
-		if rootErr != nil {
-			rootSummary.Status = configuredStatusFailed
-			rootSummary.Error = rootErr.Error()
-			summary.FailedRoots++
-			summary.Complete = false
-			runErr = errors.Join(
-				runErr,
-				fmt.Errorf(
-					"configured root %q: %w",
-					governedRoot,
-					rootErr,
-				),
-			)
-		} else {
-			switch rootSummary.Status {
-			case configuredStatusPartial:
-				summary.PartialRoots++
-				summary.Complete = false
-
-			default:
-				rootSummary.Status = configuredStatusComplete
-				summary.CompletedRoots++
-			}
-		}
-
-		summary.Roots = append(
-			summary.Roots,
-			rootSummary,
-		)
-	}
-
-	if securityPrepareErr == nil {
-		securitySummary, securityErr := finishConfiguredSecurity(
-			ctx,
-			securityPrepared,
-			configuredSecurityScopes(
-				value.GovernedRoots,
-			),
-		)
-
-		if securityErr != nil {
-			securitySummary.Status = configuredSecurityFailed
-			securitySummary.Error = securityErr.Error()
-			summary.Complete = false
-			runErr = errors.Join(
-				runErr,
-				fmt.Errorf(
-					"Windows Security source: %w",
-					securityErr,
-				),
-			)
-		}
-
-		summary.WindowsSecurity = securitySummary
-
-		if securitySummary.Coverage != nil &&
-			securitySummary.Coverage.Status == "Ready" {
-			summary.MonitoringPrerequisitesSatisfied = true
-		}
-	}
-
-	return summary, runErr
 }

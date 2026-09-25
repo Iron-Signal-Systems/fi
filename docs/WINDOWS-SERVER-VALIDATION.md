@@ -482,9 +482,19 @@ FI immediately ran the next bounded window and the Security checkpoint reached
 
 This result validates the source-side scheduler, selection, durable-spool, and
 checkpoint behavior on the tested Server 2016 workload. It does not establish
-20 MiB as a universal production Security-log sizing recommendation, and it does
-not yet claim receiver/relational materialization for those exact two 4719
-records.
+20 MiB as a universal production Security-log sizing recommendation.
+
+A subsequent Phase 3 relational acceptance generation from the same controlled
+audit-policy test was accepted as real `WindowsSecurityEvent` input:
+
+```text
+GenerationID: 20260920T161438.962456500Z-5cf6e5d4fdbd9c6c
+Result:       exact receiver/relational acceptance
+```
+
+That closes receiver/database proof for the `WindowsSecurityEvent` record family.
+It does not change the source-side limitations of Windows auditing or convert the
+20 MiB lab configuration into production sizing guidance.
 
 Detailed audit event generation still depends on Advanced Audit Policy, SACL
 coverage, access path, and Windows behavior.

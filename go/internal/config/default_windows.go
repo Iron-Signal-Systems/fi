@@ -13,9 +13,12 @@ import (
 	"strings"
 )
 
-const defaultFileName = "fi.conf"
+const (
+	defaultFileName           = "fi.conf"
+	defaultTransportTrustName = "fi-transport-trust.conf"
+)
 
-// DefaultPath returns the fixed Phase 1 FI configuration path.
+// DefaultPath returns the fixed FI operational configuration path.
 func DefaultPath() (string, error) {
 	programData := strings.TrimSpace(os.Getenv("ProgramData"))
 	if programData == "" {
@@ -24,7 +27,16 @@ func DefaultPath() (string, error) {
 	return filepath.Join(programData, "FI", "config", defaultFileName), nil
 }
 
-// LoadDefault reads and validates the fixed Phase 1 FI configuration file.
+// DefaultTransportTrustPath returns the fixed FI transport-trust path.
+func DefaultTransportTrustPath() (string, error) {
+	programData := strings.TrimSpace(os.Getenv("ProgramData"))
+	if programData == "" {
+		return "", errors.New("ProgramData is not set")
+	}
+	return filepath.Join(programData, "FI", "config", defaultTransportTrustName), nil
+}
+
+// LoadDefault reads and validates the fixed FI operational configuration.
 func LoadDefault() (Config, string, error) {
 	path, err := DefaultPath()
 	if err != nil {
@@ -33,6 +45,19 @@ func LoadDefault() (Config, string, error) {
 	value, err := Load(path)
 	if err != nil {
 		return Config{}, path, err
+	}
+	return value, path, nil
+}
+
+// LoadDefaultTransportTrust reads and validates the fixed transport-trust file.
+func LoadDefaultTransportTrust() (TransportTrustConfig, string, error) {
+	path, err := DefaultTransportTrustPath()
+	if err != nil {
+		return TransportTrustConfig{}, "", err
+	}
+	value, err := LoadTransportTrust(path)
+	if err != nil {
+		return TransportTrustConfig{}, path, err
 	}
 	return value, path, nil
 }
