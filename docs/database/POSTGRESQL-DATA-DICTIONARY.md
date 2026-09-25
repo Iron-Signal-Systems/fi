@@ -702,6 +702,13 @@ The SQL definition shown for each column is taken from the effective Phase 3 DDL
 | `collection_method` | `text` | No | — | `NOT NULL` |
 | `observation_status` | `text` | No | — | `NOT NULL` |
 
+**`collection_method` semantic contract**
+- PostgreSQL stores `fi.file_observation.collection_method` as `text NOT NULL`; the SQL schema intentionally does not duplicate the Go semantic enum with a database `CHECK`.
+- Current NTFS source values accepted by `ntfs.ValidateObservation()` are `DirectWindowsNTFS` and `BackupAuthorityWindowsNTFS`.
+- `BackupAuthorityWindowsNTFS` means that specific observation was obtained through the bounded `FIObjReader` backup-authority path after the normal collector's initial exact `OpenFileById` returned Access Denied. It is observation provenance, not permanent NTFS-object state.
+- Unknown collection-method values fail closed in the strict receiver validator before the source generation is transactionally accepted. During the 2026-09-25 version-skew characterization, the older worker rejected `BackupAuthorityWindowsNTFS` with `SOURCE_RECORD_REJECTED` and committed 0 records; durable generation/retry state retained the generation, and the compatible worker later accepted the same generation with 20 records seen and 20 committed.
+- A producer change that adds an enum-like semantic value must add downstream validator/regression coverage and use rollout ordering that preserves receiver compatibility.
+
 **Table constraints**
 - `CONSTRAINT file_observation_parent_shape_ck CHECK ( (parent_state = 'Present' AND parent_ntfs_object_id IS NOT NULL AND parent_reason_code IS NULL) OR (parent_state = 'GovernedRoot' AND parent_ntfs_object_id IS NULL AND parent_reason_code IS NULL) OR (parent_state = 'Error' AND parent_ntfs_object_id IS NULL AND parent_reason_code IS NOT NULL) )`
 
