@@ -260,9 +260,10 @@ The implemented Phase 3 path now includes:
 Accepted, rejected, failed, incomplete, duplicate, and conflicting ingest
 actions leave journal history appropriate to their outcome.
 
-The remaining Gate 3 work is acceptance/hardening, not a relational redesign:
-finish the fresh 250K relational closeout, package the permanent ingest worker,
-and run the final Gate 3 reconciliation/closeout.
+Gate 3 is closed. The fresh 250K relational closeout, permanent ingest-worker
+packaging/runtime acceptance, PostgreSQL reconnect/backoff proof, and final
+authoritative reconciliation are accepted Phase 3 results rather than remaining
+work.
 
 The current singleton lock is explicitly host-local. Phase 3 supports one active
 backend ingest-worker host per deployment. This backend ownership boundary is
@@ -304,6 +305,11 @@ classification history.
 Turn immutable FI history into useful intelligence for help desk, developers,
 administrators, security teams, DR, management/compliance, auditors, and forensic
 investigators.
+
+Ordinary query workflows accept human-readable file names, Windows paths,
+hashes, and other supported FI identities. Internal PostgreSQL table joins,
+UTF-16LE path storage, `bytea` representation, and other storage mechanics are
+query-layer implementation details rather than required operator input.
 
 **Gate 5 — Operational, Security, DR & Forensic Intelligence:** prove FI can solve
 representative real-world questions at different levels of depth from the same

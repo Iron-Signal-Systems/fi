@@ -39,6 +39,42 @@ Administrative and local diagnostic interfaces are outside this UX abstraction
 boundary. They expose the technical detail required to operate and verify FI as
 defined in `docs/ADMINISTRATIVE-INTERFACES.md`.
 
+## Human-Readable Query Contract
+
+Ordinary FI investigation begins with values an operator actually knows. Supported
+lookup pivots include, as applicable, file name, full Windows path, SHA-256, NTFS
+object identity, FI source-record identity, time interval, and source/server
+context.
+
+Users must not be required to convert file names or paths into UTF-16LE bytes,
+hexadecimal, PostgreSQL `bytea`, internal table names, or hand-written relational
+joins.
+
+The query layer owns those mechanics. Human-readable input is normalized and
+encoded as required, applied through approved read-only relational queries, and
+returned as file history with applicable metadata, hashes, NTFS identity,
+security/SACL information, streams, warnings, and source/batch/generation
+lineage.
+
+The authoritative PostgreSQL representation does not change merely for query
+convenience. Exact Windows path bytes may remain stored as UTF-16LE `bytea`; the
+query layer converts human-readable input into the representation required for
+comparison.
+
+Base file-detail projections should preserve one row per applicable file
+observation. One-to-many relationships such as DACL ACEs, SACL ACEs, streams,
+and warnings remain separately addressable by FI identity, such as
+`source_record_id`, or are assembled by a higher-level query surface without
+creating misleading Cartesian multiplication.
+
+User/query database authority remains read-only and separate from the Phase 3
+`fi_ingest` runtime identity. Query convenience must not broaden ingest authority
+or create an alternate write path.
+
+Authorized technical users must be able to drill from returned values through
+the relational/source mapping to the applicable recorded source fact and Go
+projection path when troubleshooting requires it.
+
 ### Gate 5 UX acceptance
 
 Representative help-desk, administrative, security, disaster-recovery, and

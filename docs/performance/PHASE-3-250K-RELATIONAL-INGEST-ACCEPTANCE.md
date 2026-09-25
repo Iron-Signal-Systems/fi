@@ -244,8 +244,10 @@ after the one-record generation committed.
 
 ### Worker hardening status
 
-The worker remains under Phase 3 acceptance and is not yet the packaged permanent
-service, but the original runtime-hardening list has materially advanced.
+At this intermediate acceptance checkpoint, the worker remained under Phase 3
+acceptance and had not yet been packaged as the permanent service. The later
+sections in this record preserve the subsequent permanent-service acceptance and
+final Gate 3 closeout.
 
 Closed hardening items now include:
 
