@@ -122,8 +122,9 @@ sudo tools/deployment/linux/Install-FI-Ingest-Worker.sh \
 ```
 
 The installer does not start, stop, or restart the service. This is deliberate:
-initial cutover from the current manually started acceptance worker must be an
-explicit operator action.
+installation and service activation remain separate explicit operator actions.
+During Gate 3 acceptance, the initial cutover from the manually started worker to
+the permanent systemd service was also performed explicitly.
 
 ## Static package validation
 

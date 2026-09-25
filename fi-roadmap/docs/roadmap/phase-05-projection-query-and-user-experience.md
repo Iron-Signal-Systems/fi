@@ -5,8 +5,15 @@
 Turn one immutable FI historical record into useful intelligence for users with
 different roles, permissions, workflows, and required depth.
 
-There is one authoritative FI history. User experiences are authorized
-projections of that history.
+There is one authoritative FI history.
+
+User experiences operate through **Published FI Projections**: validated,
+rebuildable, query-optimized representations of authoritative FI history through
+an explicit publication boundary.
+
+The FI System of Record remains authoritative.
+
+See `docs/PUBLISHED-FI-PROJECTION-CONTRACT.md`.
 
 ## UX Abstraction Boundary
 
@@ -39,6 +46,96 @@ Administrative and local diagnostic interfaces are outside this UX abstraction
 boundary. They expose the technical detail required to operate and verify FI as
 defined in `docs/ADMINISTRATIVE-INTERFACES.md`.
 
+## Published FI Projection Boundary
+
+Ordinary query workloads do not run directly against the authoritative
+PostgreSQL ingest workload.
+
+The logical boundary is:
+
+```text
+                    FI System of Record
+                       AUTHORITATIVE
+                            |
+                            | read only
+                            v
+                     Projection Builder
+                            |
+                            v
+                    Candidate Projection
+                            |
+                        validation
+                            |
+                            v
+                    Published Projection
+                       REBUILDABLE
+                            |
+                            v
+                        Query API
+                            |
+                            v
+                            UX
+```
+
+The projection is allowed to use structures designed specifically for fast user
+questions, including additional indexes, current-state tables, denormalized query
+shapes, precomputed relationships, time-oriented search structures, and other
+derived accelerators.
+
+Those structures never become historical authority.
+
+Query convenience must not broaden `fi_ingest` authority or create another
+System-of-Record write path.
+
+## Projection Publication
+
+Publication is state-driven.
+
+FI normally waits until authoritative ingest has reached a completed boundary and
+a configurable quiet/debounce interval has elapsed.
+
+A permanently busy source must not block projection advancement forever.
+Therefore a separate configurable maximum-projection-lag policy may cause FI to
+publish a transactionally complete source cut even while later authoritative
+ingest continues.
+
+The projection builder obtains a coherent read of the authoritative database,
+binds the candidate to its exact authoritative source cut, builds/updates the
+candidate, validates it, and only then atomically makes it the active query
+target.
+
+The implementation must not infer "settled" from low CPU, low I/O, or an
+apparently idle PostgreSQL process.
+
+It uses FI authoritative state.
+
+## Projection Lifecycle
+
+The minimum lifecycle is:
+
+```text
+BUILDING
+   |
+   v
+VALIDATING
+   |
+   +---- failure ----> REJECTED
+   |
+   v
+PUBLISHED
+   |
+   v
+SUPERSEDED
+```
+
+A candidate is not visible to ordinary queries.
+
+If build or validation fails, the existing Published FI Projection remains
+active.
+
+Every published projection declares enough identity/freshness information to
+establish the authoritative source cut it represents.
+
 ## Human-Readable Query Contract
 
 Ordinary FI investigation begins with values an operator actually knows. Supported
@@ -51,29 +148,24 @@ hexadecimal, PostgreSQL `bytea`, internal table names, or hand-written relationa
 joins.
 
 The query layer owns those mechanics. Human-readable input is normalized and
-encoded as required, applied through approved read-only relational queries, and
-returned as file history with applicable metadata, hashes, NTFS identity,
-security/SACL information, streams, warnings, and source/batch/generation
-lineage.
+encoded as required, applied against the Published FI Projection, and returned
+as file history with applicable metadata, hashes, NTFS identity, security/SACL
+information, streams, warnings, coverage, and source/batch/generation lineage.
 
 The authoritative PostgreSQL representation does not change merely for query
 convenience. Exact Windows path bytes may remain stored as UTF-16LE `bytea`; the
-query layer converts human-readable input into the representation required for
-comparison.
+projection/query layer converts human-readable input into the representation
+required for comparison.
 
-Base file-detail projections should preserve one row per applicable file
-observation. One-to-many relationships such as DACL ACEs, SACL ACEs, streams,
-and warnings remain separately addressable by FI identity, such as
-`source_record_id`, or are assembled by a higher-level query surface without
-creating misleading Cartesian multiplication.
-
-User/query database authority remains read-only and separate from the Phase 3
-`fi_ingest` runtime identity. Query convenience must not broaden ingest authority
-or create an alternate write path.
+Base file-detail projections should preserve one logical file observation rather
+than creating misleading row multiplication. One-to-many relationships such as
+DACL ACEs, SACL ACEs, streams, warnings, and other relationships remain
+independently addressable and may be assembled by a higher-level query surface.
 
 Authorized technical users must be able to drill from returned values through
-the relational/source mapping to the applicable recorded source fact and Go
-projection path when troubleshooting requires it.
+FI lineage to the applicable source record, batch, generation, receipt, and
+authoritative relational relationships without requiring the UX/API itself to
+hold System-of-Record write authority.
 
 ### Gate 5 UX acceptance
 
@@ -83,8 +175,28 @@ from the same underlying FI history without requiring ordinary users to
 understand FI implementation details.
 
 The same representative answers must remain traceable to their applicable source
-facts, relationships, coverage state, and uncertainty when a user with sufficient
-authorization drills deeper.
+facts, relationships, coverage state, uncertainty, and projection freshness when
+a user with sufficient authorization drills deeper.
+
+## Projection Freshness and Truth Presentation
+
+A Published FI Projection never claims to represent authoritative state newer
+than its declared source cut.
+
+Where asynchronous work advances at different rates, FI must preserve that
+distinction rather than collapse all components into one false "current" state.
+
+For example:
+
+```text
+base FI history:      current through source cut A
+classification:       current through source cut B
+identity derivation:  current through source cut C
+```
+
+Known lag is operational state, not missing historical authority.
+
+Known source-collection gaps remain separate from projection lag.
 
 ## Help Desk / User Support
 
@@ -193,9 +305,59 @@ Incomplete
 
 Known uncertainty and coverage gaps remain visible.
 
+Projection lag/freshness must also remain visible where it affects an answer.
+
 ## Protected Human Access
 
-User-facing and query components do not receive authoritative database write authority. Their access to FI data is read-only.
+User-facing and query components do not receive authoritative database write
+authority.
+
+The intended minimum logical authority is:
+
+```text
+Projection Builder
+    read:  FI System of Record
+    write: projection database
+
+Query Service
+    read:  Published FI Projection
+
+UX
+    use:   Query/API service
+```
+
+The UX and normal query service do not require direct System-of-Record write
+authority.
+
+## Projection Rebuild Requirement
+
+Published FI Projections are rebuildable.
+
+Gate 5 must include a destructive query-plane test:
+
+```text
+destroy projection/query database
+        |
+        v
+create empty projection database
+        |
+        v
+rebuild from FI System of Record
+        |
+        v
+validate
+        |
+        v
+publish
+        |
+        v
+same supported answers for the same authoritative source cut
+```
+
+Incremental refresh is expected in normal operation.
+
+A full rebuild remains the proof that incremental projection state has not become
+an undocumented second source of truth.
 
 ## Gate 5 — Operational, Security, DR & Forensic Intelligence
 
@@ -208,5 +370,18 @@ Gate 5 proves the same FI history can support representative:
 - management/compliance/audit questions;
 - deep forensic incident reconstruction; and
 - role-appropriate UX abstraction with drill-down to the same underlying truth.
+
+Gate 5 also proves the Published FI Projection contract:
+
+- candidate state is not query-visible before validation;
+- failed publication leaves the active projection intact;
+- published state declares its authoritative source cut;
+- projection freshness/coverage is represented truthfully;
+- continuous ingest does not indefinitely prevent publication;
+- ordinary query workload does not compete directly with authoritative ingest;
+- query/API/UX identities cannot write authoritative FI history;
+- loss of the projection database does not damage historical authority; and
+- the projection can be rebuilt from an empty query database using the System of
+  Record.
 
 Gate 5 is the primary customer-value gate for FI.

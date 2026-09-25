@@ -361,8 +361,7 @@ T:\FI-Gate2-Full\exhaust-0018\payload-000922.bin
 The requested write was 8 MiB and the observed partial file length was
 5,242,880 bytes. T: remained Healthy with `SizeRemaining=0`.
 
-This exhausted a governed **source** filesystem. It did not exhaust FI transport
-spool/generation stage or receiver custody storage.
+This was a governed **source** filesystem exhaustion test.
 
 ## Cross-root scheduler defect
 
@@ -556,8 +555,7 @@ The campaign establishes, in the tested environment:
   Security log returned to 20 MiB.
 
 This campaign does **not** establish a clean uninterrupted 250K acceptance result,
-one reconciled exact generated-byte total, universal production sizing, or
-transport-custody filesystem exhaustion behavior.
+one reconciled exact generated-byte total, or universal production sizing.
 
 ## Engineering disposition
 
@@ -575,6 +573,9 @@ Windows Security scheduler remediation:   PASS (source-side)
 A later clean 250K rerun may be used for a clean scale datapoint. It does not
 replace this report.
 
-This campaign contributes substantial live Gate 2 validation but is not itself
-Gate 2 closeout. Remaining closure work is tracked in
-`PHASE-2-GATE-2-CLOSURE-CHECKLIST.md`.
+This campaign contributed substantial live Gate 2 validation but was not
+itself Gate 2 closeout. At this campaign checkpoint, remaining closure work was
+tracked in `PHASE-2-GATE-2-CLOSURE-CHECKLIST.md`.
+
+Gate 2 subsequently closed **COMPLETE — PASS** on 2026-09-20. This report
+preserves the campaign state rather than rewriting the earlier checkpoint.

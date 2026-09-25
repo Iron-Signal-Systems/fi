@@ -27,7 +27,7 @@ Current status:
 | Rejected-generation rollback and journal outcome | PASS |
 | Volume-qualified NTFS/USN identity | PASS |
 | Read-only recorder-aware reconcile/inventory | PASS |
-| Live sequential Go ingest worker | PASS for validation |
+| Permanent sequential Go ingest worker | PASS |
 | Fresh 250K relational acceptance campaign | PASS |
 | Authoritative receiver/database record-kind proof | 13/13 PASS |
 | `USNContinuityGap` receiver/database proof | PASS |
@@ -225,10 +225,10 @@ records.
 Later observations, corrections, analysis, classification, or changed
 conclusions are represented by new related records.
 
-## Current live worker
+## Accepted live worker
 
-`go/cmd/fi-ingest-worker` is the current live sequential Phase 3 consumer used
-for acceptance work.
+`go/cmd/fi-ingest-worker` is the accepted permanent sequential Phase 3
+consumer.
 
 Implemented behavior includes:
 
@@ -244,6 +244,10 @@ Implemented behavior includes:
 The accepted Phase 3 runtime is packaged as the permanent Linux
 `fi-ingest-worker.service` and runs under the `fi-receiver` identity.
 
+This records the environment that passed Gate 3. A later Phase 6 backend-platform
+change may replace the integrated deployment environment without rewriting this
+accepted Phase 3 result.
+
 Accepted hardening includes durable rejection retry state, bounded READY-marker
 discovery, deterministic retry ordering, host-local singleton protection,
 adaptive authoritative repair, PostgreSQL reconnect/backoff, bounded supervisor
@@ -253,13 +257,13 @@ Parallel relational ingest is not part of the accepted Phase 3 design.
 Cross-backend HA/failover still requires a future authoritative distributed
 coordination mechanism.
 
-## Current acceptance record
+## Final acceptance record
 
 The fresh relational database campaign intentionally started from an empty
-49-table schema and is re-materializing the active 250K source campaign through
-the new relational path.
+49-table schema and re-materialized the active 250K source campaign through the
+new relational path.
 
-Current acceptance has proven, among other items:
+The accepted campaign proved, among other items:
 
 - real generation ingest and idempotence;
 - real rollback on a source-record rejection;
@@ -283,13 +287,13 @@ relational acceptance campaign, worker hardening, failure/recovery acceptance,
 permanent service deployment, and final authoritative reconciliation subsequently
 completed on 2026-09-24.
 
-The running acceptance record is:
+The authoritative acceptance record is:
 
 `docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
 
 ## Gate 3 — Authoritative Record & Journal Integrity
 
-Gate 3 closes only when FI demonstrates that:
+Gate 3 closure required FI to demonstrate that:
 
 - valid input is recorded correctly;
 - rejected input creates durable history without partial authority;

@@ -6,7 +6,11 @@ Phase 2 status: **COMPLETE — PASS**
 
 Gate 2 status: **COMPLETE — PASS**
 
-Phase 3 / Gate 3: **ACTIVE**
+Phase 3 / Gate 3 at this closeout checkpoint: **ACTIVE**
+
+> **Later status update — 2026-09-24:** Phase 3 / Gate 3 subsequently completed
+> **COMPLETE — PASS**. The `ACTIVE` state above is retained as the dated
+> 2026-09-20 Gate 2 closeout context.
 
 Repository baseline at closeout preparation:
 
@@ -121,11 +125,9 @@ The accepted resource-bound requirements are:
   causing ambiguous loss; and
 - restoration of the downstream path allows normal retry and drain.
 
-A full receiver filesystem is therefore another reason durable receiver custody
-cannot complete; from the sender custody contract it is equivalent to downstream
-unavailability: no valid durable acknowledgement means no source retirement.
-A separate live disk-full variant is not required to prove the already-accepted
-custody invariant.
+The accepted invariant is reason-independent: without the valid durable
+acknowledgement required by the protocol, the source does not retire the
+generation.
 
 ## Integrated and automated acceptance
 
@@ -351,5 +353,5 @@ Final decision:
 ```text
 Phase 2 — Secure Record Transport:       COMPLETE — PASS
 Gate 2 — Secure Durable Record Transfer: COMPLETE — PASS
-Phase 3 — Ingest & Recorder:             ACTIVE
+Phase 3 — Ingest & Recorder on 2026-09-20: ACTIVE (historical checkpoint)
 ```

@@ -172,17 +172,30 @@ See:
 - `PHASE-2-WINDOWS-SECURITY-WORKER-VALIDATION.md`
 - `PHASE-2-GATE-2-CLOSEOUT.md`
 
-## Phase 3 fresh relational 250K acceptance campaign
+## Phase 3 fresh relational 250K acceptance campaign — COMPLETE
 
-Phase 3 uses the active 250K corpus for a **separate backend acceptance
+Phase 3 used the active 250K corpus for a **separate backend acceptance
 campaign**. This does not convert the interrupted Phase 2 source-side campaign
 into a clean onboarding PASS.
 
 The Phase 3 campaign deliberately emptied the 49-table relational PostgreSQL
 schema and then re-materialized immutable recorder-authorized generations through
-the new typed relational ingest path.
+the typed relational ingest path.
 
-The campaign is currently **IN PROGRESS**. It is being used to measure and prove:
+The campaign began on 2026-09-20 and completed on 2026-09-24.
+
+```text
+Phase 3 / Gate 3:                         COMPLETE — PASS
+Authoritative record-kind proof:          13/13 PASS
+USNContinuityGap receiver/DB proof:       PASS
+Permanent Linux ingest-worker service:    PASS
+PostgreSQL reconnect/backoff:             PASS
+Final pending recorder receipts:          0
+Final relational conflicts:               0
+Final READY backlog:                      0
+```
+
+The campaign proved:
 
 - generation-atomic relational ingest;
 - exact receipt/FIGT identity binding;
@@ -190,13 +203,18 @@ The campaign is currently **IN PROGRESS**. It is being used to measure and prove
 - typed-projection completeness;
 - append-only ingest-journal balance;
 - duplicate-safe `AlreadyAccepted` behavior;
-- rejected-generation rollback;
+- rejected-generation rollback and durable retry ordering;
 - real-file relationship reconstruction;
 - valid zero-byte `ContentPrefix` handling;
-- all 13 supported record kinds; and
-- live sequential Go worker catch-up behavior.
+- all 13 supported record kinds;
+- bounded READY-marker operational discovery;
+- host-local singleton protection;
+- restart/crash recovery;
+- adaptive authoritative operational repair;
+- PostgreSQL availability reconnect/backoff; and
+- permanent systemd service behavior.
 
-A recorded checkpoint on 2026-09-20 showed:
+An intermediate checkpoint recorded on 2026-09-20 showed:
 
 ```text
 recorded_generation    105
@@ -215,10 +233,28 @@ and committed 7,167 / 7,167 records successfully. The database then contained a
 real `Present` content-prefix observation with zero bytes observed and an empty
 prefix, and zero observed prefix-length mismatches.
 
-Authoritative receiver/database record-kind proof is currently 12/13. The only
-remaining kind is `USNContinuityGap`; its controlled source-side gap/baseline/
-catch-up behavior has already been proven, but the final receiver/relational
-materialization proof remains outstanding.
+`USNContinuityGap` subsequently completed authoritative receiver/database
+materialization proof, closing supported record-kind coverage at 13/13.
 
-See `PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md` for the running Gate 3
-acceptance record.
+The final unfiltered authoritative reconciliation on 2026-09-24 reported:
+
+```text
+ReceiptsDiscovered: 1342
+AlreadyAccepted:    1342
+Pending:            0
+Conflict:           0
+
+recorded_generation  1,342
+source_batch          7,085
+source_record       512,022
+ingest_journal        2,688
+READY markers             0
+```
+
+The final live relational corpus naturally contained 11 of the 13 supported
+record kinds. `SupportingSourceCollectionError` and
+`WindowsSecurityContinuityGap` remain covered by their separate authoritative
+record-kind acceptance proofs and are not reclassified as missing support.
+
+See `PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md` for the authoritative Gate 3
+acceptance and closeout record.

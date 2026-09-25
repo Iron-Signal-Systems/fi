@@ -9,6 +9,12 @@ SOURCE-SIDE WINDOWS SECURITY WORKER: PASS
 FULL RECEIVER / RELATIONAL PROOF OF THE CONTROLLED 4719 PAIR: PENDING
 ```
 
+> **Later disposition:** Phase 3 / Gate 3 subsequently completed authoritative
+> receiver/database support for all 13 supported record kinds, including
+> `WindowsSecurityEvent`. The `PENDING` status above is retained as the
+> 2026-09-20 checkpoint for this exact controlled 4719 pair; it is not a statement
+> that Gate 3 or WindowsSecurityEvent relational support remains incomplete.
+
 This note records the post-Gate-2 source-runtime remediation discovered during
 the retained 250K randomized nested engineering/resilience campaign.
 
@@ -390,7 +396,8 @@ recorder receipt
 PostgreSQL WindowsSecurityEvent materialization
 ```
 
-That downstream work belongs to the current Phase 3 relational-validation effort.
+At this 2026-09-20 checkpoint, that downstream work belonged to the then-active
+Phase 3 relational-validation effort.
 
 ## Disposition
 

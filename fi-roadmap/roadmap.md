@@ -20,7 +20,13 @@ investigation.
 - Customer source-file content never travels through normal FI record transport.
 - AD identity collection is performed through the Windows collector's deployed
   service identity, intended to be a gMSA.
-- Current-state views are rebuildable projections of immutable history.
+- The PostgreSQL FI System of Record is the authoritative relational
+  representation of accepted FI history.
+- Published FI Projections are validated, rebuildable, query-optimized
+  representations of authoritative history through explicit source cuts.
+- Published FI Projections never become a second historical authority.
+- Normal Query/API/UX workloads operate against Published FI Projections rather
+  than directly competing with authoritative ingest.
 - FI collects Windows activity because it concerns governed objects, not to act
   as a general Windows event collector or SIEM.
 - Source collectors preserve source facts and may perform deterministic decoding
@@ -45,7 +51,7 @@ path, recorder-aware reconciliation/inventory, permanent sequential Go ingest
 worker, failure/recovery behavior, and final authoritative reconciliation all
 completed Gate 3 acceptance.
 
-Current Phase 3 checkpoint:
+Final Phase 3 / Gate 3 closeout state:
 
 ```text
 49-table relational foundation          PASS
@@ -58,7 +64,7 @@ Duplicate-safe AlreadyAccepted          PASS
 Rejected-generation rollback            PASS
 Volume-qualified NTFS/USN identity      PASS
 Read-only reconcile/inventory           PASS
-Live Go ingest worker                   PASS for validation
+Permanent Go ingest worker              PASS
 Bounded READY operational discovery     PASS
 Durable rejection retry ordering        PASS
 Host-local singleton protection         PASS
@@ -234,7 +240,7 @@ lose FI history across failures, retries, restarts, or network interruption.
 ## Phase 3 — Ingest & Recorder
 
 Verify transported FI material and write the resulting typed historical records
-to the FI relational System-of-Record materialization while preserving the
+to the authoritative relational FI System of Record while preserving the
 immutable Phase 2 recorder authority that authorized the generation.
 
 The implemented Phase 3 path now includes:
@@ -265,17 +271,16 @@ packaging/runtime acceptance, PostgreSQL reconnect/backoff proof, and final
 authoritative reconciliation are accepted Phase 3 results rather than remaining
 work.
 
-The current singleton lock is explicitly host-local. Phase 3 supports one active
-backend ingest-worker host per deployment. This backend ownership boundary is
-independent of Windows source count; the current acceptance worker remains
-source-scoped through `-source`, and final multi-source backend topology is a
-separate deployment concern. Cross-backend HA/failover requires a future
-authoritative distributed lock or lease and is not implied by the host-local
-`flock()`.
+The accepted singleton lock is explicitly host-local. Phase 3 supports one
+active backend ingest-worker host per deployment. This backend ownership boundary
+is independent of Windows source count; the accepted worker is source-scoped
+through `-source`, and final multi-source backend topology is a separate
+deployment concern. Cross-backend HA/failover requires a future authoritative
+distributed lock or lease and is not implied by the host-local `flock()`.
 
-**Gate 3 — Authoritative Record & Journal Integrity:** prove authoritative FI
-history is write-once, reconstructable, and every material ingest outcome is
-preserved.
+**Gate 3 — Authoritative Record & Journal Integrity: COMPLETE — PASS.**
+Accepted proof establishes that authoritative FI history is write-once,
+reconstructable, and every material ingest outcome is preserved.
 
 [Phase 3 details](docs/roadmap/phase-03-ingest-and-recorder.md)
 
@@ -290,7 +295,7 @@ Add meaning to already-recorded file and stream observations through the
 
 Phase 4 owns the protected streaming/read-broker path used to obtain bounded
 transient source content for classification. Source content is not carried by the
-normal FI record transport and is not persisted on the Linux FI system.
+normal FI record transport and is not persisted as a backend source-content copy.
 
 **Gate 4 — Protected Classification & Enrichment:** prove bounded source-content
 inspection, exact observation correlation, safe failure, and immutable
@@ -306,14 +311,24 @@ Turn immutable FI history into useful intelligence for help desk, developers,
 administrators, security teams, DR, management/compliance, auditors, and forensic
 investigators.
 
+Phase 5 publishes validated, rebuildable, query-optimized **Published FI
+Projections** from the authoritative FI System of Record. Normal user-query
+workloads operate on that query plane rather than competing directly with
+authoritative ingest.
+
 Ordinary query workflows accept human-readable file names, Windows paths,
 hashes, and other supported FI identities. Internal PostgreSQL table joins,
 UTF-16LE path storage, `bytea` representation, and other storage mechanics are
 query-layer implementation details rather than required operator input.
 
+Publication is state-driven from completed authoritative FI state, binds each
+projection to an explicit source cut, validates candidate state before atomic
+publication, and preserves the prior published projection when a candidate fails.
+
 **Gate 5 — Operational, Security, DR & Forensic Intelligence:** prove FI can solve
 representative real-world questions at different levels of depth from the same
-underlying historical source facts.
+underlying historical source facts while preserving projection freshness,
+lineage, uncertainty, and rebuildability.
 
 [Phase 5 details](docs/roadmap/phase-05-projection-query-and-user-experience.md)
 
@@ -321,13 +336,19 @@ underlying historical source facts.
 
 ## Phase 6 — Integrated Deployment & Release
 
-Combine the accepted Windows, transport, recorder, classification, query, user
-experience, operational, backup, recovery, upgrade, and release capabilities into
-a reproducible supported product.
+Combine the accepted Windows, transport, recorder, classification, projection,
+query, user experience, operational, backup, recovery, upgrade, and release
+capabilities into a reproducible supported product.
+
+Phase 6 freezes and proves the supported backend deployment profile. The proposed
+FreeBSD/VNET-jail/PF/ZFS backend direction is tracked in
+`../docs/architecture/ADR-0001-FREEBSD-BACKEND.md`; Gate 3's accepted Linux
+runtime remains preserved as engineering history.
 
 **Gate 6 — Integrated Release Acceptance:** prove FI survives representative
-installation, failure, recovery, upgrade, rollback, DR, and investigation
-scenarios without losing the integrity or explainability of its history.
+installation, failure, recovery, upgrade, rollback, DR, projection rebuild, and
+investigation scenarios without losing the integrity or explainability of its
+history.
 
 [Phase 6 details](docs/roadmap/phase-06-integrated-deployment-and-release.md)
 
