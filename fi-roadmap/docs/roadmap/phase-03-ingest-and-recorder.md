@@ -27,7 +27,7 @@ Current status:
 | Rejected-generation rollback and journal outcome | PASS |
 | Volume-qualified NTFS/USN identity | PASS |
 | Read-only recorder-aware reconcile/inventory | PASS |
-| Live sequential Go ingest worker | PASS for validation |
+| Permanent sequential Go ingest worker | PASS |
 | Fresh 250K relational acceptance campaign | PASS |
 | Authoritative receiver/database record-kind proof | 13/13 PASS |
 | `USNContinuityGap` receiver/database proof | PASS |
@@ -243,6 +243,10 @@ Implemented behavior includes:
 
 The accepted Phase 3 runtime is packaged as the permanent Linux
 `fi-ingest-worker.service` and runs under the `fi-receiver` identity.
+
+This records the environment that passed Gate 3. A later Phase 6 backend-platform
+change may replace the integrated deployment environment without rewriting this
+accepted Phase 3 result.
 
 Accepted hardening includes durable rejection retry state, bounded READY-marker
 discovery, deterministic retry ordering, host-local singleton protection,

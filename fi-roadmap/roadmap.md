@@ -20,7 +20,13 @@ investigation.
 - Customer source-file content never travels through normal FI record transport.
 - AD identity collection is performed through the Windows collector's deployed
   service identity, intended to be a gMSA.
-- Current-state views are rebuildable projections of immutable history.
+- The PostgreSQL FI System of Record is the authoritative relational
+  representation of accepted FI history.
+- Published FI Projections are validated, rebuildable, query-optimized
+  representations of authoritative history through explicit source cuts.
+- Published FI Projections never become a second historical authority.
+- Normal Query/API/UX workloads operate against Published FI Projections rather
+  than directly competing with authoritative ingest.
 - FI collects Windows activity because it concerns governed objects, not to act
   as a general Windows event collector or SIEM.
 - Source collectors preserve source facts and may perform deterministic decoding
@@ -289,7 +295,7 @@ Add meaning to already-recorded file and stream observations through the
 
 Phase 4 owns the protected streaming/read-broker path used to obtain bounded
 transient source content for classification. Source content is not carried by the
-normal FI record transport and is not persisted on the Linux FI system.
+normal FI record transport and is not persisted as a backend source-content copy.
 
 **Gate 4 — Protected Classification & Enrichment:** prove bounded source-content
 inspection, exact observation correlation, safe failure, and immutable
@@ -305,14 +311,24 @@ Turn immutable FI history into useful intelligence for help desk, developers,
 administrators, security teams, DR, management/compliance, auditors, and forensic
 investigators.
 
+Phase 5 publishes validated, rebuildable, query-optimized **Published FI
+Projections** from the authoritative FI System of Record. Normal user-query
+workloads operate on that query plane rather than competing directly with
+authoritative ingest.
+
 Ordinary query workflows accept human-readable file names, Windows paths,
 hashes, and other supported FI identities. Internal PostgreSQL table joins,
 UTF-16LE path storage, `bytea` representation, and other storage mechanics are
 query-layer implementation details rather than required operator input.
 
+Publication is state-driven from completed authoritative FI state, binds each
+projection to an explicit source cut, validates candidate state before atomic
+publication, and preserves the prior published projection when a candidate fails.
+
 **Gate 5 — Operational, Security, DR & Forensic Intelligence:** prove FI can solve
 representative real-world questions at different levels of depth from the same
-underlying historical source facts.
+underlying historical source facts while preserving projection freshness,
+lineage, uncertainty, and rebuildability.
 
 [Phase 5 details](docs/roadmap/phase-05-projection-query-and-user-experience.md)
 
@@ -320,13 +336,19 @@ underlying historical source facts.
 
 ## Phase 6 — Integrated Deployment & Release
 
-Combine the accepted Windows, transport, recorder, classification, query, user
-experience, operational, backup, recovery, upgrade, and release capabilities into
-a reproducible supported product.
+Combine the accepted Windows, transport, recorder, classification, projection,
+query, user experience, operational, backup, recovery, upgrade, and release
+capabilities into a reproducible supported product.
+
+Phase 6 freezes and proves the supported backend deployment profile. The proposed
+FreeBSD/VNET-jail/PF/ZFS backend direction is tracked in
+`../docs/architecture/ADR-0001-FREEBSD-BACKEND.md`; Gate 3's accepted Linux
+runtime remains preserved as engineering history.
 
 **Gate 6 — Integrated Release Acceptance:** prove FI survives representative
-installation, failure, recovery, upgrade, rollback, DR, and investigation
-scenarios without losing the integrity or explainability of its history.
+installation, failure, recovery, upgrade, rollback, DR, projection rebuild, and
+investigation scenarios without losing the integrity or explainability of its
+history.
 
 [Phase 6 details](docs/roadmap/phase-06-integrated-deployment-and-release.md)
 

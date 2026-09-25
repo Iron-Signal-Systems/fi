@@ -121,11 +121,9 @@ The accepted resource-bound requirements are:
   causing ambiguous loss; and
 - restoration of the downstream path allows normal retry and drain.
 
-A full receiver filesystem is therefore another reason durable receiver custody
-cannot complete; from the sender custody contract it is equivalent to downstream
-unavailability: no valid durable acknowledgement means no source retirement.
-A separate live disk-full variant is not required to prove the already-accepted
-custody invariant.
+The accepted invariant is reason-independent: without the valid durable
+acknowledgement required by the protocol, the source does not retire the
+generation.
 
 ## Integrated and automated acceptance
 

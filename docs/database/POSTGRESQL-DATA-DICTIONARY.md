@@ -8,11 +8,13 @@
 **Phase status:** Phase 3 / Gate 3 complete\
 **Effective migrations:** `0001_relational.sql` → `0002_source_families.sql` → `0003_usn_relational_identity.sql`
 
-> This dictionary describes the **effective PostgreSQL schema and relational ingest implementation in current `main`** after all three Phase 3 migrations are applied in order. The schema/projector/ingest implementation was rechecked against `main` on 2026-09-25; no database-schema, `recordingest`, or `fi-ingest-worker` implementation drift exists relative to the code used to build the column mappings.
+> This dictionary describes the **effective PostgreSQL FI System-of-Record schema and relational ingest implementation in current `main`** after all three Phase 3 migrations are applied in order. The schema/projector/ingest implementation was rechecked against `main` on 2026-09-25; no database-schema, `recordingest`, or `fi-ingest-worker` implementation drift exists relative to the code used to build the column mappings.
+>
+> This is the authoritative relational data dictionary. Phase 5 Published FI Projection schemas are separate rebuildable query representations and will receive their own data dictionary when that schema exists.
 
 ## 1. Database model at a glance
 
-FI currently uses one PostgreSQL database, `fi`, with one restricted application schema, also named `fi`.
+FI currently uses one authoritative PostgreSQL database, `fi`, with one restricted application schema, also named `fi`.
 
 | Metric | Current effective value |
 |---|---:|
@@ -25,7 +27,7 @@ FI currently uses one PostgreSQL database, `fi`, with one restricted application
 | Go ↔ PostgreSQL table mapping coverage | 49 / 49 |
 | JSON / JSONB source-payload copies | 0 |
 
-The relational database is **derived from verified immutable recorder custody**. Recorder custody remains the exact source representation; PostgreSQL is a typed, rebuildable relational system of record. Exact source JSONL is not copied into JSON/JSONB columns.
+The relational database is **derived from verified immutable recorder custody**. Recorder custody remains the exact accepted source representation and authorization basis; PostgreSQL is the authoritative typed relational FI System of Record used for historical relationships, correlation, and projection. It remains reconstructable from accepted immutable custody, but query convenience does not create a second authoritative database. Exact source JSONL is not copied into JSON/JSONB columns.
 
 ### Core invariants
 

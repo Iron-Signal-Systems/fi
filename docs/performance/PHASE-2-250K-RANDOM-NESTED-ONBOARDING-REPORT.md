@@ -361,8 +361,7 @@ T:\FI-Gate2-Full\exhaust-0018\payload-000922.bin
 The requested write was 8 MiB and the observed partial file length was
 5,242,880 bytes. T: remained Healthy with `SizeRemaining=0`.
 
-This exhausted a governed **source** filesystem. It did not exhaust FI transport
-spool/generation stage or receiver custody storage.
+This was a governed **source** filesystem exhaustion test.
 
 ## Cross-root scheduler defect
 
@@ -556,8 +555,7 @@ The campaign establishes, in the tested environment:
   Security log returned to 20 MiB.
 
 This campaign does **not** establish a clean uninterrupted 250K acceptance result,
-one reconciled exact generated-byte total, universal production sizing, or
-transport-custody filesystem exhaustion behavior.
+one reconciled exact generated-byte total, or universal production sizing.
 
 ## Engineering disposition
 

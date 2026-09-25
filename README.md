@@ -565,8 +565,14 @@ observation. Subsequent observations add history.
 
 Material changes create new records rather than silently rewriting prior history.
 
-Historical records are authoritative. Current-state, operational, reporting, and
-role-oriented backend views are rebuildable representations of that history.
+The PostgreSQL FI System of Record is the authoritative relational
+representation of accepted FI history.
+
+Current-state, operational, reporting, search, and role-oriented
+representations are **Published FI Projections**: validated, rebuildable,
+query-optimized representations of authoritative history through an explicit
+publication boundary. A Published FI Projection is not a second source of
+truth.
 
 ---
 
@@ -967,26 +973,38 @@ file's identity or history.**
              Phase 3 Relational Ingest
                          |
                          v
-         PostgreSQL Typed Materialization
+          PostgreSQL FI System of Record
+                     AUTHORITATIVE
                          |
-              +----------+----------+
-              |                     |
-              v                     v
-        Historical Records      Correlation
-                                    |
-                                    v
-                             PostgreSQL Views
-                                    |
-                                    v
-                             Query / UI / API
+                         | read only
+                         v
+                 Correlation / Projector
+                         |
+                         v
+                Candidate FI Projection
+                         |
+                     validation
+                         |
+                         v
+                Published FI Projection
+                   REBUILDABLE / QUERY
+                         |
+                         v
+                    Query / API
+                         |
+                         v
+                         UX
 ```
 
 The collector observes.
 
-The backend preserves and correlates.
+The authoritative backend preserves accepted FI history.
 
-Views present the same underlying information for different operational
-questions.
+Published FI Projections present validated, rebuildable, query-optimized
+representations of that history without becoming a second source of truth.
+
+See [`docs/PUBLISHED-FI-PROJECTION-CONTRACT.md`](docs/PUBLISHED-FI-PROJECTION-CONTRACT.md)
+for the publication, freshness, rebuild, and authority contract.
 
 FI remains non-remediating toward the systems it observes.
 
