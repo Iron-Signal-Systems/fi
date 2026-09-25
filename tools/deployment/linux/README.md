@@ -143,7 +143,7 @@ invariants, including the absence of hard PostgreSQL service coupling.
 
 ## Initial cutover acceptance
 
-Before Gate 3 closure, the permanent service must prove:
+The permanent-service acceptance completed before Gate 3 closure and proved:
 
 ```text
 normal service start

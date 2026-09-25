@@ -150,6 +150,12 @@ should not need to understand FI collectors, record types, Windows event IDs, US
 mechanics, correlation stages, database tables, or internal storage in order to
 understand the environment FI is describing.
 
+The same rule applies to query input. A user who knows a file name, Windows
+path, hash, or other supported FI identity should be able to supply that value
+directly. Internal path encodings such as UTF-16LE `bytea`, hexadecimal
+representations, relational joins, and database implementation details are owned
+by FI's query layer rather than exposed as prerequisites for ordinary use.
+
 That abstraction must not create a second or simplified truth. User-facing
 answers remain traceable to the same authoritative FI history, and users with
 appropriate access must be able to drill into the relationships and source facts

@@ -800,7 +800,7 @@ manifest.
 
 ---
 
-## Phase 1 and Phase 2 closeout; current Phase 3 focus
+## Phase 1 through Phase 3 closeout; current Phase 4 focus
 
 Phase 1 / Gate 1 is complete for the accepted source-intelligence boundary.
 
@@ -858,25 +858,28 @@ Gate 1 closure subsequently completed:
 The Gate 1 test deployment uses `1m` collection and `30m` supporting-source
 refresh only as an acceptance configuration. Gate 1 does not declare one universal production cadence; pilot and production intervals remain deployment-specific and measurement-driven.
 
-Gate 1 and Gate 2 are complete.
+Gate 1, Gate 2, and Gate 3 are complete.
 
 **Phase 2 / Gate 2 — Secure Record Transport: COMPLETE — PASS**
 
-FI is now focused on **Phase 3 / Gate 3 — Ingest & Recorder**.
+**Phase 3 / Gate 3 — Ingest & Recorder: COMPLETE — PASS**
+
+FI's next planned development boundary is **Phase 4 — Classification &
+Enrichment**.
 
 Phase 2 closeout includes durable FIGT custody, semantic recorder receipts,
 exact acknowledgement-before-retirement, retry/duplicate/conflict safety,
 receiver and sender interruption recovery, and the root-isolation remediation
 validated during the 250K resilience campaign.
 
-Phase 3 has established the relational ingest foundation, typed projectors,
+Phase 3 established the relational ingest foundation, typed projectors,
 recorder-aware reconciliation/inventory, volume-qualified NTFS/USN identity,
 all 13 current authoritative record-kind proofs, bounded READY-driven ingest,
 durable rejected-generation retry state, host-local singleton protection,
-controlled crash/restart recovery, and adaptive repair reconciliation. The
-current checkpoint is implementation and acceptance work, not Gate 3 closure:
-permanent service packaging, the final 250K relational closeout, and final
-Gate 3 reconciliation remain open.
+controlled crash/restart recovery, adaptive operational repair reconciliation,
+PostgreSQL reconnect/backoff, and the permanent Linux ingest-worker service.
+The fresh 250K relational closeout, permanent service acceptance, and final
+authoritative reconciliation completed Gate 3 on 2026-09-24.
 
 See:
 
