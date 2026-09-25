@@ -107,12 +107,37 @@ func CollectUTF16(ctx context.Context, scopeID string, governedRoot []uint16, ta
 // the opened handle still matches the requested record/sequence identity and is
 // currently contained by the governed root before accepting the observation.
 //
-// This is the entry point used for USN-triggered re-observation.
+// This is the entry point used for normal USN-triggered re-observation by
+// FICollector. SACL collection uses the existing FIUSNReader boundary.
 func CollectFileReference(
 	ctx context.Context,
 	scopeID string,
 	governedRoot string,
 	objectIdentity records.NTFSObjectIdentity,
+) (Observation, error) {
+	return CollectFileReferenceWithSACLReader(
+		ctx,
+		scopeID,
+		governedRoot,
+		objectIdentity,
+		defaultSACLDescriptorReader,
+	)
+}
+
+// CollectFileReferenceWithSACLReader performs the same exact NTFS File-ID
+// collection as CollectFileReference while allowing the caller to supply the
+// bounded SACL-reading authority.
+//
+// This entry point exists so another trusted local FI component can reuse the
+// exact NTFS observation engine without being forced through FIUSNReader for
+// SACL acquisition. It does not weaken governed-root, object-identity,
+// containment, content, or consistency validation.
+func CollectFileReferenceWithSACLReader(
+	ctx context.Context,
+	scopeID string,
+	governedRoot string,
+	objectIdentity records.NTFSObjectIdentity,
+	readSACL SACLDescriptorReader,
 ) (Observation, error) {
 	if scopeID == "" {
 		return Observation{}, &Error{Stage: StageGovernedRoot, Op: "ValidateScope", Err: ErrScopeRequired}
@@ -148,13 +173,14 @@ func CollectFileReference(
 	}
 	defer syscall.CloseHandle(targetHandle)
 
-	return collectOpenedTargetWithContentHashes(
+	return collectOpenedTargetWithContentHashesAndSACLReader(
 		ctx,
 		root,
 		CollectionEntryNTFSFileID,
 		nil,
 		targetHandle,
 		&objectIdentity,
+		readSACL,
 	)
 }
 

@@ -41,6 +41,39 @@ docs/WINDOWS-SERVER-VALIDATION.md
 
 ---
 
+## FIObjReader relationship
+
+Protected governed-object observation is intentionally handled by a different
+service, `FIObjReader`.
+
+Its privilege and protocol boundary is documented in:
+
+```text
+docs/security/object-reader-privilege-boundary.md
+```
+
+The separation is deliberate:
+
+```text
+FIUSNReader
+    raw-volume USN authority
+    bounded containment
+    bounded SACL read
+
+FIObjReader
+    exact governed-object observation
+    backup-authority open
+```
+
+`FIObjReader` does not broaden the FI-USN broker and does not replace
+`FIUSNReader`.
+
+When the normal collector's initial exact `OpenFileById` returns
+`ERROR_ACCESS_DENIED`, FI may invoke FIObjReader for a bounded current-object
+observation. Failures later in metadata, security, hashing, path consistency,
+identity, scope validation, or context handling do not automatically enter that
+fallback.
+
 # 1. USN is a change source
 
 FI uses the NTFS USN Journal for efficient change discovery and continuity.

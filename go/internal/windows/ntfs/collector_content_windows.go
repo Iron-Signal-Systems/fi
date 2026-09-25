@@ -30,13 +30,34 @@ func collectOpenedTargetWithContentHashes(
 	targetHandle syscall.Handle,
 	expectedIdentity *records.NTFSObjectIdentity,
 ) (Observation, error) {
-	observation, err := collectOpenedTarget(
+	return collectOpenedTargetWithContentHashesAndSACLReader(
 		ctx,
 		root,
 		entryMethod,
 		targetPath,
 		targetHandle,
 		expectedIdentity,
+		defaultSACLDescriptorReader,
+	)
+}
+
+func collectOpenedTargetWithContentHashesAndSACLReader(
+	ctx context.Context,
+	root governedRootContext,
+	entryMethod CollectionEntryMethod,
+	targetPath []uint16,
+	targetHandle syscall.Handle,
+	expectedIdentity *records.NTFSObjectIdentity,
+	readSACL SACLDescriptorReader,
+) (Observation, error) {
+	observation, err := collectOpenedTargetWithSACLReader(
+		ctx,
+		root,
+		entryMethod,
+		targetPath,
+		targetHandle,
+		expectedIdentity,
+		readSACL,
 	)
 	if err != nil {
 		return Observation{}, err

@@ -19,9 +19,19 @@ import (
 const (
 	saclPrivilegeUnavailable = "SACLPrivilegeUnavailable"
 	saclDescriptorReadFailed = "SACLDescriptorReadFailed"
+
+	saclWindowsErrorNotAllAssigned   syscall.Errno = 1300
+	saclWindowsErrorPrivilegeNotHeld syscall.Errno = 1314
 )
 
-type saclDescriptorReader func(
+// SACLDescriptorReader retrieves the raw SACL security descriptor for one
+// exact NTFS object identity inside a governed root.
+//
+// The caller owns the authority used to perform the read. FICollector normally
+// supplies the FIUSNReader broker-backed implementation. FIObjReader can supply
+// a local privileged implementation without changing the NTFS observation
+// engine.
+type SACLDescriptorReader func(
 	context.Context,
 	string,
 	uint64,
@@ -41,6 +51,20 @@ func (e *saclQueryError) Unwrap() error {
 	return e.Err
 }
 
+func defaultSACLDescriptorReader(
+	ctx context.Context,
+	governedRoot string,
+	fileReferenceNumber uint64,
+	sequenceNumber uint16,
+) ([]byte, error) {
+	return usnbroker.ReadSACL(
+		ctx,
+		governedRoot,
+		fileReferenceNumber,
+		sequenceNumber,
+	)
+}
+
 // querySACLDescriptor asks the privileged FIUSNReader boundary to retrieve the
 // raw SACL for the exact object identity derived from the already-proven FI
 // handle. FICollector remains responsible for parsing and recording the returned
@@ -50,19 +74,24 @@ func querySACLDescriptor(
 	root governedRootContext,
 	handle syscall.Handle,
 ) ([]byte, error) {
-	return querySACLDescriptorWithReader(ctx, root, handle, usnbroker.ReadSACL)
+	return querySACLDescriptorWithReader(
+		ctx,
+		root,
+		handle,
+		defaultSACLDescriptorReader,
+	)
 }
 
 func querySACLDescriptorWithReader(
 	ctx context.Context,
 	root governedRootContext,
 	handle syscall.Handle,
-	readSACL saclDescriptorReader,
+	readSACL SACLDescriptorReader,
 ) ([]byte, error) {
 	if readSACL == nil {
 		return nil, &saclQueryError{
 			ReasonCode: saclDescriptorReadFailed,
-			Err:        errors.New("SACL broker reader is required"),
+			Err:        errors.New("SACL reader is required"),
 		}
 	}
 
@@ -94,16 +123,9 @@ func querySACLDescriptorWithReader(
 		uint16(sequenceNumber),
 	)
 	if err != nil {
-		return nil, &saclQueryError{ReasonCode: saclBrokerReasonCode(err), Err: err}
+		return nil, &saclQueryError{ReasonCode: saclReaderReasonCode(err), Err: err}
 	}
 	return raw, nil
-}
-
-func saclBrokerReasonCode(err error) string {
-	if errors.Is(err, usnbroker.ErrSACLPrivilegeUnavailable) {
-		return saclPrivilegeUnavailable
-	}
-	return saclDescriptorReadFailed
 }
 
 func saclQueryReasonCode(err error) string {
@@ -111,5 +133,22 @@ func saclQueryReasonCode(err error) string {
 	if errors.As(err, &queryErr) && queryErr.ReasonCode != "" {
 		return queryErr.ReasonCode
 	}
+	return saclDescriptorReadFailed
+}
+
+func saclReaderReasonCode(err error) string {
+	if errors.Is(err, usnbroker.ErrSACLPrivilegeUnavailable) {
+		return saclPrivilegeUnavailable
+	}
+
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case saclWindowsErrorNotAllAssigned,
+			saclWindowsErrorPrivilegeNotHeld:
+			return saclPrivilegeUnavailable
+		}
+	}
+
 	return saclDescriptorReadFailed
 }

@@ -33,6 +33,26 @@ func collectOpenedTarget(
 	targetHandle syscall.Handle,
 	expectedIdentity *records.NTFSObjectIdentity,
 ) (Observation, error) {
+	return collectOpenedTargetWithSACLReader(
+		ctx,
+		root,
+		entryMethod,
+		targetPath,
+		targetHandle,
+		expectedIdentity,
+		defaultSACLDescriptorReader,
+	)
+}
+
+func collectOpenedTargetWithSACLReader(
+	ctx context.Context,
+	root governedRootContext,
+	entryMethod CollectionEntryMethod,
+	targetPath []uint16,
+	targetHandle syscall.Handle,
+	expectedIdentity *records.NTFSObjectIdentity,
+	readSACL SACLDescriptorReader,
+) (Observation, error) {
 	if err := validateContext(ctx); err != nil {
 		return Observation{}, err
 	}
@@ -134,7 +154,12 @@ func collectOpenedTarget(
 	}
 
 	var sacl records.SACLObservation
-	rawSACL, saclErr := querySACLDescriptor(ctx, root, targetHandle)
+	rawSACL, saclErr := querySACLDescriptorWithReader(
+		ctx,
+		root,
+		targetHandle,
+		readSACL,
+	)
 	if saclErr != nil {
 		reasonCode := saclQueryReasonCode(saclErr)
 		sacl = records.SACLObservationError(reasonCode)

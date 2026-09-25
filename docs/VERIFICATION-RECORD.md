@@ -353,6 +353,12 @@ the project-level Gate 3 status.
       pending work in the same process.
 - [ ] Durable PostgreSQL-backed `SOURCE_RECORD_REJECTED` retry state survives
       worker restart and preserves deterministic retry ordering.
+- [ ] Producer additions to strict enum-like source semantics have receiver
+      validation/regression coverage before or with source rollout.
+- [ ] Unknown NTFS `collection_method` values fail closed with zero
+      authoritative source records committed for the rejected generation.
+- [ ] A durably rejected immutable generation can survive receiver upgrade
+      and later be accepted atomically without erasing the earlier rejection.
 - [ ] Normal operational discovery uses bounded READY-marker discovery rather
       than rescanning every recorder receipt on every polling pass.
 - [ ] Host-local singleton `flock()` prevents duplicate worker processes on the

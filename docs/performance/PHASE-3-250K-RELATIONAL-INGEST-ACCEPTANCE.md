@@ -443,6 +443,79 @@ custody, and production READY state were not modified by the test.
 The campaign intentionally remains sequential. Parallel relational ingest is not
 yet authorized.
 
+## Post-Gate-3 collection-method version-skew characterization — 2026-09-25
+
+This characterization is supplemental to the 2026-09-24 Gate 3 closeout. It
+does not replace or rewrite the accepted Gate 3 totals.
+
+A Windows source running the FIObjReader-compatible collector produced immutable
+generation:
+
+```text
+20260925T204756.233378900Z-3ee88f52f943e90f
+```
+
+The installed receiver worker predated the
+`BackupAuthorityWindowsNTFS` collection method. Its strict nested
+`USNObjectObservation` validation rejected the generation at the
+`AuthoritativeRecord` stage with:
+
+```text
+SOURCE_RECORD_REJECTED
+validate FI USN nested NTFS observation:
+UnsupportedValue: collection_method
+```
+
+The rejected attempt committed zero authoritative source records. FI retained
+the immutable recorder receipt and FIGT custody object, and the durable
+`SOURCE_RECORD_REJECTED` retry state prevented immediate uncontrolled retry.
+
+A compatible worker built from the FIObjReader branch was then installed. Its
+startup reconciliation found the retained generation as the single pending item
+and honored the existing retry delay rather than bypassing durable retry state.
+
+At 2026-09-25 17:03:18 -04:00, the worker retried that same immutable
+generation and accepted it atomically:
+
+```text
+records_seen:       20
+records_committed:  20
+outcome:            Accepted
+```
+
+The earlier rejection remained in the append-only ingest journal; later success
+did not overwrite or erase the failed attempt.
+
+This proves the intended version-skew behavior for this case:
+
+```text
+new producer semantic value
+        |
+        v
+older strict receiver rejects fail-closed
+        |
+        v
+zero authoritative partial commit
+        |
+        v
+immutable generation custody retained
+        |
+        v
+durable SOURCE_RECORD_REJECTED retry state retained
+        |
+        v
+compatible receiver installed
+        |
+        v
+same immutable generation accepted atomically
+```
+
+The result does **not** authorize permissive handling of unknown enum-like
+values. `collection_method` remains strict source semantics even though the
+PostgreSQL column is `text`. Producer additions to enum-like source semantics
+must add receiver validation/regression coverage and be deployed with receiver
+compatibility established before or with the producer rollout.
+
 ## PostgreSQL campaign checkpoint
 
 At 2026-09-20 16:07:12 -04:00, the fresh relational database reported:

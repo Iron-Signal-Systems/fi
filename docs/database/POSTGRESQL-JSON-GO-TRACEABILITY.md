@@ -301,6 +301,8 @@ flowchart TD
 **Writer / projector:** `projectNTFSObservation()` — `go/internal/recordingest/projector_ntfs.go`\
 **Flow:** NTFS observation JSON → `ntfs.Observation` → identity helpers → `projectNTFSObservation()` → `fi.file_observation`
 
+`collection_method` is strict source semantics, not free-form relational text. Both the direct collector value (`DirectWindowsNTFS`) and the bounded FIObjReader value (`BackupAuthorityWindowsNTFS`) are validated by `ntfs.ValidateObservation()` before `projectNTFSObservation()` runs. This validation is used for both top-level `FileObservation` records and nested `USNObjectObservation.payload.ntfs_observation` records. Unknown values are rejected rather than coerced; PostgreSQL retains the accepted source value verbatim in `fi.file_observation.collection_method`.
+
 | PostgreSQL column | Type | Source JSON path | Go field / value | Conversion / derivation | Trace class |
 |---|---|---|---|---|---|
 | `source_record_id` | `bigint` | — | sourceRecordID | PK/FK returned from `fi.source_record`; same ID is reused for projection root | Derived |
@@ -315,7 +317,7 @@ flowchart TD
 | `observed_at` | `timestamptz` | payload.ntfs_observation.observed_at | ntfs.Observation.ObservedAt | RFC3339 text → `timestamptz` | Direct JSON |
 | `containment_method_version` | `text` | payload.ntfs_observation.containment.method_version | ntfs.Observation.Containment.MethodVersion | Direct | Direct JSON |
 | `collection_entry_method` | `text` | payload.ntfs_observation.collection_entry_method | ntfs.Observation.CollectionEntryMethod | enum → text | Direct JSON |
-| `collection_method` | `text` | payload.ntfs_observation.collection_method | ntfs.Observation.CollectionMethod | enum → text | Direct JSON |
+| `collection_method` | `text` | payload.ntfs_observation.collection_method | ntfs.Observation.CollectionMethod | validated enum → text (`DirectWindowsNTFS` or `BackupAuthorityWindowsNTFS`) | Direct JSON |
 | `observation_status` | `text` | payload.ntfs_observation.observation_status | ntfs.Observation.ObservationStatus | enum → text | Direct JSON |
 
 ### fi.file_metadata_observation
