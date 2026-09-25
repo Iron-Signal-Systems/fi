@@ -2,12 +2,8 @@ name: Security Validation
 
 on:
   push:
-    branches:
-      - main
 
   pull_request:
-    branches:
-      - main
 
   schedule:
     - cron: "15 11 * * 1"
