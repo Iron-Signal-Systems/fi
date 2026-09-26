@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportsender"
@@ -62,6 +63,14 @@ type senderResult struct {
 }
 
 func main() {
+	isService, err := runWindowsSenderServiceIfNeeded()
+	if err != nil {
+		fail(err)
+	}
+	if isService {
+		return
+	}
+
 	config, err := parseSenderConfig()
 	if err != nil {
 		fail(err)
@@ -73,19 +82,7 @@ func main() {
 	)
 	defer stopSignal()
 
-	if config.SpoolDir != "" {
-		if err := runSenderQueue(signalContext, config); err != nil {
-			fail(err)
-		}
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(signalContext, config.Timeout)
-	defer cancel()
-
-	result, err := runSender(ctx, config)
-	printSenderResult(result)
-	if err != nil {
+	if err := runSenderRuntime(signalContext, config); err != nil {
 		fail(err)
 	}
 }
@@ -97,7 +94,13 @@ func dialReceiver(
 	root *x509.Certificate,
 	issuer *x509.Certificate,
 	crl *x509.RevocationList,
-) (*tls.Conn, error) {
+) (*tls.Conn, func(), error) {
+	if ctx == nil {
+		return nil, nil, errors.New(
+			"FI sender transport context is required",
+		)
+	}
+
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
 
@@ -117,13 +120,14 @@ func dialReceiver(
 	}
 
 	dialer := &net.Dialer{}
+
 	connection, err := dialer.DialContext(
 		ctx,
 		"tcp",
 		config.ReceiverAddress,
 	)
 	if err != nil {
-		return nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"%w: dial FI receiver %s: %w",
 			transportsender.ErrRetryableTransport,
 			config.ReceiverAddress,
@@ -134,25 +138,71 @@ func dialReceiver(
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := connection.SetDeadline(deadline); err != nil {
 			_ = connection.Close()
-			return nil, fmt.Errorf("set FI sender transport deadline: %w", err)
+
+			return nil, nil, fmt.Errorf(
+				"set FI sender transport deadline: %w",
+				err,
+			)
 		}
 	}
 
-	tlsConnection := tls.Client(connection, tlsConfig)
+	tlsConnection := tls.Client(
+		connection,
+		tlsConfig,
+	)
+
 	if err := tlsConnection.HandshakeContext(ctx); err != nil {
 		_ = tlsConnection.Close()
-		wrapped := fmt.Errorf("FI receiver TLS handshake rejected: %w", err)
+
+		wrapped := fmt.Errorf(
+			"FI receiver TLS handshake rejected: %w",
+			err,
+		)
+
 		if retryableSenderNetworkError(err) {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"%w: %w",
 				transportsender.ErrRetryableTransport,
 				wrapped,
 			)
 		}
-		return nil, wrapped
+
+		return nil, nil, wrapped
 	}
 
-	return tlsConnection, nil
+	closeConnection := closeTransportOnContextDone(
+		ctx,
+		tlsConnection,
+	)
+
+	return tlsConnection, closeConnection, nil
+}
+
+func closeTransportOnContextDone(
+	ctx context.Context,
+	connection io.Closer,
+) func() {
+	var closeOnce sync.Once
+
+	contextWatchDone := make(chan struct{})
+
+	closeConnection := func() {
+		closeOnce.Do(func() {
+			close(contextWatchDone)
+			_ = connection.Close()
+		})
+	}
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			closeConnection()
+
+		case <-contextWatchDone:
+		}
+	}()
+
+	return closeConnection
 }
 
 func fail(err error) {
@@ -318,7 +368,7 @@ func runSender(
 		return result, fmt.Errorf("construct FI source TLS identity: %w", err)
 	}
 
-	connection, err := dialReceiver(
+	connection, closeConnection, err := dialReceiver(
 		ctx,
 		config,
 		transportCertificate,
@@ -329,7 +379,7 @@ func runSender(
 	if err != nil {
 		return result, err
 	}
-	defer connection.Close()
+	defer closeConnection()
 
 	state := connection.ConnectionState()
 	result.TLSVersion = tlsVersion(state.Version)

@@ -7,12 +7,14 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 
@@ -272,4 +274,41 @@ func newRSAKey(t *testing.T) *rsa.PrivateKey {
 		t.Fatalf("rsa.GenerateKey() error = %v", err)
 	}
 	return key
+}
+func TestCloseTransportOnContextDoneUnblocksNetworkIO(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	client, server := net.Pipe()
+	defer server.Close()
+
+	closeConnection := closeTransportOnContextDone(
+		ctx,
+		client,
+	)
+	defer closeConnection()
+
+	readDone := make(chan error, 1)
+
+	go func() {
+		var buffer [1]byte
+
+		_, err := client.Read(buffer[:])
+		readDone <- err
+	}()
+
+	cancel()
+
+	select {
+	case err := <-readDone:
+		if err == nil {
+			t.Fatal(
+				"blocked transport read returned nil after context cancellation",
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"context cancellation did not close blocked sender transport",
+		)
+	}
 }
