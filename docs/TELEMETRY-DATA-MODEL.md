@@ -192,7 +192,10 @@ oldest READY age
 receiver accepted/rejected generations
 receipt creation rate
 ingest records/second
-ingest transaction duration
+generation ingest total duration
+generation load duration
+relational ingest duration
+relational transaction duration
 reconnect/backoff state
 repair cadence
 last clean repair sweep
@@ -201,6 +204,69 @@ PostgreSQL WAL/checkpoint/lock/wait state
 
 Do not reduce these to unvalidated arbitrary `name/value` pairs when the meaning
 is part of the product contract.
+
+## Ingest timing semantics
+
+`telemetry.ingest_sample` must be capable of representing the end-to-end FI
+generation-ingest operation separately from narrower relational/database spans.
+
+Conceptually useful fields include:
+
+```text
+source identity
+generation identity
+observed/attempt time
+
+generation_source_bytes
+generation_encoded_bytes
+batch_count
+record_count
+
+generation_ingest_total_duration
+generation_load_duration
+relational_ingest_duration
+relational_transaction_duration
+
+source_prepare_duration
+source_record_sql_duration
+identity_resolution_duration
+projection_duration
+coverage_validation_duration
+journal_duration
+commit_duration
+rollback_duration
+
+sql_operations_total
+sql_operations_by_family
+
+outcome
+failure_stage
+```
+
+The top-level semantic distinction is mandatory:
+
+```text
+generation_ingest_total_duration
+    complete FI attempt from generation load/verification through the returned
+    authoritative ingest outcome
+
+relational_transaction_duration
+    only the PostgreSQL transaction scope
+```
+
+A historical end-to-end ingest measurement must therefore never be interpreted
+as pure PostgreSQL execution time without a separately measured transaction
+span.
+
+Internal timing spans may be nested. Before implementation, each duration field
+must define whether it is inclusive or exclusive so subspans are not assumed to
+sum to a parent duration unless that relationship is explicitly guaranteed.
+
+Resource use remains a separate semantic family. CPU, RAM, process I/O, and
+other operation-correlated resource measurements belong in
+`telemetry.operation_resource_sample` / `telemetry.operation_resource_summary`
+and may be correlated to the ingest attempt through stable operation/generation
+identity.
 
 ## Operation resource history
 

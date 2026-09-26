@@ -422,22 +422,85 @@ custody failures
 
 ### Ingest worker
 
+Telemetry must distinguish the complete end-to-end generation-ingest operation
+from the narrower PostgreSQL transaction. A generation timing must not be
+reported as "database time" merely because the operation eventually commits to
+PostgreSQL.
+
+The top-level measurement model is:
+
+```text
+generation ingest total duration
+        |
+        +-- generation load duration
+        |       receipt/custody/transfer verification
+        |       immutable generation rehydration
+        |       staged artifact verification
+        |
+        +-- relational ingest duration
+                pre-transaction relational preparation where applicable
+                |
+                +-- relational transaction duration
+                        source preparation / strict decode
+                        source_record SQL
+                        identity resolution
+                        typed projection
+                        projection coverage validation
+                        Accepted journal terminal work
+                        COMMIT
+```
+
 Useful measurements include:
 
 ```text
 READY backlog
 oldest READY age
+
 generations ingested
 records ingested
 records per second
-ingest transaction duration
+
+generation source bytes
+generation encoded bytes
+batch count
+record count
+
+generation ingest total duration
+generation load duration
+relational ingest duration
+relational transaction duration
+
+source preparation duration
+source_record SQL duration
+identity resolution duration
+typed projection duration
+coverage validation duration
+journal terminal duration
+commit duration
+rollback duration
+
+SQL operations total
+SQL operations by family
+
 Accepted
 AlreadyAccepted
 Rejected
 Failed
+outcome
+failure stage
 retry state
 PostgreSQL reconnect/backoff state
 ```
+
+The timing hierarchy must preserve scope. `generation ingest total duration` is
+an end-to-end FI application measurement. `relational transaction duration` is
+only the PostgreSQL transaction scope. Internal phase durations are operational
+measurements of FI's work and must not be mislabeled as PostgreSQL execution
+latency.
+
+Exact timing-span semantics, including whether a subspan is exclusive or
+inclusive, must be frozen before implementation so telemetry does not produce
+apparently precise but non-additive measurements without explanation.
 
 ### Reconciliation / repair
 
