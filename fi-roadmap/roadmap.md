@@ -293,15 +293,32 @@ reconstructable, and every material ingest outcome is preserved.
 Add meaning to already-recorded file and stream observations through the
 **Separate Protected Classification Stream**.
 
-Phase 4 owns the protected streaming/read-broker path used to obtain bounded
+Phase 4 begins with **4A — Operational Telemetry Foundation** so source-host and
+backend behavior are measured before protected content streaming/classification
+adds a new workload. Telemetry remains operational information, uses dedicated
+custody/receiver/recorder semantics and a separate PostgreSQL telemetry database,
+and does not become a second FI historical authority.
+
+Phase 4 then owns the protected streaming/read-broker path used to obtain bounded
 transient source content for classification. Source content is not carried by the
 normal FI record transport and is not persisted as a backend source-content copy.
 
+The controlling telemetry failure rule is:
+
+```text
+TELEMETRY FAILURE
+        MUST NOT BECOME
+FI HISTORY FAILURE
+```
+
 **Gate 4 — Protected Classification & Enrichment:** prove bounded source-content
 inspection, exact observation correlation, safe failure, and immutable
-classification history.
+classification history. Operational telemetry supports Gate 4 characterization
+but does not replace classification correctness or historical-integrity proof.
 
 [Phase 4 details](docs/roadmap/phase-04-classification-and-enrichment.md)
+
+[Phase 4 telemetry contract](../docs/PHASE-4-TELEMETRY-CONTRACT.md)
 
 ---
 

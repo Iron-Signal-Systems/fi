@@ -17,6 +17,10 @@ as applicable:
 - `fi-roadmap/docs/roadmap/phase-02-secure-record-transport.md`
 - `fi-roadmap/docs/roadmap/phase-03-ingest-and-recorder.md`
 - `fi-roadmap/docs/roadmap/phase-04-classification-and-enrichment.md`
+- `docs/PHASE-4-TELEMETRY-CONTRACT.md`
+- `docs/TELEMETRY-DATA-MODEL.md`
+- `docs/TELEMETRY-TRUST-BOUNDARY.md`
+- `docs/FI-CONFIG-2.0-CONTRACT.md`
 - `fi-roadmap/docs/roadmap/phase-05-projection-query-and-user-experience.md`
 - `fi-roadmap/docs/roadmap/phase-06-integrated-deployment-and-release.md`
 - `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`
@@ -193,15 +197,21 @@ not define the final multi-source backend topology.
 ### Phase 4 through Phase 6 boundaries
 
 Phase 4 owns classification/enrichment and the Separate Protected Classification
-Stream. Phase 5 owns Published FI Projections, query/API behavior, and protected
-user experience. Phase 6 owns integrated deployment, release, backup/recovery,
+Stream. Its first work package is the Operational Telemetry Foundation defined by
+`docs/PHASE-4-TELEMETRY-CONTRACT.md`. Telemetry is operational information about
+FI and supporting infrastructure; it is not authoritative governed-file history
+and it uses a separate PostgreSQL database/authority boundary.
+
+Phase 5 owns Published FI Projections, query/API behavior, and protected user
+experience. Phase 6 owns integrated deployment, release, backup/recovery,
 upgrade/rollback, and the supported backend deployment profile.
 
 These are accepted roadmap/design boundaries, not claims that Phase 4 through
 Phase 6 implementation or acceptance is complete.
 
-Do not pull those responsibilities into the Windows source collector, transport
-path, or Phase 3 recorder merely because implementation there appears convenient.
+Do not pull those responsibilities into the Windows source collector, normal FI
+historical transport path, or Phase 3 recorder merely because implementation
+there appears convenient. Telemetry failure must not become FI-history failure.
 
 ---
 

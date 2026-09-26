@@ -810,6 +810,14 @@ manifest.
 
 ## Phase 1 through Phase 3 closeout; current Phase 4 focus
 
+Phase 4 remains **Classification & Enrichment**. Its first planned work package is
+the bounded Operational Telemetry Foundation: permanent source and backend
+operational measurement, isolated telemetry custody/transport/recording, and a
+separate PostgreSQL telemetry database. This instrumentation is intended to be in
+place before protected content streaming/deep inspection adds new source/backend
+workload. Telemetry is not governed-file history, and telemetry failure must not
+become FI-history failure.
+
 Phase 1 / Gate 1 is complete for the accepted source-intelligence boundary.
 
 Windows Server 2016 build `14393` has completed the exact Gate 1 acceptance

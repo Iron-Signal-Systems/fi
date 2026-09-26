@@ -8,6 +8,95 @@ in the System of Record.
 Classification does not block or replace the underlying file or stream
 observation.
 
+Phase 4 begins with a bounded **Operational Telemetry Foundation** so FI can
+measure source and backend behavior before the new protected content/classification
+workload is introduced. Telemetry is an enabling work package; it does not change
+Phase 4's product outcome or become file-history authority.
+
+---
+
+## Phase 4 Work Packages
+
+```text
+4A  Operational Telemetry Foundation
+        |
+        v
+4B  Protected Classification Contracts
+        |
+        v
+4C  Protected Classification Streaming Service
+        |
+        v
+4D  Windows Bounded Content Reader
+        |
+        v
+4E  Classification Engine
+        |
+        v
+4F  Deep Inspection
+        |
+        v
+4G  Classification Result Ingest
+        |
+        v
+Gate 4 — Protected Classification & Enrichment
+```
+
+The work-package labels are implementation organization inside Phase 4. They are
+not separate product phases or gates.
+
+---
+
+## 4A — Operational Telemetry Foundation
+
+Telemetry answers:
+
+> **What was FI and the infrastructure supporting FI doing while FI collected,
+> transported, recorded, ingested, classified, or queried information?**
+
+It does not answer FI's primary file-history question and does not become a
+second System of Record.
+
+The permanent telemetry design covers both Windows/source hosts and FI backend
+hosts. It includes bounded host, storage, network, process, executable,
+configuration, receiver/custody/ingest, PostgreSQL, repair/reconciliation, and
+later classification operational measurements.
+
+Telemetry uses a dedicated custody/receiver/recorder path and a separate
+PostgreSQL telemetry database with separate authority from the FI System of
+Record.
+
+The controlling failure invariant is:
+
+```text
+TELEMETRY FAILURE
+        MUST NOT BECOME
+FI HISTORY FAILURE
+```
+
+The existing Windows operation `resourcejournal` remains useful for
+operation-correlated resource history and is integrated conceptually with the
+central telemetry plane rather than discarded.
+
+Backend telemetry is retained for operational review rather than as infinite
+historical authority. The design objective supports 30-day minimum, 60-day normal,
+and 90-day preferred operational-review horizons; exact production retention and
+rollup defaults remain subject to characterization.
+
+Configuration and executable physical SHA-256 observations are first-class
+telemetry facts. Exact configuration bytes and the canonical effective parsed
+configuration identity remain separate observations.
+
+See:
+
+- [`../../../docs/PHASE-4-TELEMETRY-CONTRACT.md`](../../../docs/PHASE-4-TELEMETRY-CONTRACT.md)
+- [`../../../docs/TELEMETRY-DATA-MODEL.md`](../../../docs/TELEMETRY-DATA-MODEL.md)
+- [`../../../docs/TELEMETRY-TRUST-BOUNDARY.md`](../../../docs/TELEMETRY-TRUST-BOUNDARY.md)
+- [`../../../docs/FI-CONFIG-2.0-CONTRACT.md`](../../../docs/FI-CONFIG-2.0-CONTRACT.md)
+
+No telemetry service, database schema, configuration 2.0 parser, or privileged
+telemetry reader is claimed implemented merely because these contracts exist.
+
 ---
 
 ## Separate Protected Classification Stream
@@ -76,6 +165,9 @@ This may identify executables, DLLs, scripts, PowerShell, batch, JavaScript,
 documents, archives, databases, configuration, encrypted/opaque material,
 unknown binary content, or other governed categories.
 
+Deep inspection limits belong to explicit configuration/policy. They are not
+inferred from file type or silently expanded during runtime.
+
 ---
 
 ## Content Persistence Rule
@@ -106,6 +198,10 @@ Reclassification creates a new result. Earlier classifications remain immutable
 history.
 
 Every classification attempt also produces journal state.
+
+Operational classification telemetry such as queue depth, CPU/RAM/I/O,
+throughput, throttling, content-read byte totals, and classifier failures belongs
+to the telemetry database rather than the authoritative classification result.
 
 ---
 
@@ -148,3 +244,7 @@ Gate 4 proves:
 - classification freshness can be represented without overstating completeness;
   and
 - classification failure does not invalidate the base FI observation.
+
+Operational telemetry supports Gate 4 validation by showing the source and
+backend cost/behavior of classification, but telemetry health is not substituted
+for classification correctness or file-history integrity.

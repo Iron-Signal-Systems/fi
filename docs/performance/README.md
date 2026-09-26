@@ -65,6 +65,39 @@ Resource-journal coverage can be expanded where useful for sizing and pilot
 validation, but broad resource instrumentation is not a reason to wrap every
 internal function in lifecycle records.
 
+## Planned permanent operational telemetry
+
+Phase 4 begins with a permanent Operational Telemetry Foundation covering both
+Windows/source hosts and FI backend hosts. It is intentionally different from
+both `-perf-root` and the bounded operation resource journal:
+
+```text
+-perf-root
+    controlled performance characterization
+
+resourcejournal
+    resource cost of a bounded FI operation
+
+FI telemetry
+    continuous operational state of FI and supporting infrastructure
+```
+
+Permanent telemetry is planned to cover bounded host CPU/memory, relevant
+storage throughput/latency/queue/capacity, interface utilization, FI process
+identity/resource use, physical executable and configuration SHA-256
+observations, receiver/custody/ingest/reconciliation state, PostgreSQL operational
+state, and later classification workload.
+
+Telemetry has a separate custody/receiver/recorder path and a separate PostgreSQL
+telemetry database. Telemetry failure does not stop or rewrite FI historical
+collection/transport/ingest state; unavailable coverage is explicit.
+
+The backend retention objective supports 30-day minimum, 60-day normal, and
+90-day preferred operational-review horizons. Exact sampling/transmission and
+retention/rollup defaults remain subject to representative characterization.
+
+See `../PHASE-4-TELEMETRY-CONTRACT.md`.
+
 ## Focused Go benchmarks
 
 The Windows NTFS benchmark file measures nearby syscall-sensitive paths
