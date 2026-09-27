@@ -21,14 +21,25 @@ func TestDefaultPathUsesFIStateDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := filepath.Join(stateDir, DefaultLockFileName)
+	want := filepath.Join(
+		stateDir,
+		DefaultLockFileName,
+	)
+
 	if got != want {
-		t.Fatalf("path = %q, want %q", got, want)
+		t.Fatalf(
+			"path = %q, want %q",
+			got,
+			want,
+		)
 	}
 }
 
 func TestAcquirePathIsExclusive(t *testing.T) {
-	path := filepath.Join(t.TempDir(), DefaultLockFileName)
+	path := filepath.Join(
+		t.TempDir(),
+		DefaultLockFileName,
+	)
 
 	first, err := AcquirePath(path)
 	if err != nil {
@@ -37,12 +48,19 @@ func TestAcquirePathIsExclusive(t *testing.T) {
 	defer first.Close()
 
 	second, err := AcquirePath(path)
+
 	if second != nil {
 		_ = second.Close()
-		t.Fatal("second ownership acquisition unexpectedly succeeded")
+		t.Fatal(
+			"second ownership acquisition unexpectedly succeeded",
+		)
 	}
+
 	if !errors.Is(err, ErrAlreadyHeld) {
-		t.Fatalf("error = %v, want ErrAlreadyHeld", err)
+		t.Fatalf(
+			"error = %v, want ErrAlreadyHeld",
+			err,
+		)
 	}
 
 	if err := first.Close(); err != nil {
@@ -51,16 +69,52 @@ func TestAcquirePathIsExclusive(t *testing.T) {
 
 	third, err := AcquirePath(path)
 	if err != nil {
-		t.Fatalf("acquire after release: %v", err)
+		t.Fatalf(
+			"acquire after release: %v",
+			err,
+		)
 	}
+
 	if err := third.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
 
+func TestAcquireSenderIsExclusive(t *testing.T) {
+	t.Setenv(
+		"FI_STATE_DIR",
+		t.TempDir(),
+	)
+
+	first, err := AcquireSender()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+
+	second, err := AcquireSender()
+
+	if second != nil {
+		_ = second.Close()
+		t.Fatal(
+			"second sender ownership acquisition unexpectedly succeeded",
+		)
+	}
+
+	if !errors.Is(err, ErrAlreadyHeld) {
+		t.Fatalf(
+			"error = %v, want ErrAlreadyHeld",
+			err,
+		)
+	}
+}
+
 func TestOwnershipCloseIsIdempotent(t *testing.T) {
 	ownership, err := AcquirePath(
-		filepath.Join(t.TempDir(), DefaultLockFileName),
+		filepath.Join(
+			t.TempDir(),
+			DefaultLockFileName,
+		),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +123,31 @@ func TestOwnershipCloseIsIdempotent(t *testing.T) {
 	if err := ownership.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := ownership.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSenderPathUsesFIStateDir(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("FI_STATE_DIR", stateDir)
+
+	got, err := SenderPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(
+		stateDir,
+		SenderLockFileName,
+	)
+
+	if got != want {
+		t.Fatalf(
+			"path = %q, want %q",
+			got,
+			want,
+		)
 	}
 }

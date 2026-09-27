@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/runtimeowner"
+
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -59,7 +61,78 @@ func TestFISenderServiceConfigurationFailure(t *testing.T) {
 	}
 }
 
+func TestFISenderServiceOwnershipConflictFailsBeforeRunning(t *testing.T) {
+	t.Setenv("FI_STATE_DIR", t.TempDir())
+
+	ownership, err := runtimeowner.AcquireSender()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ownership.Close()
+
+	statuses := make(chan svc.Status, 4)
+	runtimeCalled := false
+
+	service := &fiSenderService{
+		loadConfig: func() (senderConfig, error) {
+			return senderConfig{}, nil
+		},
+		runRuntime: func(context.Context, senderConfig) error {
+			runtimeCalled = true
+			return nil
+		},
+	}
+
+	serviceSpecific, exitCode := service.Execute(
+		nil,
+		make(chan svc.ChangeRequest),
+		statuses,
+	)
+
+	if serviceSpecific {
+		t.Fatal("service-specific exit code = true, want false")
+	}
+	if exitCode != 1 {
+		t.Fatalf(
+			"exit code = %d, want 1",
+			exitCode,
+		)
+	}
+	if runtimeCalled {
+		t.Fatal(
+			"sender runtime started without exclusive ownership",
+		)
+	}
+
+	status := receiveSenderServiceStatus(
+		t,
+		statuses,
+	)
+	if status.State != svc.StartPending {
+		t.Fatalf(
+			"first status = %v, want StartPending",
+			status.State,
+		)
+	}
+
+	select {
+	case status := <-statuses:
+		if status.State == svc.Running {
+			t.Fatal(
+				"FISender reported Running without exclusive ownership",
+			)
+		}
+
+		t.Fatalf(
+			"unexpected additional service status %v",
+			status.State,
+		)
+
+	default:
+	}
+}
 func TestFISenderServiceRuntimeFailure(t *testing.T) {
+	t.Setenv("FI_STATE_DIR", t.TempDir())
 	statuses := make(chan svc.Status, 4)
 	runtimeRelease := make(chan struct{})
 
@@ -125,6 +198,7 @@ func TestFISenderServiceRuntimeFailure(t *testing.T) {
 }
 
 func TestFISenderServiceStopCancelsRuntime(t *testing.T) {
+	t.Setenv("FI_STATE_DIR", t.TempDir())
 	requests := make(chan svc.ChangeRequest, 1)
 	statuses := make(chan svc.Status, 4)
 
@@ -193,6 +267,7 @@ func TestFISenderServiceStopCancelsRuntime(t *testing.T) {
 }
 
 func TestFISenderServiceInterrogateReturnsRunning(t *testing.T) {
+	t.Setenv("FI_STATE_DIR", t.TempDir())
 	requests := make(chan svc.ChangeRequest, 1)
 	statuses := make(chan svc.Status, 4)
 

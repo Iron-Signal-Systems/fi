@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/runtimeowner"
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -24,7 +25,7 @@ type fiSenderService struct {
 func newFISenderService() *fiSenderService {
 	return &fiSenderService{
 		loadConfig: parseSenderConfig,
-		runRuntime: runSenderRuntime,
+		runRuntime: runSenderRuntimeOwned,
 	}
 }
 
@@ -36,8 +37,46 @@ func runSenderRuntime(
 		return errors.New("context is required")
 	}
 
+	ownership, err := runtimeowner.AcquireSender()
+	if err != nil {
+		return fmt.Errorf(
+			"acquire FI sender runtime ownership: %w",
+			err,
+		)
+	}
+
+	runtimeErr := runSenderRuntimeOwned(
+		ctx,
+		config,
+	)
+
+	closeErr := ownership.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf(
+			"release FI sender runtime ownership: %w",
+			closeErr,
+		)
+	}
+
+	return errors.Join(
+		runtimeErr,
+		closeErr,
+	)
+}
+
+func runSenderRuntimeOwned(
+	ctx context.Context,
+	config senderConfig,
+) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+
 	if config.SpoolDir != "" {
-		return runSenderQueue(ctx, config)
+		return runSenderQueue(
+			ctx,
+			config,
+		)
 	}
 
 	attemptContext, cancel := context.WithTimeout(
@@ -46,8 +85,12 @@ func runSenderRuntime(
 	)
 	defer cancel()
 
-	result, err := runSender(attemptContext, config)
+	result, err := runSender(
+		attemptContext,
+		config,
+	)
 	printSenderResult(result)
+
 	return err
 }
 
@@ -59,6 +102,7 @@ func runWindowsSenderServiceIfNeeded() (bool, error) {
 			err,
 		)
 	}
+
 	if !isService {
 		return false, nil
 	}
@@ -94,13 +138,34 @@ func (service *fiSenderService) Execute(
 		return false, 1
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ownership, err := runtimeowner.AcquireSender()
+	if err != nil {
+		return false, 1
+	}
+
+	finish := func(runtimeErr error) (bool, uint32) {
+		closeErr := ownership.Close()
+
+		if runtimeErr != nil ||
+			closeErr != nil {
+			return false, 1
+		}
+
+		return false, 0
+	}
+
+	ctx, cancel := context.WithCancel(
+		context.Background(),
+	)
 	defer cancel()
 
 	done := make(chan error, 1)
 
 	go func() {
-		done <- service.runRuntime(ctx, config)
+		done <- service.runRuntime(
+			ctx,
+			config,
+		)
 	}()
 
 	running := svc.Status{
@@ -112,23 +177,21 @@ func (service *fiSenderService) Execute(
 	for {
 		select {
 		case err := <-done:
-			statuses <- svc.Status{State: svc.StopPending}
-
-			if err != nil {
-				return false, 1
+			statuses <- svc.Status{
+				State: svc.StopPending,
 			}
-			return false, 0
+
+			return finish(err)
 
 		case request, ok := <-requests:
 			if !ok {
-				statuses <- svc.Status{State: svc.StopPending}
+				statuses <- svc.Status{
+					State: svc.StopPending,
+				}
+
 				cancel()
 
-				err := <-done
-				if err != nil {
-					return false, 1
-				}
-				return false, 0
+				return finish(<-done)
 			}
 
 			switch request.Cmd {
@@ -136,14 +199,13 @@ func (service *fiSenderService) Execute(
 				statuses <- running
 
 			case svc.Stop, svc.Shutdown:
-				statuses <- svc.Status{State: svc.StopPending}
+				statuses <- svc.Status{
+					State: svc.StopPending,
+				}
+
 				cancel()
 
-				err := <-done
-				if err != nil {
-					return false, 1
-				}
-				return false, 0
+				return finish(<-done)
 			}
 		}
 	}
