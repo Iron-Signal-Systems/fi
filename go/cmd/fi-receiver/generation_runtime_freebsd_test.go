@@ -21,7 +21,7 @@ func TestGenerationRuntimeOptionsRequireExplicitEnablement(
 	}
 
 	options := generationRuntimeOptions{
-		CustodyRoot: "/var/lib/fi/generation-custody",
+		CustodyRoot: "/var/db/fi/generation-custody",
 	}
 
 	err := options.validate()
@@ -61,13 +61,13 @@ func TestGenerationRuntimeOptionsApplyListenerConfiguration(
 	t *testing.T,
 ) {
 	options := generationRuntimeOptions{
-		CustodyRoot:       "/var/lib/fi/generation-custody",
+		CustodyRoot:       "/var/db/fi/generation-custody",
 		Enabled:           true,
 		MaxCanonicalBytes: 64 << 30,
 		MaxEncodedBytes:   16 << 30,
 		MaxManifestBytes:  1 << 20,
-		ReadyRoot:         "/var/lib/fi/generation-ready",
-		RecordedRoot:      "/var/lib/fi/generation-recorded",
+		ReadyRoot:         "/var/db/fi/generation-ready",
+		RecordedRoot:      "/var/db/fi/generation-recorded",
 	}
 
 	if err := options.validate(); err != nil {
