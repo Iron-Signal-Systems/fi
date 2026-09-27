@@ -2,7 +2,7 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-//go:build linux
+//go:build freebsd
 
 package main
 
@@ -22,8 +22,8 @@ func main() {
 	generationID := flags.String("generation-id", "", "recorded FI generation ID to ingest")
 	sourceID := flags.String("source", "", "authorized FI source ID")
 	connectionString := flags.String("postgres", recordingest.DefaultPostgreSQLConnectionString, "FI PostgreSQL connection string")
-	custodyRoot := flags.String("generation-custody-root", "/var/lib/fi/custody/generation", "durable FI generation custody root")
-	recordedRoot := flags.String("generation-recorded-root", "/var/lib/fi/custody/recorded", "durable FI generation recorder root")
+	custodyRoot := flags.String("generation-custody-root", "/var/db/fi/custody/generation", "durable FI generation custody root")
+	recordedRoot := flags.String("generation-recorded-root", "/var/db/fi/custody/recorded", "durable FI generation recorder root")
 	maxCanonicalBytes := flags.Uint64("generation-max-canonical-bytes", 68719476736, "maximum canonical bytes accepted for ingest")
 	maxEncodedBytes := flags.Uint64("generation-max-encoded-bytes", 68719476736, "maximum encoded bytes accepted for ingest")
 	maxManifestBytes := flags.Uint64("generation-max-manifest-bytes", 1048576, "maximum collector manifest bytes accepted for ingest")

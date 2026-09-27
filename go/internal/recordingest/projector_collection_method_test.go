@@ -2,8 +2,6 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-//go:build linux
-
 package recordingest
 
 import (
@@ -16,7 +14,7 @@ import (
 
 // ProjectSourceRecord(FileObservation) and projectUSNObjectObservation() both
 // run ntfs.ValidateObservation() before relational projection. Keep every
-// producer-emitted NTFS collection_method covered by the Linux/backend test
+// producer-emitted NTFS collection_method covered by the backend test
 // suite so a source-side semantic addition cannot silently outrun a strict
 // receiver validator.
 func TestRelationalNTFSCollectionMethodCompatibility(t *testing.T) {

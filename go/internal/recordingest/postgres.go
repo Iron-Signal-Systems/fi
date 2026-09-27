@@ -2,8 +2,6 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-//go:build linux
-
 package recordingest
 
 import (
@@ -13,8 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 )
-
-const DefaultPostgreSQLConnectionString = "host=/run/postgresql dbname=fi user=fi_ingest sslmode=disable"
 
 const expectedRelationalTableCount = 49
 
