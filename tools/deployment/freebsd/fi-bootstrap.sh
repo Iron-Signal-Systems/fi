@@ -35,6 +35,7 @@ Usage:
     $PROGRAM preflight <config-file>
     $PROGRAM apply-zfs <config-file>
     $PROGRAM apply-jail-roots <config-file>
+    $PROGRAM apply-identities <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
@@ -55,6 +56,10 @@ Current commands:
 
     apply-jail-roots
 
+    apply-identities
+        Create or verify FI runtime identities inside receiver and ingest jail roots.
+        This command does not create FI application identities on the host.
+
     preflight-jail-roots
         Read and classify the three production jail-root destinations before apply.
         ABSENT and exact OWNED_MATCH states are accepted; no state is modified.
@@ -71,7 +76,7 @@ Current commands:
 
 The plan output directory must not already exist.
 
-Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
+Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
 VNET interfaces, PF rules, services, or boot policy.
@@ -759,7 +764,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|verify-jail-roots|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -834,6 +839,16 @@ main()
             . "$SCRIPT_DIR/fi-host-jail-root-apply.sh"
             jail_root_require_commands
             ;;
+        apply-identities)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "identity operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-identity-apply.sh" ] ||
+                fail "identity apply helper not found: $SCRIPT_DIR/fi-host-identity-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-identity-apply.sh"
+            identity_require_commands
+            ;;
         verify-zfs)
             [ "$(id -u)" -eq 0 ] ||
                 fail "ZFS verification must run as root on the intended FreeBSD host"
@@ -867,6 +882,9 @@ main()
             ;;
         verify-jail-roots)
             verify_jail_roots
+            ;;
+        apply-identities)
+            apply_identities
             ;;
         verify-zfs)
             verify_zfs_hierarchy

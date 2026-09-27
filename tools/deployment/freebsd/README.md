@@ -330,3 +330,33 @@ The initial production roots are:
 
 This layer does not create runtime identities, devfs rules, host configuration
 files, VNET interfaces, jail lifecycle configuration, or services.
+
+### Jail-local runtime identities
+
+FI runtime application accounts are local to their production jail roots.
+
+The initial identities are:
+
+    fi-receiver  uid/gid FI_RUNTIME_UID/FI_RUNTIME_GID
+    fi-ingest    uid/gid FI_RUNTIME_UID/FI_RUNTIME_GID
+
+The shared numeric UID/GID is deliberate. The receiver and ingest jail-local
+user and group names remain distinct.
+
+The FreeBSD host does not receive FI application accounts for filesystem
+ownership.
+
+The `fi-sor-db` jail is not modified by this layer. PostgreSQL package
+installation establishes the database service identity expected by FreeBSD.
+
+`apply-identities` classifies both identities before the first mutation. Exact
+matches are retained, absent identities are created, and drift, collisions,
+or unknown state fail closed.
+
+The only identity mutation primitives are:
+
+    pw -R <jail-root> groupadd
+    pw -R <jail-root> useradd
+
+The created accounts use `/nonexistent`, `/usr/sbin/nologin`, and disabled
+password login.

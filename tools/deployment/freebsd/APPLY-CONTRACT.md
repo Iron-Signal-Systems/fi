@@ -654,3 +654,82 @@ The read-only post-apply verification command accepts only:
     OWNED_MATCH
 
 Neither read-only path may invoke the `zfs clone` mutation primitive.
+
+## Production jail-local runtime identity layer
+
+FI application identities are created inside their production jail roots.
+The FreeBSD host must not receive FI application accounts merely to support
+filesystem ownership.
+
+The initial runtime identities are:
+
+    fi-receiver:
+        user  = fi-receiver
+        group = fi-receiver
+        uid   = FI_RUNTIME_UID
+        gid   = FI_RUNTIME_GID
+
+    fi-ingest:
+        user  = fi-ingest
+        group = fi-ingest
+        uid   = FI_RUNTIME_UID
+        gid   = FI_RUNTIME_GID
+
+The same numeric UID/GID is deliberate across the separate receiver and ingest
+jails. Their local names remain distinct.
+
+`fi-sor-db` is not modified by this layer. PostgreSQL package installation is
+responsible for establishing the database service identity expected by the
+FreeBSD package.
+
+Each FI runtime account must have:
+
+    home    = /nonexistent
+    shell   = /usr/sbin/nologin
+    login   = disabled
+
+The identity layer uses the jail root as an alternate password-database root.
+It must not create FI application users or groups on the FreeBSD host.
+
+### Identity classification
+
+Each receiver or ingest identity is classified as:
+
+    ABSENT
+    OWNED_MATCH
+    OWNED_DRIFT
+    FOREIGN_COLLISION
+    UNKNOWN
+
+`ABSENT` requires the requested user name, group name, UID, and GID all to be
+unused within that jail root.
+
+`OWNED_MATCH` requires the configured name, UID, GID, primary group, home,
+shell, and disabled-login state to match exactly.
+
+A configured FI name with mismatched controlled attributes is
+`OWNED_DRIFT`.
+
+Use of the configured UID or GID by another local identity is
+`FOREIGN_COLLISION`.
+
+Inspection failure is `UNKNOWN`.
+
+Only `ABSENT` may be created. `OWNED_MATCH` is a no-op. All other states fail
+closed.
+
+### Identity mutation boundary
+
+The only initial production identity mutations are:
+
+    pw -R <jail-root> groupadd
+    pw -R <jail-root> useradd
+
+The layer must not:
+
+- create host FI application identities;
+- modify or delete an existing user or group;
+- renumber an existing UID or GID;
+- modify the PostgreSQL jail;
+- create application directories;
+- modify jail, VNET, devfs, PF, or service configuration.

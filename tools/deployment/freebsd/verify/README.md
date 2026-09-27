@@ -143,3 +143,22 @@ Production acceptance uses:
     preflight-jail-roots
     apply-jail-roots
     verify-jail-roots
+
+## Jail-local identity verification
+
+The identity verifier proves:
+
+- absent identity classification;
+- foreign UID and GID collision rejection;
+- partial FI identity drift detection;
+- exact matching identity acceptance;
+- password-enabled identity rejection;
+- locked-password acceptance;
+- exact `pw groupadd` and `pw useradd` argument construction;
+- layer-wide preclassification before mutation;
+- exact second-apply no-op behavior;
+- wrong-host rejection before mutation.
+
+Production acceptance additionally verifies the resulting receiver and ingest
+`master.passwd` and group records and confirms that the FreeBSD host remains
+clear of FI runtime identities.
