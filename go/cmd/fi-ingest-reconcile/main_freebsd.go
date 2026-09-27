@@ -2,7 +2,7 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-//go:build linux
+//go:build freebsd
 
 package main
 
@@ -51,12 +51,12 @@ func main() {
 	)
 	custodyRoot := flags.String(
 		"generation-custody-root",
-		"/var/lib/fi/custody/generation",
+		"/var/db/fi/custody/generation",
 		"durable FI generation custody root",
 	)
 	recordedRoot := flags.String(
 		"generation-recorded-root",
-		"/var/lib/fi/custody/recorded",
+		"/var/db/fi/custody/recorded",
 		"durable FI generation recorder root",
 	)
 	maxCanonicalBytes := flags.Uint64(
