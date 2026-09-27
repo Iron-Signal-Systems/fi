@@ -25,3 +25,81 @@ FI_INGEST_WORK_ADDRESS=""
 
 FI_SOR_DB_MGMT_ADDRESS=""
 FI_SOR_DB_WORK_ADDRESS=""
+
+# Production jail roots.
+FI_JAIL_DATASET_ROOT="${FI_ZPOOL}/jails/containers"
+FI_JAIL_ROOT_BASE="/usr/local/jails/containers"
+
+# Exact accepted FreeBSD base-template snapshot.
+# Example form:
+# FI_JAIL_TEMPLATE_SNAPSHOT="zroot/jails/templates/15.1-RELEASE@base-YYYYMMDD"
+FI_JAIL_TEMPLATE_SNAPSHOT=""
+
+FI_RECEIVER_ROOT="${FI_JAIL_ROOT_BASE}/fi-receiver"
+FI_INGEST_ROOT="${FI_JAIL_ROOT_BASE}/fi-ingest"
+FI_SOR_DB_ROOT="${FI_JAIL_ROOT_BASE}/fi-sor-db"
+
+# Host-side FI storage paths.
+FI_CUSTODY_GENERATION_HOST="/var/db/fi/custody/generation"
+FI_RECORDED_HOST="/var/db/fi/custody/recorded"
+FI_READY_HOST="/var/db/fi/custody/ready"
+FI_RECEIVER_CONFIG_HOST="/var/db/fi/config/receiver"
+FI_INGEST_CONFIG_HOST="/var/db/fi/config/ingest"
+FI_SOR_POSTGRES_HOST="/var/db/fi/sor/postgres"
+
+# Rendered host-side jail fstab destinations.
+FI_RECEIVER_FSTAB="/etc/fstab.fi-receiver"
+FI_INGEST_FSTAB="/etc/fstab.fi-ingest"
+FI_SOR_DB_FSTAB="/etc/fstab.fi-sor-db"
+
+# Production devfs ruleset.
+# Final value is established after runtime acceptance testing.
+FI_DEVFS_RULESET=""
+
+# Deterministic VNET epair endpoint names.
+#
+# HOST_IF remains on the FreeBSD host and is attached to the configured bridge.
+# JAIL_IF is transferred into the jail through vnet.interface.
+#
+# Values are intentionally blank. Deployment must validate that configured
+# names are valid FreeBSD interface names and do not conflict with unexpected
+# existing interfaces.
+
+FI_RECEIVER_MGMT_HOST_IF=""
+FI_RECEIVER_MGMT_JAIL_IF=""
+FI_RECEIVER_WORK_HOST_IF=""
+FI_RECEIVER_WORK_JAIL_IF=""
+
+FI_INGEST_MGMT_HOST_IF=""
+FI_INGEST_MGMT_JAIL_IF=""
+FI_INGEST_WORK_HOST_IF=""
+FI_INGEST_WORK_JAIL_IF=""
+
+FI_SOR_DB_MGMT_HOST_IF=""
+FI_SOR_DB_MGMT_JAIL_IF=""
+FI_SOR_DB_WORK_HOST_IF=""
+FI_SOR_DB_WORK_JAIL_IF=""
+
+# Deterministic VNET epair endpoint names.
+#
+# HOST_IF remains on the FreeBSD host and is attached to the configured bridge.
+# JAIL_IF is transferred into the jail through vnet.interface.
+#
+# Values are intentionally blank. Deployment must validate that configured
+# names are valid FreeBSD interface names and do not conflict with unexpected
+# existing interfaces.
+
+FI_RECEIVER_MGMT_HOST_IF=""
+FI_RECEIVER_MGMT_JAIL_IF=""
+FI_RECEIVER_WORK_HOST_IF=""
+FI_RECEIVER_WORK_JAIL_IF=""
+
+FI_INGEST_MGMT_HOST_IF=""
+FI_INGEST_MGMT_JAIL_IF=""
+FI_INGEST_WORK_HOST_IF=""
+FI_INGEST_WORK_JAIL_IF=""
+
+FI_SOR_DB_MGMT_HOST_IF=""
+FI_SOR_DB_MGMT_JAIL_IF=""
+FI_SOR_DB_WORK_HOST_IF=""
+FI_SOR_DB_WORK_JAIL_IF=""

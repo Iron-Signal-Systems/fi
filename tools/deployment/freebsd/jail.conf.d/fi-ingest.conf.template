@@ -1,0 +1,20 @@
+fi-ingest {
+    path = "@FI_INGEST_ROOT@";
+    host.hostname = "fi-ingest";
+
+    persist;
+    vnet;
+    vnet.interface = "@FI_INGEST_MGMT_JAIL_IF@", "@FI_INGEST_WORK_JAIL_IF@";
+
+    mount.fstab = "@FI_INGEST_FSTAB@";
+    mount.devfs;
+    devfs_ruleset = @FI_DEVFS_RULESET@;
+
+    children.max = 0;
+    enforce_statfs = 2;
+
+    allow.nomount;
+    allow.noraw_sockets;
+
+    exec.clean;
+}

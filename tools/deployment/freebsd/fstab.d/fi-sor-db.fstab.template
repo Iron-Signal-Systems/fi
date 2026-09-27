@@ -1,0 +1,6 @@
+# FI System of Record PostgreSQL host-controlled mount.
+#
+# Tokens are rendered by deployment tooling before installation.
+#
+# source                                      destination                                                   type    opts  dump pass
+@FI_SOR_POSTGRES_HOST@                        @FI_SOR_DB_ROOT@/var/db/fi/sor/postgres                        nullfs  rw    0    0

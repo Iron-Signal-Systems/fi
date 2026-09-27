@@ -1,0 +1,20 @@
+fi-receiver {
+    path = "@FI_RECEIVER_ROOT@";
+    host.hostname = "fi-receiver";
+
+    persist;
+    vnet;
+    vnet.interface = "@FI_RECEIVER_MGMT_JAIL_IF@", "@FI_RECEIVER_WORK_JAIL_IF@";
+
+    mount.fstab = "@FI_RECEIVER_FSTAB@";
+    mount.devfs;
+    devfs_ruleset = @FI_DEVFS_RULESET@;
+
+    children.max = 0;
+    enforce_statfs = 2;
+
+    allow.nomount;
+    allow.noraw_sockets;
+
+    exec.clean;
+}

@@ -1,0 +1,9 @@
+# FI ingest host-controlled mounts.
+#
+# Tokens are rendered by deployment tooling before installation.
+#
+# source                                      destination                                                   type    opts  dump pass
+@FI_CUSTODY_GENERATION_HOST@                  @FI_INGEST_ROOT@/var/db/fi/custody/generation                 nullfs  ro    0    0
+@FI_RECORDED_HOST@                            @FI_INGEST_ROOT@/var/db/fi/custody/recorded                   nullfs  ro    0    0
+@FI_READY_HOST@                               @FI_INGEST_ROOT@/var/db/fi/custody/ready                      nullfs  rw    0    0
+@FI_INGEST_CONFIG_HOST@                       @FI_INGEST_ROOT@/usr/local/etc/fi                             nullfs  ro    0    0
