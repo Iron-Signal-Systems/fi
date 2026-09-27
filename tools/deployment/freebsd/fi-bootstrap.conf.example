@@ -1,10 +1,15 @@
 # FI FreeBSD site-specific deployment variables.
 #
-# Copy this file outside the repository and populate values appropriate to the
+# Copy this file outside the repository and populate values appropriate
+# to the deployment. Do not place private keys, passwords, or other
+# secrets here.
 #
-# Values are literal data. Shell expansion, command substitution, and shell
-# execution are not supported by the deployment parser.
-# deployment. Do not place private keys, passwords, or other secrets here.
+# Values are literal data. Shell expansion, command substitution, and
+# shell execution are not supported by the deployment parser.
+
+# Exact FreeBSD host this configuration is authorized to target.
+# This value is intentionally blank in the repository example.
+FI_HOSTNAME=""
 
 FI_ZPOOL="zroot"
 
@@ -58,30 +63,6 @@ FI_SOR_DB_FSTAB="/etc/fstab.fi-sor-db"
 # Production devfs ruleset.
 # Final value is established after runtime acceptance testing.
 FI_DEVFS_RULESET=""
-
-# Deterministic VNET epair endpoint names.
-#
-# HOST_IF remains on the FreeBSD host and is attached to the configured bridge.
-# JAIL_IF is transferred into the jail through vnet.interface.
-#
-# Values are intentionally blank. Deployment must validate that configured
-# names are valid FreeBSD interface names and do not conflict with unexpected
-# existing interfaces.
-
-FI_RECEIVER_MGMT_HOST_IF=""
-FI_RECEIVER_MGMT_JAIL_IF=""
-FI_RECEIVER_WORK_HOST_IF=""
-FI_RECEIVER_WORK_JAIL_IF=""
-
-FI_INGEST_MGMT_HOST_IF=""
-FI_INGEST_MGMT_JAIL_IF=""
-FI_INGEST_WORK_HOST_IF=""
-FI_INGEST_WORK_JAIL_IF=""
-
-FI_SOR_DB_MGMT_HOST_IF=""
-FI_SOR_DB_MGMT_JAIL_IF=""
-FI_SOR_DB_WORK_HOST_IF=""
-FI_SOR_DB_WORK_JAIL_IF=""
 
 # Deterministic VNET epair endpoint names.
 #

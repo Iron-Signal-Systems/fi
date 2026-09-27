@@ -3,7 +3,7 @@
 # FI FreeBSD backend deployment bootstrap.
 #
 # The current implementation supports non-mutating "plan" and "preflight"
-# phases only.
+# phases plus the narrowly scoped mutating "apply-zfs" phase.
 #
 # Configuration is parsed as strict KEY="VALUE" data. It is never sourced as
 # shell code.
@@ -33,6 +33,7 @@ usage()
 Usage:
     $PROGRAM plan <config-file> <output-directory>
     $PROGRAM preflight <config-file>
+    $PROGRAM apply-zfs <config-file>
 
 Current commands:
 
@@ -41,17 +42,21 @@ Current commands:
         deployment plan without modifying the host.
 
     preflight
-        Validate the intended FreeBSD host against deployment configuration
-        without modifying host state.
+        Validate the intended FreeBSD host against initial-deployment
+        prerequisites without modifying host state.
+
+    apply-zfs
+        Create or verify only the FI production ZFS data hierarchy.
+        This command mutates the configured ZFS pool.
 
 The plan output directory must not already exist.
 
-Preflight must run as root on the intended FreeBSD host.
+Preflight and apply-zfs must run as root on the intended FreeBSD host.
 
-No apply operation is implemented by this checkpoint.
+apply-zfs does not create jail roots, users, devfs rules, jail configuration,
+VNET interfaces, PF rules, services, or boot policy.
 EOF_USAGE
 }
-
 cleanup()
 {
     if [ -n "$CONFIG_MAP" ] && [ -f "$CONFIG_MAP" ]; then
@@ -70,7 +75,7 @@ require_command()
 is_allowed_key()
 {
     case "$1" in
-        FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_WORK_NETWORK|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
+        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_WORK_NETWORK|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
             return 0
             ;;
         *)
@@ -363,6 +368,7 @@ parse_config()
 validate_required_values()
 {
     for required_key in \
+        FI_HOSTNAME \
         FI_ZPOOL \
         FI_RUNTIME_UID \
         FI_RUNTIME_GID \
@@ -409,9 +415,28 @@ validate_required_values()
     done
 }
 
+validate_hostname()
+{
+    hostname_value=$(get_value FI_HOSTNAME)
+
+    [ "${#hostname_value}" -le 253 ] ||
+        fail "FI_HOSTNAME exceeds 253 characters"
+
+    printf '%s\n' "$hostname_value" |
+        grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' ||
+        fail "FI_HOSTNAME is not an accepted hostname: $hostname_value"
+
+    case "$hostname_value" in
+        *..*|*.-*|*-.*)
+            fail "FI_HOSTNAME contains an invalid hostname label boundary: $hostname_value"
+            ;;
+    esac
+}
+
 validate_config()
 {
     validate_required_values
+    validate_hostname
 
     validate_pool_name
     validate_unsigned_nonzero FI_RUNTIME_UID
@@ -714,7 +739,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight)
+        preflight|apply-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -749,6 +774,16 @@ main()
             . "$SCRIPT_DIR/fi-host-preflight.sh"
             preflight_require_commands
             ;;
+        apply-zfs)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "ZFS apply must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-zfs-apply.sh" ] ||
+                fail "ZFS apply helper not found: $SCRIPT_DIR/fi-host-zfs-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-zfs-apply.sh"
+            zfs_apply_require_commands
+            ;;
     esac
 
     parse_config "$config_file"
@@ -760,6 +795,9 @@ main()
             ;;
         preflight)
             preflight_host
+            ;;
+        apply-zfs)
+            apply_zfs_hierarchy
             ;;
     esac
 }

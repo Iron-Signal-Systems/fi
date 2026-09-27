@@ -9,6 +9,7 @@ preflight_require_commands()
     for preflight_required_command in \
         devfs \
         freebsd-version \
+        hostname \
         getent \
         id \
         ifconfig \
@@ -149,6 +150,15 @@ preflight_host()
 
     [ "$(uname -s)" = "FreeBSD" ] ||
         fail "preflight requires a FreeBSD host"
+
+    preflight_expected_hostname=$(get_value FI_HOSTNAME)
+    preflight_actual_hostname=$(hostname)
+
+    [ "$preflight_actual_hostname" = "$preflight_expected_hostname" ] ||
+        fail \
+            "deployment hostname mismatch: expected $preflight_expected_hostname, observed $preflight_actual_hostname"
+
+    pass "deployment hostname matches: $preflight_actual_hostname"
 
     preflight_zpool=$(get_value FI_ZPOOL)
 

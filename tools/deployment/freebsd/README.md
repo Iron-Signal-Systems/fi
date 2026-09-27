@@ -110,10 +110,11 @@ before bootstrap automation is finalized.
 
 ## Bootstrap implementation state
 
-The FreeBSD bootstrap currently implements two non-mutating phases:
+The FreeBSD bootstrap currently implements:
 
-- `plan`
-- `preflight`
+- `plan` — non-mutating deterministic deployment rendering;
+- `preflight` — non-mutating initial-deployment host validation;
+- `apply-zfs` — narrowly scoped mutation of the FI production ZFS data hierarchy.
 
 Configuration files are strict data files using:
 
@@ -124,27 +125,37 @@ They are not sourced or executed by the shell.
 Shell expansion, command substitution, duplicate keys, unknown keys, and
 unsupported characters are rejected.
 
+Every host-inspecting or host-mutating operation is bound to the exact
+configured `FI_HOSTNAME`.
+
 A deployment plan is generated with:
 
     ./fi-bootstrap.sh plan /path/to/fi-bootstrap.conf /path/to/new-plan-directory
 
-Host state is inspected with:
+Initial-deployment host state is inspected with:
 
     ./fi-bootstrap.sh preflight /path/to/fi-bootstrap.conf
 
-`preflight` must run as root on the intended FreeBSD host.
+The FI production ZFS hierarchy is created or verified with:
 
-The fixture under `verify/fixtures/` exists for deterministic render and
-negative-parser tests. It is not a production host configuration. A real host
-configuration must identify the exact template snapshot, networks, addresses,
-identities, paths, VNET interface names, and other deployment inputs intended
-for that host.
+    ./fi-bootstrap.sh apply-zfs /path/to/fi-bootstrap.conf
+
+`preflight` and `apply-zfs` must run as root on the intended FreeBSD host.
+
+The fixture under `verify/fixtures/` exists for deterministic rendering and
+negative acceptance tests. It is deliberately bound to a non-production
+hostname and is not a production deployment configuration.
+
+A real host configuration must identify the exact hostname, template snapshot,
+networks, addresses, identities, paths, VNET interface names, and other
+deployment inputs intended for that host.
 
 ### Plan phase
 
 The plan phase:
 
 - validates required configuration;
+- validates the configured deployment hostname syntax;
 - validates numeric identities;
 - validates management/workload IPv4 CIDR relationships;
 - validates deterministic VNET interface names;
@@ -164,6 +175,7 @@ production resources are created.
 It currently verifies:
 
 - execution as root on FreeBSD;
+- configured deployment hostname matches the current host;
 - required host commands;
 - the configured ZFS pool;
 - the jail dataset root and its configured mountpoint;
@@ -190,8 +202,64 @@ Preflight fails closed on a configuration mismatch or unexpected collision.
 
 The current preflight is specifically an **initial-deployment preflight**.
 Existing production resources are treated as collisions rather than silently
-accepted or reconciled. Idempotent ownership validation and reconciliation of
-already-created FI resources belong to the later apply/reapply contract.
+accepted or reconciled.
+
+### ZFS apply phase
+
+`apply-zfs` implements only the FI production data-storage layer.
+
+It creates or verifies:
+
+    <FI_ZPOOL>/fi/custody
+    <FI_ZPOOL>/fi/custody/generation
+    <FI_ZPOOL>/fi/recorded
+    <FI_ZPOOL>/fi/ready
+    <FI_ZPOOL>/fi/config
+    <FI_ZPOOL>/fi/config/receiver
+    <FI_ZPOOL>/fi/config/ingest
+    <FI_ZPOOL>/fi/sor
+    <FI_ZPOOL>/fi/sor/postgres
+    <FI_ZPOOL>/fi/backups
+
+The pre-existing `<FI_ZPOOL>/fi` dataset is a validated prerequisite and is not
+adopted or modified by `apply-zfs`.
+
+The ZFS apply layer:
+
+- requires root on FreeBSD;
+- requires an exact deployment-hostname match;
+- classifies the entire ZFS layer before the first mutation;
+- rejects `OWNED_DRIFT`, `FOREIGN_COLLISION`, and `UNKNOWN`;
+- validates destination-path absence for datasets that will mount;
+- reclassifies every resource immediately before mutation;
+- creates absent datasets with explicit FI ownership properties;
+- accepts only exact locally-set FI and native ZFS properties;
+- verifies each newly created dataset immediately;
+- treats an exact second apply as a no-op.
+
+Initial `apply-zfs` does not repair drift.
+
+The only production mutation primitive currently implemented by this phase is
+`zfs create`.
+
+### Current mutation boundary
+
+`apply-zfs` does **not**:
+
+- clone or destroy jail roots;
+- create users or groups;
+- create or modify devfs rulesets;
+- install or modify jail configuration under `/etc`;
+- install or modify per-jail fstab files;
+- create or destroy VNET interfaces;
+- modify bridges;
+- modify PF;
+- change IP forwarding;
+- change jail boot policy;
+- start, stop, or modify jails;
+- install or start FI services.
+
+Those operations remain future reviewed apply layers.
 
 ### Non-mutation contract
 
@@ -210,5 +278,3 @@ Neither `plan` nor `preflight` may:
 - change IP forwarding;
 - change jail boot policy;
 - start or stop FI services.
-
-No `apply` operation is implemented by this checkpoint.

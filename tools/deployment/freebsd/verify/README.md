@@ -1,6 +1,8 @@
 # FreeBSD Deployment Verification
 
-This directory contains read-only acceptance checks for the FI FreeBSD backend.
+This directory contains acceptance checks for the FI FreeBSD backend.
+
+Verification scripts must never silently remediate failed state.
 
 ## Implemented checks
 
@@ -45,15 +47,57 @@ rules/NAT state, forwarding state, and deployment-parent filesystem metadata.
 
 The verifier does not remediate failed state.
 
-The fixture under `fixtures/` is an offline deterministic-render fixture. It is
-not a substitute for a host-specific production deployment configuration.
+### ZFS apply state machine
+
+Run:
+
+    ./Validate-FI-FreeBSD-ZFS-Apply.sh
+
+This verifier is an offline mock-backed acceptance test for the ZFS apply
+state machine.
+
+It verifies:
+
+- `ABSENT` classification;
+- `OWNED_MATCH` classification;
+- `OWNED_DRIFT` classification;
+- `FOREIGN_COLLISION` classification;
+- `UNKNOWN` classification;
+- inspection failure is never interpreted as absence;
+- inherited FI ownership metadata does not establish ownership;
+- inherited controlled ZFS properties are not accepted as local desired state;
+- an existing destination mountpoint path fails closed;
+- wrong-host apply fails before mutation;
+- layer-wide preclassification prevents an avoidable partial deployment;
+- a newly created resource is independently reclassified and verified;
+- an exact second apply is a no-op;
+- collision and unknown states fail closed.
+
+The verifier uses mock ZFS functions and does not modify the production pool.
+
+The fixture under `fixtures/` is an offline deterministic fixture. It is bound
+to `fi-test.invalid` so it cannot be accepted as a production configuration on
+the real FI backend host.
+
+## Current production apply boundary
+
+The only implemented production apply command is:
+
+    ../fi-bootstrap.sh apply-zfs /path/to/fi-bootstrap.conf
+
+It is limited to creation or exact verification of the FI production ZFS data
+hierarchy.
+
+Jail roots, runtime identities, devfs rules, `/etc` files, VNET lifecycle, PF
+changes, service installation, and boot policy remain outside the current apply
+boundary.
 
 ## Future runtime acceptance
 
 Verification must eventually also cover:
 
 - expected production jail identities and VNET interfaces;
-- ZFS dataset ownership and mount authority;
+- ZFS dataset ownership and mount authority after real-host apply;
 - FI service users and groups after deployment;
 - configuration and runtime directory ownership/modes;
 - rc.d service state;
@@ -66,5 +110,3 @@ Verification must eventually also cover:
 - service restart behavior;
 - jail restart recovery;
 - host restart recovery.
-
-Verification scripts must never silently remediate failed state.
