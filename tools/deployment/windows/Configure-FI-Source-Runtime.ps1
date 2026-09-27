@@ -19,6 +19,22 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$SenderAccount,
 
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9A-Fa-f]{64}$')]
+    [string]$CollectorSHA256,
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9A-Fa-f]{64}$')]
+    [string]$USNReaderSHA256,
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9A-Fa-f]{64}$')]
+    [string]$ObjReaderSHA256,
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9A-Fa-f]{64}$')]
+    [string]$SenderSHA256,
+
     [switch]$ConfirmChange
 )
 
@@ -98,6 +114,38 @@ function Invoke-FISC {
     return $Output
 }
 
+function Assert-FIFileSHA256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSHA256
+    )
+
+    Assert-FIFile -Path $Path
+
+    $ObservedSHA256 = (
+        Get-FileHash `
+            -LiteralPath $Path `
+            -Algorithm SHA256
+    ).Hash.ToUpperInvariant()
+
+    $Expected = $ExpectedSHA256.ToUpperInvariant()
+
+    if ($ObservedSHA256 -ne $Expected) {
+        throw (
+            "FI binary SHA-256 mismatch for $Path. " +
+            "Expected $Expected; observed $ObservedSHA256."
+        )
+    }
+
+    Write-Host (
+        "[PASS] Binary SHA-256 verified: {0} {1}" -f
+        $Path,
+        $ObservedSHA256
+    )
+}
 function Assert-FISenderRuntimeOwnership {
     param(
         [switch]$RequireServiceOwner
@@ -447,14 +495,27 @@ Write-Host 'FI WINDOWS SOURCE RUNTIME LIFECYCLE'
 Write-Host '============================================================'
 Write-Host ''
 
-Assert-FIFile 'C:\Program Files\FI\fi.exe'
-Assert-FIFile 'C:\Program Files\FI\fi-usn.exe'
-Assert-FIFile 'C:\Program Files\FI\fi-obj.exe'
-Assert-FIFile 'C:\Program Files\FI\fi-sender.exe'
+Assert-FIFileSHA256 `
+    -Path 'C:\Program Files\FI\fi.exe' `
+    -ExpectedSHA256 $CollectorSHA256
+
+Assert-FIFileSHA256 `
+    -Path 'C:\Program Files\FI\fi-usn.exe' `
+    -ExpectedSHA256 $USNReaderSHA256
+
+Assert-FIFileSHA256 `
+    -Path 'C:\Program Files\FI\fi-obj.exe' `
+    -ExpectedSHA256 $ObjReaderSHA256
+
+Assert-FIFileSHA256 `
+    -Path 'C:\Program Files\FI\fi-sender.exe' `
+    -ExpectedSHA256 $SenderSHA256
+
 Assert-FIFile 'C:\ProgramData\FI\config\fi.conf'
 Assert-FIFile 'C:\ProgramData\FI\config\fi-transport-trust.conf'
 
-Write-Host '[PASS] Required FI binaries and configuration files are present.'
+Write-Host '[PASS] Required FI configuration files are present.'
+Write-Host '[PASS] All production FI binaries match their reviewed SHA-256 values.'
 
 Assert-FIExistingServiceIdentity `
     -Name $CollectorService `
