@@ -1,0 +1,27 @@
+# FI FreeBSD site-specific deployment variables.
+#
+# Copy this file outside the repository and populate values appropriate to the
+# deployment. Do not place private keys, passwords, or other secrets here.
+
+FI_ZPOOL="zroot"
+
+# Shared numeric filesystem identity used by receiver and ingest jails.
+# These values are intentionally blank in the repository example.
+FI_RUNTIME_UID=""
+FI_RUNTIME_GID=""
+
+FI_MGMT_BRIDGE="bridge10"
+FI_WORK_BRIDGE="bridge20"
+
+FI_MGMT_NETWORK="10.77.10.0/24"
+FI_WORK_NETWORK="10.77.20.0/24"
+
+# Addresses are intentionally not assigned by this example.
+FI_RECEIVER_MGMT_ADDRESS=""
+FI_RECEIVER_WORK_ADDRESS=""
+
+FI_INGEST_MGMT_ADDRESS=""
+FI_INGEST_WORK_ADDRESS=""
+
+FI_SOR_DB_MGMT_ADDRESS=""
+FI_SOR_DB_WORK_ADDRESS=""
