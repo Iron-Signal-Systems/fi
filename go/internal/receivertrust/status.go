@@ -10,14 +10,14 @@ import (
 )
 
 const (
-	BatchCRLPath        = "/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem"
-	BatchIssuerPath     = "/etc/fi/pki/trust/fi-batch-signing-ca.crt.pem"
-	ReceiverCertPath    = "/etc/fi/pki/receiver/certs/fi-receiver-tls-fullchain.pem"
-	ReceiverKeyPath     = "/etc/fi/pki/receiver/private/fi-receiver-tls.key.pem"
-	RootCAPath          = "/etc/fi/pki/trust/fi-root-ca.crt.pem"
-	SourceRegistryPath  = "/etc/fi/sources"
-	TransportCRLPath    = "/etc/fi/pki/trust/fi-transport-ca.crl.pem"
-	TransportIssuerPath = "/etc/fi/pki/trust/fi-transport-ca.crt.pem"
+	BatchCRLPath        = receiverConfigRoot + "/pki/trust/fi-batch-signing-ca.crl.pem"
+	BatchIssuerPath     = receiverConfigRoot + "/pki/trust/fi-batch-signing-ca.crt.pem"
+	ReceiverCertPath    = receiverConfigRoot + "/pki/receiver/certs/fi-receiver-tls-fullchain.pem"
+	ReceiverKeyPath     = receiverConfigRoot + "/pki/receiver/private/fi-receiver-tls.key.pem"
+	RootCAPath          = receiverConfigRoot + "/pki/trust/fi-root-ca.crt.pem"
+	SourceRegistryPath  = receiverConfigRoot + "/sources"
+	TransportCRLPath    = receiverConfigRoot + "/pki/trust/fi-transport-ca.crl.pem"
+	TransportIssuerPath = receiverConfigRoot + "/pki/trust/fi-transport-ca.crt.pem"
 )
 
 // PathState describes whether one required receiver trust path is present.

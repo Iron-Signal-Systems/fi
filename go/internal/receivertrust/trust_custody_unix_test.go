@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || freebsd
 
 // Copyright (c) 2026 John Joseph Wood. All rights reserved.
 // Use of this source code is governed by the File Intelligence (FI)

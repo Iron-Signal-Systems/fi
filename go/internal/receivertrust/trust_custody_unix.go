@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || freebsd
 
 // Copyright (c) 2026 John Joseph Wood. All rights reserved.
 // Use of this source code is governed by the File Intelligence (FI)
@@ -50,20 +50,20 @@ func InspectTrustCustodyValidation() ValidationState {
 		receiverServiceAccount,
 	)
 	if err != nil {
-		return newValidationState("/etc/fi", err)
+		return newValidationState(receiverConfigRoot, err)
 	}
 
 	return newValidationState(
-		"/etc/fi",
+		receiverConfigRoot,
 		validateTrustCustody(
 			custodyPaths{
 				BatchCRL:         BatchCRLPath,
 				BatchIssuer:      BatchIssuerPath,
 				CertsDirectory:   filepath.Dir(ReceiverCertPath),
-				EtcFI:            "/etc/fi",
-				PKI:              "/etc/fi/pki",
+				EtcFI:            receiverConfigRoot,
+				PKI:              receiverConfigRoot + "/pki",
 				PrivateDirectory: filepath.Dir(ReceiverKeyPath),
-				Receiver:         "/etc/fi/pki/receiver",
+				Receiver:         receiverConfigRoot + "/pki/receiver",
 				ReceiverCert:     ReceiverCertPath,
 				ReceiverKey:      ReceiverKeyPath,
 				RootCA:           RootCAPath,
