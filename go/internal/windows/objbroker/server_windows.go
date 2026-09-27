@@ -113,7 +113,18 @@ func Serve(ctx context.Context, governedRoots []string) error {
 		return fmt.Errorf("resolve FICollector service SID: %w", err)
 	}
 
-	securityAttributes, err := pipeSecurityAttributes(collectorSID)
+	helperSID, _, _, err := windows.LookupSID(
+		"",
+		`NT SERVICE\`+HelperServiceName,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve FIObjReader service SID: %w", err)
+	}
+
+	securityAttributes, err := pipeSecurityAttributes(
+		collectorSID,
+		helperSID,
+	)
 	if err != nil {
 		return err
 	}
@@ -374,15 +385,23 @@ func normalizedGovernedRoot(value string) string {
 
 func pipeSecurityAttributes(
 	collectorSID *windows.SID,
+	helperSID *windows.SID,
 ) (*windows.SecurityAttributes, error) {
 	if collectorSID == nil || !collectorSID.IsValid() {
 		return nil, errors.New("valid FICollector service SID is required")
 	}
+	if helperSID == nil || !helperSID.IsValid() {
+		return nil, errors.New("valid FIObjReader service SID is required")
+	}
 
+	// FICollector remains the only authorized broker client. FIObjReader gets
+	// pipe-connect access only so its SCM Stop/Shutdown path can wake a blocked
+	// ConnectNamedPipe after cancellation.
 	sddl := "D:P" +
 		"(A;;GA;;;SY)" +
 		"(A;;GA;;;BA)" +
-		"(A;;GRGW;;;" + collectorSID.String() + ")"
+		"(A;;GRGW;;;" + collectorSID.String() + ")" +
+		"(A;;GRGW;;;" + helperSID.String() + ")"
 
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {

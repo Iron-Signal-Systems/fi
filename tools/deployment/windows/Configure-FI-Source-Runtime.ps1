@@ -607,14 +607,14 @@ Set-FIManagedService `
     -DisplayName 'FIUSNReader' `
     -PathName $USNReaderPath `
     -StartName $USNReaderAccount `
-    -SIDType 'none'
+    -SIDType 'unrestricted'
 
 Set-FIManagedService `
     -Name $ObjReaderService `
     -DisplayName 'FI Object Reader' `
     -PathName $ObjReaderPath `
     -StartName $ObjReaderAccount `
-    -SIDType 'none'
+    -SIDType 'unrestricted'
 
 Set-FIManagedService `
     -Name $CollectorService `
@@ -680,13 +680,13 @@ Test-FIServiceContract `
     -Name $USNReaderService `
     -PathName $USNReaderPath `
     -StartName $USNReaderAccount `
-    -SIDType 'NONE'
+    -SIDType 'UNRESTRICTED'
 
 Test-FIServiceContract `
     -Name $ObjReaderService `
     -PathName $ObjReaderPath `
     -StartName $ObjReaderAccount `
-    -SIDType 'NONE'
+    -SIDType 'UNRESTRICTED'
 
 Test-FIServiceContract `
     -Name $SenderService `
