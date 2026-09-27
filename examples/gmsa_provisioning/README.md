@@ -1,14 +1,22 @@
 # FI gMSA Provisioning Example
 
-This example shows how to create and install the **two unique Group Managed
-Service Accounts (gMSAs) used by each FI Windows collector host**.
+This example shows how to create and install the **two Group Managed Service
+Accounts (gMSAs) used by the FICollector / FIUSNReader split-privilege
+example**.
+
+This example covers only the `FICollector` / `FIUSNReader` split-privilege
+identity boundary. It is not complete production identity provisioning for the
+current four-service Windows source runtime. `FIObjReader` and `FISender`
+identities are outside the scope of these example scripts. Current service
+configuration is documented under
+`tools/deployment/windows/Configure-FI-Source-Runtime.ps1`.
 
 Windows Security auditing is documented separately in the
 [FI Windows file-auditing example](../windows/file-auditing/README.md).
 
-## Current runtime model
+## USN split-privilege example model
 
-Each monitored Windows host uses two identities with different responsibilities:
+This example uses two identities with different responsibilities:
 
 ```text
 <HOST>
@@ -52,11 +60,11 @@ Those remain deliberate administrator-controlled deployment actions.
 
 ```text
 gmsa_provisioning\
-├── config\
-│   └── gmsa.psd1
-└── scripts\
-    ├── Setup-FIGMSA-DC.ps1
-    └── Install-FIGMSA-Collector.ps1
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ config\
+Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ gmsa.psd1
+Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ scripts\
+    Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ Setup-FIGMSA-DC.ps1
+    Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ Install-FIGMSA-Collector.ps1
 ```
 
 ## Purpose and security model

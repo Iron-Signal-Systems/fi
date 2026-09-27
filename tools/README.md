@@ -27,6 +27,13 @@ Windows Server 2025    10.0.26100
 
 See `docs\WINDOWS-SERVER-VALIDATION.md` for version-specific findings.
 
+This runbook primarily validates the Windows split-privilege collector/helper
+boundary and preserves its historical release-specific acceptance procedures.
+The current complete source runtime additionally includes `FIObjReader` and the
+SCM-owned `FISender` service. Current four-service deployment and lifecycle
+acceptance are documented in `tools\deployment\README.md`,
+`docs\VERIFICATION-RECORD.md`, and `docs\WINDOWS-SERVER-VALIDATION.md`.
+
 A later Windows Server release must be characterized independently.
 
 ---

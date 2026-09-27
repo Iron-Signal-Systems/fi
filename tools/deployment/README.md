@@ -3,6 +3,89 @@
 This directory contains explicit administrator-run deployment actions. Deployment
 tooling is not normal FI collector/runtime remediation authority.
 
+## Windows source runtime configuration
+
+The current complete Windows source runtime is configured with:
+
+```text
+tools\deployment\windows\Configure-FI-Source-Runtime.ps1
+```
+
+This is an explicit elevated administrator-run deployment action. It is not FI
+normal runtime remediation authority.
+
+The script requires the expected target computer name, four reviewed service
+accounts, and the expected SHA-256 value for each runtime executable:
+
+```text
+ExpectedComputerName
+CollectorAccount
+USNReaderAccount
+ObjReaderAccount
+SenderAccount
+
+CollectorSHA256
+USNReaderSHA256
+ObjReaderSHA256
+SenderSHA256
+```
+
+The fixed production service contract is:
+
+```text
+FICollector
+    "C:\Program Files\FI\fi.exe" -service
+
+FIUSNReader
+    "C:\Program Files\FI\fi-usn.exe"
+
+FIObjReader
+    "C:\Program Files\FI\fi-obj.exe"
+
+FISender
+    "C:\Program Files\FI\fi-sender.exe"
+```
+
+Deployment verifies the target host and exact runtime binary hashes before
+accepting the reviewed runtime configuration.
+
+The sender ownership boundary is explicit:
+
+```text
+SCM FISender
+    |
+    +-- exactly one fi-sender.exe
+```
+
+`FI-GMSA-Sender-V2-Drain` is legacy sender ownership and must not remain an
+active production runtime owner after `FISender` assumes SCM ownership.
+
+Example invocation:
+
+```powershell
+.\windows\Configure-FI-Source-Runtime.ps1 `
+    -ExpectedComputerName 'ISS-FS-01' `
+    -CollectorAccount 'ISS\gFI-FS01$' `
+    -USNReaderAccount 'ISS\gFI-USN-FS01$' `
+    -ObjReaderAccount 'ISS\gFI-OBJ-FS01$' `
+    -SenderAccount 'ISS\gFI-FS01$' `
+    -CollectorSHA256 '<REVIEWED-SHA256>' `
+    -USNReaderSHA256 '<REVIEWED-SHA256>' `
+    -ObjReaderSHA256 '<REVIEWED-SHA256>' `
+    -SenderSHA256 '<REVIEWED-SHA256>' `
+    -ConfirmChange
+```
+
+Use the hashes from the reviewed build being deployed. Do not substitute hashes
+from an earlier characterization or acceptance run merely because the file names
+match.
+
+The 2026-09-27 Server 2016 lifecycle acceptance established that all four
+services survive a real cold reboot, both local broker pipes return, the sender
+returns under singleton SCM ownership, the legacy sender task remains disabled,
+USN continuity catches up work performed while FI was stopped, and the recovered
+change proceeds through sender, receiver, and PostgreSQL relational ingest.
+
 ## Windows Phase 1 data ACL hardening
 
 `Harden-FI-Data-ACL.ps1` is an **administrator-run deployment action** for the

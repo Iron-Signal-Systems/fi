@@ -384,6 +384,146 @@ Production acceptance established:
 
 ---
 
+## Current four-service Windows source runtime lifecycle
+
+The earlier release-specific production-pair results remain historical acceptance
+for the binaries and runtime topology tested at that time. They are not rewritten
+to imply that `FIObjReader` or the later SCM-owned `FISender` existed in those
+runs.
+
+The current complete Windows source runtime was accepted on 2026-09-27 on:
+
+```text
+Host:                 ISS-FS-01
+Windows Server:       2016
+Build:                10.0.14393
+
+FICollector:          ISS\gFI-FS01$
+FIUSNReader:          ISS\gFI-USN-FS01$
+FIObjReader:          ISS\gFI-OBJ-FS01$
+FISender:             ISS\gFI-FS01$
+```
+
+The reviewed executable paths were:
+
+```text
+FICollector
+"C:\Program Files\FI\fi.exe" -service
+
+FIUSNReader
+"C:\Program Files\FI\fi-usn.exe"
+
+FIObjReader
+"C:\Program Files\FI\fi-obj.exe"
+
+FISender
+"C:\Program Files\FI\fi-sender.exe"
+```
+
+The reviewed SHA-256 values were:
+
+```text
+FICollector
+4D778B7A738B89A3920714C22D94D95EE881311D3CDB97BB7D5A3CC8C3369CDB
+
+FIUSNReader
+974B8302AA8E2EB4AAC49E24E1910BBD50E4BF64B6B7B9EAA7B9DD8D312C3BDB
+
+FIObjReader
+0369D0BB91CC9D4C4D069B21DDA51462F81D74540E0A5E31A876597D64E4216E
+
+FISender
+CD0C13F28263210A8C9200E7337162394ACDD61B46BC784CD0FE9DFC32B683FE
+```
+
+The lifecycle test deliberately stopped the complete four-service FI runtime and
+created a governed-root file while FI was down. The accepted USN checkpoint
+remained frozen. The host was then cold rebooted.
+
+Post-reboot acceptance established:
+
+```text
+FICollector auto-started                         PASS
+FIUSNReader auto-started                         PASS
+FIObjReader auto-started                         PASS
+FISender auto-started                            PASS
+
+FI-USN broker pipe                               PASS
+FI-OBJ broker pipe                               PASS
+
+reviewed service identities/paths/SID types      PASS
+reviewed binary SHA-256 values                   PASS
+exactly one SCM-owned FISender                   PASS
+legacy FI-GMSA-Sender-V2-Drain disabled         PASS
+
+USN checkpoint:
+847003536 -> 847014776                            PASS
+```
+
+The exact change made while the complete FI runtime was stopped was recovered
+after boot into:
+
+```text
+batch_id:
+20260927T111645.495101800Z-394e6bc0a9947651
+
+generation_id:
+20260927T112641.412434900Z-c3c60a5c545b4ce2
+
+PostgreSQL source_record_id:
+545839
+
+object observation:
+Observed / CurrentObjectContained
+```
+
+Three associated USN change rows were relationally materialized for the exact
+test object. The acceptance query intentionally did not select the USN reason
+field, so those rows are recorded as observed USN changes rather than assigning
+more specific create/write/close semantics.
+
+This establishes the complete tested lifecycle:
+
+```text
+complete FI runtime stopped
+        |
+        v
+governed-root change while FI is down
+        |
+        v
+accepted checkpoint remains frozen
+        |
+        v
+real Windows cold reboot
+        |
+        v
+all four FI services return under SCM
+        |
+        v
+broker services return
+        |
+        v
+USN catch-up recovers outage change
+        |
+        v
+durable batch custody
+        |
+        v
+FISender generation rollover / transport
+        |
+        v
+receiver custody
+        |
+        v
+PostgreSQL relational materialization
+```
+
+This result closes the current Windows source-runtime reboot/lifecycle acceptance
+for the tested Server 2016 lab topology. It does not generalize
+release/build-sensitive privileged-object behavior to other Windows versions.
+
+---
+
 ## FIObjReader protected-object characterization
 
 `FIObjReader` is a separate service and privilege boundary from `FIUSNReader`.
