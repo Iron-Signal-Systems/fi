@@ -499,3 +499,23 @@ mutation is implemented by this checkpoint.
 
 Real-host production mutation remains subject to explicit pre-mutation review
 and post-apply acceptance.
+
+## Read-only ZFS acceptance
+
+The production ZFS layer also exposes:
+
+    fi-bootstrap.sh verify-zfs <config-file>
+
+`verify-zfs` is not a reconciliation path.
+
+It:
+
+- requires the exact configured deployment host;
+- inspects the configured FI ZFS root;
+- classifies every required production FI dataset;
+- accepts only `OWNED_MATCH`;
+- fails on absence, owned drift, foreign collision, or unknown state;
+- performs no production mutation.
+
+Real-host acceptance must prove that selected ZFS state is unchanged across the
+verification run.

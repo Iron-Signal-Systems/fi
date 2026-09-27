@@ -242,6 +242,26 @@ Initial `apply-zfs` does not repair drift.
 The only production mutation primitive currently implemented by this phase is
 `zfs create`.
 
+### ZFS verification phase
+
+`verify-zfs` is the read-only acceptance path for an already-created FI
+production ZFS hierarchy.
+
+It:
+
+- requires root on FreeBSD;
+- requires an exact deployment-hostname match;
+- validates the configured ZFS pool and `/var/db/fi` root;
+- classifies every required production dataset;
+- requires every dataset to be `OWNED_MATCH`;
+- fails on `ABSENT`, `OWNED_DRIFT`, `FOREIGN_COLLISION`, or `UNKNOWN`;
+- validates exact FI ownership metadata, native ZFS properties, and runtime
+  mount state;
+- performs no ZFS mutation.
+
+Real-host acceptance has demonstrated that the selected ZFS state is
+byte-identical before and after `verify-zfs`.
+
 ### Current mutation boundary
 
 `apply-zfs` does **not**:
@@ -263,7 +283,7 @@ Those operations remain future reviewed apply layers.
 
 ### Non-mutation contract
 
-Neither `plan` nor `preflight` may:
+`plan`, `preflight`, and `verify-zfs` may not:
 
 - create or destroy ZFS datasets or snapshots;
 - clone jail roots;

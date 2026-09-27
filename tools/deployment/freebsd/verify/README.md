@@ -79,25 +79,34 @@ The fixture under `fixtures/` is an offline deterministic fixture. It is bound
 to `fi-test.invalid` so it cannot be accepted as a production configuration on
 the real FI backend host.
 
-## Current production apply boundary
+## Current production ZFS commands
 
-The only implemented production apply command is:
+The implemented production ZFS commands are:
 
     ../fi-bootstrap.sh apply-zfs /path/to/fi-bootstrap.conf
+    ../fi-bootstrap.sh verify-zfs /path/to/fi-bootstrap.conf
 
-It is limited to creation or exact verification of the FI production ZFS data
-hierarchy.
+`apply-zfs` is the controlled mutating path. It may create absent FI-owned
+production datasets and otherwise requires exact owned state.
 
-Jail roots, runtime identities, devfs rules, `/etc` files, VNET lifecycle, PF
-changes, service installation, and boot policy remain outside the current apply
-boundary.
+`verify-zfs` is the read-only acceptance path. It requires all ten production
+datasets to classify as `OWNED_MATCH` and fails closed on absence, drift,
+foreign ownership, or unknown state.
+
+Real-host acceptance on the intended FreeBSD backend demonstrated:
+
+- all ten production datasets classify as `OWNED_MATCH`;
+- `verify-zfs` exits successfully;
+- selected ZFS state captured before and after verification is byte-identical.
+
+Neither command currently creates jail roots, runtime identities, devfs rules,
+jail/fstab files, VNET interfaces, PF policy, FI services, or boot policy.
 
 ## Future runtime acceptance
 
 Verification must eventually also cover:
 
 - expected production jail identities and VNET interfaces;
-- ZFS dataset ownership and mount authority after real-host apply;
 - FI service users and groups after deployment;
 - configuration and runtime directory ownership/modes;
 - rc.d service state;

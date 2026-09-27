@@ -34,6 +34,7 @@ Usage:
     $PROGRAM plan <config-file> <output-directory>
     $PROGRAM preflight <config-file>
     $PROGRAM apply-zfs <config-file>
+    $PROGRAM verify-zfs <config-file>
 
 Current commands:
 
@@ -49,9 +50,13 @@ Current commands:
         Create or verify only the FI production ZFS data hierarchy.
         This command mutates the configured ZFS pool.
 
+    verify-zfs
+        Read and classify the existing FI production ZFS hierarchy.
+        This command does not modify ZFS state.
+
 The plan output directory must not already exist.
 
-Preflight and apply-zfs must run as root on the intended FreeBSD host.
+Preflight, apply-zfs, and verify-zfs must run as root on the intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
 VNET interfaces, PF rules, services, or boot policy.
@@ -739,7 +744,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|apply-zfs)
+        preflight|apply-zfs|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -784,6 +789,16 @@ main()
             . "$SCRIPT_DIR/fi-host-zfs-apply.sh"
             zfs_apply_require_commands
             ;;
+        verify-zfs)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "ZFS verification must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-zfs-apply.sh" ] ||
+                fail "ZFS helper not found: $SCRIPT_DIR/fi-host-zfs-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-zfs-apply.sh"
+            zfs_apply_require_commands
+            ;;
     esac
 
     parse_config "$config_file"
@@ -798,6 +813,9 @@ main()
             ;;
         apply-zfs)
             apply_zfs_hierarchy
+            ;;
+        verify-zfs)
+            verify_zfs_hierarchy
             ;;
     esac
 }

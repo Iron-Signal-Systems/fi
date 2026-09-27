@@ -580,3 +580,149 @@ zfs_apply_runtime_property_status()
 
     [ "$zfs_apply_actual" = "$zfs_apply_expected" ]
 }
+
+verify_zfs_hierarchy()
+{
+    [ "$(id -u)" -eq 0 ] ||
+        fail "ZFS verification must run as root on the intended FreeBSD host"
+
+    [ "$(uname -s)" = "FreeBSD" ] ||
+        fail "ZFS verification requires FreeBSD"
+
+    zfs_verify_expected_hostname=$(get_value FI_HOSTNAME)
+    zfs_verify_actual_hostname=$(hostname)
+
+    [ "$zfs_verify_actual_hostname" = "$zfs_verify_expected_hostname" ] ||
+        fail \
+            "deployment hostname mismatch: expected $zfs_verify_expected_hostname, observed $zfs_verify_actual_hostname"
+
+    pass "deployment hostname matches: $zfs_verify_actual_hostname"
+
+    zfs_verify_pool=$(get_value FI_ZPOOL)
+    zfs_verify_root="$zfs_verify_pool/fi"
+
+    zpool list -H -o name "$zfs_verify_pool" >/dev/null 2>&1 ||
+        fail "configured ZFS pool does not exist: $zfs_verify_pool"
+
+    zfs list -H -o name "$zfs_verify_root" >/dev/null 2>&1 ||
+        fail "FI ZFS root does not exist: $zfs_verify_root"
+
+    zfs_verify_root_mountpoint=$(
+        zfs get -H -o value mountpoint "$zfs_verify_root" 2>/dev/null
+    ) || fail "unable to inspect FI ZFS root mountpoint: $zfs_verify_root"
+
+    [ "$zfs_verify_root_mountpoint" = "/var/db/fi" ] ||
+        fail \
+            "FI ZFS root mountpoint mismatch: expected /var/db/fi, observed $zfs_verify_root_mountpoint"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/custody" \
+        "custody-parent" \
+        "none" \
+        "off" \
+        "no"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/custody/generation" \
+        "custody-generation" \
+        "/var/db/fi/custody/generation" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/recorded" \
+        "recorded" \
+        "/var/db/fi/custody/recorded" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/ready" \
+        "ready" \
+        "/var/db/fi/custody/ready" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/config" \
+        "config-parent" \
+        "none" \
+        "off" \
+        "no"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/config/receiver" \
+        "config-receiver" \
+        "/var/db/fi/config/receiver" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/config/ingest" \
+        "config-ingest" \
+        "/var/db/fi/config/ingest" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/sor" \
+        "sor-parent" \
+        "none" \
+        "off" \
+        "no"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/sor/postgres" \
+        "sor-postgres" \
+        "/var/db/fi/sor/postgres" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/backups" \
+        "backups" \
+        "/var/db/fi/backups" \
+        "on" \
+        "yes"
+
+    pass "FI production ZFS hierarchy verification complete"
+}
+
+zfs_verify_dataset()
+{
+    zfs_verify_name=$1
+    zfs_verify_role=$2
+    zfs_verify_mountpoint=$3
+    zfs_verify_canmount=$4
+    zfs_verify_mounted=$5
+
+    zfs_verify_state=$(
+        zfs_apply_classify_dataset \
+            "$zfs_verify_name" \
+            "$zfs_verify_role" \
+            "$zfs_verify_mountpoint" \
+            "$zfs_verify_canmount" \
+            "$zfs_verify_mounted"
+    ) || fail "unable to classify FI ZFS dataset: $zfs_verify_name"
+
+    case "$zfs_verify_state" in
+        OWNED_MATCH)
+            pass "FI ZFS dataset verified: $zfs_verify_name"
+            ;;
+        ABSENT)
+            fail "ABSENT: required FI ZFS dataset does not exist: $zfs_verify_name"
+            ;;
+        OWNED_DRIFT)
+            fail "OWNED_DRIFT: FI ZFS dataset differs from requested state: $zfs_verify_name"
+            ;;
+        FOREIGN_COLLISION)
+            fail "FOREIGN_COLLISION: ZFS dataset is not authoritatively FI-owned: $zfs_verify_name"
+            ;;
+        UNKNOWN)
+            fail "UNKNOWN: unable to establish safe ZFS dataset state: $zfs_verify_name"
+            ;;
+        *)
+            fail "invalid ZFS classification for $zfs_verify_name: $zfs_verify_state"
+            ;;
+    esac
+}
