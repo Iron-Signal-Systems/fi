@@ -52,6 +52,22 @@ func WalkGovernedRoot(
 	governedRoot string,
 	visit WalkVisitFunc,
 ) error {
+	return walkGovernedRootWithSACLReader(
+		ctx,
+		scopeID,
+		governedRoot,
+		defaultSACLDescriptorReader,
+		visit,
+	)
+}
+
+func walkGovernedRootWithSACLReader(
+	ctx context.Context,
+	scopeID string,
+	governedRoot string,
+	readSACL SACLDescriptorReader,
+	visit WalkVisitFunc,
+) error {
 	if visit == nil {
 		return ErrWalkVisitorRequired
 	}
@@ -77,7 +93,7 @@ func WalkGovernedRoot(
 	}
 	defer syscall.CloseHandle(root.handle)
 
-	rootObservation, err := collectWalkPath(ctx, root, governedRoot)
+	rootObservation, err := collectWalkPath(ctx, root, governedRoot, readSACL)
 	if err != nil {
 		return err
 	}
@@ -85,10 +101,15 @@ func WalkGovernedRoot(
 		return err
 	}
 
-	return walkDirectory(ctx, root, governedRoot, rootObservation, true, visit)
+	return walkDirectory(ctx, root, governedRoot, rootObservation, true, readSACL, visit)
 }
 
-func collectWalkPath(ctx context.Context, root governedRootContext, path string) (Observation, error) {
+func collectWalkPath(
+	ctx context.Context,
+	root governedRootContext,
+	path string,
+	readSACL SACLDescriptorReader,
+) (Observation, error) {
 	if err := validateContext(ctx); err != nil {
 		return Observation{}, err
 	}
@@ -107,13 +128,14 @@ func collectWalkPath(ctx context.Context, root governedRootContext, path string)
 	}
 	defer syscall.CloseHandle(targetHandle)
 
-	return collectOpenedTargetWithContentHashes(
+	return collectOpenedTargetWithContentHashesAndSACLReader(
 		ctx,
 		root,
 		CollectionEntryPath,
 		targetPath,
 		targetHandle,
 		nil,
+		readSACL,
 	)
 }
 
@@ -123,6 +145,7 @@ func walkDirectory(
 	directoryPath string,
 	expected Observation,
 	root bool,
+	readSACL SACLDescriptorReader,
 	visit WalkVisitFunc,
 ) error {
 	directory, err := os.Open(directoryPath)
@@ -149,7 +172,7 @@ func walkDirectory(
 		entries, readErr := directory.ReadDir(walkDirectoryBatchSize)
 		for _, entry := range entries {
 			childPath := filepath.Join(directoryPath, entry.Name())
-			if err := walkObject(ctx, rootContext, childPath, visit); err != nil {
+			if err := walkObject(ctx, rootContext, childPath, readSACL, visit); err != nil {
 				return err
 			}
 		}
@@ -175,13 +198,14 @@ func walkObject(
 	ctx context.Context,
 	root governedRootContext,
 	path string,
+	readSACL SACLDescriptorReader,
 	visit WalkVisitFunc,
 ) error {
 	if err := validateContext(ctx); err != nil {
 		return err
 	}
 
-	observation, collectErr := collectWalkPath(ctx, root, path)
+	observation, collectErr := collectWalkPath(ctx, root, path, readSACL)
 	if collectErr != nil {
 		return visit(path, Observation{}, collectErr)
 	}
@@ -193,5 +217,5 @@ func walkObject(
 		return nil
 	}
 
-	return walkDirectory(ctx, root, path, observation, false, visit)
+	return walkDirectory(ctx, root, path, observation, false, readSACL, visit)
 }
