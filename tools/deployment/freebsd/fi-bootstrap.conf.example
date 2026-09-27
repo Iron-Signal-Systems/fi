@@ -1,6 +1,9 @@
 # FI FreeBSD site-specific deployment variables.
 #
 # Copy this file outside the repository and populate values appropriate to the
+#
+# Values are literal data. Shell expansion, command substitution, and shell
+# execution are not supported by the deployment parser.
 # deployment. Do not place private keys, passwords, or other secrets here.
 
 FI_ZPOOL="zroot"
@@ -27,7 +30,7 @@ FI_SOR_DB_MGMT_ADDRESS=""
 FI_SOR_DB_WORK_ADDRESS=""
 
 # Production jail roots.
-FI_JAIL_DATASET_ROOT="${FI_ZPOOL}/jails/containers"
+FI_JAIL_DATASET_ROOT="zroot/jails/containers"
 FI_JAIL_ROOT_BASE="/usr/local/jails/containers"
 
 # Exact accepted FreeBSD base-template snapshot.
@@ -35,9 +38,9 @@ FI_JAIL_ROOT_BASE="/usr/local/jails/containers"
 # FI_JAIL_TEMPLATE_SNAPSHOT="zroot/jails/templates/15.1-RELEASE@base-YYYYMMDD"
 FI_JAIL_TEMPLATE_SNAPSHOT=""
 
-FI_RECEIVER_ROOT="${FI_JAIL_ROOT_BASE}/fi-receiver"
-FI_INGEST_ROOT="${FI_JAIL_ROOT_BASE}/fi-ingest"
-FI_SOR_DB_ROOT="${FI_JAIL_ROOT_BASE}/fi-sor-db"
+FI_RECEIVER_ROOT="/usr/local/jails/containers/fi-receiver"
+FI_INGEST_ROOT="/usr/local/jails/containers/fi-ingest"
+FI_SOR_DB_ROOT="/usr/local/jails/containers/fi-sor-db"
 
 # Host-side FI storage paths.
 FI_CUSTODY_GENERATION_HOST="/var/db/fi/custody/generation"

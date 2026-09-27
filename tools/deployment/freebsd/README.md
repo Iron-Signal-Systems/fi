@@ -107,3 +107,47 @@ Deployment automation must be:
 
 Manual deployment and acceptance testing establish the reference implementation
 before bootstrap automation is finalized.
+
+## Bootstrap implementation state
+
+The FreeBSD bootstrap currently implements a non-mutating deployment-plan
+phase.
+
+Configuration files are strict data files using:
+
+    FI_VARIABLE="literal-value"
+
+They are not sourced or executed by the shell.
+
+Shell expansion, command substitution, duplicate keys, unknown keys, and
+unsupported characters are rejected.
+
+A plan is generated with:
+
+    ./fi-bootstrap.sh plan /path/to/fi-bootstrap.conf /path/to/new-plan-directory
+
+The plan phase:
+
+- validates required configuration;
+- validates numeric identities;
+- validates management/workload IPv4 CIDR relationships;
+- validates deterministic VNET interface names;
+- validates jail-root and ZFS naming relationships;
+- verifies all template tokens have values;
+- renders jail configuration and per-jail fstab files;
+- rejects unresolved template tokens;
+- writes SHA-256 hashes of rendered artifacts.
+
+The plan phase does not:
+
+- create ZFS datasets;
+- clone jail roots;
+- create VNET interfaces;
+- modify bridges;
+- install files under `/etc`;
+- start jails;
+- modify PF;
+- start FI services.
+
+Host-state preflight and apply behavior are separate implementation
+checkpoints.
