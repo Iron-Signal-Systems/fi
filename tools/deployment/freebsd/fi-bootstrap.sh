@@ -2,7 +2,8 @@
 
 # FI FreeBSD backend deployment bootstrap.
 #
-# The current implementation supports the non-mutating "plan" phase only.
+# The current implementation supports non-mutating "plan" and "preflight"
+# phases only.
 #
 # Configuration is parsed as strict KEY="VALUE" data. It is never sourced as
 # shell code.
@@ -31,6 +32,7 @@ usage()
     cat <<EOF_USAGE
 Usage:
     $PROGRAM plan <config-file> <output-directory>
+    $PROGRAM preflight <config-file>
 
 Current commands:
 
@@ -38,7 +40,13 @@ Current commands:
         Validate FI FreeBSD deployment configuration and render the jail/fstab
         deployment plan without modifying the host.
 
-The output directory must not already exist.
+    preflight
+        Validate the intended FreeBSD host against deployment configuration
+        without modifying host state.
+
+The plan output directory must not already exist.
+
+Preflight must run as root on the intended FreeBSD host.
 
 No apply operation is implemented by this checkpoint.
 EOF_USAGE
@@ -689,33 +697,71 @@ render_plan()
 
 main()
 {
-    if [ "$#" -ne 3 ]; then
+    if [ "$#" -lt 1 ]; then
         usage
         exit 2
     fi
 
     mode=$1
-    config_file=$2
-    OUTPUT_DIR=$3
 
-    [ "$mode" = "plan" ] ||
-        fail "unsupported command: $mode"
+    case "$mode" in
+        plan)
+            if [ "$#" -ne 3 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            OUTPUT_DIR=$3
+            ;;
+        preflight)
+            if [ "$#" -ne 2 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            ;;
+        *)
+            fail "unsupported command: $mode"
+            ;;
+    esac
 
     for required_command in \
         awk \
         grep \
-        mkdir \
         mktemp \
-        sed \
-        sha256 \
-        sort
+        sed
     do
         require_command "$required_command"
     done
 
+    case "$mode" in
+        plan)
+            require_command mkdir
+            require_command sha256
+            require_command sort
+            ;;
+        preflight)
+            [ -f "$SCRIPT_DIR/fi-host-preflight.sh" ] ||
+                fail "preflight helper not found: $SCRIPT_DIR/fi-host-preflight.sh"
+
+            . "$SCRIPT_DIR/fi-host-preflight.sh"
+            preflight_require_commands
+            ;;
+    esac
+
     parse_config "$config_file"
     validate_config
-    render_plan
+
+    case "$mode" in
+        plan)
+            render_plan
+            ;;
+        preflight)
+            preflight_host
+            ;;
+    esac
 }
 
 main "$@"

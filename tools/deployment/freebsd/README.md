@@ -110,8 +110,10 @@ before bootstrap automation is finalized.
 
 ## Bootstrap implementation state
 
-The FreeBSD bootstrap currently implements a non-mutating deployment-plan
-phase.
+The FreeBSD bootstrap currently implements two non-mutating phases:
+
+- `plan`
+- `preflight`
 
 Configuration files are strict data files using:
 
@@ -122,9 +124,23 @@ They are not sourced or executed by the shell.
 Shell expansion, command substitution, duplicate keys, unknown keys, and
 unsupported characters are rejected.
 
-A plan is generated with:
+A deployment plan is generated with:
 
     ./fi-bootstrap.sh plan /path/to/fi-bootstrap.conf /path/to/new-plan-directory
+
+Host state is inspected with:
+
+    ./fi-bootstrap.sh preflight /path/to/fi-bootstrap.conf
+
+`preflight` must run as root on the intended FreeBSD host.
+
+The fixture under `verify/fixtures/` exists for deterministic render and
+negative-parser tests. It is not a production host configuration. A real host
+configuration must identify the exact template snapshot, networks, addresses,
+identities, paths, VNET interface names, and other deployment inputs intended
+for that host.
+
+### Plan phase
 
 The plan phase:
 
@@ -138,16 +154,61 @@ The plan phase:
 - rejects unresolved template tokens;
 - writes SHA-256 hashes of rendered artifacts.
 
-The plan phase does not:
+The plan phase does not inspect or modify host state.
 
-- create ZFS datasets;
+### Preflight phase
+
+The preflight phase validates the initial deployment target before any
+production resources are created.
+
+It currently verifies:
+
+- execution as root on FreeBSD;
+- required host commands;
+- the configured ZFS pool;
+- the jail dataset root and its configured mountpoint;
+- the exact configured jail-template snapshot;
+- read-only state of the jail-template dataset;
+- FreeBSD release agreement between the host and template dataset;
+- the FI dataset root at `/var/db/fi`;
+- persistent and runtime PF state;
+- persistent and runtime IPv4 forwarding;
+- persistent management and workload bridges;
+- management and workload bridge addresses within their configured networks;
+- the `/etc/jail.conf.d/*.conf` include;
+- current `jail_enable` state as informational lifecycle state only;
+- availability of the configured FI runtime UID and GID;
+- availability of the configured production devfs ruleset number;
+- absence of conflicting production jail names;
+- absence of conflicting production jail roots;
+- absence of conflicting production jail datasets;
+- absence of conflicting jail configuration and fstab paths;
+- absence of conflicting FI production storage paths and datasets;
+- absence of conflicting deterministic VNET interface names.
+
+Preflight fails closed on a configuration mismatch or unexpected collision.
+
+The current preflight is specifically an **initial-deployment preflight**.
+Existing production resources are treated as collisions rather than silently
+accepted or reconciled. Idempotent ownership validation and reconciliation of
+already-created FI resources belong to the later apply/reapply contract.
+
+### Non-mutation contract
+
+Neither `plan` nor `preflight` may:
+
+- create or destroy ZFS datasets or snapshots;
 - clone jail roots;
-- create VNET interfaces;
+- create or destroy VNET interfaces;
 - modify bridges;
-- install files under `/etc`;
-- start jails;
+- create users or groups;
+- create or modify devfs rulesets;
+- install or modify files under `/etc`;
+- mount or unmount production filesystems;
+- start, stop, or modify jails;
 - modify PF;
-- start FI services.
+- change IP forwarding;
+- change jail boot policy;
+- start or stop FI services.
 
-Host-state preflight and apply behavior are separate implementation
-checkpoints.
+No `apply` operation is implemented by this checkpoint.
