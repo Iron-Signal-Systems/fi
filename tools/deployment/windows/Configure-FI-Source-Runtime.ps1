@@ -294,6 +294,27 @@ function Set-FIManagedService {
             $DisplayName
         ) | Out-Host
 
+        $Created = Get-CimInstance `
+            Win32_Service `
+            -Filter "Name='$Name'" `
+            -ErrorAction Stop
+
+        $ChangeResult = Invoke-CimMethod `
+            -InputObject $Created `
+            -MethodName Change `
+            -Arguments @{
+                PathName    = $PathName
+                DisplayName = $DisplayName
+                StartMode   = 'Automatic'
+            }
+
+        if ($ChangeResult.ReturnValue -ne 0) {
+            throw (
+                "$Name exact service configuration failed. " +
+                "ReturnValue=$($ChangeResult.ReturnValue)"
+            )
+        }
+
         Invoke-FISC -Arguments @(
             'managedaccount',
             $Name,
@@ -374,16 +395,26 @@ function Set-FIManagedService {
     if (-not $ConfigurationCorrect) {
         Write-Host "[INFO] Reconciling $Name service configuration."
 
-        Invoke-FISC -Arguments @(
-            'config',
-            $Name,
-            'binPath=',
-            $PathName,
-            'start=',
-            'auto',
-            'DisplayName=',
-            $DisplayName
-        ) | Out-Host
+        $Current = Get-CimInstance `
+            Win32_Service `
+            -Filter "Name='$Name'" `
+            -ErrorAction Stop
+
+        $ChangeResult = Invoke-CimMethod `
+            -InputObject $Current `
+            -MethodName Change `
+            -Arguments @{
+                PathName    = $PathName
+                DisplayName = $DisplayName
+                StartMode   = 'Automatic'
+            }
+
+        if ($ChangeResult.ReturnValue -ne 0) {
+            throw (
+                "$Name exact service configuration failed. " +
+                "ReturnValue=$($ChangeResult.ReturnValue)"
+            )
+        }
     }
 
     if (-not $ManagedCorrect) {
