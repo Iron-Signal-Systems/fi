@@ -293,6 +293,37 @@ Phase 1 has a persistent Windows service runtime with three intentional source
 execution lanes. The lanes are concurrent with one another, but each lane remains
 sequential within its own checkpoint/source boundary.
 
+The current Windows source runtime is deployed as four SCM-managed services with
+separate runtime responsibilities:
+
+```text
+FICollector
+    source collection
+    source interpretation
+    durable spool/checkpoint ownership
+        |
+        +-- FIUSNReader
+        |      bounded raw-volume USN operations
+        |      bounded containment/SACL operations
+        |
+        +-- FIObjReader
+        |      bounded protected-object observation
+        |
+        +-- durable local spool
+               |
+               v
+           FISender
+               generation rollover/recovery
+               transport ownership
+               receiver delivery
+```
+
+`FISender` is a Windows service, not a scheduled-task-owned production process.
+Production runtime ownership requires exactly one SCM-owned `fi-sender.exe`.
+The legacy `FI-GMSA-Sender-V2-Drain` scheduled task is not an active runtime
+owner. `FISender` does not replace collector source-policy, source-interpretation,
+spool-write, or checkpoint ownership.
+
 ```text
 FICollector
     restricted per-host gMSA
@@ -361,6 +392,25 @@ Security. They may be overridden through `FI_SERVICE_USN_EVERY` and
 `FI_SERVICE_WINDOWS_SECURITY_EVERY`. Effective intervals are written to
 `service-runtime.jsonl` in `ServiceStarted`, `USNCatchUp`, and
 `WindowsSecurityCatchUp` records.
+
+On 2026-09-27, the complete four-service Windows source runtime was live
+validated on Windows Server 2016 host `ISS-FS-01`. All four FI services were
+stopped, a governed-root change was created while FI was completely down, and
+the accepted USN checkpoint remained frozen. A real host reboot then
+auto-started `FICollector`, `FIUSNReader`, `FIObjReader`, and `FISender` under
+SCM ownership. Both broker pipes returned, exactly one SCM-owned sender process
+was present, the legacy sender task remained disabled, all four reviewed binary
+hashes matched, and the USN checkpoint advanced from `847003536` to
+`847014776`.
+
+The exact outage change was recovered into batch
+`20260927T111645.495101800Z-394e6bc0a9947651`, rolled into generation
+`20260927T112641.412434900Z-c3c60a5c545b4ce2`, transported to the receiver,
+and relationally materialized in PostgreSQL as source record `545839` with
+`Observed / CurrentObjectContained` object observations. This establishes
+end-to-end source-runtime continuity across complete FI shutdown, host reboot,
+service recovery, USN catch-up, generation transport, receiver custody, and
+relational ingest.
 
 On 2026-09-19, the 10-minute USN lane was live validated on the Server 2016 lab.
 A single NTFS object (FRN 45 / sequence 9) was renamed and extended while a long

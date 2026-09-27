@@ -20,9 +20,17 @@ Collector executable SHA-256: __________________________________________
 
 FIUSNReader executable SHA-256: _________________________________________
 
+FIObjReader executable SHA-256: _________________________________________
+
+FISender executable SHA-256: ____________________________________________
+
 Collector gMSA: _________________________________________________________
 
 FIUSNReader gMSA: _______________________________________________________
+
+FIObjReader gMSA: _______________________________________________________
+
+FISender gMSA: __________________________________________________________
 
 Governed root used for verification: ____________________________________
 
@@ -205,6 +213,42 @@ For Windows Server 2025 build `26100`:
 
 For other Server 2025 builds, mark the build-26100 items N/A until that build is
 independently characterized.
+
+## Current four-service Windows source runtime
+
+Use this section when validating the current complete Windows source runtime.
+Historical release-specific two-service acceptance records remain valid for the
+runtime that was tested at that time.
+
+- [ ] `FICollector` is Automatic and Running.
+- [ ] `FIUSNReader` is Automatic and Running.
+- [ ] `FIObjReader` is Automatic and Running.
+- [ ] `FISender` is Automatic and Running.
+- [ ] Exact reviewed `PathName` values are preserved for all four services.
+- [ ] Managed-account settings match the reviewed deployment contract.
+- [ ] Expected service SID types are preserved.
+- [ ] All four reviewed executable SHA-256 values match.
+- [ ] `FI-USN` broker pipe is present.
+- [ ] `FI-OBJ` broker pipe is present.
+- [ ] Exactly one `fi-sender.exe` process is running.
+- [ ] The running `fi-sender.exe` PID is owned by the SCM `FISender` service.
+- [ ] Legacy `FI-GMSA-Sender-V2-Drain` is disabled or otherwise not an active
+      runtime owner.
+- [ ] A complete FI runtime stop leaves the accepted USN checkpoint frozen.
+- [ ] A governed-root change made while the complete FI runtime is stopped is
+      recovered after restart/reboot.
+- [ ] A real host reboot causes all four services to return automatically.
+- [ ] The USN checkpoint advances from the pre-reboot accepted position.
+- [ ] The exact outage/reboot change enters durable FI spool custody.
+- [ ] The exact batch is rolled into a generation by `FISender`.
+- [ ] Receiver custody is established for that generation.
+- [ ] Relational ingest materializes the exact change in PostgreSQL.
+
+Accepted source-runtime lifecycle notes:
+
+_________________________________________________________________________
+
+_________________________________________________________________________
 
 ## Windows Security source
 

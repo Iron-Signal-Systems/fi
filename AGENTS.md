@@ -422,6 +422,31 @@ parsing, spool/checkpoint ownership, supporting-source collection, and broad
 operation logic. `FIObjReader` may perform only the bounded exact-object
 structural observation and content hashing required by its fixed protocol.
 
+The production Windows transport runtime is:
+
+```text
+FISender
+    SCM-managed Windows service
+    executable: C:\Program Files\FI\fi-sender.exe
+    service SID type: NONE
+```
+
+`FISender` owns generation rollover/recovery and transport execution. It does not
+own source interpretation or accepted source checkpoints.
+
+Production Windows sender ownership has one authority:
+
+```text
+SCM FISender service
+        |
+        +-- exactly one fi-sender.exe
+```
+
+The `FI-GMSA-Sender-V2-Drain` scheduled task is legacy runtime ownership and
+must not be active when `FISender` owns production transport. Deployment and
+acceptance must verify that the running `fi-sender.exe` PID is the SCM
+`FISender` PID rather than merely checking for a process with the expected name.
+
 Windows protected-object behavior must remain explicitly characterized. Do not
 generalize a result from one Windows release/build to another without separate
 validation.
