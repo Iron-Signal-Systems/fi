@@ -2,7 +2,7 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-//go:build linux
+//go:build freebsd
 
 package main
 
@@ -78,25 +78,25 @@ func main() {
 
 	lockFile := flags.String(
 		"lock-file",
-		"/run/fi/fi-ingest-worker.lock",
+		"/var/run/fi/fi-ingest-worker.lock",
 		"exclusive FI relational ingest worker lock file",
 	)
 
 	custodyRoot := flags.String(
 		"generation-custody-root",
-		"/var/lib/fi/custody/generation",
+		"/var/db/fi/custody/generation",
 		"durable FI generation custody root",
 	)
 
 	recordedRoot := flags.String(
 		"generation-recorded-root",
-		"/var/lib/fi/custody/recorded",
+		"/var/db/fi/custody/recorded",
 		"durable FI generation recorder root",
 	)
 
 	readyRoot := flags.String(
 		"generation-ready-root",
-		"/var/lib/fi/custody/ready",
+		"/var/db/fi/custody/ready",
 		"non-authoritative FI generation ingest-ready root",
 	)
 
