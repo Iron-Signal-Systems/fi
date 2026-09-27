@@ -181,6 +181,12 @@ func (service *fiSenderService) Execute(
 				State: svc.StopPending,
 			}
 
+			if err == nil {
+				err = errors.New(
+					"FI sender runtime exited unexpectedly",
+				)
+			}
+
 			return finish(err)
 
 		case request, ok := <-requests:

@@ -131,6 +131,73 @@ func TestFISenderServiceOwnershipConflictFailsBeforeRunning(t *testing.T) {
 	default:
 	}
 }
+func TestFISenderServiceUnexpectedCleanExitFails(t *testing.T) {
+	t.Setenv("FI_STATE_DIR", t.TempDir())
+
+	statuses := make(chan svc.Status, 4)
+	runtimeRelease := make(chan struct{})
+
+	service := &fiSenderService{
+		loadConfig: func() (senderConfig, error) {
+			return senderConfig{}, nil
+		},
+		runRuntime: func(context.Context, senderConfig) error {
+			<-runtimeRelease
+			return nil
+		},
+	}
+
+	results := make(chan senderServiceExecutionResult, 1)
+
+	go func() {
+		serviceSpecific, exitCode := service.Execute(
+			nil,
+			make(chan svc.ChangeRequest),
+			statuses,
+		)
+
+		results <- senderServiceExecutionResult{
+			exitCode:        exitCode,
+			serviceSpecific: serviceSpecific,
+		}
+	}()
+
+	if status := receiveSenderServiceStatus(t, statuses); status.State != svc.StartPending {
+		t.Fatalf(
+			"first status = %v, want StartPending",
+			status.State,
+		)
+	}
+
+	if status := receiveSenderServiceStatus(t, statuses); status.State != svc.Running {
+		t.Fatalf(
+			"second status = %v, want Running",
+			status.State,
+		)
+	}
+
+	close(runtimeRelease)
+
+	if status := receiveSenderServiceStatus(t, statuses); status.State != svc.StopPending {
+		t.Fatalf(
+			"third status = %v, want StopPending",
+			status.State,
+		)
+	}
+
+	result := receiveSenderServiceResult(t, results)
+
+	if result.serviceSpecific {
+		t.Fatal("service-specific exit code = true, want false")
+	}
+
+	if result.exitCode != 1 {
+		t.Fatalf(
+			"exit code = %d, want 1",
+			result.exitCode,
+		)
+	}
+}
 func TestFISenderServiceRuntimeFailure(t *testing.T) {
 	t.Setenv("FI_STATE_DIR", t.TempDir())
 	statuses := make(chan svc.Status, 4)
