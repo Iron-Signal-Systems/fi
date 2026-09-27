@@ -519,3 +519,138 @@ It:
 
 Real-host acceptance must prove that selected ZFS state is unchanged across the
 verification run.
+
+## Production jail-root clone layer
+
+The production jail-root layer creates exactly three ZFS clones:
+
+    <FI_JAIL_DATASET_ROOT>/fi-receiver
+    <FI_JAIL_DATASET_ROOT>/fi-ingest
+    <FI_JAIL_DATASET_ROOT>/fi-sor-db
+
+Each clone must originate from exactly:
+
+    <FI_JAIL_TEMPLATE_SNAPSHOT>
+
+The configured snapshot is authoritative. The apply layer must never select,
+substitute, create, or advance a template snapshot on its own.
+
+### Jail-root ownership
+
+Every FI-managed production jail-root dataset must carry locally-set:
+
+    org.ironsignal.fi:managed=1
+    org.ironsignal.fi:schema=1
+
+The required roles are:
+
+    fi-receiver  -> jail-root-receiver
+    fi-ingest    -> jail-root-ingest
+    fi-sor-db    -> jail-root-sor-db
+
+Inherited FI ownership metadata does not establish FI authority.
+
+### Jail-root controlled state
+
+Every production jail-root clone must have:
+
+    origin      = exact FI_JAIL_TEMPLATE_SNAPSHOT
+    mountpoint  = exact configured jail root
+    canmount    = on
+    readonly    = off
+    atime       = off
+    exec        = on
+    setuid      = on
+    devices     = on
+    mounted     = yes
+
+Controlled writable ZFS properties must be locally set by FI. `origin` and
+`mounted` are inspected runtime/read-only state and are validated by exact
+value.
+
+This clone layer does not introduce additional jail hardening. Jail capability,
+devfs, filesystem visibility, service privilege, and network restrictions are
+separate reviewed deployment layers.
+
+### Jail-root classification
+
+Each requested production jail root is classified before mutation as exactly
+one of:
+
+    ABSENT
+    OWNED_MATCH
+    OWNED_DRIFT
+    FOREIGN_COLLISION
+    UNKNOWN
+
+`ABSENT` requires both the destination ZFS dataset and destination filesystem
+path to be absent.
+
+`OWNED_MATCH` requires exact FI ownership metadata, exact role, exact origin,
+exact controlled ZFS state, exact mountpoint, and mounted runtime state.
+
+`OWNED_DRIFT` means the resource is authoritatively FI-owned but differs from
+requested state.
+
+`FOREIGN_COLLISION` includes an existing destination dataset without exact
+local FI ownership metadata or an existing destination path when the
+destination dataset is absent.
+
+`UNKNOWN` means inspection could not establish a safe classification.
+
+Only `ABSENT` may be cloned. `OWNED_MATCH` is a no-op. All other states fail
+closed.
+
+### Layer-wide preclassification
+
+All three jail-root resources must be classified before the first clone is
+created.
+
+If any resource is `OWNED_DRIFT`, `FOREIGN_COLLISION`, or `UNKNOWN`, the layer
+must fail before creating any jail-root clone.
+
+Immediately before cloning an `ABSENT` resource, the implementation must
+reclassify it to detect races or newly-created collisions.
+
+### Mutation boundary
+
+The only production mutation primitive permitted in the initial jail-root
+layer is:
+
+    zfs clone
+
+The layer must not:
+
+- destroy, rename, promote, rollback, or rewrite an existing jail-root dataset;
+- create or modify users or groups;
+- create or modify devfs rules;
+- install jail or fstab files;
+- create or destroy VNET interfaces;
+- modify bridges or PF;
+- start or stop jails;
+- install or start FI services;
+- select jail boot policy;
+- automatically remove partially-created resources after a runtime failure.
+
+A partial clone set after an unexpected runtime failure is preserved for
+inspection. A later invocation must classify the existing FI-managed resources
+rather than destroy or silently replace them.
+
+### Jail-root readiness and verification
+
+The read-only pre-apply command accepts:
+
+    ABSENT
+    OWNED_MATCH
+
+and fails closed on:
+
+    OWNED_DRIFT
+    FOREIGN_COLLISION
+    UNKNOWN
+
+The read-only post-apply verification command accepts only:
+
+    OWNED_MATCH
+
+Neither read-only path may invoke the `zfs clone` mutation primitive.

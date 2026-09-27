@@ -119,3 +119,27 @@ Verification must eventually also cover:
 - service restart behavior;
 - jail restart recovery;
 - host restart recovery.
+
+## Production jail-root verification
+
+The jail-root acceptance path proves:
+
+- `ABSENT`, `OWNED_MATCH`, `OWNED_DRIFT`, `FOREIGN_COLLISION`, and `UNKNOWN`
+  classification behavior;
+- destination-path collision rejection;
+- local FI ownership requirements;
+- exact template snapshot origin;
+- exact controlled ZFS properties;
+- layer-wide preclassification before mutation;
+- exact second-apply no-op behavior;
+- wrong-host rejection;
+- exact `zfs clone` argument construction;
+- read-only preflight acceptance of only `ABSENT` and `OWNED_MATCH`;
+- read-only post-apply verification requiring `OWNED_MATCH`;
+- no clone mutation from either read-only path.
+
+Production acceptance uses:
+
+    preflight-jail-roots
+    apply-jail-roots
+    verify-jail-roots

@@ -34,6 +34,9 @@ Usage:
     $PROGRAM plan <config-file> <output-directory>
     $PROGRAM preflight <config-file>
     $PROGRAM apply-zfs <config-file>
+    $PROGRAM apply-jail-roots <config-file>
+    $PROGRAM preflight-jail-roots <config-file>
+    $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
 
 Current commands:
@@ -50,13 +53,25 @@ Current commands:
         Create or verify only the FI production ZFS data hierarchy.
         This command mutates the configured ZFS pool.
 
+    apply-jail-roots
+
+    preflight-jail-roots
+        Read and classify the three production jail-root destinations before apply.
+        ABSENT and exact OWNED_MATCH states are accepted; no state is modified.
+        Create or verify only the three FI production jail-root clones.
+        This command mutates the configured ZFS jail dataset root.
+
+    verify-jail-roots
+        Read and classify the three existing FI production jail-root clones.
+        This command does not modify ZFS or jail state.
+
     verify-zfs
         Read and classify the existing FI production ZFS hierarchy.
         This command does not modify ZFS state.
 
 The plan output directory must not already exist.
 
-Preflight, apply-zfs, and verify-zfs must run as root on the intended FreeBSD host.
+Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
 VNET interfaces, PF rules, services, or boot policy.
@@ -744,7 +759,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|apply-zfs|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -789,6 +804,36 @@ main()
             . "$SCRIPT_DIR/fi-host-zfs-apply.sh"
             zfs_apply_require_commands
             ;;
+        preflight-jail-roots)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "jail-root preflight must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-jail-root-apply.sh" ] ||
+                fail "jail-root helper not found: $SCRIPT_DIR/fi-host-jail-root-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-jail-root-apply.sh"
+            jail_root_require_commands
+            ;;
+        apply-jail-roots)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "jail-root apply must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-jail-root-apply.sh" ] ||
+                fail "jail-root apply helper not found: $SCRIPT_DIR/fi-host-jail-root-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-jail-root-apply.sh"
+            jail_root_require_commands
+            ;;
+        verify-jail-roots)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "jail-root verification must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-jail-root-apply.sh" ] ||
+                fail "jail-root helper not found: $SCRIPT_DIR/fi-host-jail-root-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-jail-root-apply.sh"
+            jail_root_require_commands
+            ;;
         verify-zfs)
             [ "$(id -u)" -eq 0 ] ||
                 fail "ZFS verification must run as root on the intended FreeBSD host"
@@ -813,6 +858,15 @@ main()
             ;;
         apply-zfs)
             apply_zfs_hierarchy
+            ;;
+        preflight-jail-roots)
+            preflight_jail_roots
+            ;;
+        apply-jail-roots)
+            apply_jail_roots
+            ;;
+        verify-jail-roots)
+            verify_jail_roots
             ;;
         verify-zfs)
             verify_zfs_hierarchy

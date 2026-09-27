@@ -298,3 +298,35 @@ Those operations remain future reviewed apply layers.
 - change IP forwarding;
 - change jail boot policy;
 - start or stop FI services.
+
+### Production jail-root phase
+
+Production jail roots are created from the explicitly configured
+`FI_JAIL_TEMPLATE_SNAPSHOT`.
+
+The jail-root deployment commands are:
+
+    preflight-jail-roots
+    apply-jail-roots
+    verify-jail-roots
+
+`preflight-jail-roots` is read-only. It accepts only `ABSENT` or exact
+`OWNED_MATCH` resources and fails closed on drift, foreign collisions, or
+unknown inspection state.
+
+`apply-jail-roots` performs the controlled production mutation. Its only
+mutation primitive is `zfs clone`. All three production jail roots are
+classified before the first clone, and an `ABSENT` resource is reclassified
+immediately before creation.
+
+`verify-jail-roots` is read-only post-apply acceptance. Every production jail
+root must classify as exact `OWNED_MATCH`.
+
+The initial production roots are:
+
+    fi-receiver
+    fi-ingest
+    fi-sor-db
+
+This layer does not create runtime identities, devfs rules, host configuration
+files, VNET interfaces, jail lifecycle configuration, or services.
