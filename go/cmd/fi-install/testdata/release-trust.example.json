@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "publisher": "Iron Signal Systems",
+  "generation": 1,
+  "previous_policy_sha256": "BOOTSTRAP",
+  "active_signers": [
+    {
+      "id": "iss-release-2026-a",
+      "certificate_sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "spki_sha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+    }
+  ],
+  "next_signers": []
+}
