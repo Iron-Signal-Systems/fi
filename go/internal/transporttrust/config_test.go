@@ -9,16 +9,16 @@ import (
 	"testing"
 )
 
-const validSourceConfig = `version_id: 1.0
+const validSourceConfig = `version_id: 2.0
 source_id: iss-fs-01.iss.local
 enabled: true
 transport_common_name: iss-fs-01.iss.local
-transport_organizational_unit: FI Shipper Transport
+transport_template_oid: 1.3.6.1.4.1.311.21.8.100.1
 transport_issuing_ca_sha256: 5EB837ED1C71E057E3F17FFB3ECF8F84176C106FB5D9437487C2A89A2151A971
 transport_certificate_sha256: B4377143A213BE00B977C2930265CD6A459F95B978B0713676A4153F51AF5092
 batch_signing_common_name: iss-fs-01.iss.local
-batch_signing_organizational_unit: FI Batch Signing
-batch_signing_issuing_ca_sha256: A309F854C0F54B9B7C28ED27CDF32D4C65B699CEBA31F05BB0A942D2DEFCFC51
+batch_signing_template_oid: 1.3.6.1.4.1.311.21.8.100.2
+batch_signing_issuing_ca_sha256: 5EB837ED1C71E057E3F17FFB3ECF8F84176C106FB5D9437487C2A89A2151A971
 batch_signing_certificate_sha256: 73370BBEA681ABF0080E68E69B29C0B68129108A9106AD556CE8DA42D7944DC6
 `
 
@@ -28,11 +28,11 @@ func TestParseSourceConfig(t *testing.T) {
 		t.Fatalf("ParseSourceConfig() error = %v", err)
 	}
 
-	if value.VersionID != SourceConfigVersion1 {
+	if value.VersionID != SourceConfigVersion2 {
 		t.Fatalf(
 			"VersionID = %q, want %q",
 			value.VersionID,
-			SourceConfigVersion1,
+			SourceConfigVersion2,
 		)
 	}
 
@@ -142,5 +142,18 @@ func TestParseSourceConfigRejectsUnknownDirective(t *testing.T) {
 
 	if _, err := ParseSourceConfig(strings.NewReader(input)); err == nil {
 		t.Fatal("ParseSourceConfig() error = nil, want unknown-directive rejection")
+	}
+}
+
+func TestParseSourceConfigRejectsInvalidTemplateOID(t *testing.T) {
+	input := strings.Replace(
+		validSourceConfig,
+		"1.3.6.1.4.1.311.21.8.100.1",
+		"1.3..6",
+		1,
+	)
+
+	if _, err := ParseSourceConfig(strings.NewReader(input)); err == nil {
+		t.Fatal("ParseSourceConfig() error = nil, want template-OID rejection")
 	}
 }

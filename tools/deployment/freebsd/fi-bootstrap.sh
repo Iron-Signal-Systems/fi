@@ -100,7 +100,7 @@ require_command()
 is_allowed_key()
 {
     case "$1" in
-        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_WORK_NETWORK|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
+        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
             return 0
             ;;
         *)
@@ -206,6 +206,28 @@ validate_pool_name()
     printf '%s\n' "$pool_value" |
         grep -Eq '^[A-Za-z][A-Za-z0-9_.:-]*$' ||
         fail "FI_ZPOOL is not an accepted pool name: $pool_value"
+}
+
+validate_ipv4_address()
+{
+    ipv4_key=$1
+    ipv4_value=$(get_value "$ipv4_key")
+
+    printf '%s\n' "$ipv4_value" |
+        awk -F '[.]' '
+            NF != 4 {
+                exit 1
+            }
+
+            {
+                for (i = 1; i <= 4; i++) {
+                    if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) {
+                        exit 1
+                    }
+                }
+            }
+        ' ||
+        fail "$ipv4_key is not an accepted IPv4 address: $ipv4_value"
 }
 
 validate_ipv4_cidr()
@@ -400,7 +422,14 @@ validate_required_values()
         FI_MGMT_BRIDGE \
         FI_WORK_BRIDGE \
         FI_MGMT_NETWORK \
+        FI_MGMT_GATEWAY \
         FI_WORK_NETWORK \
+        FI_RECEIVER_EXTERNAL_NETWORK \
+        FI_RECEIVER_EXTERNAL_ADDRESS \
+        FI_RECEIVER_EXTERNAL_GATEWAY \
+        FI_RECEIVER_EXTERNAL_IF \
+        FI_RECEIVER_DNS_SERVER \
+        FI_RECEIVER_DNS_SEARCH \
         FI_RECEIVER_MGMT_ADDRESS \
         FI_RECEIVER_WORK_ADDRESS \
         FI_INGEST_MGMT_ADDRESS \
@@ -440,6 +469,24 @@ validate_required_values()
     done
 }
 
+validate_dns_search_domain()
+{
+    dns_search_value=$(get_value FI_RECEIVER_DNS_SEARCH)
+
+    [ "${#dns_search_value}" -le 253 ] ||
+        fail "FI_RECEIVER_DNS_SEARCH exceeds 253 characters"
+
+    printf '%s\n' "$dns_search_value" |
+        grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' ||
+        fail "FI_RECEIVER_DNS_SEARCH is not an accepted DNS search domain: $dns_search_value"
+
+    case "$dns_search_value" in
+        *..*|*.-*|*-.*)
+            fail "FI_RECEIVER_DNS_SEARCH contains an invalid DNS label boundary: $dns_search_value"
+            ;;
+    esac
+}
+
 validate_hostname()
 {
     hostname_value=$(get_value FI_HOSTNAME)
@@ -462,6 +509,7 @@ validate_config()
 {
     validate_required_values
     validate_hostname
+    validate_dns_search_domain
 
     validate_pool_name
     validate_unsigned_nonzero FI_RUNTIME_UID
@@ -470,6 +518,7 @@ validate_config()
 
     validate_interface_name FI_MGMT_BRIDGE
     validate_interface_name FI_WORK_BRIDGE
+    validate_interface_name FI_RECEIVER_EXTERNAL_IF
 
     for interface_key in \
         FI_RECEIVER_MGMT_HOST_IF \
@@ -489,7 +538,8 @@ validate_config()
     done
 
     assert_distinct_values \
-        "VNET endpoint names" \
+        "VNET interface names" \
+        FI_RECEIVER_EXTERNAL_IF \
         FI_RECEIVER_MGMT_HOST_IF \
         FI_RECEIVER_MGMT_JAIL_IF \
         FI_RECEIVER_WORK_HOST_IF \
@@ -505,6 +555,13 @@ validate_config()
 
     mgmt_bridge=$(get_value FI_MGMT_BRIDGE)
     work_bridge=$(get_value FI_WORK_BRIDGE)
+    receiver_external_if=$(get_value FI_RECEIVER_EXTERNAL_IF)
+
+    [ "$receiver_external_if" != "$mgmt_bridge" ] ||
+        fail "FI_RECEIVER_EXTERNAL_IF conflicts with FI_MGMT_BRIDGE"
+
+    [ "$receiver_external_if" != "$work_bridge" ] ||
+        fail "FI_RECEIVER_EXTERNAL_IF conflicts with FI_WORK_BRIDGE"
 
     [ "$mgmt_bridge" != "$work_bridge" ] ||
         fail "management and workload bridges must be distinct"
@@ -535,6 +592,8 @@ validate_config()
     for cidr_key in \
         FI_MGMT_NETWORK \
         FI_WORK_NETWORK \
+        FI_RECEIVER_EXTERNAL_NETWORK \
+        FI_RECEIVER_EXTERNAL_ADDRESS \
         FI_RECEIVER_MGMT_ADDRESS \
         FI_RECEIVER_WORK_ADDRESS \
         FI_INGEST_MGMT_ADDRESS \
@@ -547,9 +606,24 @@ validate_config()
 
     validate_network_address FI_MGMT_NETWORK
     validate_network_address FI_WORK_NETWORK
+    validate_network_address FI_RECEIVER_EXTERNAL_NETWORK
+
+    validate_ipv4_address FI_MGMT_GATEWAY
+    validate_ipv4_address FI_RECEIVER_EXTERNAL_GATEWAY
+    validate_ipv4_address FI_RECEIVER_DNS_SERVER
 
     [ "$(get_value FI_MGMT_NETWORK)" != "$(get_value FI_WORK_NETWORK)" ] ||
         fail "management and workload networks must be distinct"
+
+    [ "$(get_value FI_RECEIVER_EXTERNAL_NETWORK)" != "$(get_value FI_MGMT_NETWORK)" ] ||
+        fail "receiver external and management networks must be distinct"
+
+    [ "$(get_value FI_RECEIVER_EXTERNAL_NETWORK)" != "$(get_value FI_WORK_NETWORK)" ] ||
+        fail "receiver external and workload networks must be distinct"
+
+    validate_address_in_network FI_MGMT_NETWORK FI_MGMT_GATEWAY
+    validate_address_in_network FI_RECEIVER_EXTERNAL_NETWORK FI_RECEIVER_EXTERNAL_GATEWAY
+    validate_address_in_network FI_RECEIVER_EXTERNAL_NETWORK FI_RECEIVER_EXTERNAL_ADDRESS
 
     validate_address_in_network FI_MGMT_NETWORK FI_RECEIVER_MGMT_ADDRESS
     validate_address_in_network FI_WORK_NETWORK FI_RECEIVER_WORK_ADDRESS

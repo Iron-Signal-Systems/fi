@@ -3,8 +3,23 @@ fi-sor-db {
     host.hostname = "fi-sor-db";
 
     persist;
+
+    exec.prestart = "/usr/local/libexec/fi-vnet-pair create-dual @FI_SOR_DB_MGMT_HOST_IF@ @FI_SOR_DB_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-sor-db:mgmt @FI_SOR_DB_WORK_HOST_IF@ @FI_SOR_DB_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-sor-db:work";
+
     vnet;
-    vnet.interface = "@FI_SOR_DB_MGMT_JAIL_IF@", "@FI_SOR_DB_WORK_JAIL_IF@";
+    vnet.interface = "@FI_SOR_DB_MGMT_JAIL_IF@";
+    vnet.interface += "@FI_SOR_DB_WORK_JAIL_IF@";
+
+    exec.start = "/sbin/ifconfig @FI_SOR_DB_MGMT_JAIL_IF@ inet @FI_SOR_DB_MGMT_ADDRESS@ up";
+    exec.start += "/sbin/ifconfig @FI_SOR_DB_WORK_JAIL_IF@ inet @FI_SOR_DB_WORK_ADDRESS@ up";
+    exec.start += "/sbin/route add default @FI_MGMT_GATEWAY@";
+    exec.start += "/bin/sh /etc/rc";
+
+    exec.stop = "/bin/sh /etc/rc.shutdown jail";
+
+    exec.poststop = "/usr/local/libexec/fi-vnet-pair destroy-dual @FI_SOR_DB_MGMT_HOST_IF@ @FI_SOR_DB_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ @FI_SOR_DB_WORK_HOST_IF@ @FI_SOR_DB_WORK_JAIL_IF@ @FI_WORK_BRIDGE@";
+
+    exec.consolelog = "/var/log/jail_console_${name}.log";
 
     mount.fstab = "@FI_SOR_DB_FSTAB@";
     mount.devfs;

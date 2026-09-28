@@ -209,15 +209,15 @@ func writeSourceRegistryConfig(
 	t.Helper()
 
 	value := fmt.Sprintf(
-		`version_id: 1.0
+		`version_id: 2.0
 source_id: %s
 enabled: %t
 transport_common_name: %s
-transport_organizational_unit: FI Shipper Transport
+transport_template_oid: 1.3.6.1.4.1.311.21.8.100.1
 transport_certificate_sha256: %s
 transport_issuing_ca_sha256: %s
 batch_signing_common_name: %s
-batch_signing_organizational_unit: FI Batch Signing
+batch_signing_template_oid: 1.3.6.1.4.1.311.21.8.100.2
 batch_signing_certificate_sha256: %s
 batch_signing_issuing_ca_sha256: %s
 `,

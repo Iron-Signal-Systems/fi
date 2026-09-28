@@ -10,14 +10,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
 const (
-	BatchSigningOrganizationalUnit = "FI Batch Signing"
-	SourceConfigVersion1           = "1.0"
-	TransportOrganizationalUnit    = "FI Shipper Transport"
+	SourceConfigVersion2 = "2.0"
 )
 
 // SourceConfig is one explicitly authorized FI source.
@@ -50,7 +49,7 @@ func LoadSourceConfig(path string) (SourceConfig, error) {
 //
 // The first meaningful line must be:
 //
-//	version_id: 1.0
+//	version_id: 2.0
 //
 // Unknown directives, duplicate directives, malformed identities, and missing
 // required directives are rejected.
@@ -100,7 +99,7 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 				)
 			}
 
-			if rawValue != SourceConfigVersion1 {
+			if rawValue != SourceConfigVersion2 {
 				return SourceConfig{}, fmt.Errorf(
 					"line %d: unsupported version_id %q",
 					lineNumber,
@@ -158,9 +157,9 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 			}
 			value.Authorization.BatchSigning.IssuingCASHA256 = normalized
 
-		case "batch_signing_organizational_unit":
+		case "batch_signing_template_oid":
 			if err := validateSourceText(
-				"batch_signing_organizational_unit",
+				"batch_signing_template_oid",
 				rawValue,
 			); err != nil {
 				return SourceConfig{}, fmt.Errorf(
@@ -169,7 +168,7 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 					err,
 				)
 			}
-			value.Authorization.BatchSigning.OrganizationalUnit = rawValue
+			value.Authorization.BatchSigning.TemplateOID = rawValue
 
 		case "enabled":
 			switch rawValue {
@@ -229,9 +228,9 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 			}
 			value.Authorization.Transport.IssuingCASHA256 = normalized
 
-		case "transport_organizational_unit":
+		case "transport_template_oid":
 			if err := validateSourceText(
-				"transport_organizational_unit",
+				"transport_template_oid",
 				rawValue,
 			); err != nil {
 				return SourceConfig{}, fmt.Errorf(
@@ -240,7 +239,7 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 					err,
 				)
 			}
-			value.Authorization.Transport.OrganizationalUnit = rawValue
+			value.Authorization.Transport.TemplateOID = rawValue
 
 		case "version_id":
 			return SourceConfig{}, fmt.Errorf(
@@ -271,13 +270,13 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 		"batch_signing_certificate_sha256",
 		"batch_signing_common_name",
 		"batch_signing_issuing_ca_sha256",
-		"batch_signing_organizational_unit",
+		"batch_signing_template_oid",
 		"enabled",
 		"source_id",
 		"transport_certificate_sha256",
 		"transport_common_name",
 		"transport_issuing_ca_sha256",
-		"transport_organizational_unit",
+		"transport_template_oid",
 	}
 
 	for _, directive := range required {
@@ -299,6 +298,20 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 func validateSourceConfig(value SourceConfig) error {
 	authorization := value.Authorization
 
+	if err := validateObjectIdentifier(
+		"transport_template_oid",
+		authorization.Transport.TemplateOID,
+	); err != nil {
+		return err
+	}
+
+	if err := validateObjectIdentifier(
+		"batch_signing_template_oid",
+		authorization.BatchSigning.TemplateOID,
+	); err != nil {
+		return err
+	}
+
 	if !strings.EqualFold(
 		authorization.SourceID,
 		authorization.Transport.CommonName,
@@ -317,22 +330,6 @@ func validateSourceConfig(value SourceConfig) error {
 		)
 	}
 
-	if authorization.Transport.OrganizationalUnit !=
-		TransportOrganizationalUnit {
-		return fmt.Errorf(
-			"transport_organizational_unit must be %q",
-			TransportOrganizationalUnit,
-		)
-	}
-
-	if authorization.BatchSigning.OrganizationalUnit !=
-		BatchSigningOrganizationalUnit {
-		return fmt.Errorf(
-			"batch_signing_organizational_unit must be %q",
-			BatchSigningOrganizationalUnit,
-		)
-	}
-
 	if authorization.Transport.CertificateSHA256 ==
 		authorization.BatchSigning.CertificateSHA256 {
 		return errors.New(
@@ -340,11 +337,68 @@ func validateSourceConfig(value SourceConfig) error {
 		)
 	}
 
-	if authorization.Transport.IssuingCASHA256 ==
-		authorization.BatchSigning.IssuingCASHA256 {
-		return errors.New(
-			"transport and batch-signing issuing CAs must be different",
-		)
+	return nil
+}
+
+func validateObjectIdentifier(name string, value string) error {
+	parts := strings.Split(value, ".")
+	if len(parts) < 2 {
+		return fmt.Errorf("%s must contain at least two OID arcs", name)
+	}
+
+	var firstArc uint64
+
+	for index, part := range parts {
+		if part == "" {
+			return fmt.Errorf("%s contains an empty OID arc", name)
+		}
+
+		if len(part) > 1 && part[0] == '0' {
+			return fmt.Errorf(
+				"%s OID arc %d has a leading zero",
+				name,
+				index,
+			)
+		}
+
+		for _, character := range part {
+			if character < '0' || character > '9' {
+				return fmt.Errorf(
+					"%s OID arc %d is not decimal",
+					name,
+					index,
+				)
+			}
+		}
+
+		arc, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return fmt.Errorf(
+				"%s OID arc %d is outside the supported range",
+				name,
+				index,
+			)
+		}
+
+		switch index {
+		case 0:
+			if arc > 2 {
+				return fmt.Errorf(
+					"%s first OID arc must be 0, 1, or 2",
+					name,
+				)
+			}
+			firstArc = arc
+
+		case 1:
+			if firstArc < 2 && arc > 39 {
+				return fmt.Errorf(
+					"%s second OID arc must be at most 39 when first arc is %d",
+					name,
+					firstArc,
+				)
+			}
+		}
 	}
 
 	return nil
