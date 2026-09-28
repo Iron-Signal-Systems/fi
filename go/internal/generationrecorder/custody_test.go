@@ -371,13 +371,16 @@ func newCustodyRecorderTrust(
 		SerialNumber: big.NewInt(3003),
 		Subject: pkix.Name{
 			CommonName: sourceID,
-			OrganizationalUnit: []string{
-				transporttrust.BatchSigningOrganizationalUnit,
-			},
 		},
-		NotBefore:             now.Add(-time.Hour),
-		NotAfter:              now.Add(6 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
+		NotBefore: now.Add(-time.Hour),
+		NotAfter:  now.Add(6 * time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: []pkix.Extension{
+			recorderTestCertificateTemplateExtension(
+				t,
+				recorderTestBatchSigningTemplateOID,
+			),
+		},
 		BasicConstraintsValid: true,
 	}
 
@@ -412,10 +415,10 @@ func newCustodyRecorderTrust(
 		Enabled:  true,
 		SourceID: sourceID,
 		BatchSigning: transporttrust.CertificateIdentity{
-			CertificateSHA256:  custodyRecorderCertificateSHA256(leaf),
-			CommonName:         sourceID,
-			IssuingCASHA256:    custodyRecorderCertificateSHA256(issuer),
-			OrganizationalUnit: transporttrust.BatchSigningOrganizationalUnit,
+			CertificateSHA256: custodyRecorderCertificateSHA256(leaf),
+			CommonName:        sourceID,
+			IssuingCASHA256:   custodyRecorderCertificateSHA256(issuer),
+			TemplateOID:       recorderTestBatchSigningTemplateOID.String(),
 		},
 	}
 

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestBuildRawTransportGenerationPromotesSemanticFreeObject(
@@ -859,10 +858,6 @@ func testTransportGenerationSigningIdentity(
 
 			Subject: pkix.Name{
 				CommonName: sourceID,
-
-				OrganizationalUnit: []string{
-					transporttrust.BatchSigningOrganizationalUnit,
-				},
 			},
 
 			NotBefore: time.Now().

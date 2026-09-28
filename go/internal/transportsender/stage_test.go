@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 type outboundStageFixture struct {
@@ -330,8 +329,7 @@ func newOutboundStageIdentity(t *testing.T, sourceID string) (*rsa.PrivateKey, *
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName:         sourceID,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: sourceID,
 		},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(24 * time.Hour),

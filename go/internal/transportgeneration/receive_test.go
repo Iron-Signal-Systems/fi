@@ -506,10 +506,6 @@ func testGenerationReceiveTrust(
 
 			Subject: pkix.Name{
 				CommonName: sourceID,
-
-				OrganizationalUnit: []string{
-					transporttrust.BatchSigningOrganizationalUnit,
-				},
 			},
 
 			NotBefore: now.Add(
@@ -522,6 +518,12 @@ func testGenerationReceiveTrust(
 			),
 
 			KeyUsage: x509.KeyUsageDigitalSignature,
+			ExtraExtensions: []pkix.Extension{
+				generationTestCertificateTemplateExtension(
+					t,
+					generationTestBatchSigningTemplateOID,
+				),
+			},
 
 			BasicConstraintsValid: true,
 		}
@@ -582,8 +584,7 @@ func testGenerationReceiveTrust(
 				IssuingCASHA256: generationReceiveCertificateSHA256(
 					issuer,
 				),
-
-				OrganizationalUnit: transporttrust.BatchSigningOrganizationalUnit,
+				TemplateOID: generationTestBatchSigningTemplateOID.String(),
 			},
 		}
 

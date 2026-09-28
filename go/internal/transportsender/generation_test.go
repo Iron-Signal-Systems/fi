@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestRolloverPublishedSpoolMovesEntireDirectoryAndReopensActivePath(t *testing.T) {
@@ -62,8 +61,7 @@ func generationTestSigningCertificate(t *testing.T, commonName string) (*rsa.Pri
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName:         commonName,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: commonName,
 		},
 		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().Add(time.Hour),

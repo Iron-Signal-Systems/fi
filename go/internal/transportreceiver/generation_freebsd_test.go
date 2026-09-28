@@ -710,14 +710,17 @@ func newGenerationTransactionTrust(
 		SerialNumber: big.NewInt(5003),
 		Subject: pkix.Name{
 			CommonName: sourceID,
-			OrganizationalUnit: []string{
-				transporttrust.BatchSigningOrganizationalUnit,
-			},
 		},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.Add(6 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
+		ExtraExtensions: []pkix.Extension{
+			receiverTestCertificateTemplateExtension(
+				t,
+				receiverTestBatchSigningTemplateOID,
+			),
+		},
 	}
 
 	leaf := createGenerationTransactionCertificate(
@@ -751,10 +754,10 @@ func newGenerationTransactionTrust(
 		Enabled:  true,
 		SourceID: sourceID,
 		BatchSigning: transporttrust.CertificateIdentity{
-			CertificateSHA256:  generationTransactionCertificateSHA256(leaf),
-			CommonName:         sourceID,
-			IssuingCASHA256:    generationTransactionCertificateSHA256(issuer),
-			OrganizationalUnit: transporttrust.BatchSigningOrganizationalUnit,
+			CertificateSHA256: generationTransactionCertificateSHA256(leaf),
+			CommonName:        sourceID,
+			IssuingCASHA256:   generationTransactionCertificateSHA256(issuer),
+			TemplateOID:       receiverTestBatchSigningTemplateOID.String(),
 		},
 	}
 

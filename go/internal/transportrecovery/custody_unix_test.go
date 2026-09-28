@@ -170,12 +170,17 @@ func testRecoveryTrust(
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1003),
 		Subject: pkix.Name{
-			CommonName:         sourceID,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: sourceID,
 		},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(6 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: []pkix.Extension{
+			recoveryTestCertificateTemplateExtension(
+				t,
+				recoveryTestBatchSigningTemplateOID,
+			),
+		},
 	}
 	leaf := createTestCertificate(t, leafTemplate, issuer, &leafKey.PublicKey, issuerKey)
 
@@ -196,10 +201,10 @@ func testRecoveryTrust(
 		Enabled:  true,
 		SourceID: sourceID,
 		BatchSigning: transporttrust.CertificateIdentity{
-			CertificateSHA256:  certificateSHA256(leaf),
-			CommonName:         sourceID,
-			IssuingCASHA256:    certificateSHA256(issuer),
-			OrganizationalUnit: transporttrust.BatchSigningOrganizationalUnit,
+			CertificateSHA256: certificateSHA256(leaf),
+			CommonName:        sourceID,
+			IssuingCASHA256:   certificateSHA256(issuer),
+			TemplateOID:       recoveryTestBatchSigningTemplateOID.String(),
 		},
 	}
 	return root, issuer, leaf, leafKey, crl, source

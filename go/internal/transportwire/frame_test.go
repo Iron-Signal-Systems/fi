@@ -20,7 +20,6 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportbatch"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportpackage"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestReadHeader(t *testing.T) {
@@ -239,8 +238,7 @@ func newWireTestBatch(t testing.TB) (transportpackage.SignedBatch, []byte) {
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(7),
 		Subject: pkix.Name{
-			CommonName:         sourceID,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: sourceID,
 		},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(time.Hour),
