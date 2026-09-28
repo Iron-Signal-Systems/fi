@@ -1,0 +1,471 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
+//go:build windows
+
+package install
+
+import (
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+)
+
+type approval1PKIHandoff struct {
+	BatchCertificateSHA256     string
+	BatchTemplateOID           string
+	TransportCertificateSHA256 string
+	TransportTemplateOID       string
+}
+
+type server2016Approval1Backend struct {
+	handoff approval1PKIHandoff
+	inputs  PlanInputs
+	pki     nativeApproval1PKIBackend
+	session *ldapSession
+}
+
+var _ approval1ControllerBackend = (*server2016Approval1Backend)(nil)
+
+func (backend *server2016Approval1Backend) ApplyPKI(
+	before Report,
+	plan InstallPlan,
+) (Approval1PKITransactionResult, error) {
+	if backend == nil || backend.session == nil {
+		return Approval1PKITransactionResult{}, errors.New(
+			"Server 2016 Approval 1 backend is unavailable",
+		)
+	}
+
+	result, err := executeApproval1PKIEnrollmentTransactionWithBackend(
+		before,
+		plan,
+		backend.inputs,
+		&backend.pki,
+	)
+	if err != nil {
+		return result, err
+	}
+
+	handoff, err := discoverApproval1PKIHandoff(
+		before,
+		&backend.pki,
+	)
+	if err != nil {
+		return result, fmt.Errorf(
+			"establish post-Approval-1 durable PKI handoff: %w",
+			err,
+		)
+	}
+
+	backend.handoff = handoff
+	return result, nil
+}
+
+func (backend *server2016Approval1Backend) BuildPlan(
+	report Report,
+	inputs PlanInputs,
+) InstallPlan {
+	plan := BuildPlanWithInputs(
+		report,
+		inputs,
+	)
+
+	if !backend.handoff.complete() {
+		return plan
+	}
+
+	if report.Trust.Presence != presenceAbsent {
+		return plan
+	}
+
+	return applyApproval1PKIHandoffToPlan(
+		report,
+		plan,
+		backend.handoff,
+	)
+}
+
+func (backend *server2016Approval1Backend) Close() {
+	if backend == nil || backend.session == nil {
+		return
+	}
+
+	backend.session.close()
+	backend.session = nil
+	backend.pki.session = nil
+}
+
+func (backend *server2016Approval1Backend) Create(
+	report Report,
+	identity DesiredFIIdentity,
+) (ActiveDirectoryGMSAState, bool, error) {
+	if backend == nil || backend.session == nil {
+		return ActiveDirectoryGMSAState{}, false, errors.New(
+			"Server 2016 Approval 1 LDAP backend is unavailable",
+		)
+	}
+
+	return createFIGroupManagedServiceAccountTracked(
+		backend.session,
+		report,
+		identity,
+	)
+}
+
+func (backend *server2016Approval1Backend) Rediscover() Report {
+	return Discover()
+}
+
+func (backend *server2016Approval1Backend) RollbackCreated(
+	report Report,
+	identity DesiredFIIdentity,
+) error {
+	if backend == nil || backend.session == nil {
+		return errors.New(
+			"Server 2016 Approval 1 LDAP backend is unavailable",
+		)
+	}
+
+	return deleteFIGroupManagedServiceAccountIfExact(
+		backend.session,
+		report,
+		identity,
+	)
+}
+
+func (handoff approval1PKIHandoff) complete() bool {
+	return validSHA256Hex(handoff.BatchCertificateSHA256) &&
+		strings.TrimSpace(handoff.BatchTemplateOID) != "" &&
+		validSHA256Hex(handoff.TransportCertificateSHA256) &&
+		strings.TrimSpace(handoff.TransportTemplateOID) != ""
+}
+
+func applyApproval1PKIHandoffToPlan(
+	report Report,
+	plan InstallPlan,
+	handoff approval1PKIHandoff,
+) InstallPlan {
+	if !handoff.complete() {
+		plan.Actions = append(
+			plan.Actions,
+			PlanAction{
+				Action:    planActionBlocked,
+				Authority: "PKI",
+				Detail:    "Approval 1 durable PKI handoff is incomplete or invalid",
+				Target:    "FI transport PKI",
+			},
+		)
+		return plan
+	}
+
+	if report.Trust.Presence != presenceAbsent {
+		plan.Actions = append(
+			plan.Actions,
+			PlanAction{
+				Action:    planActionBlocked,
+				Authority: "PKI",
+				Detail:    "Approval 1 durable PKI handoff may be consumed only while the local transport-trust configuration is authoritatively absent",
+				Target:    "FI transport PKI",
+			},
+		)
+		return plan
+	}
+
+	replaced := 0
+	for index := range plan.Actions {
+		action := plan.Actions[index]
+		if action.Authority != "PKI" ||
+			!planActionMutates(action.Action) {
+			continue
+		}
+
+		if action.Target != "FI transport PKI" {
+			plan.Actions = append(
+				plan.Actions,
+				PlanAction{
+					Action:    planActionBlocked,
+					Authority: "PKI",
+					Detail: fmt.Sprintf(
+						"Approval 1 durable PKI handoff cannot replace unexpected PKI mutation target %q",
+						action.Target,
+					),
+					Target: action.Target,
+				},
+			)
+			return plan
+		}
+
+		plan.Actions[index] = PlanAction{
+			Action:    planActionNoChange,
+			Authority: "PKI",
+			Detail: fmt.Sprintf(
+				"Approval 1 established durable transport certificate SHA256=%s template_oid=%s and batch certificate SHA256=%s template_oid=%s; no further PKI mutation is authorized by Approval 2",
+				handoff.TransportCertificateSHA256,
+				handoff.TransportTemplateOID,
+				handoff.BatchCertificateSHA256,
+				handoff.BatchTemplateOID,
+			),
+			Target: "FI transport PKI",
+		}
+		replaced++
+	}
+
+	if replaced != 1 {
+		plan.Actions = append(
+			plan.Actions,
+			PlanAction{
+				Action:    planActionBlocked,
+				Authority: "PKI",
+				Detail: fmt.Sprintf(
+					"Approval 1 durable PKI handoff expected exactly one pending PKI mutation in the post-rediscovery plan; observed=%d",
+					replaced,
+				),
+				Target: "FI transport PKI",
+			},
+		)
+		return plan
+	}
+
+	trustPath := strings.TrimSpace(
+		report.Trust.Path,
+	)
+	if trustPath == "" {
+		plan.Actions = append(
+			plan.Actions,
+			PlanAction{
+				Action:    planActionBlocked,
+				Authority: "CONFIG",
+				Detail:    "transport-trust configuration path is unavailable after Approval 1",
+				Target:    "FI transport trust configuration",
+			},
+		)
+		return plan
+	}
+
+	plan.Actions = append(
+		plan.Actions,
+		PlanAction{
+			Action:    planActionCreate,
+			Authority: "CONFIG",
+			Detail: fmt.Sprintf(
+				"after Approval 2 bind the local transport-trust configuration to durable transport certificate SHA256=%s and batch certificate SHA256=%s; the Approval 2 CONFIG mutator must derive and verify issuer/root/CRL material from the accepted transport certificate chain before writing the file",
+				handoff.TransportCertificateSHA256,
+				handoff.BatchCertificateSHA256,
+			),
+			Target: trustPath,
+		},
+	)
+
+	return plan
+}
+
+func discoverApproval1PKIHandoff(
+	before Report,
+	backend approval1PKIBackend,
+) (approval1PKIHandoff, error) {
+	if backend == nil {
+		return approval1PKIHandoff{}, errors.New(
+			"Approval 1 PKI backend is required",
+		)
+	}
+
+	expectedDNS, err := approval1PKIExpectedDNS(
+		before,
+	)
+	if err != nil {
+		return approval1PKIHandoff{}, err
+	}
+
+	transportOID, err := backend.ResolveTemplateOID(
+		fiTransportClientTemplateName,
+	)
+	if err != nil {
+		return approval1PKIHandoff{}, fmt.Errorf(
+			"resolve %s template OID for durable handoff: %w",
+			fiTransportClientTemplateName,
+			err,
+		)
+	}
+
+	batchOID, err := backend.ResolveTemplateOID(
+		fiBatchSigningTemplateName,
+	)
+	if err != nil {
+		return approval1PKIHandoff{}, fmt.Errorf(
+			"resolve %s template OID for durable handoff: %w",
+			fiBatchSigningTemplateName,
+			err,
+		)
+	}
+
+	transportContract := pkiEnrollmentContract{
+		ExpectedDNS:  expectedDNS,
+		TemplateName: fiTransportClientTemplateName,
+		TemplateOID:  transportOID,
+	}
+
+	batchContract := pkiEnrollmentContract{
+		ExpectedDNS:  expectedDNS,
+		TemplateName: fiBatchSigningTemplateName,
+		TemplateOID:  batchOID,
+	}
+
+	transport, found, err := backend.FindReusable(
+		transportContract,
+	)
+	if err != nil {
+		return approval1PKIHandoff{}, fmt.Errorf(
+			"rediscover durable transport identity: %w",
+			err,
+		)
+	}
+	if !found {
+		return approval1PKIHandoff{}, errors.New(
+			"durable transport identity disappeared before post-Approval-1 handoff",
+		)
+	}
+
+	batch, found, err := backend.FindReusable(
+		batchContract,
+	)
+	if err != nil {
+		return approval1PKIHandoff{}, fmt.Errorf(
+			"rediscover durable batch-signing identity: %w",
+			err,
+		)
+	}
+	if !found {
+		return approval1PKIHandoff{}, errors.New(
+			"durable batch-signing identity disappeared before post-Approval-1 handoff",
+		)
+	}
+
+	handoff := approval1PKIHandoff{
+		BatchCertificateSHA256:     batch.CertificateSHA256,
+		BatchTemplateOID:           batchOID,
+		TransportCertificateSHA256: transport.CertificateSHA256,
+		TransportTemplateOID:       transportOID,
+	}
+
+	if !handoff.complete() {
+		return approval1PKIHandoff{}, errors.New(
+			"rediscovered durable PKI handoff is incomplete",
+		)
+	}
+
+	return handoff, nil
+}
+
+func executeServer2016Approval1Controller(
+	writer io.Writer,
+	before Report,
+	plan InstallPlan,
+	inputs PlanInputs,
+	approval ApprovalBoundaryState,
+) (Approval1ControllerResult, error) {
+	if writer == nil {
+		return Approval1ControllerResult{}, errors.New(
+			"Approval 1 controller output writer is required",
+		)
+	}
+
+	if err := validateApproval1ControllerPlan(
+		before,
+		plan,
+	); err != nil {
+		return Approval1ControllerResult{}, err
+	}
+
+	if err := validateApprovalBoundaryState(
+		before,
+		plan,
+		approval,
+		approvalBoundaryInfrastructure,
+	); err != nil {
+		return Approval1ControllerResult{}, err
+	}
+
+	backend, err := newServer2016Approval1Backend(
+		before,
+		inputs,
+	)
+	if err != nil {
+		return Approval1ControllerResult{}, err
+	}
+	defer backend.Close()
+
+	return executeApproval1ControllerWithBackend(
+		writer,
+		before,
+		plan,
+		inputs,
+		approval,
+		backend,
+	)
+}
+
+func newServer2016Approval1Backend(
+	before Report,
+	inputs PlanInputs,
+) (*server2016Approval1Backend, error) {
+	if strings.TrimSpace(
+		before.AD.DomainController,
+	) == "" ||
+		strings.EqualFold(
+			strings.TrimSpace(before.AD.DomainController),
+			notKnown,
+		) {
+		return nil, errors.New(
+			"writable Active Directory domain controller is unavailable for Approval 1",
+		)
+	}
+
+	session, err := openLDAPSession(
+		before.AD.DomainController,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"open signed/sealed Approval 1 LDAP session: %w",
+			err,
+		)
+	}
+
+	if err := revalidateApproval1ADPreconditions(
+		session,
+		before,
+	); err != nil {
+		session.close()
+		return nil, fmt.Errorf(
+			"Approval 1 AD pre-mutation revalidation failed: %w",
+			err,
+		)
+	}
+
+	backend := &server2016Approval1Backend{
+		inputs:  inputs,
+		session: session,
+	}
+	backend.pki.session = session
+
+	return backend, nil
+}
+
+func validSHA256Hex(
+	value string,
+) bool {
+	value = strings.TrimSpace(
+		value,
+	)
+	if len(value) != 64 {
+		return false
+	}
+
+	decoded, err := hex.DecodeString(
+		value,
+	)
+	return err == nil && len(decoded) == 32
+}
