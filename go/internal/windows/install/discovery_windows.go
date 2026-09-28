@@ -492,11 +492,44 @@ func discoverPKI(report *Report, trust config.TransportTrustConfig) {
 		certstore.StoreRoot,
 		trust.RootCertificateSHA256,
 	)
-	checkCertificate(
-		"transport issuer certificate",
-		certstore.StoreCA,
+	_, issuerStore, err := loadLocalMachineTransportIssuer(
 		trust.TransportIssuerSHA256,
+		trust.RootCertificateSHA256,
 	)
+	if err != nil {
+		report.PKI = append(
+			report.PKI,
+			TrustObjectState{
+				Detail: err.Error(),
+				Name:   "transport issuer certificate",
+				State:  checkFail,
+			},
+		)
+		report.addCheck(
+			checkFail,
+			"transport issuer certificate",
+			err.Error(),
+		)
+	} else {
+		detail := fmt.Sprintf(
+			"LocalMachine\\%s SHA256=%s",
+			issuerStore,
+			trust.TransportIssuerSHA256,
+		)
+		report.PKI = append(
+			report.PKI,
+			TrustObjectState{
+				Detail: detail,
+				Name:   "transport issuer certificate",
+				State:  checkPass,
+			},
+		)
+		report.addCheck(
+			checkPass,
+			"transport issuer certificate",
+			detail,
+		)
+	}
 	checkSigningIdentity(
 		"source transport signing identity",
 		trust.TransportCertificateSHA256,
