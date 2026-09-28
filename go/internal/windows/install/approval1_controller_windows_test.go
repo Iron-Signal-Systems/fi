@@ -15,6 +15,7 @@ import (
 
 type fakeApproval1ControllerBackend struct {
 	applyPKIErr     error
+	applyPKIResult  *Approval1PKITransactionResult
 	createErr       map[string]error
 	created         map[string]bool
 	events          []string
@@ -22,7 +23,6 @@ type fakeApproval1ControllerBackend struct {
 	rediscoveries   []Report
 	rediscoverIndex int
 	rollbackADErr   map[string]error
-	rollbackPKIErr  error
 }
 
 func (backend *fakeApproval1ControllerBackend) Create(
@@ -63,25 +63,17 @@ func (backend *fakeApproval1ControllerBackend) ApplyPKI(
 		backend.events,
 		"apply:pki",
 	)
-	if backend.applyPKIErr != nil {
-		return Approval1PKITransactionResult{}, backend.applyPKIErr
-	}
-	return Approval1PKITransactionResult{
+
+	result := Approval1PKITransactionResult{
 		Applied: true,
 		Detail:  "synthetic PKI transaction",
-	}, nil
-}
+		Durable: true,
+	}
+	if backend.applyPKIResult != nil {
+		result = *backend.applyPKIResult
+	}
 
-func (backend *fakeApproval1ControllerBackend) RollbackPKI(
-	before Report,
-	plan InstallPlan,
-	result Approval1PKITransactionResult,
-) error {
-	backend.events = append(
-		backend.events,
-		"rollback:pki",
-	)
-	return backend.rollbackPKIErr
+	return result, backend.applyPKIErr
 }
 
 func (backend *fakeApproval1ControllerBackend) Rediscover() Report {
@@ -162,6 +154,9 @@ func TestApproval1ControllerInvalidatesOldPlanAndProducesNewApproval2Digest(
 	if !result.OldPlanInvalidated {
 		testingT.Fatal("pre-Approval-1 plan was not invalidated")
 	}
+	if !result.PKI.Durable {
+		testingT.Fatal("successful PKI result was not marked durable")
+	}
 	if !result.Approval2Required {
 		testingT.Fatal("Approval 2 was not required")
 	}
@@ -174,6 +169,7 @@ func TestApproval1ControllerInvalidatesOldPlanAndProducesNewApproval2Digest(
 	) {
 		testingT.Fatal("Approval 2 reused the Approval 1 digest")
 	}
+
 	wantEvents := []string{
 		"rediscover",
 		"build-plan",
@@ -183,14 +179,29 @@ func TestApproval1ControllerInvalidatesOldPlanAndProducesNewApproval2Digest(
 		"rediscover",
 		"build-plan",
 	}
-	if strings.Join(backend.events, "|") != strings.Join(wantEvents, "|") {
-		testingT.Fatalf("events=%v want=%v", backend.events, wantEvents)
+
+	if strings.Join(
+		backend.events,
+		"|",
+	) != strings.Join(
+		wantEvents,
+		"|",
+	) {
+		testingT.Fatalf(
+			"events=%v want=%v",
+			backend.events,
+			wantEvents,
+		)
 	}
+
 	if !strings.Contains(
 		output.String(),
 		"STOP: explicit Approval 2 is required",
 	) {
-		testingT.Fatalf("missing Approval 2 stop boundary:\n%s", output.String())
+		testingT.Fatalf(
+			"missing Approval 2 stop boundary:\n%s",
+			output.String(),
+		)
 	}
 }
 
@@ -206,9 +217,13 @@ func TestApproval1ControllerRejectsPreMutationDigestDriftWithoutMutation(
 		beforePlan,
 		approvalBoundaryInfrastructure,
 	)
+
 	driftedPlan := beforePlan
 	driftedPlan.Actions = append(
-		append([]PlanAction(nil), beforePlan.Actions...),
+		append(
+			[]PlanAction(nil),
+			beforePlan.Actions...,
+		),
 		PlanAction{
 			Action:    planActionReconcile,
 			Authority: "ACL",
@@ -216,6 +231,7 @@ func TestApproval1ControllerRejectsPreMutationDigestDriftWithoutMutation(
 			Detail:    "synthetic drift",
 		},
 	)
+
 	backend := &fakeApproval1ControllerBackend{
 		plans: []InstallPlan{
 			driftedPlan,
@@ -226,6 +242,7 @@ func TestApproval1ControllerRejectsPreMutationDigestDriftWithoutMutation(
 	}
 
 	var output bytes.Buffer
+
 	_, err := executeApproval1ControllerWithBackend(
 		&output,
 		before,
@@ -235,19 +252,36 @@ func TestApproval1ControllerRejectsPreMutationDigestDriftWithoutMutation(
 		backend,
 	)
 	if err == nil {
-		testingT.Fatal("digest drift was unexpectedly accepted")
+		testingT.Fatal(
+			"digest drift was unexpectedly accepted",
+		)
 	}
-	if !strings.Contains(err.Error(), "state changed after Approval 1") {
-		testingT.Fatalf("unexpected error: %v", err)
+
+	if !strings.Contains(
+		err.Error(),
+		"state changed after Approval 1",
+	) {
+		testingT.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
 	}
+
 	for _, event := range backend.events {
-		if strings.HasPrefix(event, "create:") || event == "apply:pki" {
-			testingT.Fatalf("mutation occurred after digest drift: %v", backend.events)
+		if strings.HasPrefix(
+			event,
+			"create:",
+		) ||
+			event == "apply:pki" {
+			testingT.Fatalf(
+				"mutation occurred after digest drift: %v",
+				backend.events,
+			)
 		}
 	}
 }
 
-func TestApproval1ControllerRollsBackADWhenPKIFails(
+func TestApproval1ControllerRollsBackADWhenPKIFailsBeforeDurableAcceptance(
 	testingT *testing.T,
 ) {
 	testingT.Parallel()
@@ -259,8 +293,15 @@ func TestApproval1ControllerRollsBackADWhenPKIFails(
 		beforePlan,
 		approvalBoundaryInfrastructure,
 	)
+
 	backend := &fakeApproval1ControllerBackend{
-		applyPKIErr: errors.New("synthetic PKI failure"),
+		applyPKIErr: errors.New(
+			"synthetic PKI failure",
+		),
+		applyPKIResult: &Approval1PKITransactionResult{
+			Applied: false,
+			Durable: false,
+		},
 		created: map[string]bool{
 			"gFI-USN-ADMINBOX$": true,
 			"gFI-OBJ-ADMINBOX$": true,
@@ -274,6 +315,7 @@ func TestApproval1ControllerRollsBackADWhenPKIFails(
 	}
 
 	var output bytes.Buffer
+
 	result, err := executeApproval1ControllerWithBackend(
 		&output,
 		before,
@@ -283,23 +325,49 @@ func TestApproval1ControllerRollsBackADWhenPKIFails(
 		backend,
 	)
 	if err == nil {
-		testingT.Fatal("PKI failure unexpectedly succeeded")
+		testingT.Fatal(
+			"PKI failure unexpectedly succeeded",
+		)
 	}
+
 	if !result.RollbackAttempted {
-		testingT.Fatal("outer rollback was not attempted")
+		testingT.Fatal(
+			"AD outer rollback was not attempted",
+		)
 	}
+
+	if result.DurablePKIRetained {
+		testingT.Fatal(
+			"non-durable PKI failure was incorrectly marked retained",
+		)
+	}
+
 	wantTail := []string{
 		"apply:pki",
 		"rollback-ad:gFI-OBJ-ADMINBOX$",
 		"rollback-ad:gFI-USN-ADMINBOX$",
 	}
-	joined := strings.Join(backend.events, "|")
-	if !strings.Contains(joined, strings.Join(wantTail, "|")) {
-		testingT.Fatalf("rollback order incorrect: %v", backend.events)
+
+	joined := strings.Join(
+		backend.events,
+		"|",
+	)
+
+	if !strings.Contains(
+		joined,
+		strings.Join(
+			wantTail,
+			"|",
+		),
+	) {
+		testingT.Fatalf(
+			"rollback order incorrect: %v",
+			backend.events,
+		)
 	}
 }
 
-func TestApproval1ControllerRollsBackPKIThenADWhenInfrastructureDoesNotConverge(
+func TestApproval1ControllerRetainsDurablePKIWhenInfrastructureDoesNotConverge(
 	testingT *testing.T,
 ) {
 	testingT.Parallel()
@@ -311,6 +379,7 @@ func TestApproval1ControllerRollsBackPKIThenADWhenInfrastructureDoesNotConverge(
 		beforePlan,
 		approvalBoundaryInfrastructure,
 	)
+
 	backend := &fakeApproval1ControllerBackend{
 		created: map[string]bool{
 			"gFI-USN-ADMINBOX$": true,
@@ -327,6 +396,7 @@ func TestApproval1ControllerRollsBackPKIThenADWhenInfrastructureDoesNotConverge(
 	}
 
 	var output bytes.Buffer
+
 	result, err := executeApproval1ControllerWithBackend(
 		&output,
 		before,
@@ -336,19 +406,205 @@ func TestApproval1ControllerRollsBackPKIThenADWhenInfrastructureDoesNotConverge(
 		backend,
 	)
 	if err == nil {
-		testingT.Fatal("non-converged infrastructure unexpectedly succeeded")
+		testingT.Fatal(
+			"non-converged infrastructure unexpectedly succeeded",
+		)
 	}
+
+	if !result.PKI.Durable {
+		testingT.Fatal(
+			"verified PKI identity lost durable state",
+		)
+	}
+
+	if !result.DurablePKIRetained {
+		testingT.Fatal(
+			"durable PKI identity was not explicitly retained",
+		)
+	}
+
 	if !result.RollbackAttempted {
-		testingT.Fatal("outer rollback was not attempted")
+		testingT.Fatal(
+			"transaction-created AD rollback was not attempted",
+		)
 	}
+
 	wantTail := []string{
-		"rollback:pki",
+		"rediscover",
+		"build-plan",
 		"rollback-ad:gFI-OBJ-ADMINBOX$",
 		"rollback-ad:gFI-USN-ADMINBOX$",
 	}
-	joined := strings.Join(backend.events, "|")
-	if !strings.Contains(joined, strings.Join(wantTail, "|")) {
-		testingT.Fatalf("rollback order incorrect: %v", backend.events)
+
+	joined := strings.Join(
+		backend.events,
+		"|",
+	)
+
+	if !strings.Contains(
+		joined,
+		strings.Join(
+			wantTail,
+			"|",
+		),
+	) {
+		testingT.Fatalf(
+			"rollback order incorrect: %v",
+			backend.events,
+		)
+	}
+
+	if !strings.Contains(
+		output.String(),
+		"PKI DURABLE: retain verified FI certificate/key identity",
+	) {
+		testingT.Fatalf(
+			"durable PKI retention was not reported:\n%s",
+			output.String(),
+		)
+	}
+}
+
+func TestApproval1ControllerRetainsPartialDurablePKIWhenLaterPKIStepFails(
+	testingT *testing.T,
+) {
+	testingT.Parallel()
+
+	before, beforePlan := approval1ControllerTestState(testingT)
+	approval := approvalBoundaryTestState(
+		testingT,
+		before,
+		beforePlan,
+		approvalBoundaryInfrastructure,
+	)
+
+	backend := &fakeApproval1ControllerBackend{
+		applyPKIErr: errors.New(
+			"synthetic second PKI identity failure",
+		),
+		applyPKIResult: &Approval1PKITransactionResult{
+			Applied: true,
+			Detail:  "transport identity accepted before batch enrollment failed",
+			Durable: true,
+		},
+		created: map[string]bool{
+			"gFI-USN-ADMINBOX$": true,
+			"gFI-OBJ-ADMINBOX$": true,
+		},
+		plans: []InstallPlan{
+			beforePlan,
+		},
+		rediscoveries: []Report{
+			before,
+		},
+	}
+
+	var output bytes.Buffer
+
+	result, err := executeApproval1ControllerWithBackend(
+		&output,
+		before,
+		beforePlan,
+		PlanInputs{},
+		approval,
+		backend,
+	)
+	if err == nil {
+		testingT.Fatal(
+			"partial PKI failure unexpectedly succeeded",
+		)
+	}
+
+	if !result.PKI.Durable {
+		testingT.Fatal(
+			"already accepted PKI identity was not preserved as durable",
+		)
+	}
+
+	if !result.DurablePKIRetained {
+		testingT.Fatal(
+			"partial durable PKI state was not explicitly retained",
+		)
+	}
+
+	if !result.RollbackAttempted {
+		testingT.Fatal(
+			"transaction-created AD rollback was not attempted",
+		)
+	}
+
+	if !strings.Contains(
+		output.String(),
+		"PKI DURABLE: retain verified FI certificate/key identity",
+	) {
+		testingT.Fatalf(
+			"durable PKI retention was not reported:\n%s",
+			output.String(),
+		)
+	}
+}
+
+func TestApproval1ControllerRejectsSuccessfulButNonDurablePKIResult(
+	testingT *testing.T,
+) {
+	testingT.Parallel()
+
+	before, beforePlan := approval1ControllerTestState(testingT)
+	approval := approvalBoundaryTestState(
+		testingT,
+		before,
+		beforePlan,
+		approvalBoundaryInfrastructure,
+	)
+
+	backend := &fakeApproval1ControllerBackend{
+		applyPKIResult: &Approval1PKITransactionResult{
+			Applied: true,
+			Detail:  "synthetic incomplete PKI transaction",
+			Durable: false,
+		},
+		created: map[string]bool{
+			"gFI-USN-ADMINBOX$": true,
+			"gFI-OBJ-ADMINBOX$": true,
+		},
+		plans: []InstallPlan{
+			beforePlan,
+		},
+		rediscoveries: []Report{
+			before,
+		},
+	}
+
+	var output bytes.Buffer
+
+	result, err := executeApproval1ControllerWithBackend(
+		&output,
+		before,
+		beforePlan,
+		PlanInputs{},
+		approval,
+		backend,
+	)
+	if err == nil {
+		testingT.Fatal(
+			"successful but non-durable PKI result unexpectedly accepted",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"without durable PKI acceptance",
+	) {
+		testingT.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
+	}
+
+	if result.DurablePKIRetained {
+		testingT.Fatal(
+			"non-durable PKI state was incorrectly retained",
+		)
 	}
 }
 
@@ -364,8 +620,15 @@ func TestApproval1ControllerSurfacesOuterRollbackErrors(
 		beforePlan,
 		approvalBoundaryInfrastructure,
 	)
+
 	backend := &fakeApproval1ControllerBackend{
-		applyPKIErr: errors.New("synthetic PKI failure"),
+		applyPKIErr: errors.New(
+			"synthetic PKI failure",
+		),
+		applyPKIResult: &Approval1PKITransactionResult{
+			Applied: false,
+			Durable: false,
+		},
 		created: map[string]bool{
 			"gFI-USN-ADMINBOX$": true,
 			"gFI-OBJ-ADMINBOX$": true,
@@ -377,11 +640,14 @@ func TestApproval1ControllerSurfacesOuterRollbackErrors(
 			before,
 		},
 		rollbackADErr: map[string]error{
-			"gFI-USN-ADMINBOX$": errors.New("synthetic AD rollback failure"),
+			"gFI-USN-ADMINBOX$": errors.New(
+				"synthetic AD rollback failure",
+			),
 		},
 	}
 
 	var output bytes.Buffer
+
 	result, err := executeApproval1ControllerWithBackend(
 		&output,
 		before,
@@ -391,27 +657,50 @@ func TestApproval1ControllerSurfacesOuterRollbackErrors(
 		backend,
 	)
 	if err == nil {
-		testingT.Fatal("rollback error was not surfaced")
+		testingT.Fatal(
+			"rollback error was not surfaced",
+		)
 	}
-	if len(result.RollbackErrors) != 1 {
-		testingT.Fatalf("rollback errors=%v", result.RollbackErrors)
+
+	if len(
+		result.RollbackErrors,
+	) != 1 {
+		testingT.Fatalf(
+			"rollback errors=%v",
+			result.RollbackErrors,
+		)
 	}
-	if !strings.Contains(err.Error(), "synthetic AD rollback failure") {
-		testingT.Fatalf("unexpected error: %v", err)
+
+	if !strings.Contains(
+		err.Error(),
+		"synthetic AD rollback failure",
+	) {
+		testingT.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
 	}
 }
 
 func approval1ControllerTestState(
 	testingT *testing.T,
-) (Report, InstallPlan) {
+) (
+	Report,
+	InstallPlan,
+) {
 	testingT.Helper()
 
-	report, plan := approval1ADTestState(testingT)
+	report, plan := approval1ADTestState(
+		testingT,
+	)
+
 	report.Host.Elevated = true
+
 	report.Join = DomainJoinState{
 		Name:   "ISS",
 		Status: "domain",
 	}
+
 	report.Package = PackageState{
 		AuthenticodeFilesTrusted:             true,
 		AuthenticodeSignerIdentitiesComplete: true,
@@ -432,6 +721,7 @@ func approval1ControllerTestState(
 		PayloadHashesMatch: true,
 		ReleaseID:          "test-release",
 	}
+
 	report.ReleaseTrust = ReleaseTrustState{
 		BootstrapAuthoritySPKISHA256: strings.Repeat(
 			"C",
@@ -446,6 +736,7 @@ func approval1ControllerTestState(
 		},
 		TransitionAllowed: true,
 	}
+
 	return report, plan
 }
 
@@ -453,21 +744,30 @@ func approval1ControllerPostPlan(
 	before InstallPlan,
 ) InstallPlan {
 	post := before
+
 	post.Actions = make(
 		[]PlanAction,
 		0,
-		len(before.Actions),
+		len(
+			before.Actions,
+		),
 	)
+
 	for _, action := range before.Actions {
-		if planActionMutates(action.Action) &&
-			(action.Authority == "AD" || action.Authority == "PKI") {
+		if planActionMutates(
+			action.Action,
+		) &&
+			(action.Authority == "AD" ||
+				action.Authority == "PKI") {
 			continue
 		}
+
 		post.Actions = append(
 			post.Actions,
 			action,
 		)
 	}
+
 	return post
 }
 
@@ -484,16 +784,24 @@ func approvalBoundaryTestState(
 		plan,
 	)
 	if err != nil {
-		testingT.Fatalf("plan digest: %v", err)
+		testingT.Fatalf(
+			"plan digest: %v",
+			err,
+		)
 	}
+
 	boundaryDigest, err := ApprovalBoundaryDigest(
 		report,
 		plan,
 		boundary,
 	)
 	if err != nil {
-		testingT.Fatalf("boundary digest: %v", err)
+		testingT.Fatalf(
+			"boundary digest: %v",
+			err,
+		)
 	}
+
 	return ApprovalBoundaryState{
 		Boundary:           boundary,
 		BoundarySHA256:     boundaryDigest,

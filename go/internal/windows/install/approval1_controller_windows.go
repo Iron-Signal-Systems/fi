@@ -15,6 +15,7 @@ import (
 type Approval1PKITransactionResult struct {
 	Applied bool
 	Detail  string
+	Durable bool
 }
 
 type Approval1ControllerResult struct {
@@ -23,6 +24,7 @@ type Approval1ControllerResult struct {
 	Approval2Plan      InstallPlan
 	Approval2Required  bool
 	Approval2SHA256    string
+	DurablePKIRetained bool
 	OldPlanInvalidated bool
 	PKI                Approval1PKITransactionResult
 	Rediscovered       Report
@@ -32,16 +34,21 @@ type Approval1ControllerResult struct {
 
 type approval1ControllerBackend interface {
 	approval1ADGMSABackend
+
+	// ApplyPKI owns all PKI-local failure handling.
+	//
+	// A successfully verified certificate/key identity becomes durable and is
+	// never part of the outer Approval-1 rollback set. If ApplyPKI returns an
+	// error after accepting one or more durable identities, it must report that
+	// durable state in the returned result. Any owned PKI state that has not
+	// reached durable acceptance must be cleaned inside ApplyPKI before return.
 	ApplyPKI(
 		before Report,
 		plan InstallPlan,
 	) (Approval1PKITransactionResult, error)
-	RollbackPKI(
-		before Report,
-		plan InstallPlan,
-		result Approval1PKITransactionResult,
-	) error
+
 	Rediscover() Report
+
 	BuildPlan(
 		report Report,
 		inputs PlanInputs,
@@ -50,12 +57,18 @@ type approval1ControllerBackend interface {
 
 // executeApproval1ControllerWithBackend is deliberately not wired to
 // fi-install -apply in this milestone. It establishes the two-boundary
-// controller semantics before any new-install mutation authority is exposed.
+// controller semantics before new-install mutation authority is exposed.
 //
 // Approval 1 is valid only for the exact pre-mutation boundary digest. The
 // controller rediscoveries immediately before mutation and immediately after
 // the infrastructure transaction are mandatory. The pre-Approval-1 plan is
 // never reused as Approval 2 authority.
+//
+// AD objects created by this Approval-1 attempt remain transaction-owned until
+// post-Approval-1 convergence is established. PKI identity is different:
+// after PKI-local verification accepts a new certificate/key pair, that
+// identity is durable and is retained even if a later Approval-1 operation
+// fails. A subsequent installer run must rediscover and reuse it.
 func executeApproval1ControllerWithBackend(
 	writer io.Writer,
 	before Report,
@@ -69,17 +82,20 @@ func executeApproval1ControllerWithBackend(
 			"Approval 1 controller output writer is required",
 		)
 	}
+
 	if backend == nil {
 		return Approval1ControllerResult{}, fmt.Errorf(
 			"Approval 1 controller backend is required",
 		)
 	}
+
 	if err := validateApproval1ControllerPlan(
 		before,
 		plan,
 	); err != nil {
 		return Approval1ControllerResult{}, err
 	}
+
 	if err := validateApprovalBoundaryState(
 		before,
 		plan,
@@ -89,10 +105,22 @@ func executeApproval1ControllerWithBackend(
 		return Approval1ControllerResult{}, err
 	}
 
-	fmt.Fprintln(writer, "")
-	fmt.Fprintln(writer, "============================================================")
-	fmt.Fprintln(writer, "FI WINDOWS INSTALLER - APPROVAL 1 CONTROLLER")
-	fmt.Fprintln(writer, "============================================================")
+	fmt.Fprintln(
+		writer,
+		"",
+	)
+	fmt.Fprintln(
+		writer,
+		"============================================================",
+	)
+	fmt.Fprintln(
+		writer,
+		"FI WINDOWS INSTALLER - APPROVAL 1 CONTROLLER",
+	)
+	fmt.Fprintln(
+		writer,
+		"============================================================",
+	)
 	fmt.Fprintf(
 		writer,
 		"Approved Approval 1 SHA256: %s\n",
@@ -104,10 +132,12 @@ func executeApproval1ControllerWithBackend(
 	)
 
 	current := backend.Rediscover()
+
 	currentPlan := backend.BuildPlan(
 		current,
 		inputs,
 	)
+
 	if err := validateApproval1ControllerPlan(
 		current,
 		currentPlan,
@@ -117,6 +147,7 @@ func executeApproval1ControllerWithBackend(
 			err,
 		)
 	}
+
 	currentDigest, err := ApprovalBoundaryDigest(
 		current,
 		currentPlan,
@@ -125,6 +156,7 @@ func executeApproval1ControllerWithBackend(
 	if err != nil {
 		return Approval1ControllerResult{}, err
 	}
+
 	if !strings.EqualFold(
 		currentDigest,
 		approval.BoundarySHA256,
@@ -151,50 +183,59 @@ func executeApproval1ControllerWithBackend(
 		Approval1:      approval,
 		RollbackErrors: make([]string, 0),
 	}
-	adResult, err := executeApproval1ADGMSATransactionWithBackend(
-		writer,
-		current,
-		identities,
-		backend,
-	)
+
+	adResult, err :=
+		executeApproval1ADGMSATransactionWithBackend(
+			writer,
+			current,
+			identities,
+			backend,
+		)
+
 	result.AD = adResult
+
 	if err != nil {
 		return result, err
 	}
 
-	rollbackOuter := func(cause error) (Approval1ControllerResult, error) {
-		result.RollbackAttempted = result.PKI.Applied ||
-			len(result.AD.Created) != 0
+	rollbackOuter := func(
+		cause error,
+	) (
+		Approval1ControllerResult,
+		error,
+	) {
+		// A PKI identity that reached durable acceptance is deliberately not
+		// part of this rollback set. The PKI backend owns cleanup of only
+		// non-durable PKI-local failures before it returns.
+		if result.PKI.Durable {
+			result.DurablePKIRetained = true
 
-		if result.PKI.Applied {
 			fmt.Fprintln(
 				writer,
-				"ROLLBACK PKI: reverse Approval 1 transport-PKI mutation",
+				"PKI DURABLE: retain verified FI certificate/key identity; outer Approval 1 rollback will not delete it",
 			)
-			if rollbackErr := backend.RollbackPKI(
-				current,
-				currentPlan,
-				result.PKI,
-			); rollbackErr != nil {
-				result.RollbackErrors = append(
-					result.RollbackErrors,
-					"PKI: "+rollbackErr.Error(),
-				)
-			}
 		}
 
-		adRollbackErrors := rollbackApproval1ADCreatedWithBackend(
-			writer,
-			current,
-			currentPlan,
-			result.AD,
-			backend,
-		)
+		result.RollbackAttempted =
+			len(result.AD.Created) != 0
+
+		adRollbackErrors :=
+			rollbackApproval1ADCreatedWithBackend(
+				writer,
+				current,
+				currentPlan,
+				result.AD,
+				backend,
+			)
+
 		result.RollbackErrors = append(
 			result.RollbackErrors,
 			adRollbackErrors...,
 		)
-		result.AD.RollbackAttempted = len(result.AD.Created) != 0
+
+		result.AD.RollbackAttempted =
+			len(result.AD.Created) != 0
+
 		result.AD.RollbackErrors = append(
 			result.AD.RollbackErrors[:0],
 			adRollbackErrors...,
@@ -203,6 +244,7 @@ func executeApproval1ControllerWithBackend(
 		if len(result.RollbackErrors) == 0 {
 			return result, cause
 		}
+
 		return result, fmt.Errorf(
 			"%w; Approval 1 outer rollback errors: %s",
 			cause,
@@ -221,10 +263,12 @@ func executeApproval1ControllerWithBackend(
 			writer,
 			"APPLY PKI: execute the exact Approval 1 transport-PKI transaction",
 		)
+
 		result.PKI, err = backend.ApplyPKI(
 			current,
 			currentPlan,
 		)
+
 		if err != nil {
 			return rollbackOuter(
 				fmt.Errorf(
@@ -233,13 +277,27 @@ func executeApproval1ControllerWithBackend(
 				),
 			)
 		}
+
 		if !result.PKI.Applied {
 			return rollbackOuter(
 				fmt.Errorf(
-					"Approval 1 PKI transaction returned success without transaction ownership",
+					"Approval 1 PKI transaction returned success without applying the approved PKI mutation",
 				),
 			)
 		}
+
+		if !result.PKI.Durable {
+			return rollbackOuter(
+				fmt.Errorf(
+					"Approval 1 PKI transaction returned success without durable PKI acceptance",
+				),
+			)
+		}
+
+		fmt.Fprintln(
+			writer,
+			"APPROVAL 1 PKI: PASS - verified certificate/key identity accepted as durable",
+		)
 	} else {
 		fmt.Fprintln(
 			writer,
@@ -251,11 +309,14 @@ func executeApproval1ControllerWithBackend(
 		writer,
 		"POST-APPROVAL-1 REDISCOVERY: discard the approved pre-mutation plan and rebuild from authoritative state",
 	)
+
 	post := backend.Rediscover()
+
 	postPlan := backend.BuildPlan(
 		post,
 		inputs,
 	)
+
 	result.Rediscovered = post
 	result.Approval2Plan = postPlan
 	result.OldPlanInvalidated = true
@@ -267,6 +328,7 @@ func executeApproval1ControllerWithBackend(
 			),
 		)
 	}
+
 	if postPlan.HasQuestions() {
 		return rollbackOuter(
 			fmt.Errorf(
@@ -274,6 +336,7 @@ func executeApproval1ControllerWithBackend(
 			),
 		)
 	}
+
 	if hasApprovalBoundaryMutation(
 		postPlan,
 		approvalBoundaryInfrastructure,
@@ -284,6 +347,7 @@ func executeApproval1ControllerWithBackend(
 			),
 		)
 	}
+
 	if err := validateAuthenticatedRelease(
 		post,
 	); err != nil {
@@ -295,25 +359,34 @@ func executeApproval1ControllerWithBackend(
 		)
 	}
 
-	_, result.Approval2Required = ApprovalRequirements(
-		postPlan,
-	)
-	if result.Approval2Required {
-		result.Approval2SHA256, err = ApprovalBoundaryDigest(
-			post,
+	_, result.Approval2Required =
+		ApprovalRequirements(
 			postPlan,
-			approvalBoundaryLocal,
 		)
+
+	if result.Approval2Required {
+		result.Approval2SHA256, err =
+			ApprovalBoundaryDigest(
+				post,
+				postPlan,
+				approvalBoundaryLocal,
+			)
 		if err != nil {
-			return rollbackOuter(err)
+			return rollbackOuter(
+				err,
+			)
 		}
 	}
 
-	fmt.Fprintln(writer, "APPROVAL 1 RESULT: PASS")
+	fmt.Fprintln(
+		writer,
+		"APPROVAL 1 RESULT: PASS",
+	)
 	fmt.Fprintln(
 		writer,
 		"The pre-Approval-1 plan is invalidated and cannot authorize local mutation.",
 	)
+
 	if result.Approval2Required {
 		fmt.Fprintf(
 			writer,
@@ -330,6 +403,7 @@ func executeApproval1ControllerWithBackend(
 			"Approval 2: NOT REQUIRED - no local FI mutation remains after rediscovery.",
 		)
 	}
+
 	return result, nil
 }
 
@@ -344,44 +418,66 @@ func rollbackApproval1ADCreatedWithBackend(
 		return nil
 	}
 
-	identityBySAM := make(map[string]DesiredFIIdentity)
+	identityBySAM :=
+		make(
+			map[string]DesiredFIIdentity,
+		)
+
 	for _, identity := range desiredFIIdentityList(
 		plan.Identities,
 	) {
 		identityBySAM[strings.ToLower(
-			strings.TrimSpace(identity.SAMAccountName),
+			strings.TrimSpace(
+				identity.SAMAccountName,
+			),
 		)] = identity
 	}
 
-	errorsFound := make([]string, 0)
+	errorsFound :=
+		make(
+			[]string,
+			0,
+		)
+
 	for index := len(result.Created) - 1; index >= 0; index-- {
 		created := result.Created[index]
-		identity, found := identityBySAM[strings.ToLower(
-			strings.TrimSpace(created.SAMAccountName),
-		)]
+
+		identity, found :=
+			identityBySAM[strings.ToLower(
+				strings.TrimSpace(
+					created.SAMAccountName,
+				),
+			)]
+
 		if !found {
 			errorsFound = append(
 				errorsFound,
-				created.SAMAccountName+": cannot map transaction-owned gMSA to approved FI identity",
+				created.SAMAccountName+
+					": cannot map transaction-owned gMSA to approved FI identity",
 			)
 			continue
 		}
+
 		fmt.Fprintf(
 			writer,
 			"ROLLBACK AD: delete transaction-created %s (%s)\n",
 			identity.SAMAccountName,
 			identity.Role,
 		)
+
 		if err := backend.RollbackCreated(
 			before,
 			identity,
 		); err != nil {
 			errorsFound = append(
 				errorsFound,
-				identity.SAMAccountName+": "+err.Error(),
+				identity.SAMAccountName+
+					": "+
+					err.Error(),
 			)
 		}
 	}
+
 	return errorsFound
 }
 
@@ -395,38 +491,57 @@ func validateApproval1ControllerPlan(
 			report.Host.BuildNumber,
 		)
 	}
+
 	if !report.Host.Elevated {
 		return fmt.Errorf(
 			"Approval 1 controller requires an elevated administrator session",
 		)
 	}
+
 	if report.Join.Status != "domain" {
 		return fmt.Errorf(
 			"Approval 1 controller requires a domain-joined source; observed status=%s",
-			valueOrNotKnown(report.Join.Status),
+			valueOrNotKnown(
+				report.Join.Status,
+			),
 		)
 	}
+
 	if plan.HasBlockers() {
-		return fmt.Errorf("plan contains blockers")
+		return fmt.Errorf(
+			"plan contains blockers",
+		)
 	}
+
 	if plan.HasQuestions() {
-		return fmt.Errorf("plan still contains unanswered questions")
+		return fmt.Errorf(
+			"plan still contains unanswered questions",
+		)
 	}
+
 	if err := validateAuthenticatedRelease(
 		report,
 	); err != nil {
 		return err
 	}
-	approval1Required, _ := ApprovalRequirements(plan)
+
+	approval1Required, _ :=
+		ApprovalRequirements(
+			plan,
+		)
+
 	if !approval1Required {
 		return fmt.Errorf(
 			"Approval 1 is not required by the current plan",
 		)
 	}
+
 	return nil
 }
 
-func validateAuthenticatedRelease(report Report) error {
+func validateAuthenticatedRelease(
+	report Report,
+) error {
 	if !report.Package.ManifestValid ||
 		!report.Package.PayloadHashesMatch ||
 		!report.Package.AuthenticodeFilesTrusted ||
@@ -440,6 +555,7 @@ func validateAuthenticatedRelease(report Report) error {
 			"release package is not fully authenticated, transition-valid, and FI-authorized",
 		)
 	}
+
 	return nil
 }
 
@@ -456,12 +572,14 @@ func validateApprovalBoundaryState(
 			boundary,
 		)
 	}
+
 	if !approval.Required {
 		return fmt.Errorf(
 			"Approval %d state does not mark the boundary as required",
 			boundary,
 		)
 	}
+
 	if !approval.Given {
 		return fmt.Errorf(
 			"Approval %d is required but was not granted",
@@ -476,6 +594,7 @@ func validateApprovalBoundaryState(
 	if err != nil {
 		return err
 	}
+
 	if !strings.EqualFold(
 		reviewedPlanSHA256,
 		approval.ReviewedPlanSHA256,
@@ -496,6 +615,7 @@ func validateApprovalBoundaryState(
 	if err != nil {
 		return err
 	}
+
 	if !strings.EqualFold(
 		boundarySHA256,
 		approval.BoundarySHA256,
@@ -507,6 +627,7 @@ func validateApprovalBoundaryState(
 			boundarySHA256,
 		)
 	}
+
 	return nil
 }
 
@@ -515,17 +636,28 @@ func hasApprovalBoundaryMutation(
 	boundary int,
 ) bool {
 	for _, action := range plan.Actions {
-		if !planActionMutates(action.Action) {
+		if !planActionMutates(
+			action.Action,
+		) {
 			continue
 		}
-		infrastructure := action.Authority == "AD" ||
-			action.Authority == "PKI"
-		if boundary == approvalBoundaryInfrastructure && infrastructure {
+
+		infrastructure :=
+			action.Authority == "AD" ||
+				action.Authority == "PKI"
+
+		if boundary ==
+			approvalBoundaryInfrastructure &&
+			infrastructure {
 			return true
 		}
-		if boundary == approvalBoundaryLocal && !infrastructure {
+
+		if boundary ==
+			approvalBoundaryLocal &&
+			!infrastructure {
 			return true
 		}
 	}
+
 	return false
 }
