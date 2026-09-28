@@ -48,19 +48,30 @@ func TestLivePKIEnrollRollback(
 		t.Fatal(err)
 	}
 
-	before, err := snapshotLocalMachinePKICertificates(
-		contract.TemplateOID,
-	)
+	beforeCertificates, err :=
+		snapshotLocalMachinePKICertificates(
+			contract.TemplateOID,
+		)
 	if err != nil {
 		t.Fatalf(
-			"snapshot before enrollment: %v",
+			"snapshot certificates before enrollment: %v",
+			err,
+		)
+	}
+
+	beforeKeys, err :=
+		snapshotFIMachineCNGKeys()
+	if err != nil {
+		t.Fatalf(
+			"snapshot machine CNG keys before enrollment: %v",
 			err,
 		)
 	}
 
 	t.Logf(
-		"before: matching certificates=%d",
-		len(before),
+		"before: matching certificates=%d machine_cng_keys=%d",
+		len(beforeCertificates),
+		len(beforeKeys),
 	)
 
 	mutation, enrollErr :=
@@ -80,8 +91,9 @@ func TestLivePKIEnrollRollback(
 				mutation,
 			); err != nil {
 				t.Errorf(
-					"emergency cleanup of transaction-owned certificate SHA256=%s failed: %v",
+					"emergency cleanup of transaction-owned certificate SHA256=%s key=%q failed: %v",
 					mutation.Certificate.CertificateSHA256,
+					mutation.Key.KeyName,
 					err,
 				)
 			}
@@ -91,67 +103,109 @@ func TestLivePKIEnrollRollback(
 	if enrollErr != nil {
 		if mutation.Owned {
 			t.Fatalf(
-				"live enrollment failed after creating transaction-owned SHA256=%s: %v",
+				"live enrollment failed after establishing exact transaction ownership for SHA256=%s key=%q: %v",
 				mutation.Certificate.CertificateSHA256,
+				mutation.Key.KeyName,
 				enrollErr,
 			)
 		}
 
 		t.Fatalf(
-			"live enrollment failed: %v",
+			"live enrollment failed without transaction ownership: new_machine_keys=%+v error=%v",
+			mutation.NewMachineKeys,
 			enrollErr,
 		)
 	}
 
 	if !mutation.Owned {
 		t.Fatal(
-			"successful enrollment returned no transaction-owned certificate",
+			"successful enrollment returned no exact transaction-owned certificate/key pair",
+		)
+	}
+
+	if mutation.Key.KeyName == "" {
+		t.Fatal(
+			"successful enrollment established ownership without an exact CNG key name",
+		)
+	}
+
+	if len(mutation.NewMachineKeys) != 1 {
+		t.Fatalf(
+			"successful enrollment observed %d new machine CNG keys; expected exactly one: %+v",
+			len(mutation.NewMachineKeys),
+			mutation.NewMachineKeys,
 		)
 	}
 
 	t.Logf(
-		"created: template=%s SHA256=%s CN=%s SAN=%v",
+		"created: template=%s SHA256=%s CN=%s SAN=%v key=%q provider=%q new_machine_keys=%d",
 		mutation.Certificate.TemplateOID,
 		mutation.Certificate.CertificateSHA256,
 		mutation.Certificate.CommonName,
 		mutation.Certificate.DNSNames,
+		mutation.Key.KeyName,
+		mutation.Key.ProviderName,
+		len(mutation.NewMachineKeys),
 	)
 
 	if err := rollbackOwnedPKIEnrollment(
 		mutation,
 	); err != nil {
 		t.Fatalf(
-			"rollback transaction-owned certificate SHA256=%s: %v",
+			"rollback transaction-owned certificate SHA256=%s key=%q: %v",
 			mutation.Certificate.CertificateSHA256,
+			mutation.Key.KeyName,
 			err,
 		)
 	}
 
 	cleanupNeeded = false
 
-	after, err := snapshotLocalMachinePKICertificates(
-		contract.TemplateOID,
-	)
+	afterCertificates, err :=
+		snapshotLocalMachinePKICertificates(
+			contract.TemplateOID,
+		)
 	if err != nil {
 		t.Fatalf(
-			"snapshot after rollback: %v",
+			"snapshot certificates after rollback: %v",
+			err,
+		)
+	}
+
+	afterKeys, err :=
+		snapshotFIMachineCNGKeys()
+	if err != nil {
+		t.Fatalf(
+			"snapshot machine CNG keys after rollback: %v",
 			err,
 		)
 	}
 
 	if !reflect.DeepEqual(
-		before,
-		after,
+		beforeCertificates,
+		afterCertificates,
 	) {
 		t.Fatalf(
-			"LocalMachine\\MY did not return exactly to its pre-enrollment state:\nbefore=%+v\nafter=%+v",
-			before,
-			after,
+			"LocalMachine\\MY did not return exactly to its pre-enrollment certificate state:\nbefore=%+v\nafter=%+v",
+			beforeCertificates,
+			afterCertificates,
+		)
+	}
+
+	if !reflect.DeepEqual(
+		beforeKeys,
+		afterKeys,
+	) {
+		t.Fatalf(
+			"Microsoft Software KSP machine-key inventory did not return exactly to its pre-enrollment state:\nbefore=%+v\nafter=%+v",
+			beforeKeys,
+			afterKeys,
 		)
 	}
 
 	t.Logf(
-		"rollback complete: matching certificates=%d; pre-enrollment state restored exactly",
-		len(after),
+		"rollback complete: matching certificates=%d machine_cng_keys=%d; certificate store and machine-key inventory restored exactly",
+		len(afterCertificates),
+		len(afterKeys),
 	)
 }

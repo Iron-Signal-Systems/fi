@@ -24,13 +24,88 @@ type pkiEnrollmentContract struct {
 	TemplateOID  string
 }
 
+type pkiEnrollmentInvoker func(
+	templateName string,
+) error
+
 type pkiEnrollmentMutation struct {
-	Certificate localMachinePKICertificate
-	Owned       bool
+	Certificate    localMachinePKICertificate
+	Key            cngKeyLocator
+	NewMachineKeys []machineCNGKeyState
+	Owned          bool
+}
+
+func buildOwnedPKIEnrollmentMutation(
+	certificate localMachinePKICertificate,
+	addedKeys []machineCNGKeyState,
+) (
+	pkiEnrollmentMutation,
+	error,
+) {
+	mutation := pkiEnrollmentMutation{
+		Certificate: certificate,
+		NewMachineKeys: append(
+			[]machineCNGKeyState(nil),
+			addedKeys...,
+		),
+	}
+
+	locator, err :=
+		localMachineCNGKeyLocatorForCertificateSHA256(
+			certificate.CertificateSHA256,
+		)
+	if err != nil {
+		return mutation, err
+	}
+
+	mutation.Key = locator
+
+	_, found, err :=
+		findAddedMachineCNGKeyForLocator(
+			locator,
+			addedKeys,
+		)
+	if err != nil {
+		return mutation, err
+	}
+
+	if !found {
+		return mutation, fmt.Errorf(
+			"certificate SHA256=%s references CNG key %q, but that exact machine key was not absent before enrollment and newly present afterward; transaction ownership is not established",
+			certificate.CertificateSHA256,
+			locator.KeyName,
+		)
+	}
+
+	mutation.Owned = true
+
+	if len(addedKeys) != 1 {
+		return mutation, fmt.Errorf(
+			"exact certificate/key ownership is established for SHA256=%s key=%q, but %d total machine CNG keys appeared during enrollment; additional key state is not claimed by this transaction",
+			certificate.CertificateSHA256,
+			locator.KeyName,
+			len(addedKeys),
+		)
+	}
+
+	return mutation, nil
 }
 
 func enrollMachineCertificateTemplateTracked(
 	contract pkiEnrollmentContract,
+) (
+	pkiEnrollmentMutation,
+	error,
+) {
+	return enrollMachineCertificateTemplateTrackedWithInvoker(
+		contract,
+		enrollMachineCertificateTemplate,
+	)
+}
+
+func enrollMachineCertificateTemplateTrackedWithInvoker(
+	contract pkiEnrollmentContract,
+	enroll pkiEnrollmentInvoker,
 ) (
 	pkiEnrollmentMutation,
 	error,
@@ -41,9 +116,16 @@ func enrollMachineCertificateTemplateTracked(
 		return pkiEnrollmentMutation{}, err
 	}
 
-	before, err := snapshotLocalMachinePKICertificates(
-		contract.TemplateOID,
-	)
+	if enroll == nil {
+		return pkiEnrollmentMutation{}, errors.New(
+			"certificate enrollment invoker is required",
+		)
+	}
+
+	beforeCertificates, err :=
+		snapshotLocalMachinePKICertificates(
+			contract.TemplateOID,
+		)
 	if err != nil {
 		return pkiEnrollmentMutation{}, fmt.Errorf(
 			"snapshot LocalMachine\\MY before %s enrollment: %w",
@@ -52,79 +134,148 @@ func enrollMachineCertificateTemplateTracked(
 		)
 	}
 
-	enrollErr := enrollMachineCertificateTemplate(
-		contract.TemplateName,
-	)
-
-	after, rediscoverErr := snapshotLocalMachinePKICertificates(
-		contract.TemplateOID,
-	)
-	if rediscoverErr != nil {
-		if enrollErr != nil {
-			return pkiEnrollmentMutation{}, fmt.Errorf(
-				"%s enrollment failed: %v; post-enrollment rediscovery also failed: %w",
-				contract.TemplateName,
-				enrollErr,
-				rediscoverErr,
-			)
-		}
-
+	beforeKeys, err :=
+		snapshotFIMachineCNGKeys()
+	if err != nil {
 		return pkiEnrollmentMutation{}, fmt.Errorf(
-			"rediscover LocalMachine\\MY after %s enrollment: %w",
+			"snapshot FI machine CNG keys before %s enrollment: %w",
 			contract.TemplateName,
-			rediscoverErr,
+			err,
 		)
 	}
 
-	added := certificateStateDifference(
-		before,
-		after,
+	enrollErr := enroll(
+		contract.TemplateName,
+	)
+
+	afterCertificates, certificateRediscoveryErr :=
+		snapshotLocalMachinePKICertificates(
+			contract.TemplateOID,
+		)
+
+	afterKeys, keyRediscoveryErr :=
+		snapshotFIMachineCNGKeys()
+
+	var addedKeys []machineCNGKeyState
+
+	if keyRediscoveryErr == nil {
+		addedKeys = machineCNGKeyStateDifference(
+			beforeKeys,
+			afterKeys,
+		)
+	}
+
+	diagnosticMutation := pkiEnrollmentMutation{
+		NewMachineKeys: append(
+			[]machineCNGKeyState(nil),
+			addedKeys...,
+		),
+	}
+
+	if certificateRediscoveryErr != nil ||
+		keyRediscoveryErr != nil {
+		switch {
+		case certificateRediscoveryErr != nil &&
+			keyRediscoveryErr != nil:
+			return diagnosticMutation, fmt.Errorf(
+				"%s enrollment completed with enrollment_error=%v; post-enrollment certificate rediscovery failed: %v; post-enrollment CNG key rediscovery failed: %v",
+				contract.TemplateName,
+				enrollErr,
+				certificateRediscoveryErr,
+				keyRediscoveryErr,
+			)
+
+		case certificateRediscoveryErr != nil:
+			return diagnosticMutation, fmt.Errorf(
+				"%s enrollment completed with enrollment_error=%v; post-enrollment certificate rediscovery failed: %v; new_machine_keys=%d",
+				contract.TemplateName,
+				enrollErr,
+				certificateRediscoveryErr,
+				len(addedKeys),
+			)
+
+		default:
+			return diagnosticMutation, fmt.Errorf(
+				"%s enrollment completed with enrollment_error=%v; post-enrollment CNG key rediscovery failed: %v",
+				contract.TemplateName,
+				enrollErr,
+				keyRediscoveryErr,
+			)
+		}
+	}
+
+	addedCertificates := certificateStateDifference(
+		beforeCertificates,
+		afterCertificates,
 	)
 
 	if enrollErr != nil {
-		switch len(added) {
+		switch len(addedCertificates) {
 		case 0:
-			return pkiEnrollmentMutation{}, fmt.Errorf(
-				"%s enrollment failed without installing a new certificate: %w",
+			return diagnosticMutation, fmt.Errorf(
+				"%s enrollment failed without installing a new certificate; new_machine_keys=%d: %w",
 				contract.TemplateName,
+				len(addedKeys),
 				enrollErr,
 			)
 
 		case 1:
-			mutation := pkiEnrollmentMutation{
-				Certificate: added[0],
-				Owned:       true,
+			mutation, ownershipErr :=
+				buildOwnedPKIEnrollmentMutation(
+					addedCertificates[0],
+					addedKeys,
+				)
+
+			if ownershipErr != nil {
+				return mutation, fmt.Errorf(
+					"%s enrollment returned an error and exactly one new certificate was installed, but exact certificate/key ownership could not be established: %v; enrollment error: %w",
+					contract.TemplateName,
+					ownershipErr,
+					enrollErr,
+				)
 			}
 
 			return mutation, fmt.Errorf(
-				"%s enrollment returned an error but exactly one new certificate was installed; transaction ownership is established for SHA256=%s: %w",
+				"%s enrollment returned an error but exact ownership is established for certificate SHA256=%s CNG key=%q: %w",
 				contract.TemplateName,
-				added[0].CertificateSHA256,
+				mutation.Certificate.CertificateSHA256,
+				mutation.Key.KeyName,
 				enrollErr,
 			)
 
 		default:
-			return pkiEnrollmentMutation{}, fmt.Errorf(
-				"%s enrollment returned an error and %d new matching certificates appeared; transaction ownership is ambiguous and automatic rollback is refused: %w",
+			return diagnosticMutation, fmt.Errorf(
+				"%s enrollment returned an error and %d new matching certificates appeared; transaction ownership is ambiguous and automatic rollback is refused; new_machine_keys=%d: %w",
 				contract.TemplateName,
-				len(added),
+				len(addedCertificates),
+				len(addedKeys),
 				enrollErr,
 			)
 		}
 	}
 
-	switch len(added) {
+	switch len(addedCertificates) {
 	case 0:
-		return pkiEnrollmentMutation{}, fmt.Errorf(
-			"%s enrollment returned success but no new certificate matching template OID %s was installed",
+		return diagnosticMutation, fmt.Errorf(
+			"%s enrollment returned success but no new certificate matching template OID %s was installed; new_machine_keys=%d",
 			contract.TemplateName,
 			contract.TemplateOID,
+			len(addedKeys),
 		)
 
 	case 1:
-		mutation := pkiEnrollmentMutation{
-			Certificate: added[0],
-			Owned:       true,
+		mutation, err :=
+			buildOwnedPKIEnrollmentMutation(
+				addedCertificates[0],
+				addedKeys,
+			)
+		if err != nil {
+			return mutation, fmt.Errorf(
+				"%s certificate/key ownership verification failed for SHA256=%s: %w",
+				contract.TemplateName,
+				addedCertificates[0].CertificateSHA256,
+				err,
+			)
 		}
 
 		if err := verifyTrackedPKIEnrollment(
@@ -142,10 +293,11 @@ func enrollMachineCertificateTemplateTracked(
 		return mutation, nil
 
 	default:
-		return pkiEnrollmentMutation{}, fmt.Errorf(
-			"%s enrollment returned success but %d new matching certificates appeared; transaction ownership is ambiguous and automatic rollback is refused",
+		return diagnosticMutation, fmt.Errorf(
+			"%s enrollment returned success but %d new matching certificates appeared; transaction ownership is ambiguous and automatic rollback is refused; new_machine_keys=%d",
 			contract.TemplateName,
-			len(added),
+			len(addedCertificates),
+			len(addedKeys),
 		)
 	}
 }
