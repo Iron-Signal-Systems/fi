@@ -43,45 +43,45 @@ func main() {
 	apply := flag.Bool(
 		"apply",
 		false,
-		"apply the exact validated Server 2016 desired-state plan after explicit approval",
+		"apply the exact validated Server 2016 desired-state plan after explicit approval boundaries",
 	)
 
 	receiverAddress := flag.String(
 		"receiver-address",
 		"",
-		"read-only new-install planning input: FI receiver address",
+		"new-install deployment input: FI receiver address",
 	)
 	receiverName := flag.String(
 		"receiver-name",
 		"",
-		"read-only new-install planning input: FI receiver DNS/name",
+		"new-install deployment input: FI receiver DNS/name",
 	)
 	spoolDir := flag.String(
 		"spool-dir",
 		"",
-		"read-only new-install planning input: FI spool directory",
+		"new-install deployment input: FI spool directory",
 	)
 	stageDir := flag.String(
 		"stage-dir",
 		"",
-		"read-only new-install planning input: FI stage directory; defaults to C:\\ProgramData\\FI\\transport-v2-drain\\stage",
+		"new-install deployment input: FI stage directory; defaults to C:\\ProgramData\\FI\\transport-v2-drain\\stage",
 	)
 	stateDir := flag.String(
 		"state-dir",
 		"",
-		"read-only new-install planning input: FI state directory; defaults to C:\\ProgramData\\FI\\state",
+		"new-install deployment input: FI state directory; defaults to C:\\ProgramData\\FI\\state",
 	)
 	pkiChoice := flag.String(
 		"pki-choice",
 		"",
-		"read-only new-install planning input: reuse, enroll, or create",
+		"new-install deployment input: reuse, enroll, or create",
 	)
 
 	var governedRoots repeatedStringFlag
 	flag.Var(
 		&governedRoots,
 		"governed-root",
-		"read-only new-install planning input: governed root; repeat for multiple roots",
+		"new-install deployment input: governed root; repeat for multiple roots",
 	)
 
 	flag.Parse()
@@ -121,11 +121,20 @@ func main() {
 
 	if plan.Mode == "NEW INSTALL" ||
 		!inputs.Empty() {
-		fmt.Fprintln(
-			os.Stderr,
-			"\nFI APPLY BLOCKED: M19 new-install deployment inputs are planning-only; AD/PKI/config/SCM first-install mutation authority is not enabled",
-		)
-		os.Exit(1)
+		if err := executeNewInstall(
+			report,
+			plan,
+			inputs,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"\nFI NEW INSTALL FAILED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+		writeFinalState()
+		return
 	}
 
 	if err := install.ValidateServer2016Apply(report, plan); err != nil {
@@ -142,6 +151,100 @@ func main() {
 		os.Exit(1)
 	}
 
+	writeFinalState()
+}
+
+func executeNewInstall(
+	report install.Report,
+	plan install.InstallPlan,
+	inputs install.PlanInputs,
+) error {
+	approval1Required, _ := install.ApprovalRequirements(
+		plan,
+	)
+	if !approval1Required {
+		return fmt.Errorf(
+			"new-install plan does not contain an Approval 1 AD/PKI boundary",
+		)
+	}
+
+	approval1, err := install.PromptApproval1Boundary(
+		os.Stdin,
+		os.Stdout,
+		report,
+		plan,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"Approval 1 failed: %w",
+			err,
+		)
+	}
+
+	approval1Result, err := install.ExecuteServer2016Approval1Controller(
+		os.Stdout,
+		report,
+		plan,
+		inputs,
+		approval1,
+	)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(
+		os.Stdout,
+		"",
+	)
+	if err := approval1Result.Rediscovered.WriteText(
+		os.Stdout,
+	); err != nil {
+		return err
+	}
+	if err := approval1Result.Approval2Plan.WriteText(
+		os.Stdout,
+	); err != nil {
+		return err
+	}
+
+	if !approval1Result.Approval2Required {
+		return nil
+	}
+
+	approval2, err := install.PromptApproval2Boundary(
+		os.Stdin,
+		os.Stdout,
+		approval1Result.Rediscovered,
+		approval1Result.Approval2Plan,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"Approval 2 failed: %w",
+			err,
+		)
+	}
+
+	if !strings.EqualFold(
+		approval2.BoundarySHA256,
+		approval1Result.Approval2SHA256,
+	) {
+		return fmt.Errorf(
+			"Approval 2 digest=%s does not match Approval 1 sealed digest=%s",
+			approval2.BoundarySHA256,
+			approval1Result.Approval2SHA256,
+		)
+	}
+
+	_, err = install.ExecuteServer2016Approval2Controller(
+		os.Stdout,
+		approval1Result,
+		inputs,
+		approval2,
+	)
+	return err
+}
+
+func writeFinalState() {
 	post := install.Discover()
 	postPlan := install.BuildPlan(post)
 	fmt.Fprintln(os.Stdout, "")
@@ -151,7 +254,22 @@ func main() {
 	if err := postPlan.WriteText(os.Stdout); err != nil {
 		os.Exit(2)
 	}
-	if post.HasFailures() || postPlan.HasBlockers() {
+	if post.HasFailures() ||
+		postPlan.HasBlockers() ||
+		postPlan.HasQuestions() ||
+		planHasMutation(postPlan) {
 		os.Exit(1)
 	}
+}
+
+func planHasMutation(
+	plan install.InstallPlan,
+) bool {
+	for _, action := range plan.Actions {
+		if action.Action == "CREATE" ||
+			action.Action == "RECONCILE" {
+			return true
+		}
+	}
+	return false
 }

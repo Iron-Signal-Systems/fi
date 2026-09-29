@@ -17,6 +17,7 @@ import (
 type server2016Approval2Backend struct{}
 
 var _ approval2ControllerBackend = (*server2016Approval2Backend)(nil)
+var _ approval2ExtendedControllerBackend = (*server2016Approval2Backend)(nil)
 
 func (backend *server2016Approval2Backend) ApplyLocalIdentities(
 	report Report,
@@ -43,6 +44,37 @@ func (backend *server2016Approval2Backend) ApplyLocalIdentities(
 	)
 }
 
+func (backend *server2016Approval2Backend) ApplyOperationalConfig(
+	report Report,
+	plan InstallPlan,
+	inputs PlanInputs,
+	handoff approval1PKIHandoff,
+	transactionID string,
+) (func() error, error) {
+	if backend == nil {
+		return nil, errors.New(
+			"Server 2016 Approval 2 backend is unavailable",
+		)
+	}
+
+	if !approval2OperationalConfigRequired(
+		report,
+		plan,
+	) {
+		return nil, errors.New(
+			"Approval 2 plan does not authorize an operational CONFIG mutation",
+		)
+	}
+
+	return createApproval2OperationalConfig(
+		report,
+		plan,
+		inputs,
+		handoff,
+		transactionID,
+	)
+}
+
 func (backend *server2016Approval2Backend) ApplyTransportTrust(
 	report Report,
 	plan InstallPlan,
@@ -61,6 +93,16 @@ func (backend *server2016Approval2Backend) ApplyTransportTrust(
 	) {
 		return nil, errors.New(
 			"Approval 2 plan does not authorize a CONFIG mutation",
+		)
+	}
+
+	if !approval2TransportConfigRequired(
+		report,
+		plan,
+		handoff,
+	) {
+		return nil, errors.New(
+			"Approval 2 plan does not authorize the exact transport-trust CONFIG pair",
 		)
 	}
 
@@ -92,11 +134,38 @@ func (backend *server2016Approval2Backend) ApplyTransportTrust(
 	)
 }
 
+func (backend *server2016Approval2Backend) ApplyRemainingLocal(
+	report Report,
+	plan InstallPlan,
+	transactionID string,
+) ([]approval2ControllerStep, []AppliedMutation, error) {
+	if backend == nil {
+		return nil, nil, errors.New(
+			"Server 2016 Approval 2 backend is unavailable",
+		)
+	}
+
+	return applyServer2016Approval2RemainingLocal(
+		report,
+		plan,
+		transactionID,
+	)
+}
+
 func (backend *server2016Approval2Backend) BuildPlan(
 	report Report,
 	inputs PlanInputs,
 	handoff approval1PKIHandoff,
 ) InstallPlan {
+	// New-install deployment inputs are authoritative only while the
+	// operational configuration is absent. Once fi.conf exists, reusing those
+	// command-line values would intentionally trigger the planner's
+	// existing-config protection. Post-mutation convergence therefore rebuilds
+	// from the installed configuration itself.
+	if report.Config.Presence == presencePresent {
+		inputs = PlanInputs{}
+	}
+
 	plan := BuildPlanWithInputs(
 		report,
 		inputs,

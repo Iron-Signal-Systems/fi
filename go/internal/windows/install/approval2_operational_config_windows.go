@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,6 +71,77 @@ func approval2OperationalConfigProposal(
 	}
 
 	return proposal, nil
+}
+
+func approval2OperationalConfigRequired(
+	report Report,
+	plan InstallPlan,
+) bool {
+	configPath := strings.TrimSpace(
+		report.Config.Path,
+	)
+	expectedSource := approval2ExpectedSourceTarget(
+		report,
+	)
+
+	for _, action := range plan.Actions {
+		if action.Authority != "CONFIG" ||
+			!planActionMutates(
+				action.Action,
+			) {
+			continue
+		}
+
+		target := strings.TrimSpace(
+			action.Target,
+		)
+
+		if configPath != "" &&
+			strings.EqualFold(
+				target,
+				configPath,
+			) {
+			return true
+		}
+
+		if expectedSource != "" &&
+			strings.EqualFold(
+				target,
+				expectedSource,
+			) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func approval2ExpectedSourceTarget(
+	report Report,
+) string {
+	computer := strings.TrimSpace(
+		report.Host.Computer,
+	)
+	domain := strings.TrimSpace(
+		report.Host.DomainDNS,
+	)
+
+	if computer == "" ||
+		domain == "" ||
+		strings.EqualFold(
+			computer,
+			notKnown,
+		) ||
+		strings.EqualFold(
+			domain,
+			notKnown,
+		) {
+		return ""
+	}
+
+	return "source.id=" + strings.ToLower(
+		computer+"."+domain,
+	)
 }
 
 func approval2OperationalConfigValue(
@@ -159,6 +232,455 @@ func approval2OperationalConfigValue(
 	}
 
 	return value, nil
+}
+
+func createApproval2OperationalConfig(
+	report Report,
+	plan InstallPlan,
+	inputs PlanInputs,
+	handoff approval1PKIHandoff,
+	transactionID string,
+) (func() error, error) {
+	if !validApproval2TransactionID(
+		transactionID,
+	) {
+		return nil, fmt.Errorf(
+			"invalid Approval 2 transaction ID %q",
+			transactionID,
+		)
+	}
+
+	proposal, err := approval2OperationalConfigProposal(
+		report,
+		plan,
+		inputs,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	expectedPath, err := config.DefaultPath()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"resolve fixed FI operational configuration path: %w",
+			err,
+		)
+	}
+
+	if !strings.EqualFold(
+		filepath.Clean(
+			strings.TrimSpace(
+				proposal.Path,
+			),
+		),
+		filepath.Clean(
+			expectedPath,
+		),
+	) {
+		return nil, fmt.Errorf(
+			"operational configuration path=%q does not match fixed FI path=%q",
+			proposal.Path,
+			expectedPath,
+		)
+	}
+
+	if report.Config.Presence != presenceAbsent {
+		return nil, fmt.Errorf(
+			"Approval 2 operational CONFIG CREATE requires presence=%s; observed=%s",
+			presenceAbsent,
+			report.Config.Presence,
+		)
+	}
+
+	value, err := approval2OperationalConfigValue(
+		proposal,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	encoded, err := renderApproval2OperationalConfig(
+		value,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	directories := []string{
+		filepath.Dir(
+			proposal.Path,
+		),
+		proposal.SpoolDir,
+		proposal.StageDir,
+		proposal.StateDir,
+	}
+
+	if handoff.complete() {
+		directories = append(
+			directories,
+			filepath.Dir(
+				handoff.CRLDestinationPath,
+			),
+		)
+	}
+
+	createdDirectories, err := prepareApproval2OwnedDirectories(
+		directories,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	rollbackDirectories := func() error {
+		return rollbackApproval2CreatedDirectories(
+			createdDirectories,
+		)
+	}
+
+	configPath := filepath.Clean(
+		proposal.Path,
+	)
+
+	if _, err := os.Lstat(
+		configPath,
+	); err == nil {
+		_ = rollbackDirectories()
+		return nil, fmt.Errorf(
+			"Approval 2 CREATE refuses existing operational configuration %s",
+			configPath,
+		)
+	} else if !errors.Is(
+		err,
+		os.ErrNotExist,
+	) {
+		_ = rollbackDirectories()
+		return nil, fmt.Errorf(
+			"inspect Approval 2 operational configuration destination %s: %w",
+			configPath,
+			err,
+		)
+	}
+
+	stage := configPath +
+		".fi-new-" +
+		transactionID
+
+	_ = os.Remove(
+		stage,
+	)
+
+	if err := writeApproval2ExclusiveFile(
+		stage,
+		encoded,
+	); err != nil {
+		_ = rollbackDirectories()
+		return nil, err
+	}
+
+	cleanupStage := true
+	defer func() {
+		if cleanupStage {
+			_ = os.Remove(
+				stage,
+			)
+		}
+	}()
+
+	staged, err := config.Load(
+		stage,
+	)
+	if err != nil {
+		_ = rollbackDirectories()
+		return nil, fmt.Errorf(
+			"verify staged FI operational configuration: %w",
+			err,
+		)
+	}
+
+	if !sameApproval2OperationalConfig(
+		staged,
+		value,
+	) {
+		_ = rollbackDirectories()
+		return nil, errors.New(
+			"staged FI operational configuration does not match the approved typed contract",
+		)
+	}
+
+	if err := os.Rename(
+		stage,
+		configPath,
+	); err != nil {
+		_ = rollbackDirectories()
+		return nil, fmt.Errorf(
+			"activate FI operational configuration %s: %w",
+			configPath,
+			err,
+		)
+	}
+	cleanupStage = false
+
+	rollback := func() error {
+		var found []error
+
+		if err := removeFileWithRetry(
+			configPath,
+			5*time.Second,
+		); err != nil &&
+			!errors.Is(
+				err,
+				os.ErrNotExist,
+			) {
+			found = append(
+				found,
+				err,
+			)
+		}
+
+		if err := rollbackDirectories(); err != nil {
+			found = append(
+				found,
+				err,
+			)
+		}
+
+		return errors.Join(
+			found...,
+		)
+	}
+
+	activated, err := config.Load(
+		configPath,
+	)
+	if err != nil {
+		_ = rollback()
+		return nil, fmt.Errorf(
+			"verify activated FI operational configuration: %w",
+			err,
+		)
+	}
+
+	if !sameApproval2OperationalConfig(
+		activated,
+		value,
+	) {
+		_ = rollback()
+		return nil, errors.New(
+			"activated FI operational configuration does not match the approved typed contract",
+		)
+	}
+
+	return rollback, nil
+}
+
+func prepareApproval2OwnedDirectories(
+	paths []string,
+) ([]string, error) {
+	created := make(
+		[]string,
+		0,
+	)
+	seen := make(
+		map[string]struct{},
+	)
+
+	rollback := func() {
+		_ = rollbackApproval2CreatedDirectories(
+			created,
+		)
+	}
+
+	for _, raw := range paths {
+		path := filepath.Clean(
+			strings.TrimSpace(
+				raw,
+			),
+		)
+
+		if path == "" ||
+			path == "." {
+			rollback()
+			return nil, errors.New(
+				"Approval 2 FI-owned directory path is empty",
+			)
+		}
+
+		key := strings.ToLower(
+			path,
+		)
+		if _, found := seen[key]; found {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		added, err := prepareApproval2OwnedDirectory(
+			path,
+		)
+		if err != nil {
+			rollback()
+			return nil, err
+		}
+
+		for _, directory := range added {
+			createdKey := strings.ToLower(
+				directory,
+			)
+			if _, found := seen[createdKey]; !found {
+				seen[createdKey] = struct{}{}
+			}
+			created = append(
+				created,
+				directory,
+			)
+		}
+	}
+
+	return created, nil
+}
+
+func prepareApproval2OwnedDirectory(
+	path string,
+) ([]string, error) {
+	path = filepath.Clean(
+		path,
+	)
+
+	missing := make(
+		[]string,
+		0,
+	)
+	cursor := path
+
+	for {
+		_, err := os.Lstat(
+			cursor,
+		)
+		if err == nil {
+			if err := requireApproval2PlainDirectory(
+				cursor,
+			); err != nil {
+				return nil, err
+			}
+			break
+		}
+
+		if !errors.Is(
+			err,
+			os.ErrNotExist,
+		) {
+			return nil, fmt.Errorf(
+				"inspect Approval 2 FI-owned directory %s: %w",
+				cursor,
+				err,
+			)
+		}
+
+		missing = append(
+			missing,
+			cursor,
+		)
+
+		parent := filepath.Dir(
+			cursor,
+		)
+		if parent == cursor ||
+			parent == "." ||
+			parent == "" {
+			return nil, fmt.Errorf(
+				"cannot establish existing parent for Approval 2 directory %s",
+				path,
+			)
+		}
+		cursor = parent
+	}
+
+	created := make(
+		[]string,
+		0,
+		len(missing),
+	)
+
+	rollback := func() {
+		_ = rollbackApproval2CreatedDirectories(
+			created,
+		)
+	}
+
+	for index := len(missing) - 1; index >= 0; index-- {
+		directory := missing[index]
+
+		if err := os.Mkdir(
+			directory,
+			0o700,
+		); err != nil {
+			rollback()
+			return nil, fmt.Errorf(
+				"create Approval 2 FI-owned directory %s: %w",
+				directory,
+				err,
+			)
+		}
+
+		created = append(
+			created,
+			directory,
+		)
+
+		if err := withEnabledProcessPrivilege(
+			"SeRestorePrivilege",
+			func() error {
+				return setNamedSecurityDescriptorFromSDDL(
+					directory,
+					desiredProtectedDirectorySDDL(
+						nil,
+					),
+				)
+			},
+		); err != nil {
+			rollback()
+			return nil, fmt.Errorf(
+				"protect Approval 2 FI-owned directory %s: %w",
+				directory,
+				err,
+			)
+		}
+	}
+
+	return created, nil
+}
+
+func rollbackApproval2CreatedDirectories(
+	created []string,
+) error {
+	var found []error
+
+	for index := len(created) - 1; index >= 0; index-- {
+		directory := created[index]
+
+		err := os.Remove(
+			directory,
+		)
+		if err == nil ||
+			errors.Is(
+				err,
+				os.ErrNotExist,
+			) {
+			continue
+		}
+
+		found = append(
+			found,
+			fmt.Errorf(
+				"remove transaction-created FI directory %s: %w",
+				directory,
+				err,
+			),
+		)
+	}
+
+	return errors.Join(
+		found...,
+	)
 }
 
 func renderApproval2OperationalConfig(

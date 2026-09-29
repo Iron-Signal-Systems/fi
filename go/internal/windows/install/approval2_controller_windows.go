@@ -46,31 +46,39 @@ type approval2ControllerBackend interface {
 	Rediscover() Report
 }
 
+type approval2ExtendedControllerBackend interface {
+	approval2ControllerBackend
+
+	ApplyOperationalConfig(
+		report Report,
+		plan InstallPlan,
+		inputs PlanInputs,
+		handoff approval1PKIHandoff,
+		transactionID string,
+	) (func() error, error)
+
+	ApplyRemainingLocal(
+		report Report,
+		plan InstallPlan,
+		transactionID string,
+	) ([]approval2ControllerStep, []AppliedMutation, error)
+}
+
 type approval2ControllerStep struct {
+	commit   func() error
 	name     string
 	rollback func() error
 }
 
-// executeApproval2ControllerWithBackend is deliberately not wired to
-// fi-install -apply yet.
+// executeApproval2ControllerWithBackend is deliberately separate from the
+// legacy one-plan ApplyServer2016ApprovedPlan path. The Approval-2 controller
+// consumes only the exact post-Approval-1 report, plan, typed PKI handoff, and
+// Approval-2 digest established by Approval 1.
 //
-// It establishes the second approval boundary and transaction semantics before
-// local new-install mutation authority is exposed. The controller accepts only
-// the exact post-Approval-1 report, plan, typed PKI handoff, and Approval-2
-// digest produced by the first controller.
-//
-// Before the first mutation it performs another authoritative rediscovery,
-// rebuilds the Approval-2 plan, and requires the local-boundary digest to remain
-// byte-for-byte equivalent to the approved digest.
-//
-// This initial controller slice owns only:
-//
-//   - LOCAL ID gMSA installation
-//   - the exact two-file transport-trust CONFIG transaction
-//
-// Any other mutating Approval-2 authority blocks the controller before the
-// first mutation. Additional local authorities are added only when their
-// transaction and rollback contracts are ready.
+// Before the first local mutation it performs an authoritative rediscovery,
+// rebuilds the local plan, and requires the Approval-2 digest to remain exact.
+// All successful local mutation steps remain rollback-owned until final
+// authoritative discovery proves complete convergence.
 func executeApproval2ControllerWithBackend(
 	writer io.Writer,
 	approval1 Approval1ControllerResult,
@@ -119,6 +127,15 @@ func executeApproval2ControllerWithBackend(
 			"sealed post-Approval-1 plan is not eligible for Approval 2: %w",
 			err,
 		)
+	}
+
+	if err := validateApproval2BackendCoverage(
+		approval1.Rediscovered,
+		approval1.Approval2Plan,
+		approval1.PKI.Handoff,
+		backend,
+	); err != nil {
+		return Approval2ControllerResult{}, err
 	}
 
 	if err := validateApprovalBoundaryState(
@@ -192,6 +209,15 @@ func executeApproval2ControllerWithBackend(
 		)
 	}
 
+	if err := validateApproval2BackendCoverage(
+		current,
+		currentPlan,
+		approval1.PKI.Handoff,
+		backend,
+	); err != nil {
+		return result, err
+	}
+
 	currentDigest, err := ApprovalBoundaryDigest(
 		current,
 		currentPlan,
@@ -226,7 +252,7 @@ func executeApproval2ControllerWithBackend(
 	steps := make(
 		[]approval2ControllerStep,
 		0,
-		2,
+		12,
 	)
 
 	rollbackAll := func(
@@ -311,9 +337,54 @@ func executeApproval2ControllerWithBackend(
 		)
 	}
 
-	if planHasMutationAuthority(
+	extended, _ := backend.(approval2ExtendedControllerBackend)
+
+	if approval2OperationalConfigRequired(
+		current,
 		currentPlan,
-		"CONFIG",
+	) {
+		fmt.Fprintln(
+			writer,
+			"APPLY CONFIG: create exact approved FI operational configuration and FI-owned directory roots",
+		)
+
+		rollback, err := extended.ApplyOperationalConfig(
+			current,
+			currentPlan,
+			inputs,
+			approval1.PKI.Handoff,
+			result.TransactionID,
+		)
+		if err != nil {
+			return rollbackAll(
+				fmt.Errorf(
+					"Approval 2 operational CONFIG transaction failed: %w",
+					err,
+				),
+			)
+		}
+
+		steps = append(
+			steps,
+			approval2ControllerStep{
+				name:     "CONFIG operational",
+				rollback: rollback,
+			},
+		)
+
+		result.Applied = append(
+			result.Applied,
+			AppliedMutation{
+				Authority: "CONFIG",
+				Target:    "FI operational configuration",
+			},
+		)
+	}
+
+	if approval2TransportConfigRequired(
+		current,
+		currentPlan,
+		approval1.PKI.Handoff,
 	) {
 		fmt.Fprintln(
 			writer,
@@ -338,7 +409,7 @@ func executeApproval2ControllerWithBackend(
 		steps = append(
 			steps,
 			approval2ControllerStep{
-				name:     "CONFIG",
+				name:     "CONFIG transport trust",
 				rollback: rollback,
 			},
 		)
@@ -352,9 +423,42 @@ func executeApproval2ControllerWithBackend(
 		)
 	}
 
+	if approval2RemainingLocalRequired(
+		currentPlan,
+	) {
+		fmt.Fprintln(
+			writer,
+			"APPLY LOCAL SYSTEM: release trust, package, rights, groups, services, ACLs, and runtime in rollback-safe order",
+		)
+
+		additionalSteps, applied, err :=
+			extended.ApplyRemainingLocal(
+				current,
+				currentPlan,
+				result.TransactionID,
+			)
+		if err != nil {
+			return rollbackAll(
+				fmt.Errorf(
+					"Approval 2 local-system transaction failed: %w",
+					err,
+				),
+			)
+		}
+
+		steps = append(
+			steps,
+			additionalSteps...,
+		)
+		result.Applied = append(
+			result.Applied,
+			applied...,
+		)
+	}
+
 	fmt.Fprintln(
 		writer,
-		"POST-APPROVAL-2 REDISCOVERY: prove all implemented local mutations converged",
+		"POST-APPROVAL-2 REDISCOVERY: prove the complete local installation converged",
 	)
 
 	post := backend.Rediscover()
@@ -398,7 +502,7 @@ func executeApproval2ControllerWithBackend(
 	) {
 		return rollbackAll(
 			errors.New(
-				"post-Approval-2 rediscovery still contains local mutations; implemented Approval 2 transaction did not converge",
+				"post-Approval-2 rediscovery still contains local mutations; Approval 2 did not converge",
 			),
 		)
 	}
@@ -414,6 +518,19 @@ func executeApproval2ControllerWithBackend(
 		)
 	}
 
+	for _, step := range steps {
+		if step.commit == nil {
+			continue
+		}
+		if err := step.commit(); err != nil {
+			return result, fmt.Errorf(
+				"Approval 2 converged, but transaction cleanup failed at %s: %w",
+				step.name,
+				err,
+			)
+		}
+	}
+
 	fmt.Fprintln(
 		writer,
 		"APPROVAL 2 RESULT: PASS",
@@ -424,6 +541,57 @@ func executeApproval2ControllerWithBackend(
 	)
 
 	return result, nil
+}
+
+func validateApproval2BackendCoverage(
+	report Report,
+	plan InstallPlan,
+	handoff approval1PKIHandoff,
+	backend approval2ControllerBackend,
+) error {
+	_, extended := backend.(approval2ExtendedControllerBackend)
+
+	if extended {
+		return nil
+	}
+
+	if approval2OperationalConfigRequired(
+		report,
+		plan,
+	) {
+		return errors.New(
+			"Approval 2 operational CONFIG mutation is not implemented by the current backend",
+		)
+	}
+
+	for _, action := range plan.Actions {
+		if !planActionMutates(
+			action.Action,
+		) {
+			continue
+		}
+
+		switch action.Authority {
+		case "LOCAL ID":
+			continue
+		case "CONFIG":
+			if approval2TransportConfigTarget(
+				report,
+				handoff,
+				action.Target,
+			) {
+				continue
+			}
+		}
+
+		return fmt.Errorf(
+			"Approval 2 mutating authority %q is not implemented by the current backend; target=%s",
+			action.Authority,
+			action.Target,
+		)
+	}
+
+	return nil
 }
 
 func validateApproval2ControllerPlan(
@@ -501,9 +669,10 @@ func validateApproval2ControllerMutationScope(
 	plan InstallPlan,
 	handoff approval1PKIHandoff,
 ) error {
-	configMutationCount := 0
-	crlMutationCount := 0
-	trustMutationCount := 0
+	operationalConfig := 0
+	sourceConfig := 0
+	crlConfig := 0
+	trustConfig := 0
 
 	for _, action := range plan.Actions {
 		if !planActionMutates(
@@ -523,18 +692,9 @@ func validateApproval2ControllerMutationScope(
 			}
 
 		case "CONFIG":
-			configMutationCount++
-
-			if err := handoff.validate(); err != nil {
-				return fmt.Errorf(
-					"Approval 2 CONFIG mutation requires a complete typed Approval 1 PKI handoff: %w",
-					err,
-				)
-			}
-
 			if action.Action != planActionCreate {
 				return fmt.Errorf(
-					"Approval 2 transport CONFIG supports CREATE only; action=%s target=%s",
+					"Approval 2 CONFIG supports CREATE only; action=%s target=%s",
 					action.Action,
 					action.Target,
 				)
@@ -548,22 +708,67 @@ func validateApproval2ControllerMutationScope(
 			case strings.EqualFold(
 				target,
 				strings.TrimSpace(
-					handoff.CRLDestinationPath,
+					report.Config.Path,
 				),
 			):
-				crlMutationCount++
+				operationalConfig++
 
 			case strings.EqualFold(
 				target,
-				strings.TrimSpace(
-					report.Trust.Path,
+				approval2ExpectedSourceTarget(
+					report,
 				),
 			):
-				trustMutationCount++
+				sourceConfig++
+
+			case handoff.complete() &&
+				strings.EqualFold(
+					target,
+					strings.TrimSpace(
+						handoff.CRLDestinationPath,
+					),
+				):
+				crlConfig++
+
+			case handoff.complete() &&
+				strings.EqualFold(
+					target,
+					strings.TrimSpace(
+						report.Trust.Path,
+					),
+				):
+				trustConfig++
 
 			default:
+				if !handoff.complete() {
+					return fmt.Errorf(
+						"Approval 2 CONFIG mutation requires a complete typed Approval 1 PKI handoff: %w",
+						handoff.validate(),
+					)
+				}
 				return fmt.Errorf(
 					"Approval 2 CONFIG target %q is not implemented by the current controller",
+					action.Target,
+				)
+			}
+
+		case "RIGHTS", "GROUPS", "ACL", "RUNTIME":
+			if action.Action != planActionReconcile {
+				return fmt.Errorf(
+					"Approval 2 %s supports RECONCILE only; action=%s target=%s",
+					action.Authority,
+					action.Action,
+					action.Target,
+				)
+			}
+
+		case "RELEASE TRUST", "PACKAGE", "SCM":
+			if action.Action != planActionCreate &&
+				action.Action != planActionReconcile {
+				return fmt.Errorf(
+					"Approval 2 %s supports CREATE or RECONCILE only; action=%s target=%s",
+					action.Authority,
+					action.Action,
 					action.Target,
 				)
 			}
@@ -577,18 +782,113 @@ func validateApproval2ControllerMutationScope(
 		}
 	}
 
-	if configMutationCount != 0 {
-		if configMutationCount != 2 ||
-			crlMutationCount != 1 ||
-			trustMutationCount != 1 {
+	if operationalConfig != 0 ||
+		sourceConfig != 0 {
+		if operationalConfig != 1 ||
+			sourceConfig != 1 {
 			return fmt.Errorf(
-				"Approval 2 transport CONFIG requires exactly one approved CRL CREATE and one approved trust-config CREATE; config=%d crl=%d trust=%d",
-				configMutationCount,
-				crlMutationCount,
-				trustMutationCount,
+				"Approval 2 operational CONFIG requires exactly one config CREATE and one source.id CREATE; config=%d source=%d",
+				operationalConfig,
+				sourceConfig,
+			)
+		}
+	}
+
+	if crlConfig != 0 ||
+		trustConfig != 0 {
+		if err := handoff.validate(); err != nil {
+			return fmt.Errorf(
+				"Approval 2 transport CONFIG requires a complete typed Approval 1 PKI handoff: %w",
+				err,
+			)
+		}
+
+		if crlConfig != 1 ||
+			trustConfig != 1 {
+			return fmt.Errorf(
+				"Approval 2 transport CONFIG requires exactly one approved CRL CREATE and one approved trust-config CREATE; crl=%d trust=%d",
+				crlConfig,
+				trustConfig,
 			)
 		}
 	}
 
 	return nil
+}
+
+func approval2TransportConfigRequired(
+	report Report,
+	plan InstallPlan,
+	handoff approval1PKIHandoff,
+) bool {
+	if !handoff.complete() {
+		return false
+	}
+
+	for _, action := range plan.Actions {
+		if action.Authority != "CONFIG" ||
+			!planActionMutates(
+				action.Action,
+			) {
+			continue
+		}
+		if approval2TransportConfigTarget(
+			report,
+			handoff,
+			action.Target,
+		) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func approval2TransportConfigTarget(
+	report Report,
+	handoff approval1PKIHandoff,
+	target string,
+) bool {
+	if !handoff.complete() {
+		return false
+	}
+
+	target = strings.TrimSpace(
+		target,
+	)
+
+	return strings.EqualFold(
+		target,
+		strings.TrimSpace(
+			handoff.CRLDestinationPath,
+		),
+	) || strings.EqualFold(
+		target,
+		strings.TrimSpace(
+			report.Trust.Path,
+		),
+	)
+}
+
+func approval2RemainingLocalRequired(
+	plan InstallPlan,
+) bool {
+	for _, authority := range []string{
+		"RELEASE TRUST",
+		"PACKAGE",
+		"RIGHTS",
+		"GROUPS",
+		"SCM",
+		"ACL",
+		"RUNTIME",
+	} {
+		if planHasMutationAuthority(
+			plan,
+			authority,
+		) {
+			return true
+		}
+	}
+
+	return false
 }
