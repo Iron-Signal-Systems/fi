@@ -16,6 +16,7 @@ type Approval1PKITransactionResult struct {
 	Applied bool
 	Detail  string
 	Durable bool
+	Handoff approval1PKIHandoff
 }
 
 type Approval1ControllerResult struct {
@@ -46,6 +47,11 @@ type approval1ControllerBackend interface {
 		before Report,
 		plan InstallPlan,
 	) (Approval1PKITransactionResult, error)
+
+	// PKIHandoff returns the exact complete structured handoff established by
+	// the successful Approval-1 PKI transaction. The controller consumes it
+	// only after ApplyPKI reports Applied=true and Durable=true.
+	PKIHandoff() approval1PKIHandoff
 
 	Rediscover() Report
 
@@ -293,6 +299,17 @@ func executeApproval1ControllerWithBackend(
 				),
 			)
 		}
+
+		handoff := backend.PKIHandoff()
+		if err := handoff.validate(); err != nil {
+			return rollbackOuter(
+				fmt.Errorf(
+					"Approval 1 PKI transaction returned success without a complete typed PKI handoff: %w",
+					err,
+				),
+			)
+		}
+		result.PKI.Handoff = handoff
 
 		fmt.Fprintln(
 			writer,
