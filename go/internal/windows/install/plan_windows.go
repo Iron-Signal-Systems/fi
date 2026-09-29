@@ -774,7 +774,7 @@ func planLocalGMSAs(
 				PlanAction{
 					Action:    planActionBlocked,
 					Authority: "LOCAL ID",
-					Detail:    "native managed-service-account discovery state is unavailable; FI will not infer local absence",
+					Detail:    "authoritative gMSA local-state discovery is unavailable; FI will not infer local absence",
 					Target:    identity.Account,
 				},
 			)
@@ -788,57 +788,51 @@ func planLocalGMSAs(
 				PlanAction{
 					Action:    planActionNoChange,
 					Authority: "LOCAL ID",
-					Detail:    "native managed-service-account state=installed",
+					Detail:    "AD gMSA exists and the native Netlogon local service-account store contains the identity",
 					Target:    identity.Account,
 				},
 			)
-		case "not_exist":
+
+		case "not_installed":
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionReconcile,
 					Authority: "LOCAL ID",
-					Detail:    "native account state authoritatively reports not_exist; install/test locally only after Approval 1 has established the AD gMSA and password-retrieval policy, then Approval 2",
+					Detail:    "AD gMSA exists but the native Netlogon local service-account store does not contain the identity; install it locally after Approval 2 before configuring rights, groups, ACL dependencies, or services",
 					Target:    identity.Account,
 				},
 			)
-		case "can_install":
-			plan.Actions = append(
-				plan.Actions,
-				PlanAction{
-					Action:    planActionReconcile,
-					Authority: "LOCAL ID",
-					Detail:    "native account state permits local installation; requires Approval 2",
-					Target:    identity.Account,
-				},
-			)
+
 		case "pending_ad_creation":
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionReconcile,
 					Authority: "LOCAL ID",
-					Detail:    "AD authoritatively confirms the gMSA is absent; after Approval 1 creates it, rediscover native local state and install/test the managed service account before Approval 2 local service configuration",
+					Detail:    "AD authoritatively confirms the gMSA is absent; Approval 1 must create it, then FI must rediscover authoritative AD and native Netlogon local state before Approval 2 can install it locally",
 					Target:    identity.Account,
 				},
 			)
+
 		case notKnown:
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionBlocked,
 					Authority: "LOCAL ID",
-					Detail:    "native managed-service-account state is unknown; FI will not infer absence or installability",
+					Detail:    "gMSA AD/native Netlogon local state is unknown; FI will not infer local absence or installation authority",
 					Target:    identity.Account,
 				},
 			)
+
 		default:
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionBlocked,
 					Authority: "LOCAL ID",
-					Detail:    "native managed-service-account state=" + state.State + " does not authorize automatic installation planning",
+					Detail:    "gMSA local state=" + state.State + " does not authorize automatic local installation planning",
 					Target:    identity.Account,
 				},
 			)

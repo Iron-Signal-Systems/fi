@@ -36,7 +36,16 @@ type GMSAState struct {
 }
 
 var (
-	netapi32ManagedServiceDLL  = syscall.NewLazyDLL("netapi32.dll")
+	logoncliManagedServiceDLL = syscall.NewLazyDLL(
+		"logoncli.dll",
+	)
+	netapi32ManagedServiceDLL = syscall.NewLazyDLL(
+		"netapi32.dll",
+	)
+
+	netIsServiceAccountProc = logoncliManagedServiceDLL.NewProc(
+		"NetIsServiceAccount",
+	)
 	netQueryServiceAccountProc = netapi32ManagedServiceDLL.NewProc(
 		"NetQueryServiceAccount",
 	)
@@ -124,39 +133,52 @@ func discoverGMSAs(report *Report) {
 		}
 		seen[key] = struct{}{}
 
-		state, err := queryManagedServiceAccountState(sam)
-		if err != nil {
-			// NetQueryServiceAccount cannot always return an MSA_INFO_STATE
-			// for an account that AD authoritatively proves does not exist.
-			// Preserve that distinction: this is not local "absence" and it is
-			// not an UNKNOWN->CREATE conversion. It is a sequencing dependency.
-			if report.AD.GMSADiscoveryKnown {
-				if _, found := findADGMSA(
-					report.AD.GMSAs,
-					sam,
-				); !found {
-					report.GMSAs = append(
-						report.GMSAs,
-						GMSAState{
-							Account:        account,
-							Role:           item.Role,
-							SAMAccountName: sam,
-							State:          "pending_ad_creation",
-						},
-					)
-					report.addCheck(
-						checkInfo,
-						item.Role+" managed service account",
-						fmt.Sprintf(
-							"AD authoritatively confirms sam=%s is absent; native local query is deferred until the AD gMSA is created (%v)",
-							sam,
-							err,
-						),
-					)
-					continue
-				}
-			}
+		if !report.AD.GMSADiscoveryKnown {
+			report.GMSAs = append(
+				report.GMSAs,
+				GMSAState{
+					Account:        account,
+					Role:           item.Role,
+					SAMAccountName: sam,
+					State:          notKnown,
+				},
+			)
+			report.addCheck(
+				checkFail,
+				item.Role+" managed service account",
+				"Active Directory gMSA discovery is not authoritative; FI did not query local Netlogon service-account state",
+			)
+			continue
+		}
 
+		if _, found := findADGMSA(
+			report.AD.GMSAs,
+			sam,
+		); !found {
+			report.GMSAs = append(
+				report.GMSAs,
+				GMSAState{
+					Account:        account,
+					Role:           item.Role,
+					SAMAccountName: sam,
+					State:          "pending_ad_creation",
+				},
+			)
+			report.addCheck(
+				checkInfo,
+				item.Role+" managed service account",
+				fmt.Sprintf(
+					"AD authoritatively confirms sam=%s is absent; local Netlogon service-account state is not queried until Approval 1 creates the gMSA",
+					sam,
+				),
+			)
+			continue
+		}
+
+		present, err := localManagedServiceAccountPresent(
+			sam,
+		)
+		if err != nil {
 			report.GMSAs = append(
 				report.GMSAs,
 				GMSAState{
@@ -174,6 +196,21 @@ func discoverGMSAs(report *Report) {
 			continue
 		}
 
+		state := "not_installed"
+		status := checkInfo
+		if present {
+			state = "installed"
+			status = checkPass
+		}
+
+		detail := fmt.Sprintf(
+			"account=%s sam=%s ad=present netlogon_present=%t state=%s",
+			account,
+			sam,
+			present,
+			state,
+		)
+
 		report.GMSAs = append(
 			report.GMSAs,
 			GMSAState{
@@ -183,35 +220,10 @@ func discoverGMSAs(report *Report) {
 				State:          state,
 			},
 		)
-
-		if state != "installed" {
-			status := checkFail
-			switch state {
-			case "not_exist", "can_install":
-				status = checkInfo
-			}
-			report.addCheck(
-				status,
-				item.Role+" managed service account",
-				fmt.Sprintf(
-					"account=%s sam=%s state=%s",
-					account,
-					sam,
-					state,
-				),
-			)
-			continue
-		}
-
 		report.addCheck(
-			checkPass,
+			status,
 			item.Role+" managed service account",
-			fmt.Sprintf(
-				"account=%s sam=%s state=%s",
-				account,
-				sam,
-				state,
-			),
+			detail,
 		)
 	}
 }
@@ -229,6 +241,45 @@ func domainJoinStatusName(value uint32) string {
 	default:
 		return fmt.Sprintf("not_known(%d)", value)
 	}
+}
+
+func localManagedServiceAccountPresent(
+	samAccountName string,
+) (bool, error) {
+	samAccountName, err := serviceAccountSAMName(
+		samAccountName,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	accountName, err := syscall.UTF16PtrFromString(
+		samAccountName,
+	)
+	if err != nil {
+		return false, fmt.Errorf(
+			"encode managed service account %q: %w",
+			samAccountName,
+			err,
+		)
+	}
+
+	var isService int32
+
+	status, _, _ := netIsServiceAccountProc.Call(
+		0,
+		uintptr(unsafe.Pointer(accountName)),
+		uintptr(unsafe.Pointer(&isService)),
+	)
+	if status != 0 {
+		return false, fmt.Errorf(
+			"query local Netlogon service-account presence %q: NTSTATUS=0x%08x",
+			samAccountName,
+			uint32(status),
+		)
+	}
+
+	return isService != 0, nil
 }
 
 func managedServiceAccountStateName(value uint32) string {
