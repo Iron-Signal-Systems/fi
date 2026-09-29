@@ -239,8 +239,9 @@ The ZFS apply layer:
 
 Initial `apply-zfs` does not repair drift.
 
-The only production mutation primitive currently implemented by this phase is
-`zfs create`.
+The ZFS apply layer's production mutation primitive is `zfs create`.
+Later reviewed layers separately implement jail-root, identity, and filesystem
+directory mutation.
 
 ### ZFS verification phase
 
@@ -278,7 +279,7 @@ byte-identical before and after `verify-zfs`.
 - change jail boot policy;
 - start, stop, or modify jails;
 - install or start FI services.
-
+Later sections define the reviewed jail-root, identity, and directory layers. Remaining operations stay behind future reviewed apply boundaries.
 Those operations remain future reviewed apply layers.
 
 ### Non-mutation contract
@@ -360,3 +361,35 @@ The only identity mutation primitives are:
 
 The created accounts use `/nonexistent`, `/usr/sbin/nologin`, and disabled
 password login.
+
+### Production filesystem directories
+
+`apply-directories` initializes and verifies the FI-controlled production
+directory layer after ZFS, jail-root, and jail-local identity acceptance.
+
+The layer manages:
+
+- ownership and mode of the custody, recorded, READY, receiver-config, and
+  ingest-config host dataset roots;
+- required receiver and ingest jail mountpoint directories;
+- `/var/run/fi` for receiver and ingest with the configured FI runtime UID/GID;
+- the System-of-Record jail mountpoint hierarchy.
+
+Initialization is recorded with the locally-set ZFS property:
+
+    org.ironsignal.fi:directory-schema=1
+
+The marker is accepted only on an already-authoritative FI dataset or jail-root
+clone. Inherited markers are not accepted.
+
+The layer preclassifies every managed resource before its first mutation,
+fails closed on drift or collisions, independently verifies newly initialized
+resources, and treats an exact second apply as a no-op.
+
+PostgreSQL data-directory ownership is intentionally not selected by this
+layer. It remains deferred until the selected FreeBSD PostgreSQL package has
+established and exposed the service UID/GID.
+
+Production invocation is:
+
+    ./fi-bootstrap.sh apply-directories /path/to/fi-bootstrap.conf

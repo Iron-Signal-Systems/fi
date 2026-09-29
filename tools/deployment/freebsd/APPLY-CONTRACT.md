@@ -494,8 +494,9 @@ The only production mutation primitive in this layer is:
 
     zfs create
 
-No jail-root, identity, devfs, host-file, VNET, PF, service, or boot-policy
-mutation is implemented by this checkpoint.
+Jail-root and jail-local identity mutation are also implemented by the later
+layers in this contract. Directory, devfs, host-file, VNET, PF, service, and
+boot-policy mutation remain unimplemented by this checkpoint.
 
 Real-host production mutation remains subject to explicit pre-mutation review
 and post-apply acceptance.
@@ -733,3 +734,157 @@ The layer must not:
 - modify the PostgreSQL jail;
 - create application directories;
 - modify jail, VNET, devfs, PF, or service configuration.
+
+## Production filesystem directory layer
+
+The filesystem directory layer is the next deployment mutation boundary after
+jail-local runtime identities.
+
+It establishes only the FI-controlled directory ownership and mode required
+before host-controlled mounts and FI services can be installed.
+
+It does not:
+
+- install or modify jail or fstab files;
+- mount or unmount filesystems;
+- create or modify devfs rules;
+- create or destroy VNET interfaces;
+- modify bridges or PF;
+- start or stop jails;
+- install or start FI services;
+- select or modify jail boot policy.
+
+### Directory initialization marker
+
+Directory initialization uses the locally-set ZFS user property:
+
+    org.ironsignal.fi:directory-schema=1
+
+This property is not an ownership marker by itself.
+
+The underlying production dataset or jail-root clone must already classify as
+exact `OWNED_MATCH` under its authoritative ZFS or jail-root contract before
+the directory layer may act on it.
+
+A missing directory-schema property means that directory initialization has
+not yet been completed for that FI-owned resource.
+
+Once the property is locally set to `1`, directory ownership or mode mismatch
+is `OWNED_DRIFT` and must fail closed.
+
+An inherited directory-schema property is not accepted as local initialization
+authority.
+
+### Host source-directory permissions
+
+The following FI-owned ZFS dataset roots receive exact Unix ownership and mode:
+
+| Configuration path | Owner | Group | Mode |
+| --- | ---: | ---: | ---: |
+| `FI_CUSTODY_GENERATION_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
+| `FI_RECORDED_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
+| `FI_READY_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
+| `FI_RECEIVER_CONFIG_HOST` | `0` | `FI_RUNTIME_GID` | `0750` |
+| `FI_INGEST_CONFIG_HOST` | `0` | `FI_RUNTIME_GID` | `0750` |
+
+The custody, recorded, and READY roots use the shared FI numeric identity so
+the existing owner-only FI object modes remain valid across the receiver and
+ingest jail views.
+
+The configuration roots remain host-root-owned. Their FI runtime group permits
+the applicable jail-local service identity to traverse and read explicitly
+permitted configuration material after the host mounts that dataset read-only
+into the jail.
+
+`FI_SOR_POSTGRES_HOST` is not modified by this layer. PostgreSQL ownership and
+mode remain deferred until the selected FreeBSD PostgreSQL package has been
+installed and its service UID/GID has been inspected and accepted.
+
+### Receiver jail directories
+
+Before the receiver directory-schema marker is set, the following FI-specific
+paths are created inside `FI_RECEIVER_ROOT`:
+
+| Jail path | Owner | Group | Mode | Purpose |
+| --- | ---: | ---: | ---: | --- |
+| `/var/db/fi` | `0` | `0` | `0755` | FI data namespace |
+| `/var/db/fi/custody` | `0` | `0` | `0755` | custody mount parent |
+| `/var/db/fi/custody/generation` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/var/db/fi/custody/recorded` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/var/db/fi/custody/ready` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/usr/local/etc/fi` | `0` | `0` | `0755` | read-only config mountpoint |
+| `/var/run/fi` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` | jail-local runtime state |
+
+### Ingest jail directories
+
+Before the ingest directory-schema marker is set, the following FI-specific
+paths are created inside `FI_INGEST_ROOT`:
+
+| Jail path | Owner | Group | Mode | Purpose |
+| --- | ---: | ---: | ---: | --- |
+| `/var/db/fi` | `0` | `0` | `0755` | FI data namespace |
+| `/var/db/fi/custody` | `0` | `0` | `0755` | custody mount parent |
+| `/var/db/fi/custody/generation` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/var/db/fi/custody/recorded` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/var/db/fi/custody/ready` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/usr/local/etc/fi` | `0` | `0` | `0755` | read-only config mountpoint |
+| `/var/run/fi` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` | jail-local runtime state |
+
+### System-of-Record jail directories
+
+Before the System-of-Record jail directory-schema marker is set, the following
+mount hierarchy is created inside `FI_SOR_DB_ROOT`:
+
+| Jail path | Owner | Group | Mode | Purpose |
+| --- | ---: | ---: | ---: | --- |
+| `/var/db/fi` | `0` | `0` | `0755` | FI data namespace |
+| `/var/db/fi/sor` | `0` | `0` | `0755` | SOR mount parent |
+| `/var/db/fi/sor/postgres` | `0` | `0` | `0755` | PostgreSQL nullfs mountpoint |
+
+The PostgreSQL service does not use these root-owned mountpoint permissions as
+its data-directory authority. After the host-controlled nullfs mount is active,
+the mounted source dataset's separately accepted PostgreSQL ownership and mode
+are authoritative.
+
+### Directory preclassification and mutation
+
+The entire directory layer is preclassified before its first mutation.
+
+For host source directories, the corresponding dataset must already be an
+exact FI-owned dataset. A missing directory-schema marker permits the layer to
+establish the contracted owner and mode and then verify them before setting the
+marker locally.
+
+For jail-local directories, a jail root without a local directory-schema
+marker may be initialized only when every FI-specific managed destination path
+for that jail is absent. An unexpected pre-existing managed path is a
+`FOREIGN_COLLISION` and fails closed.
+
+When a jail root has a local directory-schema marker, every managed directory
+must:
+
+- exist;
+- be a directory;
+- not be a symbolic link;
+- have the exact numeric owner;
+- have the exact numeric group;
+- have the exact mode.
+
+Any mismatch is `OWNED_DRIFT`.
+
+The directory-schema marker is written only after all directories for that
+resource have been independently verified.
+
+A partial runtime failure is preserved for inspection. The deployment must not
+recursively remove, replace, rename, or silently repair an ambiguous
+pre-existing directory.
+
+The only initial directory mutation primitives are:
+
+    mkdir
+    chown
+    chmod
+    zfs set org.ironsignal.fi:directory-schema=1
+
+`/var/run/fi` is operational state. The later rc.d service layer must recreate
+it with the same exact owner and mode after boot when required.

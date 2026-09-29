@@ -36,6 +36,7 @@ Usage:
     $PROGRAM apply-zfs <config-file>
     $PROGRAM apply-jail-roots <config-file>
     $PROGRAM apply-identities <config-file>
+    $PROGRAM apply-directories <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
@@ -60,6 +61,10 @@ Current commands:
         Create or verify FI runtime identities inside receiver and ingest jail roots.
         This command does not create FI application identities on the host.
 
+    apply-directories
+        Initialize and verify FI production filesystem directories.
+        This command mutates only the directory layer defined by the apply contract.
+
     preflight-jail-roots
         Read and classify the three production jail-root destinations before apply.
         ABSENT and exact OWNED_MATCH states are accepted; no state is modified.
@@ -76,7 +81,7 @@ Current commands:
 
 The plan output directory must not already exist.
 
-Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
+Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities, apply-directories, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
 VNET interfaces, PF rules, services, or boot policy.
@@ -838,7 +843,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|verify-jail-roots|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -922,6 +927,30 @@ main()
 
             . "$SCRIPT_DIR/fi-host-identity-apply.sh"
             identity_require_commands
+            ;;
+        apply-directories)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "directory operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-zfs-apply.sh" ] ||
+                fail "ZFS helper not found: $SCRIPT_DIR/fi-host-zfs-apply.sh"
+
+            [ -f "$SCRIPT_DIR/fi-host-jail-root-apply.sh" ] ||
+                fail "jail-root helper not found: $SCRIPT_DIR/fi-host-jail-root-apply.sh"
+
+            [ -f "$SCRIPT_DIR/fi-host-directory-apply.sh" ] ||
+                fail "directory helper not found: $SCRIPT_DIR/fi-host-directory-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-zfs-apply.sh"
+            . "$SCRIPT_DIR/fi-host-jail-root-apply.sh"
+            . "$SCRIPT_DIR/fi-host-directory-apply.sh"
+
+            zfs_apply_require_commands
+            jail_root_require_commands
+            directory_require_commands
+            ;;
+        apply-directories)
+            apply_directories
             ;;
         verify-zfs)
             [ "$(id -u)" -eq 0 ] ||

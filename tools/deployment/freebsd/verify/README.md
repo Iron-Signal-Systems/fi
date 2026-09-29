@@ -99,8 +99,10 @@ Real-host acceptance on the intended FreeBSD backend demonstrated:
 - `verify-zfs` exits successfully;
 - selected ZFS state captured before and after verification is byte-identical.
 
-Neither command currently creates jail roots, runtime identities, devfs rules,
-jail/fstab files, VNET interfaces, PF policy, FI services, or boot policy.
+The ZFS commands themselves do not create jail roots, runtime identities,
+directories, devfs rules, jail/fstab files, VNET interfaces, PF policy,
+FI services, or boot policy. Jail-root, identity, and directory mutation are
+separate reviewed deployment layers.
 
 ## Future runtime acceptance
 
@@ -162,3 +164,27 @@ The identity verifier proves:
 Production acceptance additionally verifies the resulting receiver and ingest
 `master.passwd` and group records and confirms that the FreeBSD host remains
 clear of FI runtime identities.
+
+## Filesystem directory verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-Directory-Apply.sh
+
+This offline acceptance path verifies:
+
+- uninitialized FI-owned host-directory classification;
+- exact `OWNED_MATCH` classification;
+- ownership/mode drift detection;
+- symbolic-link collision rejection;
+- wrong local directory-schema version rejection;
+- marker inspection failure as `UNKNOWN`;
+- empty uninitialized jail-directory classification;
+- rejection of pre-existing managed jail paths;
+- exact directory-schema `zfs set` mutation arguments;
+- initialization of exactly five host resources and three jail resources;
+- exact second-apply no-op behavior;
+- layer-wide preclassification before mutation;
+- wrong-host rejection before mutation.
+
+The verifier does not modify the production pool or production jail roots.
