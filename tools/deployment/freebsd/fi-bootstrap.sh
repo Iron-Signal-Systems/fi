@@ -856,6 +856,18 @@ render_plan()
     cat "$SCRIPT_DIR/fi-vnet-pair.sh" > "$OUTPUT_DIR/fi-vnet-pair" ||
         fail "unable to copy FI VNET helper into deployment plan"
 
+    render_template \
+        "$SCRIPT_DIR/lifecycle.d/fi-jails.rc.conf.template" \
+        "$OUTPUT_DIR/rc.conf.d.fi_jails"
+
+    render_template \
+        "$SCRIPT_DIR/lifecycle.d/devfs.rc.conf.template" \
+        "$OUTPUT_DIR/rc.conf.d.devfs.90-fi"
+
+    render_template \
+        "$SCRIPT_DIR/lifecycle.d/fi-jails.rc.d.template" \
+        "$OUTPUT_DIR/rc.d.fi_jails"
+
     : > "$OUTPUT_DIR/MANIFEST.sha256" ||
         fail "unable to create render manifest"
 
@@ -867,7 +879,10 @@ render_plan()
         fstab.fi-ingest \
         fstab.fi-sor-db \
         devfs.rules.fi \
-        fi-vnet-pair
+        fi-vnet-pair \
+        rc.conf.d.fi_jails \
+        rc.conf.d.devfs.90-fi \
+        rc.d.fi_jails
     do
         rendered_hash=$(sha256 -q "$OUTPUT_DIR/$rendered_name") ||
             fail "unable to hash rendered file: $rendered_name"

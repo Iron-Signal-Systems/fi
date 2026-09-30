@@ -6,6 +6,8 @@ fi-ingest {
 
     persist;
 
+    depend = "fi-sor-db";
+
     exec.prestart = "/usr/local/libexec/fi-vnet-pair create-dual @FI_INGEST_MGMT_HOST_IF@ @FI_INGEST_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-ingest:mgmt @FI_INGEST_WORK_HOST_IF@ @FI_INGEST_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-ingest:work";
 
     vnet;

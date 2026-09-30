@@ -273,3 +273,28 @@ The offline host-file verifier proves:
 The verifier uses temporary files only. It does not install anything beneath
 `/etc` or `/usr/local/libexec` and does not operate live jails, VNET, PF, or
 devfs.
+
+## Lifecycle render verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-Lifecycle-Render.sh
+
+This offline verifier proves:
+
+- dedicated FI lifecycle enable authority;
+- absence of FI ownership over global `jail_*` policy;
+- explicit FI startup order;
+- explicit reverse FI shutdown order;
+- one-jail-at-a-time base jail-service invocation;
+- independent `jls` runtime verification;
+- FI rc ordering after the base jail service;
+- explicit ingest dependency on System of Record;
+- explicit receiver dependency on ingest;
+- System of Record as the dependency root;
+- persistent loading of `/etc/devfs.rules.fi`;
+- preservation of existing site `devfs_rulesets`;
+- duplicate-safe FI rules-file append behavior;
+- absence of FI control over `devfs_system_ruleset`.
+
+The verifier performs no live rc, jail, devfs, VNET, or service mutation.

@@ -481,3 +481,62 @@ change `rc.conf`, modify PF, or select jail boot policy.
 
 `/etc/devfs.rules.fi` is intentionally inert until the later lifecycle layer
 adds it to the configured FreeBSD `devfs_rulesets` list.
+
+### Production lifecycle policy
+
+FI does not take ownership of the host's global FreeBSD jail-service policy.
+
+In particular, FI does not set:
+
+    jail_enable
+    jail_parallel_start
+    jail_list
+    jail_reverse_stop
+
+Production FI jail startup is instead controlled by a dedicated local rc.d
+service:
+
+    /usr/local/etc/rc.d/fi_jails
+
+with its dedicated enable configuration:
+
+    /etc/rc.conf.d/fi_jails
+
+The FI controller starts production jails one at a time in this order:
+
+    fi-sor-db
+    fi-ingest
+    fi-receiver
+
+It stops them one at a time in the reverse order:
+
+    fi-receiver
+    fi-ingest
+    fi-sor-db
+
+Each operation invokes the base FreeBSD jail service with `onestart` or
+`onestop` for exactly one named jail and then independently verifies runtime
+state with `jls`.
+
+The jail configuration additionally carries explicit dependencies:
+
+    fi-receiver -> fi-ingest -> fi-sor-db
+
+The controller therefore owns FI application ordering without changing the
+site's global jail ordering or selection policy.
+
+The FI controller requires the base `jail` rc service. This places it after
+the base jail service during startup and before it during reverse shutdown
+ordering.
+
+Persistent FI devfs loading uses:
+
+    /etc/rc.conf.d/devfs/90-fi
+
+The devfs fragment enables ruleset loading and adds `/etc/devfs.rules.fi` to
+the site's existing `devfs_rulesets` list only when it is not already present.
+
+FI does not set `devfs_system_ruleset`.
+
+Rendering this policy does not install rc files, reload devfs, or start/stop
+any jail.

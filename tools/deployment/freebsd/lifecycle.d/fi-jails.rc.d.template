@@ -1,0 +1,113 @@
+#!/bin/sh
+
+# FI-MANAGED: ironsignal-fi-freebsd-lifecycle-v1
+# FI-ROLE: fi-jails-controller
+#
+# PROVIDE: fi_jails
+# REQUIRE: jail
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="fi_jails"
+desc="FI production jail lifecycle"
+rcvar="fi_jails_enable"
+
+start_cmd="fi_jails_start"
+stop_cmd="fi_jails_stop"
+status_cmd="fi_jails_status"
+extra_commands="status"
+
+: ${fi_jails_enable:="NO"}
+
+fi_jails_is_running()
+{
+    /usr/sbin/jls -j "$1" >/dev/null 2>&1
+}
+
+fi_jails_start_one()
+{
+    fi_jail_name=$1
+
+    if fi_jails_is_running "$fi_jail_name"; then
+        echo "$fi_jail_name already running"
+        return 0
+    fi
+
+    /etc/rc.d/jail onestart "$fi_jail_name"
+
+    if ! fi_jails_is_running "$fi_jail_name"; then
+        warn "FI production jail failed to start: $fi_jail_name"
+        return 1
+    fi
+
+    return 0
+}
+
+fi_jails_stop_one()
+{
+    fi_jail_name=$1
+
+    if ! fi_jails_is_running "$fi_jail_name"; then
+        echo "$fi_jail_name already stopped"
+        return 0
+    fi
+
+    /etc/rc.d/jail onestop "$fi_jail_name"
+
+    if fi_jails_is_running "$fi_jail_name"; then
+        warn "FI production jail failed to stop: $fi_jail_name"
+        return 1
+    fi
+
+    return 0
+}
+
+fi_jails_start()
+{
+    for fi_jail_name in \
+        fi-sor-db \
+        fi-ingest \
+        fi-receiver
+    do
+        fi_jails_start_one "$fi_jail_name" || return 1
+    done
+
+    return 0
+}
+
+fi_jails_stop()
+{
+    for fi_jail_name in \
+        fi-receiver \
+        fi-ingest \
+        fi-sor-db
+    do
+        fi_jails_stop_one "$fi_jail_name" || return 1
+    done
+
+    return 0
+}
+
+fi_jails_status()
+{
+    fi_jails_status_rc=0
+
+    for fi_jail_name in \
+        fi-sor-db \
+        fi-ingest \
+        fi-receiver
+    do
+        if fi_jails_is_running "$fi_jail_name"; then
+            echo "$fi_jail_name is running"
+        else
+            echo "$fi_jail_name is not running"
+            fi_jails_status_rc=1
+        fi
+    done
+
+    return "$fi_jails_status_rc"
+}
+
+load_rc_config "$name"
+run_rc_command "$1"

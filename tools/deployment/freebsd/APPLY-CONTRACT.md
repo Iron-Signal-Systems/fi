@@ -539,13 +539,90 @@ Any additional device requires an explicit contract revision and acceptance befo
 
 ## Jail boot policy
 
-`preflight` reports the current jail boot policy but does not change it.
+FI production lifecycle authority is isolated from the host's global jail
+service policy.
 
-`apply` must not silently choose a production boot policy.
+FI does not set or own:
 
-Automatic production jail startup and jail ordering must be explicitly defined
-and accepted before `apply` is permitted to modify `jail_enable`, `jail_list`,
-or equivalent lifecycle settings.
+    jail_enable
+    jail_parallel_start
+    jail_list
+    jail_reverse_stop
+
+The FI production jail controller is:
+
+    /usr/local/etc/rc.d/fi_jails
+
+Its dedicated service enable configuration is:
+
+    /etc/rc.conf.d/fi_jails
+
+The controller is ordered after the base FreeBSD `jail` rc service and
+participates in shutdown ordering.
+
+It starts FI production jails one at a time in this exact order:
+
+    fi-sor-db
+    fi-ingest
+    fi-receiver
+
+It stops FI production jails one at a time in this exact reverse order:
+
+    fi-receiver
+    fi-ingest
+    fi-sor-db
+
+Each start or stop uses the base jail rc service for exactly one named jail.
+The controller independently checks the resulting state with `jls` rather
+than accepting the wrapper command return alone as runtime acceptance.
+
+The jail definitions additionally enforce:
+
+    fi-ingest
+        depend = "fi-sor-db"
+
+    fi-receiver
+        depend = "fi-ingest"
+
+The System of Record is the FI dependency root.
+
+The resulting application dependency chain is:
+
+    fi-sor-db
+        -> fi-ingest
+        -> fi-receiver
+
+FI therefore owns its own production application lifecycle without selecting,
+reordering, or enabling unrelated site jails.
+
+The persistent FI devfs lifecycle fragment is:
+
+    /etc/rc.conf.d/devfs/90-fi
+
+It requires:
+
+    devfs_load_rulesets="YES"
+
+and appends:
+
+    /etc/devfs.rules.fi
+
+to the existing site `devfs_rulesets` value only when that path is not already
+present.
+
+FI does not set `devfs_system_ruleset` and therefore does not choose a host
+`/dev` ruleset.
+
+Rendering the lifecycle policy does not mutate rc configuration, reload devfs,
+or start/stop jails.
+
+Installation and verification remain the mutating portion of this layer and
+must satisfy FI's fail-closed preclassification and no-clobber requirements.
+
+Before lifecycle installation is accepted, FI must also reject any existing
+site lifecycle configuration that already claims direct automatic authority
+over the FI production jail names. That collision check belongs to the
+mutating lifecycle helper and real-host preflight, not this render checkpoint.
 
 ### Layer preclassification
 

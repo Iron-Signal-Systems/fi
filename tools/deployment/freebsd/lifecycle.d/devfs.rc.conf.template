@@ -1,0 +1,12 @@
+# FI-MANAGED: ironsignal-fi-freebsd-lifecycle-v1
+# FI-ROLE: devfs-boot-policy
+
+devfs_load_rulesets="YES"
+
+case " ${devfs_rulesets} " in
+    *" /etc/devfs.rules.fi "*)
+        ;;
+    *)
+        devfs_rulesets="${devfs_rulesets} /etc/devfs.rules.fi"
+        ;;
+esac

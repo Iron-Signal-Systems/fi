@@ -6,6 +6,8 @@ fi-receiver {
 
     persist;
 
+    depend = "fi-ingest";
+
     exec.prestart = "/usr/local/libexec/fi-vnet-pair create-receiver @FI_RECEIVER_EXTERNAL_IF@ @FI_RECEIVER_MGMT_HOST_IF@ @FI_RECEIVER_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-receiver:mgmt @FI_RECEIVER_WORK_HOST_IF@ @FI_RECEIVER_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-receiver:work";
 
     vnet;
