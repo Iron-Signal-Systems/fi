@@ -323,3 +323,42 @@ The offline lifecycle-apply verifier proves:
 
 The lifecycle installer writes configuration only. It does not start or stop
 jails and does not reload or mutate the running devfs ruleset.
+
+## Real-host state capture
+
+Run the read-only state capture before and after important real-host
+acceptance transitions.
+
+For the current receiver host:
+
+    ./Capture-FI-FreeBSD-Host-State.sh \
+        vtnet0 \
+        vtnet1 \
+        bridge10 \
+        bridge20 \
+        baseline
+
+The capture reports host, interface, route, jail, rc-policy, devfs, and FI
+production-file state. It performs no mutation.
+
+## Dedicated receiver interface return verification
+
+After `fi-receiver` has been stopped through the reviewed lifecycle path, run:
+
+    ./Validate-FI-FreeBSD-Dedicated-Interface-Return.sh \
+        vtnet0 \
+        192.168.1.218 \
+        vtnet1 \
+        bridge10 \
+        bridge20
+
+Acceptance requires:
+
+- the administrative interface and expected administrative IPv4 remain;
+- `vtnet1` has returned to the host;
+- `vtnet1` has no IPv4 address;
+- the IPv4 route table does not reference `vtnet1`;
+- `vtnet1` is not a member of either FI bridge;
+- `fi-receiver` is stopped.
+
+The verifier is read-only.
