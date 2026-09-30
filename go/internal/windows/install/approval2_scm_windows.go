@@ -206,6 +206,18 @@ func reconcileServer2016Services(
 				},
 			)
 
+			if err := setApproval2ServiceManagedAccountFlag(
+				contract.Name,
+				contract.Account,
+			); err != nil {
+				_ = rollbackOwned()
+				return nil, nil, fmt.Errorf(
+					"mark created service %s as managed service account: %w",
+					contract.Name,
+					err,
+				)
+			}
+
 		case presencePresent:
 			if openErr != nil {
 				_ = rollbackOwned()

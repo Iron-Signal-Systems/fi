@@ -1083,6 +1083,13 @@ func planLocalGroups(
 			want:    false,
 		},
 		{
+			account: identities.CollectorSender.Account,
+			check:   "FICollector/FISender direct Event Log Readers membership",
+			detail:  "collector/sender requires direct Event Log Readers membership for Windows Security channel read access without local-Administrator membership",
+			group:   "Event Log Readers",
+			want:    true,
+		},
+		{
 			account: identities.USNReader.Account,
 			check:   "FIUSNReader direct local Administrator membership",
 			detail:  "USN helper requires the narrowly scoped local-Administrator boundary on Server 2016",

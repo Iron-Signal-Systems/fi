@@ -8,7 +8,6 @@ package install
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -647,21 +646,31 @@ func discoverIdentityBoundary(
 
 	checks := []struct {
 		account string
+		group   string
 		name    string
 		want    bool
 	}{
 		{
 			account: collector,
+			group:   "Administrators",
 			name:    "FICollector direct local Administrator membership",
 			want:    false,
 		},
 		{
+			account: collector,
+			group:   "Event Log Readers",
+			name:    "FICollector/FISender direct Event Log Readers membership",
+			want:    true,
+		},
+		{
 			account: usnReader,
+			group:   "Administrators",
 			name:    "FIUSNReader direct local Administrator membership",
 			want:    true,
 		},
 		{
 			account: objReader,
+			group:   "Administrators",
 			name:    "FIObjReader direct local Administrator membership",
 			want:    false,
 		},
@@ -677,7 +686,7 @@ func discoverIdentityBoundary(
 			continue
 		}
 
-		member, err := accountIsDirectLocalGroupMember("Administrators", check.account)
+		member, err := accountIsDirectLocalGroupMember(check.group, check.account)
 		if err != nil {
 			report.addCheck(
 				checkFail,
@@ -1760,12 +1769,12 @@ func readManagedAccountState(serviceName string) string {
 	}
 	defer key.Close()
 
-	value, _, err := key.GetBinaryValue("ServiceAccountManaged")
-	if err != nil || len(value) < 4 {
+	value, _, err := key.GetIntegerValue("ServiceAccountManaged")
+	if err != nil {
 		return notKnown
 	}
 
-	if binary.LittleEndian.Uint32(value[:4]) == 0 {
+	if value == 0 {
 		return "false"
 	}
 	return "true"

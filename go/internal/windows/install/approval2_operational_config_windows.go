@@ -657,7 +657,7 @@ func rollbackApproval2CreatedDirectories(
 	for index := len(created) - 1; index >= 0; index-- {
 		directory := created[index]
 
-		err := os.Remove(
+		err := os.RemoveAll(
 			directory,
 		)
 		if err == nil ||

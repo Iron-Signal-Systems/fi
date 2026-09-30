@@ -173,6 +173,7 @@ func reconcileServer2016Groups(identities DesiredFIIdentities) (func() error, er
 	}
 	contracts := []contract{
 		{account: identities.CollectorSender.Account, group: "Administrators", want: false},
+		{account: identities.CollectorSender.Account, group: "Event Log Readers", want: true},
 		{account: identities.USNReader.Account, group: "Administrators", want: true},
 		{account: identities.ObjReader.Account, group: "Administrators", want: false},
 		{account: identities.ObjReader.Account, group: "Backup Operators", want: false},

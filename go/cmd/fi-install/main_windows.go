@@ -96,6 +96,17 @@ func main() {
 		StateDir:        strings.TrimSpace(*stateDir),
 	}
 
+	if err := install.ValidateGovernedRootsForInstall(
+		inputs.GovernedRoots,
+	); err != nil {
+		fmt.Fprintf(
+			os.Stderr,
+			"`nFI INSTALLER INPUT BLOCKED: %v`n",
+			err,
+		)
+		os.Exit(1)
+	}
+
 	report := install.Discover()
 	plan := install.BuildPlanWithInputs(
 		report,
