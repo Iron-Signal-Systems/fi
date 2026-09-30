@@ -44,6 +44,7 @@ stack.
 The initial interface model is:
 
     fi-receiver
+        dedicated external/LAN interface
         management interface
         workload/data-plane interface
 
@@ -55,8 +56,14 @@ The initial interface model is:
         management interface
         workload/data-plane interface
 
-The host creates the epair interfaces and assigns the jail-side interfaces
-through `vnet.interface`.
+Management and workload attachments use host-created epairs. The jail-side
+interfaces are assigned through `vnet.interface`.
+
+The receiver additionally receives the site-configured dedicated physical
+external interface directly through `vnet.interface`.
+
+The dedicated receiver interface must have no host IP address and must not be a
+member of the management or workload bridge before receiver start.
 
 Jails do not create or attach their own host-side VNET interfaces.
 
@@ -71,9 +78,12 @@ The workload interface is for FI application traffic.
 
 The intended application paths are:
 
-    Windows FI sources -> fi-receiver workload interface
+    Windows FI sources -> fi-receiver dedicated external interface
 
     fi-ingest workload interface -> fi-sor-db workload interface
+
+The receiver management and workload interfaces do not replace the dedicated
+external source-facing interface.
 
 No PostgreSQL listener is exposed through the receiver jail.
 

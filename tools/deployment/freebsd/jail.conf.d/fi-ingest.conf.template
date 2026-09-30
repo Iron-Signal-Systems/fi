@@ -3,8 +3,23 @@ fi-ingest {
     host.hostname = "fi-ingest";
 
     persist;
+
+    exec.prestart = "/usr/local/libexec/fi-vnet-pair create-dual @FI_INGEST_MGMT_HOST_IF@ @FI_INGEST_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-ingest:mgmt @FI_INGEST_WORK_HOST_IF@ @FI_INGEST_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-ingest:work";
+
     vnet;
-    vnet.interface = "@FI_INGEST_MGMT_JAIL_IF@", "@FI_INGEST_WORK_JAIL_IF@";
+    vnet.interface = "@FI_INGEST_MGMT_JAIL_IF@";
+    vnet.interface += "@FI_INGEST_WORK_JAIL_IF@";
+
+    exec.start = "/sbin/ifconfig @FI_INGEST_MGMT_JAIL_IF@ inet @FI_INGEST_MGMT_ADDRESS@ up";
+    exec.start += "/sbin/ifconfig @FI_INGEST_WORK_JAIL_IF@ inet @FI_INGEST_WORK_ADDRESS@ up";
+    exec.start += "/sbin/route add default @FI_MGMT_GATEWAY@";
+    exec.start += "/bin/sh /etc/rc";
+
+    exec.stop = "/bin/sh /etc/rc.shutdown jail";
+
+    exec.poststop = "/usr/local/libexec/fi-vnet-pair destroy-dual @FI_INGEST_MGMT_HOST_IF@ @FI_INGEST_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ @FI_INGEST_WORK_HOST_IF@ @FI_INGEST_WORK_JAIL_IF@ @FI_WORK_BRIDGE@";
+
+    exec.consolelog = "/var/log/jail_console_${name}.log";
 
     mount.fstab = "@FI_INGEST_FSTAB@";
     mount.devfs;

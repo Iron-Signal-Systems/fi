@@ -216,3 +216,30 @@ exactly one helper-loading arm before configuration parsing and exactly one
 execution arm after configuration parsing. This specifically prevents a
 command from being accepted and prepared by bootstrap without ever executing
 its implementation.
+
+## Jail network render verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-Jail-Network-Render.sh
+
+This offline verifier renders the production jail configuration using the
+accepted fixture and proves:
+
+- receiver use of the dedicated external interface;
+- exact receiver management and workload epair lifecycle;
+- receiver external, management, and workload addresses;
+- receiver default routing through the external gateway;
+- exact ingest dual-epair lifecycle;
+- ingest default routing through the management gateway;
+- preservation of the System of Record dual-epair lifecycle;
+- absence of the receiver dedicated interface from ingest and SOR;
+- absence of the host administrative address from the receiver jail template;
+- exact VNET interface counts;
+- network configuration before `/etc/rc`;
+- controlled `/etc/rc.shutdown jail` on stop.
+
+This verifier performs no live VNET, bridge, route, jail, or interface mutation.
+
+Real-host acceptance remains required to prove physical receiver-interface
+return and address cleanup after jail shutdown.

@@ -3,8 +3,25 @@ fi-receiver {
     host.hostname = "fi-receiver";
 
     persist;
+
+    exec.prestart = "/usr/local/libexec/fi-vnet-pair create-receiver @FI_RECEIVER_EXTERNAL_IF@ @FI_RECEIVER_MGMT_HOST_IF@ @FI_RECEIVER_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-receiver:mgmt @FI_RECEIVER_WORK_HOST_IF@ @FI_RECEIVER_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-receiver:work";
+
     vnet;
-    vnet.interface = "@FI_RECEIVER_MGMT_JAIL_IF@", "@FI_RECEIVER_WORK_JAIL_IF@";
+    vnet.interface = "@FI_RECEIVER_EXTERNAL_IF@";
+    vnet.interface += "@FI_RECEIVER_MGMT_JAIL_IF@";
+    vnet.interface += "@FI_RECEIVER_WORK_JAIL_IF@";
+
+    exec.start = "/sbin/ifconfig @FI_RECEIVER_EXTERNAL_IF@ inet @FI_RECEIVER_EXTERNAL_ADDRESS@ up";
+    exec.start += "/sbin/ifconfig @FI_RECEIVER_MGMT_JAIL_IF@ inet @FI_RECEIVER_MGMT_ADDRESS@ up";
+    exec.start += "/sbin/ifconfig @FI_RECEIVER_WORK_JAIL_IF@ inet @FI_RECEIVER_WORK_ADDRESS@ up";
+    exec.start += "/sbin/route add default @FI_RECEIVER_EXTERNAL_GATEWAY@";
+    exec.start += "/bin/sh /etc/rc";
+
+    exec.stop = "/bin/sh /etc/rc.shutdown jail";
+
+    exec.poststop = "/usr/local/libexec/fi-vnet-pair destroy-dual @FI_RECEIVER_MGMT_HOST_IF@ @FI_RECEIVER_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ @FI_RECEIVER_WORK_HOST_IF@ @FI_RECEIVER_WORK_JAIL_IF@ @FI_WORK_BRIDGE@";
+
+    exec.consolelog = "/var/log/jail_console_${name}.log";
 
     mount.fstab = "@FI_RECEIVER_FSTAB@";
     mount.devfs;

@@ -361,30 +361,79 @@ are eventually written.
 
 ## VNET lifecycle authority
 
-Production VNET lifecycle follows the pattern already proven by `fi-dev`:
+Production VNET lifecycle uses deterministic interface names supplied by the
+site configuration.
+
+Management and workload network attachments use epair pairs:
 
     host exec.prestart
+        validate configured host and jail endpoint names are absent
         create epair
-        configure host peer
-        attach host peer to configured bridge
+        rename both endpoints deterministically
+        configure host endpoint
+        attach host endpoint to the configured bridge
 
     vnet.interface
-        transfer jail peer
+        transfer the configured jail endpoint into the jail VNET
 
     jail exec.start
-        configure jail peer address
+        configure the jail interface address
+        establish the jail default route
         start /etc/rc
 
+    jail exec.stop
+        run /etc/rc.shutdown jail
+
     host exec.poststop
-        remove host peer from bridge
-        destroy epair
+        detach/destroy the managed epair pair
 
-`apply` installs this lifecycle configuration.
+The receiver has an additional dedicated external physical interface.
 
-It does not create long-lived runtime epairs merely to prove configuration.
+Before receiver epair creation, the host helper must verify that the configured
+`FI_RECEIVER_EXTERNAL_IF`:
 
-A pre-existing interface using a configured production name remains a
+- exists;
+- has no host IPv4 or IPv6 address;
+- is not a member of the FI management bridge;
+- is not a member of the FI workload bridge.
+
+The receiver jail receives that physical interface directly through
+`vnet.interface` in addition to its management and workload epairs.
+
+Inside the receiver VNET:
+
+    FI_RECEIVER_EXTERNAL_IF
+        receives FI_RECEIVER_EXTERNAL_ADDRESS
+
+    FI_RECEIVER_MGMT_JAIL_IF
+        receives FI_RECEIVER_MGMT_ADDRESS
+
+    FI_RECEIVER_WORK_JAIL_IF
+        receives FI_RECEIVER_WORK_ADDRESS
+
+    default route
+        FI_RECEIVER_EXTERNAL_GATEWAY
+
+The ingest and System of Record jails receive management and workload epairs
+only. Their default route is `FI_MGMT_GATEWAY`.
+
+The dedicated receiver interface is not created or destroyed by FI. It is
+temporarily assigned to the receiver VNET by jail lifecycle authority and must
+return to the host when the jail is removed.
+
+Real-host restart acceptance must prove that after receiver shutdown the
+dedicated external interface:
+
+- is visible on the host again;
+- has no IPv4 address;
+- has no IPv6 address;
+- is not attached to either FI bridge.
+
+A pre-existing epair interface using a configured production name remains a
 collision unless FI runtime ownership is unambiguous.
+
+This checkpoint defines and renders the lifecycle configuration. It does not
+start production jails or mutate live host networking.
 
 ## devfs authority
 
