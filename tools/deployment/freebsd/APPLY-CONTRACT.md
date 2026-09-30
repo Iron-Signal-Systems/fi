@@ -388,16 +388,29 @@ collision unless FI runtime ownership is unambiguous.
 
 ## devfs authority
 
-Production FI jails use a dedicated FI devfs ruleset.
+Production FI jails use one dedicated FI devfs ruleset identified by the site-configured `FI_DEVFS_RULESET` number. FI requires this custom ruleset number to be 100 or greater.
 
-The existing `fi-dev` ruleset is not reused because development exposure is
-broader than production requirements.
+FI defines the production rules explicitly and does not include `devfsrules_jail` or `devfsrules_jail_vnet`.
 
-Initial apply must create only the exact production rules required by the FI
-jails.
+The exact production rule actions are:
 
-An existing configured ruleset number with different or ambiguous rules is a
-collision.
+```text
+add hide
+add path null unhide
+add path zero unhide
+add path random unhide
+add path urandom unhide
+```
+
+No other device is authorized. In particular, production FI jails must not expose `zfs`, `pf`, `bpf`, `fuse`, `mem`, PTY/PTS devices, `ptmx`, or the login-oriented `fd`, `stdin`, `stdout`, and `stderr` aliases.
+
+`random` is retained because FreeBSD 15.1 `rc.d/tmp` uses it when the default `tmpmfs=AUTO` path is evaluated. `urandom` remains the standard alias to `random`. The FI Go runtime itself uses `getrandom(2)` for `crypto/rand` on FreeBSD.
+
+An absent configured ruleset is eligible for creation. An existing configured ruleset is accepted only when its ordered rules exactly match this contract. Different, additional, missing, or ambiguous rules are `FOREIGN_COLLISION` and must not be silently repaired or replaced.
+
+This layer creates and verifies the in-kernel ruleset only. Persistent host definition and jail binding remain responsibilities of the deterministic host-file layer.
+
+Any additional device requires an explicit contract revision and acceptance before exposure.
 
 ## Jail boot policy
 
@@ -494,9 +507,9 @@ The only production mutation primitive in this layer is:
 
     zfs create
 
-Jail-root and jail-local identity mutation are also implemented by the later
-layers in this contract. Directory, devfs, host-file, VNET, PF, service, and
-boot-policy mutation remain unimplemented by this checkpoint.
+Jail-root, jail-local identity, filesystem-directory, and dedicated devfs
+mutation are also implemented by the later layers in this contract. Host-file,
+VNET, PF, service, and boot-policy mutation remain unimplemented by this checkpoint.
 
 Real-host production mutation remains subject to explicit pre-mutation review
 and post-apply acceptance.

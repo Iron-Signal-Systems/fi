@@ -70,7 +70,7 @@ FI_INGEST_FSTAB="/etc/fstab.fi-ingest"
 FI_SOR_DB_FSTAB="/etc/fstab.fi-sor-db"
 
 # Production devfs ruleset.
-# Final value is established after runtime acceptance testing.
+# Site-selected unused ruleset number >= 100; deployment never chooses one automatically.
 FI_DEVFS_RULESET=""
 
 # Deterministic VNET epair endpoint names.

@@ -240,8 +240,8 @@ The ZFS apply layer:
 Initial `apply-zfs` does not repair drift.
 
 The ZFS apply layer's production mutation primitive is `zfs create`.
-Later reviewed layers separately implement jail-root, identity, and filesystem
-directory mutation.
+Later reviewed layers separately implement jail-root, identity, filesystem
+directory, and dedicated devfs mutation.
 
 ### ZFS verification phase
 
@@ -279,7 +279,7 @@ byte-identical before and after `verify-zfs`.
 - change jail boot policy;
 - start, stop, or modify jails;
 - install or start FI services.
-Later sections define the reviewed jail-root, identity, and directory layers. Remaining operations stay behind future reviewed apply boundaries.
+Later sections define the reviewed jail-root, identity, directory, and devfs layers. Remaining operations stay behind future reviewed apply boundaries.
 Those operations remain future reviewed apply layers.
 
 ### Non-mutation contract
@@ -393,3 +393,48 @@ established and exposed the service UID/GID.
 Production invocation is:
 
     ./fi-bootstrap.sh apply-directories /path/to/fi-bootstrap.conf
+
+### Production devfs ruleset
+
+`apply-devfs` creates or verifies one dedicated production devfs ruleset after
+the filesystem-directory layer has been accepted.
+
+The ruleset number comes from `FI_DEVFS_RULESET` and must be 100 or greater. The deployment never selects
++a production number automatically. The value `100` in the verification fixture
+is test data only.
+
+The production ruleset is intentionally independent of the stock
+`devfsrules_jail` and `devfsrules_jail_vnet` rulesets. Its exact effective
+ordered rules are:
+
+    hide
+    path null unhide
+    path zero unhide
+    path random unhide
+    path urandom unhide
+
+The layer does not expose ZFS, PF, BPF, FUSE, memory devices, PTYs, PTS,
+`ptmx`, or login-oriented fd/stdin/stdout/stderr aliases.
+
+Classification is fail closed:
+
+- an absent configured ruleset is `ABSENT` and may be created;
+- an exact effective ordered ruleset is `OWNED_MATCH`;
+- any existing different, additional, missing, or reordered rule is
+  `FOREIGN_COLLISION`;
+- inability to inspect devfs state is `UNKNOWN`.
+
+The apply path never deletes, clears, replaces, or silently repairs an existing
+ruleset. An exact second apply performs no mutation.
+
+`verify-devfs` is the read-only production acceptance path and requires exact
+`OWNED_MATCH`.
+
+The commands are:
+
+    ./fi-bootstrap.sh apply-devfs /path/to/fi-bootstrap.conf
+    ./fi-bootstrap.sh verify-devfs /path/to/fi-bootstrap.conf
+
+This layer establishes only the in-kernel ruleset. Persistent `/etc/devfs.rules`
+definition and jail binding remain part of the later deterministic host-file
+layer.

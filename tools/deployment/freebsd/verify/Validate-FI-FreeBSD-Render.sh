@@ -139,4 +139,19 @@ fi
 
 pass "address/network mismatch fails closed"
 
+BAD_DEVFS="$WORK_ROOT/bad-devfs.conf"
+
+sed \
+    's#FI_DEVFS_RULESET="100"#FI_DEVFS_RULESET="5"#' \
+    "$FIXTURE" > "$BAD_DEVFS" ||
+    fail "unable to create devfs-ruleset test fixture"
+
+if "$BOOTSTRAP" plan "$BAD_DEVFS" "$WORK_ROOT/bad-devfs-plan" \
+    >/dev/null 2>&1
+then
+    fail "low-numbered FI devfs ruleset was accepted"
+fi
+
+pass "FI devfs ruleset numbers below 100 fail closed"
+
 printf '[PASS] FI FreeBSD render acceptance complete\n'

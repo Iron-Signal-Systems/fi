@@ -188,3 +188,31 @@ This offline acceptance path verifies:
 - wrong-host rejection before mutation.
 
 The verifier does not modify the production pool or production jail roots.
+
+## Devfs verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-Devfs-Apply.sh
+    ./Validate-FI-FreeBSD-Bootstrap-Dispatch.sh
+
+The devfs verifier proves:
+
+- absent ruleset classification;
+- inspection failure as `UNKNOWN`;
+- exact ordered rules as `OWNED_MATCH`;
+- missing rule rejection;
+- additional rule rejection;
+- rule-order drift rejection;
+- exact ordered `devfs rule -s ... add` mutation arguments;
+- exact second-apply no-op behavior;
+- read-only verification without mutation;
+- absent-state verification failure;
+- wrong-host rejection before mutation;
+- unknown-state rejection before mutation.
+
+The bootstrap-dispatch verifier proves that each reviewed deployment command has
+exactly one helper-loading arm before configuration parsing and exactly one
+execution arm after configuration parsing. This specifically prevents a
+command from being accepted and prepared by bootstrap without ever executing
+its implementation.

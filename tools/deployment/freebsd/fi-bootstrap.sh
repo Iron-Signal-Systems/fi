@@ -2,8 +2,8 @@
 
 # FI FreeBSD backend deployment bootstrap.
 #
-# The current implementation supports non-mutating "plan" and "preflight"
-# phases plus the narrowly scoped mutating "apply-zfs" phase.
+# The current implementation supports non-mutating planning and verification
+# plus the reviewed ZFS, jail-root, identity, directory, and devfs mutation phases.
 #
 # Configuration is parsed as strict KEY="VALUE" data. It is never sourced as
 # shell code.
@@ -37,6 +37,8 @@ Usage:
     $PROGRAM apply-jail-roots <config-file>
     $PROGRAM apply-identities <config-file>
     $PROGRAM apply-directories <config-file>
+    $PROGRAM apply-devfs <config-file>
+    $PROGRAM verify-devfs <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
@@ -65,6 +67,13 @@ Current commands:
         Initialize and verify FI production filesystem directories.
         This command mutates only the directory layer defined by the apply contract.
 
+    apply-devfs
+        Create or verify the dedicated FI production devfs ruleset.
+        This command mutates only the configured in-kernel devfs ruleset.
+
+    verify-devfs
+        Verify the configured FI production devfs ruleset without mutation.
+
     preflight-jail-roots
         Read and classify the three production jail-root destinations before apply.
         ABSENT and exact OWNED_MATCH states are accepted; no state is modified.
@@ -81,7 +90,7 @@ Current commands:
 
 The plan output directory must not already exist.
 
-Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities, apply-directories, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
+Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities, apply-directories, apply-devfs, verify-devfs, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
 VNET interfaces, PF rules, services, or boot policy.
@@ -159,6 +168,16 @@ validate_unsigned_nonzero()
     if [ "$numeric_value" -eq 0 ]; then
         fail "$numeric_name must be greater than zero"
     fi
+}
+
+validate_devfs_ruleset()
+{
+    validate_unsigned_nonzero FI_DEVFS_RULESET
+
+    devfs_ruleset_value=$(get_value FI_DEVFS_RULESET)
+
+    [ "$devfs_ruleset_value" -ge 100 ] ||
+        fail "FI_DEVFS_RULESET must be at least 100"
 }
 
 validate_absolute_path()
@@ -519,7 +538,7 @@ validate_config()
     validate_pool_name
     validate_unsigned_nonzero FI_RUNTIME_UID
     validate_unsigned_nonzero FI_RUNTIME_GID
-    validate_unsigned_nonzero FI_DEVFS_RULESET
+    validate_devfs_ruleset
 
     validate_interface_name FI_MGMT_BRIDGE
     validate_interface_name FI_WORK_BRIDGE
@@ -843,7 +862,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|verify-jail-roots|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-devfs|verify-devfs|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -949,8 +968,15 @@ main()
             jail_root_require_commands
             directory_require_commands
             ;;
-        apply-directories)
-            apply_directories
+        apply-devfs|verify-devfs)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "devfs operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-devfs-apply.sh" ] ||
+                fail "devfs helper not found: $SCRIPT_DIR/fi-host-devfs-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-devfs-apply.sh"
+            devfs_require_commands
             ;;
         verify-zfs)
             [ "$(id -u)" -eq 0 ] ||
@@ -988,6 +1014,15 @@ main()
             ;;
         apply-identities)
             apply_identities
+            ;;
+        apply-directories)
+            apply_directories
+            ;;
+        apply-devfs)
+            apply_devfs
+            ;;
+        verify-devfs)
+            verify_devfs
             ;;
         verify-zfs)
             verify_zfs_hierarchy

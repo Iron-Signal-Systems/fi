@@ -287,7 +287,10 @@ preflight_host()
 
     preflight_devfs_ruleset=$(get_value FI_DEVFS_RULESET)
 
-    if devfs rule showsets |
+    preflight_devfs_sets=$(devfs rule showsets 2>/dev/null) ||
+        fail "unable to inspect existing devfs rulesets"
+
+    if printf "%s\n" "$preflight_devfs_sets" |
         grep -qx "$preflight_devfs_ruleset"
     then
         fail "configured FI production devfs ruleset already exists: $preflight_devfs_ruleset"
