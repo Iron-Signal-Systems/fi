@@ -1,3 +1,5 @@
+# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
+# FI-ROLE: jail-config-ingest
 fi-ingest {
     path = "@FI_INGEST_ROOT@";
     host.hostname = "fi-ingest";

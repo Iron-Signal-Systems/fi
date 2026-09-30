@@ -132,7 +132,9 @@ capture_host_state()
             /etc/jail.conf.d/fi-sor-db.conf \
             /etc/fstab.fi-receiver \
             /etc/fstab.fi-ingest \
-            /etc/fstab.fi-sor-db
+            /etc/fstab.fi-sor-db \
+            /etc/devfs.rules.fi \
+            /usr/local/libexec/fi-vnet-pair
         do
             if [ -e "$capture_path" ] || [ -L "$capture_path" ]; then
                 ls -ld "$capture_path"

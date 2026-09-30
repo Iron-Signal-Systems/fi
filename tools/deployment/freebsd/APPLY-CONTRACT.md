@@ -334,7 +334,7 @@ lookups.
 
 ## Host-file authority
 
-Production host files include:
+The deterministic host-file layer owns exactly these eight production files:
 
     /etc/jail.conf.d/fi-receiver.conf
     /etc/jail.conf.d/fi-ingest.conf
@@ -342,22 +342,97 @@ Production host files include:
     /etc/fstab.fi-receiver
     /etc/fstab.fi-ingest
     /etc/fstab.fi-sor-db
+    /etc/devfs.rules.fi
+    /usr/local/libexec/fi-vnet-pair
 
-Initial apply may create an absent path.
+The three `FI_*_FSTAB` configuration values are required to resolve to the
+three exact fstab paths above. Initial apply does not accept arbitrary host
+destinations.
 
-It may keep an existing exact FI-owned file.
+Every managed host artifact contains the exact ownership marker:
 
-It must fail on:
+    # FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
 
-- a symbolic link;
-- a directory at the expected file path;
-- unexpected contents;
-- unexpected ownership;
-- unexpected mode;
-- an existing non-FI file.
+Each artifact also contains an exact `FI-ROLE` comment.
 
-Atomic temporary-file-plus-rename installation must be used when these files
-are eventually written.
+The required metadata is:
+
+| Host file | Owner | Group | Mode |
+| --- | ---: | ---: | ---: |
+| `/etc/jail.conf.d/fi-receiver.conf` | `0` | `0` | `0644` |
+| `/etc/jail.conf.d/fi-ingest.conf` | `0` | `0` | `0644` |
+| `/etc/jail.conf.d/fi-sor-db.conf` | `0` | `0` | `0644` |
+| `/etc/fstab.fi-receiver` | `0` | `0` | `0600` |
+| `/etc/fstab.fi-ingest` | `0` | `0` | `0600` |
+| `/etc/fstab.fi-sor-db` | `0` | `0` | `0600` |
+| `/etc/devfs.rules.fi` | `0` | `0` | `0644` |
+| `/usr/local/libexec/fi-vnet-pair` | `0` | `0` | `0555` |
+
+Owner `0` and group `0` are the FreeBSD `root:wheel` identity.
+
+An existing file is `OWNED_MATCH` only when:
+
+- it is a regular file and not a symbolic link;
+- it contains the exact FI management marker;
+- its complete content is byte-identical to the deterministic expected file;
+- its numeric owner and group are exact;
+- its mode is exact;
+- its hard-link count is exactly one.
+
+An FI-marked file with content, metadata, or hard-link drift is `OWNED_DRIFT`.
+
+An existing unmarked regular file, symbolic link, directory, or other file
+type at a managed destination is `FOREIGN_COLLISION`.
+
+Inspection failure is `UNKNOWN`.
+
+The layer preclassifies all eight resources before its first production
+mutation. Every `ABSENT` resource is classified again immediately before
+creation.
+
+Creation uses a same-directory temporary regular file. FI writes the complete
+expected content, applies final ownership and mode, and verifies the temporary
+file before publication.
+
+Publication uses an atomic no-clobber hard-link creation. If the destination
+appears before publication, creation fails rather than replacing it. The
+temporary link is then removed and the final destination is independently
+verified.
+
+Initial apply never uses an overwriting rename for a production host-file
+destination.
+
+A runtime failure after one or more files have been created may therefore
+leave an incomplete but accurately classifiable FI host-file set. Initial
+apply does not delete successfully created files to hide that failure boundary.
+
+### Persistent devfs file
+
+`/etc/devfs.rules.fi` contains one named ruleset:
+
+    [fi_production=<FI_DEVFS_RULESET>]
+
+followed by the exact five production rules already accepted by the in-kernel
+devfs layer.
+
+The host-file layer only installs this persistent definition.
+
+It does not modify `rc.conf`, `devfs_rulesets`, `devfs_system_ruleset`, or the
+host `/dev` ruleset.
+
+Loading `/etc/devfs.rules.fi` through `devfs_rulesets` belongs to the later
+lifecycle/boot-policy layer.
+
+### VNET helper installation
+
+`/usr/local/libexec/fi-vnet-pair` is a byte-identical installation of the
+reviewed repository helper.
+
+Installing the helper does not execute it and does not create, destroy, rename,
+or attach any network interface.
+
+The jail lifecycle configuration invokes the helper later through
+`exec.prestart` and `exec.poststop`.
 
 ## VNET lifecycle authority
 
@@ -457,8 +532,9 @@ No other device is authorized. In particular, production FI jails must not expos
 
 An absent configured ruleset is eligible for creation. An existing configured ruleset is accepted only when its ordered rules exactly match this contract. Different, additional, missing, or ambiguous rules are `FOREIGN_COLLISION` and must not be silently repaired or replaced.
 
-This layer creates and verifies the in-kernel ruleset only. Persistent host definition and jail binding remain responsibilities of the deterministic host-file layer.
-
+The devfs apply layer creates and verifies the in-kernel ruleset. The
+deterministic host-file layer installs the matching `/etc/devfs.rules.fi`
+definition. Loading that file remains part of the later lifecycle policy.
 Any additional device requires an explicit contract revision and acceptance before exposure.
 
 ## Jail boot policy
@@ -556,9 +632,10 @@ The only production mutation primitive in this layer is:
 
     zfs create
 
-Jail-root, jail-local identity, filesystem-directory, and dedicated devfs
-mutation are also implemented by the later layers in this contract. Host-file,
-VNET, PF, service, and boot-policy mutation remain unimplemented by this checkpoint.
+Jail-root, jail-local identity, filesystem-directory, dedicated devfs, and
+deterministic host-file mutation are also implemented by the later layers in
+this contract. Live VNET lifecycle, PF, service, and boot-policy mutation
+remain unimplemented by this checkpoint.
 
 Real-host production mutation remains subject to explicit pre-mutation review
 and post-apply acceptance.

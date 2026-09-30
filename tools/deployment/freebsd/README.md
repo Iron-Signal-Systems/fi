@@ -435,6 +435,49 @@ The commands are:
     ./fi-bootstrap.sh apply-devfs /path/to/fi-bootstrap.conf
     ./fi-bootstrap.sh verify-devfs /path/to/fi-bootstrap.conf
 
-This layer establishes only the in-kernel ruleset. Persistent `/etc/devfs.rules`
-definition and jail binding remain part of the later deterministic host-file
-layer.
+This layer establishes only the in-kernel ruleset. The deterministic host-file
+layer installs the matching `/etc/devfs.rules.fi` definition and rendered jail
+configuration. Loading the persistent rules file and enabling production jail
+lifecycle remain responsibilities of the later lifecycle/boot-policy layer.
+
+### Production host-file layer
+
+`apply-host-files` creates or verifies the deterministic host artifacts required
+before production jail lifecycle can be enabled.
+
+The managed set is:
+
+    /etc/jail.conf.d/fi-receiver.conf
+    /etc/jail.conf.d/fi-ingest.conf
+    /etc/jail.conf.d/fi-sor-db.conf
+    /etc/fstab.fi-receiver
+    /etc/fstab.fi-ingest
+    /etc/fstab.fi-sor-db
+    /etc/devfs.rules.fi
+    /usr/local/libexec/fi-vnet-pair
+
+All eight artifacts carry the FI host-file ownership marker and exact role
+metadata in their content.
+
+The jail configuration files are installed `root:wheel` mode `0644`.
+
+The per-jail fstab files are installed `root:wheel` mode `0600`.
+
+The persistent FI devfs rules file is installed `root:wheel` mode `0644`.
+
+The VNET helper is installed `root:wheel` mode `0555`.
+
+Initial apply preclassifies the complete layer and fails closed on owned drift,
+foreign collisions, or unknown state.
+
+Absent files are published through same-directory temporary files and atomic
+no-clobber hard links. Existing destinations are never overwritten.
+
+`verify-host-files` is the read-only acceptance path and requires all eight
+files to classify as exact `OWNED_MATCH`.
+
+The host-file layer does not start jails, run the VNET helper, reload devfs,
+change `rc.conf`, modify PF, or select jail boot policy.
+
+`/etc/devfs.rules.fi` is intentionally inert until the later lifecycle layer
+adds it to the configured FreeBSD `devfs_rulesets` list.

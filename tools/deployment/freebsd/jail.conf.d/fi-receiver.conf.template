@@ -1,3 +1,5 @@
+# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
+# FI-ROLE: jail-config-receiver
 fi-receiver {
     path = "@FI_RECEIVER_ROOT@";
     host.hostname = "fi-receiver";

@@ -1,0 +1,12 @@
+# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
+# FI-ROLE: devfs-rules
+#
+# Dedicated FI production devfs rules.
+# Loading/activation is controlled by the later lifecycle-policy layer.
+
+[fi_production=@FI_DEVFS_RULESET@]
+add hide
+add path null unhide
+add path zero unhide
+add path random unhide
+add path urandom unhide

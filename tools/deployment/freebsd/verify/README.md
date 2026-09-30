@@ -243,3 +243,33 @@ This verifier performs no live VNET, bridge, route, jail, or interface mutation.
 
 Real-host acceptance remains required to prove physical receiver-interface
 return and address cleanup after jail shutdown.
+
+## Host-file apply verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-Host-File-Apply.sh
+
+The offline host-file verifier proves:
+
+- absent host-file classification;
+- exact `OWNED_MATCH` classification;
+- FI-owned content drift detection;
+- FI-owned mode drift detection;
+- unmarked file collision rejection;
+- symbolic-link collision rejection;
+- directory collision rejection;
+- unexpected hard-link detection;
+- metadata inspection failure as `UNKNOWN`;
+- atomic no-clobber publication when a destination appears during creation;
+- exact first creation;
+- exact second-apply no-op behavior;
+- read-only verification of exact state;
+- layer-wide preclassification before mutation;
+- unknown-state rejection before mutation;
+- wrong-host rejection before mutation;
+- absent-state verification failure without mutation.
+
+The verifier uses temporary files only. It does not install anything beneath
+`/etc` or `/usr/local/libexec` and does not operate live jails, VNET, PF, or
+devfs.

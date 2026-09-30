@@ -59,6 +59,8 @@ for expected_file in \
     fstab.fi-receiver \
     fstab.fi-ingest \
     fstab.fi-sor-db \
+    devfs.rules.fi \
+    fi-vnet-pair \
     MANIFEST.sha256
 do
     [ -f "$PLAN_A/$expected_file" ] ||
@@ -153,5 +155,63 @@ then
 fi
 
 pass "FI devfs ruleset numbers below 100 fail closed"
+
+for managed_file in \
+    fi-receiver.conf \
+    fi-ingest.conf \
+    fi-sor-db.conf \
+    fstab.fi-receiver \
+    fstab.fi-ingest \
+    fstab.fi-sor-db \
+    devfs.rules.fi \
+    fi-vnet-pair
+do
+    grep -Fqx \
+        '# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1' \
+        "$PLAN_A/$managed_file" ||
+        fail "rendered host artifact lacks FI ownership marker: $managed_file"
+done
+
+pass "all rendered host artifacts contain the FI ownership marker"
+
+grep -Fqx \
+    '[fi_production=100]' \
+    "$PLAN_A/devfs.rules.fi" ||
+    fail "rendered devfs ruleset declaration is not exact"
+
+for expected_devfs_rule in \
+    'add hide' \
+    'add path null unhide' \
+    'add path zero unhide' \
+    'add path random unhide' \
+    'add path urandom unhide'
+do
+    grep -Fqx "$expected_devfs_rule" "$PLAN_A/devfs.rules.fi" ||
+        fail "rendered devfs rule is absent: $expected_devfs_rule"
+done
+
+pass "rendered persistent devfs rules are exact"
+
+cmp -s \
+    "$FREEBSD_DIR/fi-vnet-pair.sh" \
+    "$PLAN_A/fi-vnet-pair" ||
+    fail "rendered VNET helper differs from reviewed source"
+
+pass "rendered VNET helper is byte-identical to reviewed source"
+
+BAD_FSTAB="$WORK_ROOT/bad-fstab.conf"
+
+sed \
+    's#FI_RECEIVER_FSTAB="/etc/fstab.fi-receiver"#FI_RECEIVER_FSTAB="/tmp/fstab.fi-receiver"#' \
+    "$FIXTURE" > "$BAD_FSTAB" ||
+    fail "unable to create host-file destination test fixture"
+
+if "$BOOTSTRAP" plan "$BAD_FSTAB" "$WORK_ROOT/bad-fstab-plan" \
+    >/dev/null 2>&1
+then
+    fail "unsupported receiver fstab destination was accepted"
+fi
+
+pass "unsupported host-file destinations fail closed"
 
 printf '[PASS] FI FreeBSD render acceptance complete\n'

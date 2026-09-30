@@ -3,7 +3,7 @@
 # FI FreeBSD backend deployment bootstrap.
 #
 # The current implementation supports non-mutating planning and verification
-# plus the reviewed ZFS, jail-root, identity, directory, and devfs mutation phases.
+# plus the reviewed ZFS, jail-root, identity, directory, devfs, and host-file mutation phases.
 #
 # Configuration is parsed as strict KEY="VALUE" data. It is never sourced as
 # shell code.
@@ -39,6 +39,8 @@ Usage:
     $PROGRAM apply-directories <config-file>
     $PROGRAM apply-devfs <config-file>
     $PROGRAM verify-devfs <config-file>
+    $PROGRAM apply-host-files <config-file>
+    $PROGRAM verify-host-files <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
@@ -46,8 +48,8 @@ Usage:
 Current commands:
 
     plan
-        Validate FI FreeBSD deployment configuration and render the jail/fstab
-        deployment plan without modifying the host.
+        Validate FI FreeBSD deployment configuration and render the complete
+        deterministic host-file deployment plan without modifying the host.
 
     preflight
         Validate the intended FreeBSD host against initial-deployment
@@ -58,6 +60,8 @@ Current commands:
         This command mutates the configured ZFS pool.
 
     apply-jail-roots
+        Create or verify only the three FI production jail-root clones.
+        This command mutates the configured ZFS jail dataset root.
 
     apply-identities
         Create or verify FI runtime identities inside receiver and ingest jail roots.
@@ -68,17 +72,22 @@ Current commands:
         This command mutates only the directory layer defined by the apply contract.
 
     apply-devfs
-        Create or verify the dedicated FI production devfs ruleset.
+        Create or verify the dedicated FI production in-kernel devfs ruleset.
         This command mutates only the configured in-kernel devfs ruleset.
 
     verify-devfs
         Verify the configured FI production devfs ruleset without mutation.
 
+    apply-host-files
+        Create or verify the deterministic FI production host files.
+        This command does not start jails or activate lifecycle policy.
+
+    verify-host-files
+        Verify the deterministic FI production host files without mutation.
+
     preflight-jail-roots
         Read and classify the three production jail-root destinations before apply.
         ABSENT and exact OWNED_MATCH states are accepted; no state is modified.
-        Create or verify only the three FI production jail-root clones.
-        This command mutates the configured ZFS jail dataset root.
 
     verify-jail-roots
         Read and classify the three existing FI production jail-root clones.
@@ -90,7 +99,10 @@ Current commands:
 
 The plan output directory must not already exist.
 
-Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities, apply-directories, apply-devfs, verify-devfs, verify-jail-roots, and verify-zfs must run as root on the intended FreeBSD host.
+Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities,
+apply-directories, apply-devfs, verify-devfs, apply-host-files,
+verify-host-files, verify-jail-roots, and verify-zfs must run as root on the
+intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
 VNET interfaces, PF rules, services, or boot policy.
@@ -100,6 +112,12 @@ cleanup()
 {
     if [ -n "$CONFIG_MAP" ] && [ -f "$CONFIG_MAP" ]; then
         rm -f "$CONFIG_MAP"
+    fi
+
+    if [ -n "${HOST_FILE_PLAN_ROOT:-}" ] &&
+        [ -d "$HOST_FILE_PLAN_ROOT" ]
+    then
+        rm -rf "$HOST_FILE_PLAN_ROOT"
     fi
 }
 
@@ -511,6 +529,18 @@ validate_dns_search_domain()
     esac
 }
 
+validate_host_file_destinations()
+{
+    [ "$(get_value FI_RECEIVER_FSTAB)" = "/etc/fstab.fi-receiver" ] ||
+        fail "FI_RECEIVER_FSTAB must be /etc/fstab.fi-receiver"
+
+    [ "$(get_value FI_INGEST_FSTAB)" = "/etc/fstab.fi-ingest" ] ||
+        fail "FI_INGEST_FSTAB must be /etc/fstab.fi-ingest"
+
+    [ "$(get_value FI_SOR_DB_FSTAB)" = "/etc/fstab.fi-sor-db" ] ||
+        fail "FI_SOR_DB_FSTAB must be /etc/fstab.fi-sor-db"
+}
+
 validate_hostname()
 {
     hostname_value=$(get_value FI_HOSTNAME)
@@ -539,6 +569,7 @@ validate_config()
     validate_unsigned_nonzero FI_RUNTIME_UID
     validate_unsigned_nonzero FI_RUNTIME_GID
     validate_devfs_ruleset
+    validate_host_file_destinations
 
     validate_interface_name FI_MGMT_BRIDGE
     validate_interface_name FI_WORK_BRIDGE
@@ -818,6 +849,13 @@ render_plan()
         "$SCRIPT_DIR/fstab.d/fi-sor-db.fstab.template" \
         "$OUTPUT_DIR/fstab.fi-sor-db"
 
+    render_template \
+        "$SCRIPT_DIR/devfs.d/fi-production.rules.template" \
+        "$OUTPUT_DIR/devfs.rules.fi"
+
+    cat "$SCRIPT_DIR/fi-vnet-pair.sh" > "$OUTPUT_DIR/fi-vnet-pair" ||
+        fail "unable to copy FI VNET helper into deployment plan"
+
     : > "$OUTPUT_DIR/MANIFEST.sha256" ||
         fail "unable to create render manifest"
 
@@ -827,7 +865,9 @@ render_plan()
         fi-sor-db.conf \
         fstab.fi-receiver \
         fstab.fi-ingest \
-        fstab.fi-sor-db
+        fstab.fi-sor-db \
+        devfs.rules.fi \
+        fi-vnet-pair
     do
         rendered_hash=$(sha256 -q "$OUTPUT_DIR/$rendered_name") ||
             fail "unable to hash rendered file: $rendered_name"
@@ -862,7 +902,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-devfs|verify-devfs|verify-jail-roots|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-devfs|verify-devfs|apply-host-files|verify-host-files|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -886,6 +926,7 @@ main()
 
     case "$mode" in
         plan)
+            require_command cat
             require_command mkdir
             require_command sha256
             require_command sort
@@ -978,6 +1019,16 @@ main()
             . "$SCRIPT_DIR/fi-host-devfs-apply.sh"
             devfs_require_commands
             ;;
+        apply-host-files|verify-host-files)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "host-file operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-file-apply.sh" ] ||
+                fail "host-file helper not found: $SCRIPT_DIR/fi-host-file-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-file-apply.sh"
+            host_file_require_commands
+            ;;
         verify-zfs)
             [ "$(id -u)" -eq 0 ] ||
                 fail "ZFS verification must run as root on the intended FreeBSD host"
@@ -1023,6 +1074,12 @@ main()
             ;;
         verify-devfs)
             verify_devfs
+            ;;
+        apply-host-files)
+            apply_host_files
+            ;;
+        verify-host-files)
+            verify_host_files
             ;;
         verify-zfs)
             verify_zfs_hierarchy

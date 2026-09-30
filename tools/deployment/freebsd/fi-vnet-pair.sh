@@ -1,4 +1,6 @@
 #!/bin/sh
+# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
+# FI-ROLE: vnet-helper
 
 fail()
 {

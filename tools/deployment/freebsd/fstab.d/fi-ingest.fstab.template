@@ -1,3 +1,5 @@
+# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
+# FI-ROLE: fstab-ingest
 # FI ingest host-controlled mounts.
 #
 # Tokens are rendered by deployment tooling before installation.

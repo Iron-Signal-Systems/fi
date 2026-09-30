@@ -335,6 +335,13 @@ preflight_host()
         preflight_path_absent "$(get_value "$preflight_fstab_key")"
     done
 
+    for preflight_host_file_path in \
+        /etc/devfs.rules.fi \
+        /usr/local/libexec/fi-vnet-pair
+    do
+        preflight_path_absent "$preflight_host_file_path"
+    done
+
     for preflight_storage_key in \
         FI_CUSTODY_GENERATION_HOST \
         FI_RECORDED_HOST \

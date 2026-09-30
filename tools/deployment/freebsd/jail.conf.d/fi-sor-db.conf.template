@@ -1,3 +1,5 @@
+# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
+# FI-ROLE: jail-config-sor-db
 fi-sor-db {
     path = "@FI_SOR_DB_ROOT@";
     host.hostname = "fi-sor-db";
