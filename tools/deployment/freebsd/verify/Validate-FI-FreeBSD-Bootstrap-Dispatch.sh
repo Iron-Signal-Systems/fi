@@ -20,7 +20,9 @@ awk '
         modes[8] = "verify-devfs"
         modes[9] = "apply-host-files"
         modes[10] = "verify-host-files"
-        modes[11] = "verify-zfs"
+        modes[11] = "apply-lifecycle"
+        modes[12] = "verify-lifecycle"
+        modes[13] = "verify-zfs"
     }
 
     $0 == "    case \"$mode\" in" {
@@ -40,7 +42,7 @@ awk '
         count = split(label, parts, /\|/)
 
         for (part = 1; part <= count; part++) {
-            for (i = 1; i <= 11; i++) {
+            for (i = 1; i <= 13; i++) {
                 if (parts[part] != modes[i]) {
                     continue
                 }
@@ -64,7 +66,7 @@ awk '
             failed = 1
         }
 
-        for (i = 1; i <= 11; i++) {
+        for (i = 1; i <= 13; i++) {
             mode = modes[i]
 
             if (helper[mode] != 1 || dispatch[mode] != 1) {

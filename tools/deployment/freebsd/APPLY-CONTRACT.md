@@ -711,7 +711,7 @@ The only production mutation primitive in this layer is:
 
 Jail-root, jail-local identity, filesystem-directory, dedicated devfs, and
 deterministic host-file mutation are also implemented by the later layers in
-this contract. Live VNET lifecycle, PF, service, and boot-policy mutation
+this contract. Live VNET lifecycle, PF, and service activation
 remain unimplemented by this checkpoint.
 
 Real-host production mutation remains subject to explicit pre-mutation review

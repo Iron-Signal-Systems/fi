@@ -298,3 +298,28 @@ This offline verifier proves:
 - absence of FI control over `devfs_system_ruleset`.
 
 The verifier performs no live rc, jail, devfs, VNET, or service mutation.
+
+## Lifecycle apply verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-Lifecycle-Apply.sh
+
+The offline lifecycle-apply verifier proves:
+
+- exact lifecycle parent-directory classification;
+- parent symbolic-link and metadata collision rejection;
+- disabled global jail-policy compatibility;
+- compatibility with enabled global policy that selects only unrelated jails;
+- rejection of enabled `_ALL` global jail authority;
+- rejection of explicit global FI jail ownership;
+- exact first lifecycle-file creation;
+- exact second-apply no-op behavior;
+- read-only lifecycle verification;
+- layer-wide preclassification before mutation;
+- global jail-policy rejection before mutation;
+- wrong-host rejection before mutation;
+- absence of live jail or devfs activation from the installer.
+
+The lifecycle installer writes configuration only. It does not start or stop
+jails and does not reload or mutate the running devfs ruleset.

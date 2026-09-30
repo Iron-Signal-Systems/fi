@@ -41,6 +41,8 @@ Usage:
     $PROGRAM verify-devfs <config-file>
     $PROGRAM apply-host-files <config-file>
     $PROGRAM verify-host-files <config-file>
+    $PROGRAM apply-lifecycle <config-file>
+    $PROGRAM verify-lifecycle <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
@@ -917,7 +919,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-devfs|verify-devfs|apply-host-files|verify-host-files|verify-jail-roots|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-lifecycle|verify-lifecycle|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -1044,6 +1046,21 @@ main()
             . "$SCRIPT_DIR/fi-host-file-apply.sh"
             host_file_require_commands
             ;;
+        apply-lifecycle|verify-lifecycle)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "lifecycle operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-file-apply.sh" ] ||
+                fail "host-file helper not found: $SCRIPT_DIR/fi-host-file-apply.sh"
+
+            [ -f "$SCRIPT_DIR/fi-host-lifecycle-apply.sh" ] ||
+                fail "lifecycle helper not found: $SCRIPT_DIR/fi-host-lifecycle-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-file-apply.sh"
+            . "$SCRIPT_DIR/fi-host-lifecycle-apply.sh"
+
+            lifecycle_require_commands
+            ;;
         verify-zfs)
             [ "$(id -u)" -eq 0 ] ||
                 fail "ZFS verification must run as root on the intended FreeBSD host"
@@ -1095,6 +1112,12 @@ main()
             ;;
         verify-host-files)
             verify_host_files
+            ;;
+        apply-lifecycle)
+            apply_lifecycle
+            ;;
+        verify-lifecycle)
+            verify_lifecycle
             ;;
         verify-zfs)
             verify_zfs_hierarchy
