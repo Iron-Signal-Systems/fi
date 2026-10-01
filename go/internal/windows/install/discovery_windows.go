@@ -1718,6 +1718,7 @@ func discoverTransportTrust(report *Report) {
 	)
 
 	discoverPKI(report, value)
+	discoverCNGKeyACLs(report)
 }
 
 func fileSHA256(path string) (string, error) {

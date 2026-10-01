@@ -128,6 +128,7 @@ func BuildPlanWithInputs(
 	planPrivileges(&plan, report, identities, identityErr)
 	planLocalGroups(&plan, report, identities, identityErr)
 	planACLs(&plan, report)
+	planCNGKeyACLs(&plan, report)
 	planServices(&plan, report, identities, identityErr)
 	planReleaseTrust(&plan, report)
 	planReleaseTrustACL(&plan, report)

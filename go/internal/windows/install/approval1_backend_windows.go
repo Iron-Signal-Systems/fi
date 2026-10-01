@@ -415,6 +415,11 @@ func applyApproval1PKIHandoffToPlan(
 		},
 	)
 
+	planApproval1CNGKeyACLs(
+		&plan,
+		handoff,
+	)
+
 	return plan
 }
 

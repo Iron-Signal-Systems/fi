@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportsender"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/certstore"
 )
 
@@ -717,13 +716,7 @@ func validateSourceTransportIdentity(
 			sourceID,
 		)
 	}
-	if len(certificate.Subject.OrganizationalUnit) != 1 ||
-		certificate.Subject.OrganizationalUnit[0] != transporttrust.TransportOrganizationalUnit {
-		return fmt.Errorf(
-			"FI source transport certificate organizational unit must be exactly %q",
-			transporttrust.TransportOrganizationalUnit,
-		)
-	}
+
 	if certificate.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
 		return errors.New("FI source transport certificate does not permit digital signatures")
 	}

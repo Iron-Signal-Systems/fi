@@ -7,6 +7,7 @@
 package install
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -133,19 +134,41 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 		)
 	}
 
+	cngMutations, err := reconcileServer2016CNGKeyACLs(
+		plan,
+	)
+	if err != nil {
+		return nil, errors.Join(
+			err,
+			rollbackACLMutations(
+				mutations,
+			),
+		)
+	}
+
 	if err := verifyServer2016ACLMutations(
 		report,
 		plan,
 	); err != nil {
-		_ = rollbackACLMutations(
-			mutations,
+		return nil, errors.Join(
+			err,
+			restoreCNGKeyACLMutations(
+				cngMutations,
+			),
+			rollbackACLMutations(
+				mutations,
+			),
 		)
-		return nil, err
 	}
 
 	return func() error {
-		return rollbackACLMutations(
-			mutations,
+		return errors.Join(
+			restoreCNGKeyACLMutations(
+				cngMutations,
+			),
+			rollbackACLMutations(
+				mutations,
+			),
 		)
 	}, nil
 }

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportencoding"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestSignedGenerationRoundTripAndTamperDetection(
@@ -339,10 +338,6 @@ func testGenerationSigningCertificate(
 
 			Subject: pkix.Name{
 				CommonName: sourceID,
-
-				OrganizationalUnit: []string{
-					transporttrust.BatchSigningOrganizationalUnit,
-				},
 			},
 
 			NotBefore: time.Now().
