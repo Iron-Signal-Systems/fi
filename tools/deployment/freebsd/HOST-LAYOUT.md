@@ -165,8 +165,12 @@ The jail-visible path is:
 
     /var/db/fi/sor/postgres
 
-This path becomes the explicit FI PostgreSQL `PGDATA` authority during the
-PostgreSQL service implementation checkpoint.
+This path is the explicit FI PostgreSQL `PGDATA` authority.
+
+The System-of-Record PostgreSQL policy layer validates the authoritative host
+source directory against the package-provided `postgres` UID and primary GID,
+requires mode `0700`, and selects the jail-visible path explicitly rather than
+relying on the package default data directory.
 
 The package default data directory is not implicitly authoritative.
 

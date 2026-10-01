@@ -175,9 +175,10 @@ Apply the implemented layers in contract order:
     2. jail roots
     3. jail-local identities
     4. jail-local filesystem directories
-    5. in-kernel dedicated production devfs ruleset
-    6. deterministic host files
-    7. lifecycle files
+    5. System-of-Record PostgreSQL policy and PGDATA authority
+    6. in-kernel dedicated production devfs ruleset
+    7. deterministic host files
+    8. lifecycle files
 
 Each layer must pass its own verification before the next layer is accepted.
 
@@ -194,6 +195,15 @@ Lifecycle-file installation itself must not:
 The in-kernel devfs apply operation is a separate earlier layer and must
 already have passed its own acceptance.
 
+The PostgreSQL policy layer must be applied while `fi-sor-db` is stopped.
+Before proceeding it must prove:
+
+- the package-provided `postgres` UID and primary GID are exact and consistent;
+- `FI_SOR_POSTGRES_HOST` is a non-symlink directory;
+- PGDATA owner/group match that package identity;
+- PGDATA mode is exactly `0700`;
+- `/etc/rc.conf.d/postgresql` is exact FI-owned state.
+
 ## Phase 4 - post-configuration quiescent proof
 
 Before production jail activation, capture host state again.
@@ -209,6 +219,8 @@ The comparison with the baseline must prove:
 - global jail-service policy remains site-owned;
 - the three lifecycle files match reviewed desired state;
 - the dedicated production devfs ruleset is exact.
+- the FI-managed PostgreSQL rc policy remains exact;
+- authoritative PGDATA ownership and mode remain exact.
 
 ## Phase 5 - controlled first start
 
@@ -238,6 +250,12 @@ After startup prove:
 - System-of-Record default route uses its management path;
 - the host administrative interface remains healthy;
 - the host administrative route remains healthy.
+- PostgreSQL started through normal jail rc;
+- `fi-sor-db` has private `sysvmsg`, `sysvsem`, and `sysvshm` namespaces;
+- those namespace modes are `new`, not `inherit`;
+- deprecated `allow.sysvipc` is not granted;
+- PostgreSQL is using `/var/db/fi/sor/postgres`;
+- the mounted PGDATA source retains the accepted owner/group and mode.
 
 ## Phase 6 - controlled first stop
 
@@ -278,6 +296,8 @@ Accept only if:
 - the dedicated physical interface again returns cleanly;
 - no stale FI epair remains;
 - administrative connectivity remains intact.
+- PostgreSQL restarts without manual repair;
+- the private PostgreSQL IPC namespace state remains exact.
 
 ## Phase 8 - persistence acceptance
 
@@ -298,6 +318,9 @@ After reboot prove:
 - receiver obtains the dedicated external interface;
 - all expected network state is correct;
 - administrative access remains intact.
+- PostgreSQL starts through normal jail rc;
+- PostgreSQL private IPC namespace state remains exact;
+- authoritative PGDATA ownership and mode remain exact.
 
 Then perform one controlled stop/start cycle after reboot and repeat the
 dedicated-interface return proof.
