@@ -323,6 +323,19 @@ func applyServer2016Approval2RemainingLocal(
 		}
 	}
 
+	if approval2ServiceStabilityRequired(
+		plan,
+	) {
+		if err := waitForFIServiceStability(
+			approval2ServiceStabilityWindow,
+		); err != nil {
+			return fail(
+				"SERVICE READINESS",
+				err,
+			)
+		}
+	}
+
 	for _, action := range plan.Actions {
 		if !planActionMutates(
 			action.Action,

@@ -319,6 +319,28 @@ func ApplyServer2016ApprovedPlan(writer io.Writer, before Report, plan InstallPl
 		)
 	}
 
+	if approval2ServiceStabilityRequired(
+		currentPlan,
+	) {
+		fmt.Fprintf(
+			writer,
+			"VERIFY SERVICE READINESS: all four FI services must remain Running for %s\n",
+			approval2ServiceStabilityWindow,
+		)
+		if err := waitForFIServiceStability(
+			approval2ServiceStabilityWindow,
+		); err != nil {
+			return writeFailureRecord(
+				fmt.Errorf(
+					"SERVICE READINESS: %w",
+					err,
+				),
+				nil,
+				nil,
+			)
+		}
+	}
+
 	// Do not destroy rollback material until authoritative post-install discovery
 	// proves that every characterized mutation converged to NO CHANGE.
 	after := Discover()
