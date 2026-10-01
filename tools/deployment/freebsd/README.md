@@ -114,7 +114,14 @@ The FreeBSD bootstrap currently implements:
 
 - `plan` — non-mutating deterministic deployment rendering;
 - `preflight` — non-mutating initial-deployment host validation;
-- `apply-zfs` — narrowly scoped mutation of the FI production ZFS data hierarchy.
+- `apply-zfs` / `verify-zfs` — production ZFS hierarchy mutation and verification;
+- `preflight-jail-roots` / `apply-jail-roots` / `verify-jail-roots` — production jail-root readiness, creation, and verification;
+- `apply-identities` — jail-local FI runtime identity creation and verification;
+- `apply-directories` — production filesystem-directory initialization and verification;
+- `apply-sor-postgresql` / `verify-sor-postgresql` — System-of-Record PostgreSQL rc-policy and PGDATA authority;
+- `apply-devfs` / `verify-devfs` — production devfs ruleset mutation and verification;
+- `apply-host-files` / `verify-host-files` — deterministic host-file installation and verification;
+- `apply-lifecycle` / `verify-lifecycle` — FI-specific lifecycle-policy installation and verification.
 
 Configuration files are strict data files using:
 
@@ -265,26 +272,28 @@ byte-identical before and after `verify-zfs`.
 
 ### Current mutation boundary
 
-`apply-zfs` does **not**:
+The implemented FreeBSD deployment mutation boundary now includes:
 
-- clone or destroy jail roots;
-- create users or groups;
-- create or modify devfs rulesets;
-- install or modify jail configuration under `/etc`;
-- install or modify per-jail fstab files;
-- create or destroy VNET interfaces;
-- modify bridges;
-- modify PF;
-- change IP forwarding;
-- change jail boot policy;
-- start, stop, or modify jails;
-- install or start FI services.
-Later sections define the reviewed jail-root, identity, directory, and devfs layers. Remaining operations stay behind future reviewed apply boundaries.
-Those operations remain future reviewed apply layers.
+- production ZFS datasets;
+- production jail-root clones;
+- jail-local FI runtime identities;
+- FI-controlled production directories;
+- System-of-Record PostgreSQL rc policy and PGDATA authority verification;
+- the dedicated production devfs ruleset;
+- deterministic jail, fstab, devfs, and VNET host files;
+- FI-specific production lifecycle policy.
+
+Each layer retains its own fail-closed classification, mutation, and
+verification boundary.
+
+PF policy and FI application-service installation remain outside this
+checkpoint.
 
 ### Non-mutation contract
 
-`plan`, `preflight`, and `verify-zfs` may not:
+Read-only commands including `plan`, `preflight`, `preflight-jail-roots`,
+`verify-zfs`, `verify-jail-roots`, `verify-sor-postgresql`, `verify-devfs`,
+`verify-host-files`, and `verify-lifecycle` may not:
 
 - create or destroy ZFS datasets or snapshots;
 - clone jail roots;
@@ -386,13 +395,74 @@ The layer preclassifies every managed resource before its first mutation,
 fails closed on drift or collisions, independently verifies newly initialized
 resources, and treats an exact second apply as a no-op.
 
-PostgreSQL data-directory ownership is intentionally not selected by this
-layer. It remains deferred until the selected FreeBSD PostgreSQL package has
-established and exposed the service UID/GID.
+PostgreSQL data-directory ownership is intentionally not selected or repaired
+by this layer. The later System-of-Record PostgreSQL policy layer discovers
+the package-provided `postgres` UID and primary GID and requires
+`FI_SOR_POSTGRES_HOST` to have that exact numeric owner/group with mode
+`0700`. A mismatch fails closed.
 
 Production invocation is:
 
     ./fi-bootstrap.sh apply-directories /path/to/fi-bootstrap.conf
+
+### System-of-Record PostgreSQL policy
+
+The System-of-Record PostgreSQL deployment layer is exposed as:
+
+    ./fi-bootstrap.sh apply-sor-postgresql /path/to/fi-bootstrap.conf
+    ./fi-bootstrap.sh verify-sor-postgresql /path/to/fi-bootstrap.conf
+
+The layer requires the selected FreeBSD PostgreSQL package to have already
+established exactly one local `postgres` user, exactly one local `postgres`
+group, the PostgreSQL rc.d service, and `pg_ctl` inside `fi-sor-db`.
+
+The package-provided service identity is authoritative. The `postgres` user's
+primary GID must match the `postgres` group GID.
+
+The authoritative host PGDATA source identified by `FI_SOR_POSTGRES_HOST`
+must:
+
+- exist as a directory and not a symbolic link;
+- be owned by the discovered `postgres` UID;
+- be grouped by the discovered `postgres` primary GID;
+- have mode `0700`.
+
+The PostgreSQL policy layer verifies this state but does not `chown`, `chmod`,
+replace, or otherwise repair PGDATA.
+
+The managed jail-local PostgreSQL rc policy is:
+
+    /etc/rc.conf.d/postgresql
+
+Its deterministic source enables PostgreSQL and selects:
+
+    postgresql_enable="YES"
+    postgresql_user="postgres"
+    postgresql_data="/var/db/fi/sor/postgres"
+    postgresql_initdb_flags="--encoding=UTF8 --locale=C --data-checksums"
+
+The policy file uses FI ownership and role markers. Exact FI-owned state is
+`OWNED_MATCH`; FI-owned content or metadata mismatch is `OWNED_DRIFT`;
+unmarked or incompatible pre-existing state is `FOREIGN_COLLISION`; and
+uninspectable state is `UNKNOWN`.
+
+`apply-sor-postgresql` requires `fi-sor-db` to be stopped before mutation.
+Only an `ABSENT` policy may be created. Publication uses a same-directory
+temporary file and an atomic no-clobber hard link. Existing policy files are
+never overwritten or silently adopted.
+
+`verify-sor-postgresql` performs no mutation and requires exact
+`OWNED_MATCH`.
+
+PostgreSQL also requires private System V IPC namespaces inside `fi-sor-db`:
+
+    sysvmsg = new;
+    sysvsem = new;
+    sysvshm = new;
+
+These namespaces are jail-local. FI does not enable deprecated
+`allow.sysvipc`, does not use `inherit`, and does not grant these PostgreSQL
+IPC namespaces to `fi-receiver` or `fi-ingest`.
 
 ### Production devfs ruleset
 

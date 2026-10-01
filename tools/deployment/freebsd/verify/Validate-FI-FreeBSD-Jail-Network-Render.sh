@@ -169,6 +169,47 @@ require_line \
     '    exec.start += "/sbin/route add default 10.77.10.1";' \
     "System of Record default route uses management gateway"
 
+require_line \
+    "$SOR" \
+    '    sysvmsg = new;' \
+    "System of Record receives a private System V message namespace"
+
+require_line \
+    "$SOR" \
+    '    sysvsem = new;' \
+    "System of Record receives a private System V semaphore namespace"
+
+require_line \
+    "$SOR" \
+    '    sysvshm = new;' \
+    "System of Record receives a private System V shared-memory namespace"
+
+reject_text \
+    "$SOR" \
+    "allow.sysvipc" \
+    "System of Record does not receive deprecated allow.sysvipc"
+
+for ipc_token in sysvmsg sysvsem sysvshm
+do
+    reject_text \
+        "$SOR" \
+        "    $ipc_token = inherit;" \
+        "System of Record does not inherit System V IPC namespace: $ipc_token"
+done
+
+for ipc_token in sysvmsg sysvsem sysvshm
+do
+    reject_text \
+        "$RECEIVER" \
+        "$ipc_token" \
+        "receiver does not receive PostgreSQL private IPC: $ipc_token"
+
+    reject_text \
+        "$INGEST" \
+        "$ipc_token" \
+        "ingest does not receive PostgreSQL private IPC: $ipc_token"
+done
+
 reject_text \
     "$INGEST" \
     "vtnet1" \

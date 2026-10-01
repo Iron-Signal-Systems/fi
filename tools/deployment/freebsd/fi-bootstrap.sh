@@ -37,6 +37,8 @@ Usage:
     $PROGRAM apply-jail-roots <config-file>
     $PROGRAM apply-identities <config-file>
     $PROGRAM apply-directories <config-file>
+    $PROGRAM apply-sor-postgresql <config-file>
+    $PROGRAM verify-sor-postgresql <config-file>
     $PROGRAM apply-devfs <config-file>
     $PROGRAM verify-devfs <config-file>
     $PROGRAM apply-host-files <config-file>
@@ -72,6 +74,13 @@ Current commands:
     apply-directories
         Initialize and verify FI production filesystem directories.
         This command mutates only the directory layer defined by the apply contract.
+
+    apply-sor-postgresql
+        Create or verify the deterministic PostgreSQL rc policy inside fi-sor-db.
+        This command does not start the jail or PostgreSQL.
+
+    verify-sor-postgresql
+        Verify the deterministic PostgreSQL rc policy without mutation.
 
     apply-devfs
         Create or verify the dedicated FI production in-kernel devfs ruleset.
@@ -858,6 +867,9 @@ render_plan()
     cat "$SCRIPT_DIR/fi-vnet-pair.sh" > "$OUTPUT_DIR/fi-vnet-pair" ||
         fail "unable to copy FI VNET helper into deployment plan"
 
+    cat "$SCRIPT_DIR/sor.d/postgresql.rc.conf" > "$OUTPUT_DIR/rc.conf.d.postgresql" ||
+        fail "unable to copy PostgreSQL rc policy into deployment plan"
+
     render_template \
         "$SCRIPT_DIR/lifecycle.d/fi-jails.rc.conf.template" \
         "$OUTPUT_DIR/rc.conf.d.fi_jails"
@@ -882,6 +894,7 @@ render_plan()
         fstab.fi-sor-db \
         devfs.rules.fi \
         fi-vnet-pair \
+        rc.conf.d.postgresql \
         rc.conf.d.fi_jails \
         rc.conf.d.devfs.90-fi \
         rc.d.fi_jails
@@ -919,7 +932,7 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-lifecycle|verify-lifecycle|verify-jail-roots|verify-zfs)
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-lifecycle|verify-lifecycle|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -1026,6 +1039,16 @@ main()
             jail_root_require_commands
             directory_require_commands
             ;;
+        apply-sor-postgresql|verify-sor-postgresql)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "PostgreSQL policy operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-sor-postgresql-apply.sh" ] ||
+                fail "PostgreSQL policy helper not found: $SCRIPT_DIR/fi-sor-postgresql-apply.sh"
+
+            . "$SCRIPT_DIR/fi-sor-postgresql-apply.sh"
+            sor_postgresql_require_commands
+            ;;
         apply-devfs|verify-devfs)
             [ "$(id -u)" -eq 0 ] ||
                 fail "devfs operation must run as root on the intended FreeBSD host"
@@ -1100,6 +1123,12 @@ main()
             ;;
         apply-directories)
             apply_directories
+            ;;
+        apply-sor-postgresql)
+            apply_sor_postgresql
+            ;;
+        verify-sor-postgresql)
+            verify_sor_postgresql
             ;;
         apply-devfs)
             apply_devfs

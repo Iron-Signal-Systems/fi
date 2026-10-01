@@ -61,6 +61,7 @@ for expected_file in \
     fstab.fi-sor-db \
     devfs.rules.fi \
     fi-vnet-pair \
+    rc.conf.d.postgresql \
     MANIFEST.sha256
 do
     [ -f "$PLAN_A/$expected_file" ] ||
@@ -173,6 +174,41 @@ do
 done
 
 pass "all rendered host artifacts contain the FI ownership marker"
+
+grep -Fqx \
+    '# FI-MANAGED: ironsignal-fi-freebsd-sor-postgresql-v1' \
+    "$PLAN_A/rc.conf.d.postgresql" ||
+    fail "rendered PostgreSQL policy lacks FI ownership marker"
+
+grep -Fqx \
+    '# FI-ROLE: postgresql-rc-policy' \
+    "$PLAN_A/rc.conf.d.postgresql" ||
+    fail "rendered PostgreSQL policy lacks exact role marker"
+
+for expected_postgresql_line in \
+    'postgresql_enable="YES"' \
+    'postgresql_user="postgres"' \
+    'postgresql_data="/var/db/fi/sor/postgres"' \
+    'postgresql_initdb_flags="--encoding=UTF8 --locale=C --data-checksums"'
+do
+    grep -Fqx \
+        "$expected_postgresql_line" \
+        "$PLAN_A/rc.conf.d.postgresql" ||
+        fail \
+            "rendered PostgreSQL policy is incomplete: $expected_postgresql_line"
+done
+
+cmp -s \
+    "$FREEBSD_DIR/sor.d/postgresql.rc.conf" \
+    "$PLAN_A/rc.conf.d.postgresql" ||
+    fail "rendered PostgreSQL policy differs from reviewed source"
+
+grep -Eq \
+    '^[0-9a-fA-F]{64}  rc\.conf\.d\.postgresql$' \
+    "$PLAN_A/MANIFEST.sha256" ||
+    fail "PostgreSQL policy is absent from deterministic manifest"
+
+pass "rendered PostgreSQL policy is exact"
 
 grep -Fqx \
     '[fi_production=100]' \

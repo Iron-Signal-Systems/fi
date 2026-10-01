@@ -228,6 +228,28 @@ Any future exception must identify:
     acceptance test proving the requirement
     negative test proving the grant is not broader than intended
 
+## PostgreSQL private System V IPC namespaces
+
+`fi-sor-db` requires private FreeBSD System V IPC namespaces:
+
+```text
+sysvmsg = new;
+sysvsem = new;
+sysvshm = new;
+```
+
+These are jail-local namespaces required by the PostgreSQL runtime.
+
+This exception does not enable the deprecated `allow.sysvipc` capability
+and does not use `inherit`. The System of Record therefore does not
+receive visibility into the host or another jail's System V IPC
+namespace.
+
+`fi-receiver` and `fi-ingest` do not receive this exception.
+
+The requirement must remain covered by deterministic render tests and
+real-host PostgreSQL lifecycle acceptance.
+
 ## Child jails
 
 Production FI jails do not create subordinate jails.

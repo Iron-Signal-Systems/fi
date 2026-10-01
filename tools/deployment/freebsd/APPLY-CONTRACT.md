@@ -643,6 +643,84 @@ creation.
 This two-pass rule prevents known late-layer conflicts from producing avoidable
 partial deployments while retaining fail-closed behavior against races.
 
+## System-of-Record PostgreSQL policy authority
+
+The System-of-Record PostgreSQL policy layer controls the deterministic
+jail-local rc policy required to start the selected FreeBSD PostgreSQL
+package.
+
+The managed resource is:
+
+    <FI_SOR_DB_ROOT>/etc/rc.conf.d/postgresql
+
+Its FI-owned content must select:
+
+    postgresql_enable="YES"
+    postgresql_user="postgres"
+    postgresql_data="/var/db/fi/sor/postgres"
+    postgresql_initdb_flags="--encoding=UTF8 --locale=C --data-checksums"
+
+The layer must discover the PostgreSQL service identity from the
+`fi-sor-db` jail root. Exactly one `postgres` user and exactly one `postgres`
+group must exist, and the user's primary GID must equal the group GID.
+
+The authoritative PGDATA source identified by `FI_SOR_POSTGRES_HOST` must:
+
+- exist as a directory;
+- not be a symbolic link;
+- be owned by the discovered PostgreSQL service UID;
+- be grouped by the discovered PostgreSQL primary GID;
+- have mode `0700`.
+
+PGDATA ownership and mode are verification authority, not a repair boundary.
+The PostgreSQL policy layer must not `chown`, `chmod`, replace, rename, or
+otherwise reconcile PGDATA when this state differs. A mismatch is a failure.
+
+The PostgreSQL rc-policy resource uses the standard FI state model:
+
+    ABSENT
+    OWNED_MATCH
+    OWNED_DRIFT
+    FOREIGN_COLLISION
+    UNKNOWN
+
+An absent policy may be created only after all PostgreSQL prerequisites and
+PGDATA authority have been accepted.
+
+An exact FI-owned policy is retained without mutation.
+
+FI-owned content, ownership, mode, role, or link-count mismatch is
+`OWNED_DRIFT`.
+
+An unmarked pre-existing policy, symbolic link, non-regular destination, or
+other non-FI state is `FOREIGN_COLLISION` and must not be silently adopted.
+
+Inspection failure is `UNKNOWN`.
+
+Initial apply does not repair drift or foreign state.
+
+The only initial policy-file publication path is a same-directory temporary
+file followed by an atomic no-clobber hard link. The final policy must be
+owned by UID `0`, GID `0`, mode `0644`, with link count `1`.
+
+`apply-sor-postgresql` requires `fi-sor-db` to be stopped before policy
+mutation. `verify-sor-postgresql` is read-only.
+
+The PostgreSQL jail additionally requires private jail-local System V IPC
+namespaces:
+
+    sysvmsg = new;
+    sysvsem = new;
+    sysvshm = new;
+
+FI does not authorize `allow.sysvipc` or `inherit` for this purpose.
+`fi-receiver` and `fi-ingest` must not receive these PostgreSQL IPC namespace
+exceptions.
+
+Real-host acceptance must prove PostgreSQL autostart through normal jail rc,
+private IPC state, exact PGDATA authority, managed stop/start behavior, and
+continued separation of receiver and ingest IPC authority.
+
 ## Ordering
 
 Mutations must occur in dependency order.
@@ -654,10 +732,11 @@ The intended apply sequence is:
 3. create/verify jail-root clones;
 4. create/verify jail-local runtime identities;
 5. create/verify required jail-local directories;
-6. create/verify dedicated production devfs rules;
-7. install/verify deterministic host jail/fstab files;
-8. establish/verify production lifecycle policy;
-9. run post-apply acceptance.
+6. establish/verify System-of-Record PostgreSQL policy and PGDATA authority;
+7. create/verify dedicated production devfs rules;
+8. install/verify deterministic host jail/fstab files;
+9. establish/verify production lifecycle policy;
+10. run post-apply acceptance.
 
 Later steps must not begin when an earlier dependency fails.
 
@@ -674,6 +753,10 @@ At minimum it must eventually verify:
 - exact jail-root origins;
 - exact numeric identities;
 - exact directory ownership and modes;
+- exact PostgreSQL package service identity;
+- exact PostgreSQL PGDATA owner, group, and mode;
+- exact FI-owned PostgreSQL rc policy;
+- private System-of-Record PostgreSQL System V IPC namespaces;
 - exact host-file contents, ownership, and modes;
 - exact devfs rules;
 - exact jail definitions;
@@ -686,33 +769,50 @@ At minimum it must eventually verify:
 
 ## Current implementation boundary
 
-The first mutating apply layer is now implemented as:
+The FreeBSD deployment currently implements independently reviewed mutation
+and verification boundaries for:
 
-    fi-bootstrap.sh apply-zfs <config-file>
+- the FI production ZFS hierarchy;
+- production jail-root clones;
+- jail-local FI runtime identities;
+- FI-controlled filesystem directories;
+- System-of-Record PostgreSQL policy and PGDATA authority;
+- the dedicated production devfs ruleset;
+- deterministic production host files;
+- FI-specific lifecycle policy.
 
-This command is limited to the production FI ZFS data hierarchy defined by
-this contract.
+The corresponding bootstrap commands include:
 
-The ZFS layer implements:
+    apply-zfs
+    verify-zfs
+    preflight-jail-roots
+    apply-jail-roots
+    verify-jail-roots
+    apply-identities
+    apply-directories
+    apply-sor-postgresql
+    verify-sor-postgresql
+    apply-devfs
+    verify-devfs
+    apply-host-files
+    verify-host-files
+    apply-lifecycle
+    verify-lifecycle
 
-- exact host binding;
-- layer-wide preclassification before mutation;
-- immediate reclassification before each create;
-- FI ZFS ownership markers;
-- explicit locally-set native properties;
-- mountpoint-path collision checks;
-- exact post-create verification;
-- exact idempotent reapply behavior;
-- fail-closed handling of drift, foreign collisions, and unknown state.
+These layers retain exact host binding, fail-closed resource classification,
+no-clobber creation where applicable, independent post-mutation verification,
+and idempotent handling of exact `OWNED_MATCH` state.
 
-The only production mutation primitive in this layer is:
+The System-of-Record PostgreSQL path additionally binds PGDATA authority to
+the package-provided `postgres` UID/GID and mode `0700`, without using the
+policy layer as a PGDATA repair mechanism.
 
-    zfs create
+Production jail networking and lifecycle have been exercised on the real host,
+including dedicated receiver-interface return/reacquisition and PostgreSQL
+restart through normal jail rc.
 
-Jail-root, jail-local identity, filesystem-directory, dedicated devfs, and
-deterministic host-file mutation are also implemented by the later layers in
-this contract. Live VNET lifecycle, PF, and service activation
-remain unimplemented by this checkpoint.
+PF policy and FI application-service installation remain outside this
+checkpoint.
 
 Real-host production mutation remains subject to explicit pre-mutation review
 and post-apply acceptance.
@@ -1012,9 +1112,12 @@ the applicable jail-local service identity to traverse and read explicitly
 permitted configuration material after the host mounts that dataset read-only
 into the jail.
 
-`FI_SOR_POSTGRES_HOST` is not modified by this layer. PostgreSQL ownership and
-mode remain deferred until the selected FreeBSD PostgreSQL package has been
-installed and its service UID/GID has been inspected and accepted.
+`FI_SOR_POSTGRES_HOST` is not modified by this layer. The later
+System-of-Record PostgreSQL policy layer discovers the package-provided
+`postgres` service UID and primary GID and requires this authoritative source
+directory to have that exact owner/group with mode `0700`. That layer verifies
+the state and fails closed on mismatch; it does not repair PGDATA ownership or
+mode.
 
 ### Receiver jail directories
 
