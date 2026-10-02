@@ -371,6 +371,9 @@ preflight_host()
     done
 
     for preflight_interface_key in \
+        FI_RECEIVER_EXTERNAL_BRIDGE \
+        FI_RECEIVER_EXTERNAL_HOST_IF \
+        FI_RECEIVER_EXTERNAL_JAIL_IF \
         FI_RECEIVER_MGMT_HOST_IF \
         FI_RECEIVER_MGMT_JAIL_IF \
         FI_RECEIVER_WORK_HOST_IF \

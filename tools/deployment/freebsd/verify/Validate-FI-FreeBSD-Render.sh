@@ -60,6 +60,9 @@ for expected_file in \
     fstab.fi-ingest \
     fstab.fi-sor-db \
     devfs.rules.fi \
+    pf.conf \
+    rc.conf.d.fi_pf \
+    rc.d.fi_pf \
     fi-vnet-pair \
     rc.conf.d.postgresql \
     MANIFEST.sha256

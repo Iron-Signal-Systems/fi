@@ -1,0 +1,11 @@
+# FI-MANAGED: ironsignal-fi-freebsd-lifecycle-v1
+# FI-ROLE: fi-pf-enable-policy
+
+fi_pf_enable="YES"
+fi_pf_rules="/etc/pf.conf"
+fi_pf_expected_sha256="@FI_PF_POLICY_SHA256@"
+fi_pf_sor_db_work_ip="@FI_SOR_DB_WORK_IP@"
+
+fi_pf_pfil_member="1"
+fi_pf_pfil_bridge="0"
+fi_pf_pfil_onlyip="1"

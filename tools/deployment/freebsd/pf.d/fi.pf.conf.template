@@ -1,0 +1,21 @@
+# FI-MANAGED: ironsignal-fi-freebsd-pf-v1
+# FI-ROLE: host-packet-filter-policy
+
+ext_if   = "@FI_HOST_ADMIN_IF@"
+mgmt_net = "@FI_MGMT_NETWORK@"
+work_net = "@FI_WORK_NETWORK@"
+
+# NAT only the jail management network.
+nat on $ext_if inet from $mgmt_net to any -> ($ext_if)
+
+# Only ingest may initiate PostgreSQL traffic to the System of Record.
+pass in quick inet proto tcp from @FI_INGEST_WORK_IP@ to @FI_SOR_DB_WORK_IP@ port 5432 keep state
+
+# All other inbound PostgreSQL paths to the System of Record are denied.
+block drop in quick inet proto tcp from any to @FI_SOR_DB_WORK_IP@ port 5432
+
+# The FI workload network is not allowed to route off its own subnet.
+block drop in quick inet from $work_net to ! $work_net
+
+# Preserve current permissive behavior outside the FI isolation contract.
+pass all

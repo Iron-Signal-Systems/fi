@@ -1,0 +1,351 @@
+#!/bin/sh
+
+# FI-MANAGED: ironsignal-fi-freebsd-lifecycle-v1
+# FI-ROLE: fi-pf-controller
+#
+# PROVIDE: fi_pf
+# REQUIRE: pf
+# BEFORE: fi_jails
+
+. /etc/rc.subr
+
+name="fi_pf"
+desc="FI packet-filter runtime policy"
+rcvar="fi_pf_enable"
+
+start_cmd="fi_pf_start"
+stop_cmd="fi_pf_stop"
+status_cmd="fi_pf_status"
+extra_commands="status"
+
+: ${fi_pf_enable:="NO"}
+: ${fi_pf_rules:="/etc/pf.conf"}
+
+fi_pf_runtime_snapshot="/var/run/fi_pf.runtime"
+
+fi_pf_validate_config()
+{
+    [ "$fi_pf_rules" = "/etc/pf.conf" ] || {
+        warn "FI PF rules path is not exact"
+        return 1
+    }
+
+    printf '%s\n' "$fi_pf_expected_sha256" |
+        grep -Eq '^[0-9a-f]{64}$' || {
+            warn "FI PF expected SHA-256 is invalid"
+            return 1
+        }
+
+    printf '%s\n' "$fi_pf_sor_db_work_ip" |
+        grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || {
+            warn "FI PF System of Record address is invalid"
+            return 1
+        }
+
+    [ "$fi_pf_pfil_member" = "1" ] &&
+    [ "$fi_pf_pfil_bridge" = "0" ] &&
+    [ "$fi_pf_pfil_onlyip" = "1" ] || {
+        warn "FI PF bridge filtering contract is not exact"
+        return 1
+    }
+
+    return 0
+}
+
+fi_pf_validate_persistent()
+{
+    [ -f "$fi_pf_rules" ] &&
+    [ ! -L "$fi_pf_rules" ] || {
+        warn "FI PF persistent rules file is unavailable"
+        return 1
+    }
+
+    fi_pf_metadata=$(
+        stat -f '%u:%g:%OMp:%#Lp:%l' "$fi_pf_rules" 2>/dev/null
+    ) || {
+        warn "unable to inspect FI PF persistent rules metadata"
+        return 1
+    }
+
+    [ "$fi_pf_metadata" = "0:0:0:0644:1" ] || {
+        warn "FI PF persistent rules metadata is not exact"
+        return 1
+    }
+
+    grep -Fqx \
+        '# FI-MANAGED: ironsignal-fi-freebsd-pf-v1' \
+        "$fi_pf_rules" || {
+            warn "FI PF persistent rules lack ownership marker"
+            return 1
+        }
+
+    grep -Fqx \
+        '# FI-ROLE: host-packet-filter-policy' \
+        "$fi_pf_rules" || {
+            warn "FI PF persistent rules lack role marker"
+            return 1
+        }
+
+    fi_pf_actual_sha256=$(
+        sha256 -q "$fi_pf_rules"
+    ) || {
+        warn "unable to hash FI PF persistent rules"
+        return 1
+    }
+
+    [ "$fi_pf_actual_sha256" = "$fi_pf_expected_sha256" ] || {
+        warn "FI PF persistent rules differ from expected policy"
+        return 1
+    }
+
+    pfctl -nf "$fi_pf_rules" >/dev/null 2>&1 || {
+        warn "FI PF persistent rules failed syntax validation"
+        return 1
+    }
+
+    return 0
+}
+
+fi_pf_is_enabled()
+{
+    pfctl -s Running >/dev/null 2>&1
+}
+
+fi_pf_sysctls_match()
+{
+    [ "$(sysctl -n net.link.bridge.pfil_member 2>/dev/null)" = \
+        "$fi_pf_pfil_member" ] &&
+    [ "$(sysctl -n net.link.bridge.pfil_bridge 2>/dev/null)" = \
+        "$fi_pf_pfil_bridge" ] &&
+    [ "$(sysctl -n net.link.bridge.pfil_onlyip 2>/dev/null)" = \
+        "$fi_pf_pfil_onlyip" ]
+}
+
+fi_pf_filter_hash()
+{
+    fi_pf_filter_rules=$(
+        pfctl -sr 2>/dev/null
+    ) || return 1
+
+    printf '%s\n' "$fi_pf_filter_rules" | sha256 -q
+}
+
+fi_pf_nat_hash()
+{
+    fi_pf_nat_rules=$(
+        pfctl -sn 2>/dev/null
+    ) || return 1
+
+    printf '%s\n' "$fi_pf_nat_rules" | sha256 -q
+}
+
+fi_pf_snapshot_valid()
+{
+    [ -f "$fi_pf_runtime_snapshot" ] &&
+    [ ! -L "$fi_pf_runtime_snapshot" ] ||
+        return 1
+
+    fi_pf_snapshot_metadata=$(
+        stat -f '%u:%g:%OMp:%#Lp:%l' \
+            "$fi_pf_runtime_snapshot" 2>/dev/null
+    ) || return 1
+
+    [ "$fi_pf_snapshot_metadata" = "0:0:0:0600:1" ] ||
+        return 1
+
+    fi_pf_current_filter_hash=$(fi_pf_filter_hash) ||
+        return 1
+
+    fi_pf_current_nat_hash=$(fi_pf_nat_hash) ||
+        return 1
+
+    grep -Fqx \
+        "filter_sha256=$fi_pf_current_filter_hash" \
+        "$fi_pf_runtime_snapshot" &&
+    grep -Fqx \
+        "nat_sha256=$fi_pf_current_nat_hash" \
+        "$fi_pf_runtime_snapshot"
+}
+
+fi_pf_snapshot_path_safe()
+{
+    if [ ! -e "$fi_pf_runtime_snapshot" ] &&
+       [ ! -L "$fi_pf_runtime_snapshot" ]
+    then
+        return 0
+    fi
+
+    [ -f "$fi_pf_runtime_snapshot" ] &&
+    [ ! -L "$fi_pf_runtime_snapshot" ] || {
+        warn "FI PF runtime snapshot path is not a regular file"
+        return 1
+    }
+
+    fi_pf_snapshot_path_metadata=$(
+        stat -f '%u:%g:%OMp:%#Lp:%l' \
+            "$fi_pf_runtime_snapshot" 2>/dev/null
+    ) || {
+        warn "unable to inspect FI PF runtime snapshot metadata"
+        return 1
+    }
+
+    [ "$fi_pf_snapshot_path_metadata" = "0:0:0:0600:1" ] || {
+        warn "FI PF runtime snapshot metadata is not exact"
+        return 1
+    }
+
+    return 0
+}
+
+fi_pf_capture_snapshot()
+{
+    fi_pf_filter_sha256=$(fi_pf_filter_hash) ||
+        return 1
+
+    fi_pf_nat_sha256=$(fi_pf_nat_hash) ||
+        return 1
+
+    fi_pf_snapshot_temp=$(
+        mktemp "${fi_pf_runtime_snapshot}.XXXXXX"
+    ) || return 1
+
+    printf '%s\n' \
+        "filter_sha256=$fi_pf_filter_sha256" \
+        "nat_sha256=$fi_pf_nat_sha256" \
+        > "$fi_pf_snapshot_temp" || {
+            rm -f "$fi_pf_snapshot_temp"
+            return 1
+        }
+
+    chown 0:0 "$fi_pf_snapshot_temp" || {
+        rm -f "$fi_pf_snapshot_temp"
+        return 1
+    }
+
+    chmod 0600 "$fi_pf_snapshot_temp" || {
+        rm -f "$fi_pf_snapshot_temp"
+        return 1
+    }
+
+    mv -f \
+        "$fi_pf_snapshot_temp" \
+        "$fi_pf_runtime_snapshot" ||
+        return 1
+
+    return 0
+}
+
+fi_pf_status_internal()
+{
+    fi_pf_validate_config &&
+    fi_pf_validate_persistent &&
+    fi_pf_is_enabled &&
+    fi_pf_sysctls_match &&
+    fi_pf_snapshot_valid
+}
+
+fi_pf_start()
+{
+    if fi_pf_status_internal >/dev/null 2>&1; then
+        echo "FI PF runtime policy already ready"
+        return 0
+    fi
+
+    fi_pf_validate_config ||
+        return 1
+
+    fi_pf_validate_persistent ||
+        return 1
+
+    fi_pf_is_enabled || {
+        warn "base PF service is not enabled at runtime"
+        return 1
+    }
+
+    fi_pf_snapshot_path_safe ||
+        return 1
+
+    # Load the already validated policy before enabling bridge-member
+    # filtering.
+    pfctl -f "$fi_pf_rules" || {
+        warn "unable to load FI PF policy"
+        return 1
+    }
+
+    # Remove all pre-policy states involving the System of Record so an
+    # existing state cannot bypass the new authorization boundary.
+    pfctl \
+        -k 0.0.0.0/0 \
+        -k "$fi_pf_sor_db_work_ip" \
+        >/dev/null || {
+            warn "unable to clear PF states targeting the System of Record"
+            return 1
+        }
+
+    pfctl \
+        -k "$fi_pf_sor_db_work_ip" \
+        >/dev/null || {
+            warn "unable to clear PF states originating from the System of Record"
+            return 1
+        }
+
+    # Establish non-member settings first. Member filtering is enabled last.
+    sysctl \
+        "net.link.bridge.pfil_bridge=$fi_pf_pfil_bridge" \
+        >/dev/null || {
+            warn "unable to set bridge pfil_bridge"
+            return 1
+        }
+
+    sysctl \
+        "net.link.bridge.pfil_onlyip=$fi_pf_pfil_onlyip" \
+        >/dev/null || {
+            warn "unable to set bridge pfil_onlyip"
+            return 1
+        }
+
+    sysctl \
+        "net.link.bridge.pfil_member=$fi_pf_pfil_member" \
+        >/dev/null || {
+            warn "unable to enable bridge member filtering"
+            return 1
+        }
+
+    fi_pf_sysctls_match || {
+        warn "FI PF bridge filtering did not reach exact runtime state"
+        return 1
+    }
+
+    fi_pf_capture_snapshot || {
+        warn "unable to capture FI PF runtime policy snapshot"
+        return 1
+    }
+
+    fi_pf_status_internal || {
+        warn "FI PF runtime policy failed final verification"
+        return 1
+    }
+
+    echo "FI PF runtime policy ready"
+    return 0
+}
+
+fi_pf_stop()
+{
+    echo "FI PF runtime policy remains active by design"
+    return 0
+}
+
+fi_pf_status()
+{
+    if fi_pf_status_internal; then
+        echo "FI PF runtime policy is ready"
+        return 0
+    fi
+
+    warn "FI PF runtime policy is not ready"
+    return 1
+}
+
+load_rc_config "$name"
+run_rc_command "$1"

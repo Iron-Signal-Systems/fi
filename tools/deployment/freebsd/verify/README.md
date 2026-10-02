@@ -226,7 +226,8 @@ Run:
 This offline verifier renders the production jail configuration using the
 accepted fixture and proves:
 
-- receiver use of the dedicated external interface;
+- host retention of the dedicated receiver physical interface;
+- exact receiver external bridge/epair lifecycle;
 - exact receiver management and workload epair lifecycle;
 - receiver external, management, and workload addresses;
 - receiver default routing through the external gateway;
@@ -324,6 +325,51 @@ The offline lifecycle-apply verifier proves:
 The lifecycle installer writes configuration only. It does not start or stop
 jails and does not reload or mutate the running devfs ruleset.
 
+## PF render verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-PF-Render.sh
+
+The offline PF render verifier proves the deterministic host PF policy,
+including the ingest-to-System-of-Record PostgreSQL authorization, denial of
+other PostgreSQL initiation paths, workload-network external-path denial, and
+absence of unresolved FI tokens.
+
+## PF persistence verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-PF-Apply.sh
+
+The offline PF persistence verifier proves create, verify, explicit legacy
+adoption, controlled FI-owned update, metadata/collision rejection,
+preclassification, syntax validation before mutation, and absence of runtime
+PF activation from the persistence helper.
+
+## PF lifecycle render verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-PF-Lifecycle-Render.sh
+
+The offline PF lifecycle verifier proves exact PF runtime configuration,
+`pf -> fi_pf -> fi_jails` ordering, FI-jail startup dependence on verified PF
+readiness, policy-hash binding, bridge-filtering configuration, and
+System-of-Record state invalidation.
+
+## PF runtime behavior verification
+
+Run:
+
+    ./Validate-FI-FreeBSD-PF-Runtime.sh
+
+The mock runtime verifier proves fail-closed policy and metadata validation,
+snapshot-path safety, PF-load and state-invalidation failure boundaries,
+bridge-member filtering enabled last, exact runtime snapshot behavior,
+filter/NAT drift detection, idempotent second start, and intentional
+continued PF enforcement during FI jail shutdown.
+
 ## Real-host state capture
 
 Run the read-only state capture before and after important real-host
@@ -334,12 +380,17 @@ For the current receiver host:
     ./Capture-FI-FreeBSD-Host-State.sh \
         vtnet0 \
         vtnet1 \
+        bridge30 \
+        epre0a \
+        epre0b \
         bridge10 \
         bridge20 \
         baseline
 
-The capture reports host, interface, route, jail, rc-policy, devfs, and FI
-production-file state. It performs no mutation.
+The capture reports host, physical/external/internal interface state, routes,
+jails, rc policy, devfs, persistent PF policy, active PF filter/NAT rules,
+bridge-filtering sysctls, PF runtime snapshot, and FI production files. It
+performs no mutation.
 
 ## Dedicated receiver interface return verification
 
@@ -349,16 +400,22 @@ After `fi-receiver` has been stopped through the reviewed lifecycle path, run:
         vtnet0 \
         192.168.1.218 \
         vtnet1 \
+        bridge30 \
+        epre0a \
+        epre0b \
         bridge10 \
         bridge20
 
 Acceptance requires:
 
 - the administrative interface and expected administrative IPv4 remain;
-- `vtnet1` has returned to the host;
-- `vtnet1` has no IPv4 address;
-- the IPv4 route table does not reference `vtnet1`;
-- `vtnet1` is not a member of either FI bridge;
+- `vtnet1` remains present on the host;
+- `vtnet1` has no IPv4 or IPv6 address;
+- the IPv4 and IPv6 route tables do not reference `vtnet1`;
+- `vtnet1` is not a member of either internal FI bridge;
+- `bridge30` is absent;
+- `epre0a` is absent;
+- `epre0b` is absent;
 - `fi-receiver` is stopped.
 
 The verifier is read-only.

@@ -30,30 +30,47 @@ FI must never:
 - replace its administrative route;
 - use it as the receiver dedicated external interface.
 
-The dedicated receiver external interface is:
+The dedicated receiver physical external interface is:
 
     vtnet1
 
-When the receiver jail is stopped, `vtnet1` must be host-owned and must not:
+It remains host-owned in both stopped and running receiver states.
 
-- carry an FI layer-3 address;
-- carry an FI route;
-- be a member of the management bridge;
-- be a member of the workload bridge.
+When the receiver jail is stopped:
 
-When the receiver jail is running, only `fi-receiver` may receive `vtnet1`.
+- `vtnet1` must carry no FI layer-3 address;
+- `vtnet1` must carry no FI route;
+- `bridge30` must be absent;
+- `epre0a` must be absent;
+- `epre0b` must be absent.
 
-`fi-ingest` and `fi-sor-db` must never receive the dedicated external
-interface.
+When the receiver jail is running:
+
+- the host retains `vtnet1`;
+- `bridge30` is the no-IP external layer-2 bridge;
+- `bridge30` contains only `vtnet1` and `epre0a`;
+- the host retains `epre0a`;
+- only `fi-receiver` receives `epre0b`;
+- `epre0b` carries the receiver external address.
+
+`fi-ingest` and `fi-sor-db` must never receive `vtnet1`, `epre0a`, or `epre0b`.
 
 ## Production topology
 
 Host:
 
     vtnet0      administrative network
-    vtnet1      dedicated receiver external interface
+    vtnet1      dedicated receiver physical external interface
     bridge10    FI management bridge, 10.77.10.1/24
     bridge20    FI workload bridge, 10.77.20.1/24
+
+Receiver-running external topology:
+
+    bridge30    FI receiver external layer-2 bridge, no FI IP address
+        vtnet1  dedicated physical member
+        epre0a  host external epair member
+
+    epre0b      receiver external jail endpoint
 
 Production jail addresses:
 
@@ -72,7 +89,7 @@ Production jail addresses:
 
 Receiver default route:
 
-    192.168.1.1 through vtnet1
+    192.168.1.1 through epre0b
 
 Ingest and System-of-Record default route:
 
@@ -91,11 +108,23 @@ FI must not change:
 
 FI production lifecycle authority is:
 
+    /usr/local/etc/rc.d/fi_pf
     /usr/local/etc/rc.d/fi_jails
+    /etc/rc.conf.d/fi_pf
     /etc/rc.conf.d/fi_jails
     /etc/rc.conf.d/devfs/90-fi
 
-The production startup order is:
+FI persistent packet-filter authority is:
+
+    /etc/pf.conf
+
+The host startup dependency is:
+
+    pf
+        -> fi_pf
+            -> fi_jails
+
+After `fi_pf` reports ready, the production jail startup order is:
 
     fi-sor-db
     fi-ingest
@@ -178,7 +207,8 @@ Apply the implemented layers in contract order:
     5. System-of-Record PostgreSQL policy and PGDATA authority
     6. in-kernel dedicated production devfs ruleset
     7. deterministic host files
-    8. lifecycle files
+    8. persistent FI PF policy
+    9. lifecycle files
 
 Each layer must pass its own verification before the next layer is accepted.
 
@@ -214,21 +244,32 @@ The comparison with the baseline must prove:
 - `vtnet0` remains host-owned and unchanged by FI;
 - `vtnet1` remains host-owned;
 - `vtnet1` has not gained an FI address;
+- `vtnet1` has not gained an FI route;
 - `vtnet1` has not joined bridge10 or bridge20;
+- `bridge30`, `epre0a`, and `epre0b` remain absent before receiver startup;
 - no production FI jail was started by configuration installation;
 - global jail-service policy remains site-owned;
-- the three lifecycle files match reviewed desired state;
-- the dedicated production devfs ruleset is exact.
+- all five FI lifecycle resources match reviewed desired state;
+- `/etc/pf.conf` matches the reviewed FI persistent PF policy;
+- PF runtime has not been activated merely by persistent-policy installation;
+- the dedicated production devfs ruleset is exact;
 - the FI-managed PostgreSQL rc policy remains exact;
 - authoritative PGDATA ownership and mode remain exact.
 
 ## Phase 5 - controlled first start
 
-Start FI through the dedicated FI lifecycle controller.
+Activate the reviewed FI PF runtime policy first:
+
+    /usr/local/etc/rc.d/fi_pf start
+
+Before production-jail startup, `fi_pf onestatus` must report ready and the
+runtime bridge-filtering state must be exact.
+
+Then start FI through the dedicated FI jail lifecycle controller.
 
 Do not start the three production jails independently for initial acceptance.
 
-The controller must establish:
+The jail controller must establish:
 
     fi-sor-db
     fi-ingest
@@ -242,10 +283,14 @@ After startup prove:
 - no unexpected FI jail exists;
 - the System of Record has only its intended VNET interfaces;
 - ingest has only its intended VNET interfaces;
-- receiver has its management, workload, and dedicated external interfaces;
-- receiver owns `vtnet1`;
-- receiver external IPv4 is exactly 192.168.1.219/24;
-- receiver default route is exactly through 192.168.1.1;
+- receiver has its management, workload, and external epair interfaces;
+- the host still owns `vtnet1`;
+- `bridge30` exists with only `vtnet1` and `epre0a` as members;
+- `bridge30` has no FI layer-3 address;
+- `epre0a` remains host-owned;
+- only the receiver owns `epre0b`;
+- receiver external IPv4 on `epre0b` is exactly 192.168.1.219/24;
+- receiver default route is exactly through 192.168.1.1 on `epre0b`;
 - ingest default route uses its management path;
 - System-of-Record default route uses its management path;
 - the host administrative interface remains healthy;
@@ -272,15 +317,20 @@ in that order.
 After shutdown prove:
 
 - none of the three production FI jails is running;
-- FI-created epair attachments are gone;
-- `vtnet1` has returned to the host;
+- `bridge30` is absent;
+- `epre0a` is absent;
+- `epre0b` is absent;
+- `vtnet1` remains present and host-owned;
 - `vtnet1` carries no FI layer-3 address;
 - `vtnet1` carries no FI route;
 - `vtnet1` is not a member of bridge10;
 - `vtnet1` is not a member of bridge20;
-- `vtnet0` and 192.168.1.218/24 remain intact.
+- `vtnet0` and 192.168.1.218/24 remain intact;
+- FI PF enforcement remains active by design while the production jails are
+  stopped.
 
-The return of `vtnet1` to a clean host state is a mandatory acceptance gate.
+Clean teardown of `bridge30`, `epre0a`, and `epre0b` together with clean
+host ownership of `vtnet1` is a mandatory acceptance gate.
 
 ## Phase 7 - restart repeatability
 
@@ -313,14 +363,19 @@ After reboot prove:
 
 - `/etc/devfs.rules.fi` is loaded through the persistent devfs policy;
 - the FI production ruleset is exact;
-- `fi_jails` participates in rc ordering as reviewed;
+- base PF loads before `fi_pf`;
+- `fi_pf` validates and activates the reviewed FI PF runtime policy;
+- `fi_jails` starts only after verified `fi_pf` readiness;
 - the three FI production jails start in the intended dependency order;
-- receiver obtains the dedicated external interface;
+- the host retains `vtnet1`;
+- receiver external topology is `vtnet1 -> bridge30 -> epre0a/epre0b`;
+- only `epre0b` enters the receiver VNET;
 - all expected network state is correct;
-- administrative access remains intact.
+- administrative access remains intact;
 - PostgreSQL starts through normal jail rc;
 - PostgreSQL private IPC namespace state remains exact;
-- authoritative PGDATA ownership and mode remain exact.
+- authoritative PGDATA ownership and mode remain exact;
+- the runtime PF filter/NAT snapshot matches the active rules.
 
 Then perform one controlled stop/start cycle after reboot and repeat the
 dedicated-interface return proof.

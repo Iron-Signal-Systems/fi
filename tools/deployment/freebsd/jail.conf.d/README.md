@@ -34,26 +34,40 @@ For each management and workload connection, deployment configuration defines:
     JAIL_IF
         peer endpoint transferred into the jail through `vnet.interface`.
 
-The receiver additionally receives the dedicated physical
-`FI_RECEIVER_EXTERNAL_IF` directly through `vnet.interface`.
+The receiver external path consists of:
 
-That external interface:
+    FI_RECEIVER_EXTERNAL_IF
+        dedicated physical interface retained by the host
 
-- is not an epair;
-- is not attached to either FI bridge;
-- must carry no host IP address before receiver start;
-- becomes the receiver's external/LAN interface;
-- receives `FI_RECEIVER_EXTERNAL_ADDRESS` inside the receiver VNET;
+    FI_RECEIVER_EXTERNAL_BRIDGE
+        transient no-IP host bridge
+
+    FI_RECEIVER_EXTERNAL_HOST_IF
+        transient host epair endpoint attached to the external bridge
+
+    FI_RECEIVER_EXTERNAL_JAIL_IF
+        transient peer transferred into the receiver through `vnet.interface`
+
+The physical external interface:
+
+- remains in the host VNET;
+- must carry no host IPv4 or IPv6 address before receiver start;
+- is attached to the external bridge only while the receiver is running;
+- is never transferred into the receiver jail.
+
+Inside the receiver VNET, `FI_RECEIVER_EXTERNAL_JAIL_IF`:
+
+- receives `FI_RECEIVER_EXTERNAL_ADDRESS`;
 - provides the receiver default route through
-  `FI_RECEIVER_EXTERNAL_GATEWAY`;
-- must return to the host without an IP address when the receiver jail stops.
+  `FI_RECEIVER_EXTERNAL_GATEWAY`.
 
-The management and workload epairs are created by the host-side
+The external, management, and workload epairs are created by the host-side
 `fi-vnet-pair` helper during `exec.prestart` and removed during
 `exec.poststop`.
 
-The receiver uses the helper's `create-receiver` path so the dedicated
-external interface is validated before either internal epair is created.
+The receiver uses the helper's `create-receiver` path so physical-interface
+state and all deterministic external topology names are validated before
+runtime topology is created.
 
 The ingest and System of Record jails use `create-dual`.
 

@@ -226,10 +226,22 @@ lifecycle_require_host()
 lifecycle_resource_map()
 {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "fi-pf-controller" \
+        "$LIFECYCLE_PLAN/rc.d.fi_pf" \
+        "/usr/local/etc/rc.d/fi_pf" \
+        "0" "0" "0555"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "fi-jails-controller" \
         "$LIFECYCLE_PLAN/rc.d.fi_jails" \
         "/usr/local/etc/rc.d/fi_jails" \
         "0" "0" "0555"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "fi-pf-enable-policy" \
+        "$LIFECYCLE_PLAN/rc.conf.d.fi_pf" \
+        "/etc/rc.conf.d/fi_pf" \
+        "0" "0" "0644"
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "fi-jails-enable-policy" \
@@ -382,6 +394,248 @@ apply_lifecycle()
     lifecycle_cleanup_expected
 
     pass "FI FreeBSD lifecycle apply acceptance complete"
+}
+
+update_lifecycle()
+{
+    lifecycle_prior_plan=$1
+
+    lifecycle_require_host
+    lifecycle_global_jail_policy_precheck
+
+    [ -n "$lifecycle_prior_plan" ] ||
+        fail "approved prior lifecycle plan is required"
+
+    [ -d "$lifecycle_prior_plan" ] &&
+    [ ! -L "$lifecycle_prior_plan" ] ||
+        fail "approved prior lifecycle plan is unavailable: $lifecycle_prior_plan"
+
+    lifecycle_prepare_expected
+
+    lifecycle_parent_map_file="$LIFECYCLE_PLAN_ROOT/parents"
+    lifecycle_resource_map_file="$LIFECYCLE_PLAN_ROOT/resources"
+
+    lifecycle_parent_map > "$lifecycle_parent_map_file" ||
+        fail "unable to build lifecycle parent map"
+
+    lifecycle_resource_map > "$lifecycle_resource_map_file" ||
+        fail "unable to build lifecycle resource map"
+
+    lifecycle_tab=$(printf '\t')
+
+    # Existing lifecycle parent directories are authority for an update.
+    # update-lifecycle never creates or repairs parent directories.
+    while IFS="$lifecycle_tab" read -r \
+        lifecycle_parent_role \
+        lifecycle_parent_target \
+        lifecycle_parent_uid \
+        lifecycle_parent_gid \
+        lifecycle_parent_mode
+    do
+        lifecycle_parent_state=$(
+            lifecycle_parent_classify \
+                "$lifecycle_parent_target" \
+                "$lifecycle_parent_uid" \
+                "$lifecycle_parent_gid" \
+                "$lifecycle_parent_mode"
+        ) || fail \
+            "unable to classify lifecycle update parent: $lifecycle_parent_role"
+
+        [ "$lifecycle_parent_state" = "DIRECTORY_MATCH" ] ||
+            fail \
+                "lifecycle update parent is not exact: $lifecycle_parent_role ($lifecycle_parent_state)"
+    done < "$lifecycle_parent_map_file"
+
+    # --------------------------------------------------------
+    # Complete-layer preclassification before first mutation.
+    # --------------------------------------------------------
+
+    while IFS="$lifecycle_tab" read -r \
+        lifecycle_role \
+        lifecycle_expected \
+        lifecycle_target \
+        lifecycle_uid \
+        lifecycle_gid \
+        lifecycle_mode
+    do
+        lifecycle_prior_expected="$lifecycle_prior_plan/${lifecycle_expected##*/}"
+
+        if [ -e "$lifecycle_prior_expected" ] ||
+            [ -L "$lifecycle_prior_expected" ]
+        then
+            [ -f "$lifecycle_prior_expected" ] &&
+            [ ! -L "$lifecycle_prior_expected" ] ||
+                fail \
+                    "approved prior lifecycle resource is not a regular file: $lifecycle_role"
+
+            lifecycle_prior_present=1
+        else
+            lifecycle_prior_present=0
+        fi
+
+        lifecycle_update_state=$(
+            host_file_classify \
+                "$lifecycle_expected" \
+                "$lifecycle_target" \
+                "$lifecycle_uid" \
+                "$lifecycle_gid" \
+                "$lifecycle_mode"
+        ) || fail \
+            "unable to classify lifecycle resource for update: $lifecycle_role"
+
+        case "$lifecycle_update_state" in
+            OWNED_MATCH)
+                # Already at the new reviewed version.
+                ;;
+
+            OWNED_DRIFT)
+                [ "$lifecycle_prior_present" -eq 1 ] ||
+                    fail \
+                        "lifecycle resource exists but has no approved prior version: $lifecycle_role"
+
+                lifecycle_prior_state=$(
+                    host_file_classify \
+                        "$lifecycle_prior_expected" \
+                        "$lifecycle_target" \
+                        "$lifecycle_uid" \
+                        "$lifecycle_gid" \
+                        "$lifecycle_mode"
+                ) || fail \
+                    "unable to classify lifecycle resource against approved prior: $lifecycle_role"
+
+                [ "$lifecycle_prior_state" = "OWNED_MATCH" ] ||
+                    fail \
+                        "lifecycle resource does not match approved prior version: $lifecycle_role ($lifecycle_prior_state)"
+                ;;
+
+            ABSENT)
+                [ "$lifecycle_prior_present" -eq 0 ] ||
+                    fail \
+                        "approved prior lifecycle resource is unexpectedly absent live: $lifecycle_role"
+                ;;
+
+            FOREIGN_COLLISION)
+                fail \
+                    "lifecycle update collides with non-FI state: $lifecycle_role"
+                ;;
+
+            UNKNOWN)
+                fail \
+                    "lifecycle update resource could not be classified safely: $lifecycle_role"
+                ;;
+
+            *)
+                fail \
+                    "unexpected lifecycle update state: $lifecycle_role ($lifecycle_update_state)"
+                ;;
+        esac
+    done < "$lifecycle_resource_map_file"
+
+    # --------------------------------------------------------
+    # Mutation pass. Every resource has already been accepted.
+    # --------------------------------------------------------
+
+    lifecycle_use_marker
+
+    while IFS="$lifecycle_tab" read -r \
+        lifecycle_role \
+        lifecycle_expected \
+        lifecycle_target \
+        lifecycle_uid \
+        lifecycle_gid \
+        lifecycle_mode
+    do
+        lifecycle_prior_expected="$lifecycle_prior_plan/${lifecycle_expected##*/}"
+
+        if [ -e "$lifecycle_prior_expected" ] ||
+            [ -L "$lifecycle_prior_expected" ]
+        then
+            [ -f "$lifecycle_prior_expected" ] &&
+            [ ! -L "$lifecycle_prior_expected" ] ||
+                fail \
+                    "approved prior lifecycle resource changed type: $lifecycle_role"
+
+            lifecycle_prior_present=1
+        else
+            lifecycle_prior_present=0
+        fi
+
+        lifecycle_update_state=$(
+            host_file_classify \
+                "$lifecycle_expected" \
+                "$lifecycle_target" \
+                "$lifecycle_uid" \
+                "$lifecycle_gid" \
+                "$lifecycle_mode"
+        ) || fail \
+            "unable to reclassify lifecycle resource for update: $lifecycle_role"
+
+        case "$lifecycle_update_state" in
+            OWNED_MATCH)
+                pass \
+                    "lifecycle resource already matches new version: $lifecycle_target"
+                ;;
+
+            OWNED_DRIFT)
+                [ "$lifecycle_prior_present" -eq 1 ] ||
+                    fail \
+                        "lifecycle resource lost approved prior authority: $lifecycle_role"
+
+                lifecycle_prior_state=$(
+                    host_file_classify \
+                        "$lifecycle_prior_expected" \
+                        "$lifecycle_target" \
+                        "$lifecycle_uid" \
+                        "$lifecycle_gid" \
+                        "$lifecycle_mode"
+                ) || fail \
+                    "unable to reclassify approved prior lifecycle resource: $lifecycle_role"
+
+                [ "$lifecycle_prior_state" = "OWNED_MATCH" ] ||
+                    fail \
+                        "lifecycle resource changed after update preclassification: $lifecycle_role ($lifecycle_prior_state)"
+
+                lifecycle_prior_sha256=$(
+                    sha256 -q "$lifecycle_prior_expected"
+                ) || fail \
+                    "unable to hash approved prior lifecycle resource: $lifecycle_role"
+
+                host_file_replace_owned \
+                    "$lifecycle_expected" \
+                    "$lifecycle_target" \
+                    "$lifecycle_uid" \
+                    "$lifecycle_gid" \
+                    "$lifecycle_mode" \
+                    "$lifecycle_role" \
+                    "$lifecycle_prior_sha256"
+                ;;
+
+            ABSENT)
+                [ "$lifecycle_prior_present" -eq 0 ] ||
+                    fail \
+                        "old lifecycle resource disappeared after preclassification: $lifecycle_role"
+
+                host_file_install_absent \
+                    "$lifecycle_expected" \
+                    "$lifecycle_target" \
+                    "$lifecycle_uid" \
+                    "$lifecycle_gid" \
+                    "$lifecycle_mode" \
+                    "$lifecycle_role"
+                ;;
+
+            *)
+                fail \
+                    "lifecycle resource changed after update preclassification: $lifecycle_role ($lifecycle_update_state)"
+                ;;
+        esac
+    done < "$lifecycle_resource_map_file"
+
+    verify_lifecycle_internal
+
+    lifecycle_cleanup_expected
+
+    pass "FI FreeBSD lifecycle update acceptance complete"
 }
 
 verify_lifecycle_internal()

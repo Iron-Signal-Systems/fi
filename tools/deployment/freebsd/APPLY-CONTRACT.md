@@ -462,22 +462,50 @@ Management and workload network attachments use epair pairs:
     host exec.poststop
         detach/destroy the managed epair pair
 
-The receiver has an additional dedicated external physical interface.
+The receiver has an additional source-facing external attachment built
+from the dedicated physical interface, a transient layer-2 bridge, and a
+transient epair pair.
 
-Before receiver epair creation, the host helper must verify that the configured
+The configured external roles are:
+
+    FI_RECEIVER_EXTERNAL_IF
+        dedicated physical interface retained by the host
+
+    FI_RECEIVER_EXTERNAL_BRIDGE
+        transient host layer-2 bridge with no FI layer-3 address
+
+    FI_RECEIVER_EXTERNAL_HOST_IF
+        transient host epair endpoint attached to the external bridge
+
+    FI_RECEIVER_EXTERNAL_JAIL_IF
+        transient peer endpoint transferred into the receiver VNET
+
+Before receiver external topology creation, the host helper must verify that
 `FI_RECEIVER_EXTERNAL_IF`:
 
-- exists;
+- exists on the host;
 - has no host IPv4 or IPv6 address;
 - is not a member of the FI management bridge;
 - is not a member of the FI workload bridge.
 
-The receiver jail receives that physical interface directly through
-`vnet.interface` in addition to its management and workload epairs.
+The helper must also verify that the configured external bridge and both
+external epair endpoint names are absent before creation.
+
+During receiver startup the host helper:
+
+1. creates `FI_RECEIVER_EXTERNAL_BRIDGE`;
+2. keeps that bridge free of an FI layer-3 address;
+3. attaches `FI_RECEIVER_EXTERNAL_IF` to that bridge;
+4. creates the deterministic external epair pair;
+5. attaches `FI_RECEIVER_EXTERNAL_HOST_IF` to the external bridge; and
+6. leaves `FI_RECEIVER_EXTERNAL_JAIL_IF` for transfer into the receiver VNET.
+
+The receiver jail receives `FI_RECEIVER_EXTERNAL_JAIL_IF` through
+`vnet.interface`. The dedicated physical interface itself remains host-owned.
 
 Inside the receiver VNET:
 
-    FI_RECEIVER_EXTERNAL_IF
+    FI_RECEIVER_EXTERNAL_JAIL_IF
         receives FI_RECEIVER_EXTERNAL_ADDRESS
 
     FI_RECEIVER_MGMT_JAIL_IF
@@ -492,17 +520,22 @@ Inside the receiver VNET:
 The ingest and System of Record jails receive management and workload epairs
 only. Their default route is `FI_MGMT_GATEWAY`.
 
-The dedicated receiver interface is not created or destroyed by FI. It is
-temporarily assigned to the receiver VNET by jail lifecycle authority and must
-return to the host when the jail is removed.
+The dedicated physical receiver interface is not created, destroyed, renamed,
+or transferred into a jail by FI.
 
-Real-host restart acceptance must prove that after receiver shutdown the
-dedicated external interface:
+Receiver shutdown destroys the FI-created external bridge and external epair
+pair and leaves the dedicated physical interface host-owned and free of FI
+layer-3 configuration.
 
-- is visible on the host again;
-- has no IPv4 address;
-- has no IPv6 address;
-- is not attached to either FI bridge.
+Real-host restart acceptance must prove that after receiver shutdown:
+
+- `FI_RECEIVER_EXTERNAL_IF` remains visible on the host;
+- it has no IPv4 or IPv6 address;
+- it has no FI route;
+- `FI_RECEIVER_EXTERNAL_BRIDGE` is absent;
+- `FI_RECEIVER_EXTERNAL_HOST_IF` is absent;
+- `FI_RECEIVER_EXTERNAL_JAIL_IF` is absent; and
+- the physical interface is not attached to either internal FI bridge.
 
 A pre-existing epair interface using a configured production name remains a
 collision unless FI runtime ownership is unambiguous.
@@ -549,6 +582,24 @@ FI does not set or own:
     jail_list
     jail_reverse_stop
 
+The FI host PF runtime controller is:
+
+    /usr/local/etc/rc.d/fi_pf
+
+Its dedicated service configuration is:
+
+    /etc/rc.conf.d/fi_pf
+
+The persistent FI PF policy is:
+
+    /etc/pf.conf
+
+`fi_pf` is ordered after the base FreeBSD `pf` service and before FI
+production-jail startup. It validates the exact persistent policy, loads that
+policy, invalidates pre-policy System-of-Record states, establishes the
+reviewed bridge-filtering sysctls, and records the active filter/NAT snapshot
+before reporting ready.
+
 The FI production jail controller is:
 
     /usr/local/etc/rc.d/fi_jails
@@ -557,8 +608,18 @@ Its dedicated service enable configuration is:
 
     /etc/rc.conf.d/fi_jails
 
-The controller is ordered after the base FreeBSD `jail` rc service and
-participates in shutdown ordering.
+`fi_jails` requires both the base FreeBSD `jail` service and verified `fi_pf`
+runtime readiness before starting production jails.
+
+The effective startup boundary is:
+
+    pf
+        -> fi_pf
+            -> fi_jails
+
+`fi_jails` participates in shutdown ordering. `fi_pf` intentionally does not
+tear down PF during FI jail shutdown; packet-filter enforcement remains active
+while the production jails stop.
 
 It starts FI production jails one at a time in this exact order:
 

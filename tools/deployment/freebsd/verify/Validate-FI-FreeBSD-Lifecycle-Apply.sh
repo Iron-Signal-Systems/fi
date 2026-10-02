@@ -238,9 +238,19 @@ lifecycle_prepare_expected()
     mkdir -p "$LIFECYCLE_PLAN"
 
     make_expected \
+        "$LIFECYCLE_PLAN/rc.d.fi_pf" \
+        "fi-pf-controller" \
+        "controller=pf"
+
+    make_expected \
         "$LIFECYCLE_PLAN/rc.d.fi_jails" \
         "fi-jails-controller" \
         "controller=true"
+
+    make_expected \
+        "$LIFECYCLE_PLAN/rc.conf.d.fi_pf" \
+        "fi-pf-enable-policy" \
+        'fi_pf_enable="YES"'
 
     make_expected \
         "$LIFECYCLE_PLAN/rc.conf.d.fi_jails" \
@@ -285,12 +295,28 @@ lifecycle_parent_map()
 lifecycle_resource_map()
 {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "fi-pf-controller" \
+        "$LIFECYCLE_PLAN/rc.d.fi_pf" \
+        "$TEST_ROOT/live/rc-local/fi_pf" \
+        "$TEST_UID" \
+        "$TEST_GID" \
+        "0555"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "fi-jails-controller" \
         "$LIFECYCLE_PLAN/rc.d.fi_jails" \
         "$TEST_ROOT/live/rc-local/fi_jails" \
         "$TEST_UID" \
         "$TEST_GID" \
         "0555"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "fi-pf-enable-policy" \
+        "$LIFECYCLE_PLAN/rc.conf.d.fi_pf" \
+        "$TEST_ROOT/live/rc-conf/fi_pf" \
+        "$TEST_UID" \
+        "$TEST_GID" \
+        "0644"
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "fi-jails-enable-policy" \
@@ -317,7 +343,9 @@ apply_lifecycle >/dev/null
 HOST_FILE_MARKER=$LIFECYCLE_FILE_MARKER
 
 for lifecycle_test_spec in \
+    "rc.d.fi_pf|$TEST_ROOT/live/rc-local/fi_pf|0555" \
     "rc.d.fi_jails|$TEST_ROOT/live/rc-local/fi_jails|0555" \
+    "rc.conf.d.fi_pf|$TEST_ROOT/live/rc-conf/fi_pf|0644" \
     "rc.conf.d.fi_jails|$TEST_ROOT/live/rc-conf/fi_jails|0644" \
     "rc.conf.d.devfs.90-fi|$TEST_ROOT/live/rc-conf/devfs/90-fi|0644"
 do
@@ -341,8 +369,16 @@ done
 
 test_pass "first lifecycle apply creates exact managed files"
 
+inode_pf_controller_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-local/fi_pf"
+)
+
 inode_controller_before=$(
     stat -f '%i' "$TEST_ROOT/live/rc-local/fi_jails"
+)
+
+inode_pf_enable_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/fi_pf"
 )
 
 inode_enable_before=$(
@@ -355,8 +391,16 @@ inode_devfs_before=$(
 
 apply_lifecycle >/dev/null
 
+inode_pf_controller_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-local/fi_pf"
+)
+
 inode_controller_after=$(
     stat -f '%i' "$TEST_ROOT/live/rc-local/fi_jails"
+)
+
+inode_pf_enable_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/fi_pf"
 )
 
 inode_enable_after=$(
@@ -367,7 +411,9 @@ inode_devfs_after=$(
     stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
 )
 
+[ "$inode_pf_controller_before" = "$inode_pf_controller_after" ] &&
 [ "$inode_controller_before" = "$inode_controller_after" ] &&
+[ "$inode_pf_enable_before" = "$inode_pf_enable_after" ] &&
 [ "$inode_enable_before" = "$inode_enable_after" ] &&
 [ "$inode_devfs_before" = "$inode_devfs_after" ] ||
     test_fail "exact second lifecycle apply replaced managed files"
@@ -442,6 +488,252 @@ fi
 test_pass "wrong-host lifecycle apply fails before mutation"
 
 MOCK_HOSTNAME="fi-test"
+
+# ------------------------------------------------------------
+# Controlled lifecycle version transition.
+#
+# Prior version:
+#   fi_jails controller exists and differs from new version
+#   fi_jails rc policy already equals new version
+#   devfs rc policy already equals new version
+#
+# New version:
+#   fi_pf controller is new
+#   fi_pf rc policy is new
+# ------------------------------------------------------------
+
+UPDATE_PRIOR="$TEST_ROOT/prior-lifecycle-plan"
+
+rm -rf "$UPDATE_PRIOR"
+mkdir "$UPDATE_PRIOR" ||
+    test_fail "unable to create approved prior lifecycle plan"
+
+make_expected \
+    "$UPDATE_PRIOR/rc.d.fi_jails" \
+    "fi-jails-controller" \
+    "controller=old"
+
+make_expected \
+    "$UPDATE_PRIOR/rc.conf.d.fi_jails" \
+    "fi-jails-enable-policy" \
+    'fi_jails_enable="YES"'
+
+make_expected \
+    "$UPDATE_PRIOR/rc.conf.d.devfs.90-fi" \
+    "devfs-boot-policy" \
+    'devfs_load_rulesets="YES"'
+
+rm -rf "$TEST_ROOT/live"
+
+mkdir -p \
+    "$TEST_ROOT/live/rc-local" \
+    "$TEST_ROOT/live/rc-conf/devfs" ||
+    test_fail "unable to create lifecycle update live fixture"
+
+chmod 0755 \
+    "$TEST_ROOT/live/rc-local" \
+    "$TEST_ROOT/live/rc-conf" \
+    "$TEST_ROOT/live/rc-conf/devfs"
+
+cp \
+    "$UPDATE_PRIOR/rc.d.fi_jails" \
+    "$TEST_ROOT/live/rc-local/fi_jails"
+
+cp \
+    "$UPDATE_PRIOR/rc.conf.d.fi_jails" \
+    "$TEST_ROOT/live/rc-conf/fi_jails"
+
+cp \
+    "$UPDATE_PRIOR/rc.conf.d.devfs.90-fi" \
+    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+
+chmod 0555 "$TEST_ROOT/live/rc-local/fi_jails"
+
+chmod 0644 \
+    "$TEST_ROOT/live/rc-conf/fi_jails" \
+    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+
+update_lifecycle "$UPDATE_PRIOR" >/dev/null
+
+HOST_FILE_MARKER=$LIFECYCLE_FILE_MARKER
+
+for lifecycle_test_spec in \
+    "rc.d.fi_pf|$TEST_ROOT/live/rc-local/fi_pf|0555" \
+    "rc.d.fi_jails|$TEST_ROOT/live/rc-local/fi_jails|0555" \
+    "rc.conf.d.fi_pf|$TEST_ROOT/live/rc-conf/fi_pf|0644" \
+    "rc.conf.d.fi_jails|$TEST_ROOT/live/rc-conf/fi_jails|0644" \
+    "rc.conf.d.devfs.90-fi|$TEST_ROOT/live/rc-conf/devfs/90-fi|0644"
+do
+    lifecycle_test_expected_name=${lifecycle_test_spec%%|*}
+    lifecycle_test_rest=${lifecycle_test_spec#*|}
+    lifecycle_test_target=${lifecycle_test_rest%%|*}
+    lifecycle_test_mode=${lifecycle_test_rest##*|}
+
+    lifecycle_test_state=$(
+        host_file_classify \
+            "$TEST_ROOT/layer/plan/$lifecycle_test_expected_name" \
+            "$lifecycle_test_target" \
+            "$TEST_UID" \
+            "$TEST_GID" \
+            "$lifecycle_test_mode"
+    )
+
+    [ "$lifecycle_test_state" = "OWNED_MATCH" ] ||
+        test_fail \
+            "lifecycle update did not produce exact resource: $lifecycle_test_target"
+done
+
+test_pass \
+    "approved lifecycle transition replaces old resources and creates new resources"
+
+inode_pf_controller_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-local/fi_pf"
+)
+
+inode_jails_controller_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-local/fi_jails"
+)
+
+inode_pf_enable_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/fi_pf"
+)
+
+inode_jails_enable_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/fi_jails"
+)
+
+inode_devfs_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+)
+
+update_lifecycle "$UPDATE_PRIOR" >/dev/null
+
+inode_pf_controller_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-local/fi_pf"
+)
+
+inode_jails_controller_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-local/fi_jails"
+)
+
+inode_pf_enable_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/fi_pf"
+)
+
+inode_jails_enable_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/fi_jails"
+)
+
+inode_devfs_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+)
+
+[ "$inode_pf_controller_before" = "$inode_pf_controller_after" ] &&
+[ "$inode_jails_controller_before" = "$inode_jails_controller_after" ] &&
+[ "$inode_pf_enable_before" = "$inode_pf_enable_after" ] &&
+[ "$inode_jails_enable_before" = "$inode_jails_enable_after" ] &&
+[ "$inode_devfs_before" = "$inode_devfs_after" ] ||
+    test_fail "exact second lifecycle update replaced managed resources"
+
+test_pass "exact second lifecycle update is a no-op"
+
+# ------------------------------------------------------------
+# A later unapproved resource must prevent replacement of an
+# otherwise approved earlier resource AND prevent creation of
+# the new FI PF resources.
+# ------------------------------------------------------------
+
+rm -rf "$TEST_ROOT/live"
+
+mkdir -p \
+    "$TEST_ROOT/live/rc-local" \
+    "$TEST_ROOT/live/rc-conf/devfs"
+
+chmod 0755 \
+    "$TEST_ROOT/live/rc-local" \
+    "$TEST_ROOT/live/rc-conf" \
+    "$TEST_ROOT/live/rc-conf/devfs"
+
+cp \
+    "$UPDATE_PRIOR/rc.d.fi_jails" \
+    "$TEST_ROOT/live/rc-local/fi_jails"
+
+cp \
+    "$UPDATE_PRIOR/rc.conf.d.fi_jails" \
+    "$TEST_ROOT/live/rc-conf/fi_jails"
+
+make_expected \
+    "$TEST_ROOT/live/rc-conf/devfs/90-fi" \
+    "devfs-boot-policy" \
+    'devfs_load_rulesets="NO"'
+
+chmod 0555 "$TEST_ROOT/live/rc-local/fi_jails"
+
+chmod 0644 \
+    "$TEST_ROOT/live/rc-conf/fi_jails" \
+    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+
+if (
+    update_lifecycle "$UPDATE_PRIOR" >/dev/null 2>&1
+); then
+    test_fail "lifecycle update accepted unapproved current resource"
+fi
+
+cmp -s \
+    "$UPDATE_PRIOR/rc.d.fi_jails" \
+    "$TEST_ROOT/live/rc-local/fi_jails" ||
+    test_fail \
+        "failed lifecycle update replaced approved earlier resource before later rejection"
+
+[ ! -e "$TEST_ROOT/live/rc-local/fi_pf" ] &&
+[ ! -e "$TEST_ROOT/live/rc-conf/fi_pf" ] ||
+    test_fail \
+        "failed lifecycle update created new PF resources before complete-layer acceptance"
+
+test_pass \
+    "lifecycle update preclassification prevents partial version transition"
+
+# ------------------------------------------------------------
+# A resource that existed in the approved prior version may
+# not disappear and be recreated as though it were new.
+# ------------------------------------------------------------
+
+rm -rf "$TEST_ROOT/live"
+
+mkdir -p \
+    "$TEST_ROOT/live/rc-local" \
+    "$TEST_ROOT/live/rc-conf/devfs"
+
+chmod 0755 \
+    "$TEST_ROOT/live/rc-local" \
+    "$TEST_ROOT/live/rc-conf" \
+    "$TEST_ROOT/live/rc-conf/devfs"
+
+cp \
+    "$UPDATE_PRIOR/rc.conf.d.fi_jails" \
+    "$TEST_ROOT/live/rc-conf/fi_jails"
+
+cp \
+    "$UPDATE_PRIOR/rc.conf.d.devfs.90-fi" \
+    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+
+chmod 0644 \
+    "$TEST_ROOT/live/rc-conf/fi_jails" \
+    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+
+if (
+    update_lifecycle "$UPDATE_PRIOR" >/dev/null 2>&1
+); then
+    test_fail "lifecycle update accepted missing approved prior resource"
+fi
+
+[ ! -e "$TEST_ROOT/live/rc-local/fi_pf" ] &&
+[ ! -e "$TEST_ROOT/live/rc-conf/fi_pf" ] ||
+    test_fail \
+        "missing old lifecycle resource allowed creation of new PF resources"
+
+test_pass \
+    "missing approved prior lifecycle resource fails before mutation"
 
 if grep -Eq \
     '/etc/rc\.d/jail|/usr/sbin/jls|devfs rule|service[[:space:]]' \

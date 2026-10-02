@@ -59,11 +59,16 @@ The initial interface model is:
 Management and workload attachments use host-created epairs. The jail-side
 interfaces are assigned through `vnet.interface`.
 
-The receiver additionally receives the site-configured dedicated physical
-external interface directly through `vnet.interface`.
+The receiver external path also uses a host-created epair. The dedicated
+physical external interface remains in the host VNET and is attached to a
+transient no-IP external bridge. The host endpoint of the receiver external
+epair is attached to that bridge, and only the jail endpoint is transferred
+into the receiver through `vnet.interface`.
 
-The dedicated receiver interface must have no host IP address and must not be a
-member of the management or workload bridge before receiver start.
+Before receiver start, the dedicated physical interface must have no host
+IPv4 or IPv6 address and must not be a member of the management or workload
+bridge. The configured external bridge and external epair names must also be
+free for deterministic creation.
 
 Jails do not create or attach their own host-side VNET interfaces.
 

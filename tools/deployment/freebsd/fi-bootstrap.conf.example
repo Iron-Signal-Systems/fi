@@ -18,6 +18,10 @@ FI_ZPOOL="zroot"
 FI_RUNTIME_UID=""
 FI_RUNTIME_GID=""
 
+# Host administrative/LAN interface used for management-network NAT.
+# This is distinct from the dedicated receiver external interface.
+FI_HOST_ADMIN_IF=""
+
 FI_MGMT_BRIDGE="bridge10"
 FI_WORK_BRIDGE="bridge20"
 
@@ -30,6 +34,9 @@ FI_RECEIVER_EXTERNAL_NETWORK=""
 FI_RECEIVER_EXTERNAL_ADDRESS=""
 FI_RECEIVER_EXTERNAL_GATEWAY=""
 FI_RECEIVER_EXTERNAL_IF=""
+FI_RECEIVER_EXTERNAL_BRIDGE="bridge30"
+FI_RECEIVER_EXTERNAL_HOST_IF="epre0a"
+FI_RECEIVER_EXTERNAL_JAIL_IF="epre0b"
 FI_RECEIVER_DNS_SERVER=""
 FI_RECEIVER_DNS_SEARCH=""
 

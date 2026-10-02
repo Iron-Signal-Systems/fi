@@ -4,7 +4,8 @@
 # FI-ROLE: fi-jails-controller
 #
 # PROVIDE: fi_jails
-# REQUIRE: jail
+# REQUIRE: jail fi_pf
+# BEFORE: securelevel
 # KEYWORD: shutdown
 
 . /etc/rc.subr
@@ -63,8 +64,18 @@ fi_jails_stop_one()
     return 0
 }
 
+fi_jails_pf_ready()
+{
+    /usr/local/etc/rc.d/fi_pf onestatus >/dev/null 2>&1
+}
+
 fi_jails_start()
 {
+    if ! fi_jails_pf_ready; then
+        warn "FI PF runtime policy is not ready; production jails will not start"
+        return 1
+    fi
+
     for fi_jail_name in \
         fi-sor-db \
         fi-ingest \

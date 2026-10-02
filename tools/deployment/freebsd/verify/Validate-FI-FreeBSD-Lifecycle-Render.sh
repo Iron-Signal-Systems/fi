@@ -63,6 +63,8 @@ PLAN="$WORK_ROOT/plan"
 FI_RC="$PLAN/rc.conf.d.fi_jails"
 DEVFS_RC="$PLAN/rc.conf.d.devfs.90-fi"
 FI_SERVICE="$PLAN/rc.d.fi_jails"
+FI_PF_RC="$PLAN/rc.conf.d.fi_pf"
+FI_PF_SERVICE="$PLAN/rc.d.fi_pf"
 
 RECEIVER="$PLAN/fi-receiver.conf"
 INGEST="$PLAN/fi-ingest.conf"
@@ -72,6 +74,8 @@ for required_file in \
     "$FI_RC" \
     "$DEVFS_RC" \
     "$FI_SERVICE" \
+    "$FI_PF_RC" \
+    "$FI_PF_SERVICE" \
     "$RECEIVER" \
     "$INGEST" \
     "$SOR"
@@ -127,8 +131,13 @@ require_line \
 
 require_line \
     "$FI_SERVICE" \
-    '# REQUIRE: jail' \
-    "FI jail controller is ordered after base jail service"
+    '# REQUIRE: jail fi_pf' \
+    "FI jail controller requires base jail and FI PF runtime policy"
+
+require_line \
+    "$FI_SERVICE" \
+    '# BEFORE: securelevel' \
+    "FI jail controller is explicitly ordered before securelevel"
 
 require_line \
     "$FI_SERVICE" \
@@ -258,7 +267,7 @@ FI_ERR="$WORK_ROOT/rcorder-fi.err"
 rcorder /etc/rc.d/* >"$BASE_ORDER" 2>"$BASE_ERR"
 base_rc=$?
 
-rcorder /etc/rc.d/* "$FI_SERVICE" >"$FI_ORDER" 2>"$FI_ERR"
+rcorder /etc/rc.d/* "$FI_PF_SERVICE" "$FI_SERVICE" >"$FI_ORDER" 2>"$FI_ERR"
 fi_rc=$?
 
 [ "$fi_rc" -eq "$base_rc" ] ||

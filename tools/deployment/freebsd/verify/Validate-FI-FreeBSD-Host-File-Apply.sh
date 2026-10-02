@@ -424,4 +424,200 @@ fi
 
 test_pass "verify-host-files fails closed on absent state"
 
+UPDATE_SOURCE="$TEST_ROOT/update-source"
+UPDATE_TARGET="$TEST_ROOT/update-target"
+
+make_expected \
+    "$UPDATE_SOURCE" \
+    "update-test" \
+    "payload=new"
+
+make_expected \
+    "$UPDATE_TARGET" \
+    "update-test" \
+    "payload=old"
+
+chmod 0644 "$UPDATE_SOURCE" "$UPDATE_TARGET"
+
+UPDATE_PRIOR_SHA=$(sha256 -q "$UPDATE_TARGET") ||
+    test_fail "unable to hash approved prior update fixture"
+
+host_file_replace_owned \
+    "$UPDATE_SOURCE" \
+    "$UPDATE_TARGET" \
+    "$TEST_UID" \
+    "$TEST_GID" \
+    "0644" \
+    "update-test" \
+    "$UPDATE_PRIOR_SHA" \
+    >/dev/null
+
+expect_state \
+    "OWNED_MATCH" \
+    "$UPDATE_SOURCE" \
+    "$UPDATE_TARGET" \
+    "0644" \
+    "approved prior version updates to exact new version"
+
+make_expected \
+    "$UPDATE_TARGET" \
+    "update-test" \
+    "payload=unexpected"
+
+chmod 0644 "$UPDATE_TARGET"
+
+if (
+    host_file_replace_owned \
+        "$UPDATE_SOURCE" \
+        "$UPDATE_TARGET" \
+        "$TEST_UID" \
+        "$TEST_GID" \
+        "0644" \
+        "update-test" \
+        "$UPDATE_PRIOR_SHA" \
+        >/dev/null 2>&1
+); then
+    test_fail "unapproved current contents were overwritten"
+fi
+
+grep -Fqx "payload=unexpected" "$UPDATE_TARGET" ||
+    test_fail "failed prior-version check altered target contents"
+
+test_pass "unapproved current contents fail closed without replacement"
+
+make_expected \
+    "$UPDATE_TARGET" \
+    "update-test" \
+    "payload=old"
+
+chmod 0600 "$UPDATE_TARGET"
+
+UPDATE_PRIOR_SHA=$(sha256 -q "$UPDATE_TARGET") ||
+    test_fail "unable to hash metadata-drift fixture"
+
+if (
+    host_file_replace_owned \
+        "$UPDATE_SOURCE" \
+        "$UPDATE_TARGET" \
+        "$TEST_UID" \
+        "$TEST_GID" \
+        "0644" \
+        "update-test" \
+        "$UPDATE_PRIOR_SHA" \
+        >/dev/null 2>&1
+); then
+    test_fail "metadata drift was silently repaired by update"
+fi
+
+[ "$(stat -f '%Lp' "$UPDATE_TARGET")" = "600" ] ||
+    test_fail "failed metadata-drift update altered target mode"
+
+test_pass "non-content drift is rejected rather than repaired"
+
+UPDATE_LAYER="$TEST_ROOT/update-layer"
+UPDATE_PRIOR="$TEST_ROOT/update-prior"
+
+rm -rf "$UPDATE_LAYER" "$UPDATE_PRIOR"
+mkdir -p "$UPDATE_LAYER/plan" "$UPDATE_PRIOR"
+
+HOST_FILE_PLAN_ROOT="$UPDATE_LAYER"
+HOST_FILE_PLAN="$UPDATE_LAYER/plan"
+
+make_expected \
+    "$HOST_FILE_PLAN/a" \
+    "test-a" \
+    "payload=new-a"
+
+make_expected \
+    "$HOST_FILE_PLAN/b" \
+    "test-b" \
+    "payload=new-b"
+
+make_expected \
+    "$UPDATE_PRIOR/a" \
+    "test-a" \
+    "payload=old-a"
+
+make_expected \
+    "$UPDATE_PRIOR/b" \
+    "test-b" \
+    "payload=old-b"
+
+cp "$UPDATE_PRIOR/a" "$TEST_ROOT/live-a"
+cp "$UPDATE_PRIOR/b" "$TEST_ROOT/live-b"
+
+chmod 0644 "$TEST_ROOT/live-a"
+chmod 0600 "$TEST_ROOT/live-b"
+
+host_file_prepare_expected()
+{
+    HOST_FILE_PLAN_ROOT="$UPDATE_LAYER"
+    HOST_FILE_PLAN="$UPDATE_LAYER/plan"
+}
+
+host_file_cleanup_expected()
+{
+    :
+}
+
+update_host_files "$UPDATE_PRIOR" >/dev/null
+
+expect_state \
+    "OWNED_MATCH" \
+    "$HOST_FILE_PLAN/a" \
+    "$TEST_ROOT/live-a" \
+    "0644" \
+    "layer update advances first approved prior file"
+
+expect_state \
+    "OWNED_MATCH" \
+    "$HOST_FILE_PLAN/b" \
+    "$TEST_ROOT/live-b" \
+    "0600" \
+    "layer update advances second approved prior file"
+
+# Exact second update must be a no-op.
+inode_a_before=$(stat -f '%i' "$TEST_ROOT/live-a")
+inode_b_before=$(stat -f '%i' "$TEST_ROOT/live-b")
+
+update_host_files "$UPDATE_PRIOR" >/dev/null
+
+inode_a_after=$(stat -f '%i' "$TEST_ROOT/live-a")
+inode_b_after=$(stat -f '%i' "$TEST_ROOT/live-b")
+
+[ "$inode_a_before" = "$inode_a_after" ] ||
+    test_fail "exact second update replaced first host file"
+
+[ "$inode_b_before" = "$inode_b_after" ] ||
+    test_fail "exact second update replaced second host file"
+
+test_pass "exact second host-file update is a no-op"
+
+# An unapproved later resource must prevent mutation of an otherwise
+# updateable earlier resource.
+cp "$UPDATE_PRIOR/a" "$TEST_ROOT/live-a"
+
+make_expected \
+    "$TEST_ROOT/live-b" \
+    "test-b" \
+    "payload=unauthorized-b"
+
+chmod 0644 "$TEST_ROOT/live-a"
+chmod 0600 "$TEST_ROOT/live-b"
+
+if (
+    update_host_files "$UPDATE_PRIOR" >/dev/null 2>&1
+); then
+    test_fail "layer update accepted unapproved current contents"
+fi
+
+grep -Fqx "payload=old-a" "$TEST_ROOT/live-a" ||
+    test_fail \
+        "layer update mutated earlier approved file before detecting later unapproved state"
+
+grep -Fqx "payload=unauthorized-b" "$TEST_ROOT/live-b" ||
+    test_fail "failed layer update altered unapproved file"
+
+test_pass "layer-wide update preclassification prevents partial version transition"
+
 test_pass "FI FreeBSD host-file acceptance complete"

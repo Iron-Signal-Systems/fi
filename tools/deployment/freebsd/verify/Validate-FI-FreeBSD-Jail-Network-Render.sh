@@ -91,13 +91,18 @@ pass "all three jail network templates render without unresolved FI tokens"
 
 require_line \
     "$RECEIVER" \
-    '    exec.prestart = "/usr/local/libexec/fi-vnet-pair create-receiver vtnet1 eprm0a eprm0b bridge10 jail:fi-receiver:mgmt eprw0a eprw0b bridge20 jail:fi-receiver:work";' \
-    "receiver uses create-receiver with exact dedicated and epair inputs"
+    '    exec.prestart = "/usr/local/libexec/fi-vnet-pair create-receiver vtnet1 bridge30 epre0a epre0b jail:fi-receiver:external eprm0a eprm0b bridge10 jail:fi-receiver:mgmt eprw0a eprw0b bridge20 jail:fi-receiver:work";' \
+    "receiver uses create-receiver with exact external bridge and epair inputs"
 
 require_line \
     "$RECEIVER" \
+    '    vnet.interface = "epre0b";' \
+    "receiver receives external jail epair endpoint"
+
+reject_text \
+    "$RECEIVER" \
     '    vnet.interface = "vtnet1";' \
-    "receiver receives dedicated external interface"
+    "receiver does not receive dedicated physical external interface"
 
 require_line \
     "$RECEIVER" \
@@ -111,7 +116,7 @@ require_line \
 
 require_line \
     "$RECEIVER" \
-    '    exec.start = "/sbin/ifconfig vtnet1 inet 192.168.1.219/24 up";' \
+    '    exec.start = "/sbin/ifconfig epre0b inet 192.168.1.219/24 up";' \
     "receiver configures exact external address inside VNET"
 
 require_line \
@@ -131,8 +136,8 @@ require_line \
 
 require_line \
     "$RECEIVER" \
-    '    exec.poststop = "/usr/local/libexec/fi-vnet-pair destroy-dual eprm0a eprm0b bridge10 eprw0a eprw0b bridge20";' \
-    "receiver poststop destroys only FI epair attachments"
+    '    exec.poststop = "/usr/local/libexec/fi-vnet-pair destroy-receiver vtnet1 bridge30 epre0a epre0b eprm0a eprm0b bridge10 eprw0a eprw0b bridge20";' \
+    "receiver poststop destroys external, management, and workload attachments"
 
 require_line \
     "$INGEST" \

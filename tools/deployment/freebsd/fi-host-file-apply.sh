@@ -223,6 +223,158 @@ host_file_install_absent()
     pass "created and verified FI host file: $host_file_install_target"
 }
 
+host_file_replace_owned()
+{
+    host_file_replace_expected=$1
+    host_file_replace_target=$2
+    host_file_replace_uid=$3
+    host_file_replace_gid=$4
+    host_file_replace_mode=$5
+    host_file_replace_role=$6
+    host_file_replace_prior_sha256=$7
+
+    host_file_replace_state=$(
+        host_file_classify \
+            "$host_file_replace_expected" \
+            "$host_file_replace_target" \
+            "$host_file_replace_uid" \
+            "$host_file_replace_gid" \
+            "$host_file_replace_mode"
+    ) || fail "unable to reclassify host file before update: $host_file_replace_role"
+
+    [ "$host_file_replace_state" = "OWNED_DRIFT" ] ||
+        fail \
+            "host file changed before update: $host_file_replace_role ($host_file_replace_state)"
+
+    host_file_replace_metadata=$(
+        stat -f '%u:%g:%OMp:%#Lp:%l' \
+            "$host_file_replace_target" 2>/dev/null
+    ) || fail "unable to inspect update target metadata: $host_file_replace_role"
+
+    host_file_replace_expected_metadata="${host_file_replace_uid}:${host_file_replace_gid}:0:${host_file_replace_mode}:1"
+
+    [ "$host_file_replace_metadata" = "$host_file_replace_expected_metadata" ] ||
+        fail \
+            "host file has non-content drift and is not eligible for update: $host_file_replace_role"
+
+    host_file_replace_current_sha256=$(
+        sha256 -q "$host_file_replace_target"
+    ) || fail "unable to hash current host file: $host_file_replace_role"
+
+    [ "$host_file_replace_current_sha256" = "$host_file_replace_prior_sha256" ] ||
+        fail \
+            "host file does not match approved prior version: $host_file_replace_role"
+
+    host_file_require_parent "$host_file_replace_target"
+
+    host_file_replace_parent=${host_file_replace_target%/*}
+    host_file_replace_name=${host_file_replace_target##*/}
+
+    host_file_replace_temp=$(
+        mktemp \
+            "$host_file_replace_parent/.${host_file_replace_name}.fi-update.XXXXXX"
+    ) || fail "unable to create update file: $host_file_replace_role"
+
+    if ! cat "$host_file_replace_expected" > "$host_file_replace_temp"; then
+        rm -f "$host_file_replace_temp"
+        fail "unable to populate update file: $host_file_replace_role"
+    fi
+
+    if ! chown \
+        "${host_file_replace_uid}:${host_file_replace_gid}" \
+        "$host_file_replace_temp"
+    then
+        rm -f "$host_file_replace_temp"
+        fail "unable to set update-file ownership: $host_file_replace_role"
+    fi
+
+    if ! chmod "$host_file_replace_mode" "$host_file_replace_temp"; then
+        rm -f "$host_file_replace_temp"
+        fail "unable to set update-file mode: $host_file_replace_role"
+    fi
+
+    host_file_replace_temp_state=$(
+        host_file_classify \
+            "$host_file_replace_expected" \
+            "$host_file_replace_temp" \
+            "$host_file_replace_uid" \
+            "$host_file_replace_gid" \
+            "$host_file_replace_mode"
+    ) || {
+        rm -f "$host_file_replace_temp"
+        fail "unable to verify update file: $host_file_replace_role"
+    }
+
+    [ "$host_file_replace_temp_state" = "OWNED_MATCH" ] || {
+        rm -f "$host_file_replace_temp"
+        fail \
+            "update file failed exact verification: $host_file_replace_role ($host_file_replace_temp_state)"
+    }
+
+    host_file_replace_state=$(
+        host_file_classify \
+            "$host_file_replace_expected" \
+            "$host_file_replace_target" \
+            "$host_file_replace_uid" \
+            "$host_file_replace_gid" \
+            "$host_file_replace_mode"
+    ) || {
+        rm -f "$host_file_replace_temp"
+        fail "unable to reclassify destination before publication: $host_file_replace_role"
+    }
+
+    [ "$host_file_replace_state" = "OWNED_DRIFT" ] || {
+        rm -f "$host_file_replace_temp"
+        fail \
+            "host file changed before publication: $host_file_replace_role ($host_file_replace_state)"
+    }
+
+    host_file_replace_metadata=$(
+        stat -f '%u:%g:%OMp:%#Lp:%l' \
+            "$host_file_replace_target" 2>/dev/null
+    ) || {
+        rm -f "$host_file_replace_temp"
+        fail "unable to recheck update target metadata: $host_file_replace_role"
+    }
+
+    [ "$host_file_replace_metadata" = "$host_file_replace_expected_metadata" ] || {
+        rm -f "$host_file_replace_temp"
+        fail \
+            "host file metadata changed before publication: $host_file_replace_role"
+    }
+
+    host_file_replace_current_sha256=$(
+        sha256 -q "$host_file_replace_target"
+    ) || {
+        rm -f "$host_file_replace_temp"
+        fail "unable to rehash update target: $host_file_replace_role"
+    }
+
+    [ "$host_file_replace_current_sha256" = "$host_file_replace_prior_sha256" ] || {
+        rm -f "$host_file_replace_temp"
+        fail \
+            "host file contents changed before publication: $host_file_replace_role"
+    }
+
+    mv -f "$host_file_replace_temp" "$host_file_replace_target" ||
+        fail "unable to publish updated host file: $host_file_replace_role"
+
+    host_file_replace_final_state=$(
+        host_file_classify \
+            "$host_file_replace_expected" \
+            "$host_file_replace_target" \
+            "$host_file_replace_uid" \
+            "$host_file_replace_gid" \
+            "$host_file_replace_mode"
+    ) || fail "unable to verify updated host file: $host_file_replace_role"
+
+    [ "$host_file_replace_final_state" = "OWNED_MATCH" ] ||
+        fail \
+            "updated host file failed verification: $host_file_replace_role ($host_file_replace_final_state)"
+
+    pass "updated and verified FI host file: $host_file_replace_target"
+}
+
 host_file_prepare_expected()
 {
     HOST_FILE_PLAN_ROOT=$(
@@ -252,6 +404,7 @@ host_file_require_commands()
         ln \
         mkdir \
         mktemp \
+        mv \
         rm \
         sha256 \
         sort \
@@ -442,6 +595,175 @@ apply_host_files()
     host_file_cleanup_expected
 
     pass "FI FreeBSD host-file apply acceptance complete"
+}
+
+update_host_files()
+{
+    host_file_prior_plan=$1
+
+    host_file_require_host
+
+    [ -n "$host_file_prior_plan" ] ||
+        fail "approved prior host-file plan is required"
+
+    [ -d "$host_file_prior_plan" ] ||
+        fail "approved prior host-file plan is absent: $host_file_prior_plan"
+
+    host_file_prepare_expected
+
+    host_file_map="$HOST_FILE_PLAN_ROOT/resources"
+    host_file_resource_map > "$host_file_map" ||
+        fail "unable to build host-file resource map"
+
+    host_file_tab=$(printf '\t')
+
+    # Preclassify the complete layer before first mutation.
+    while IFS="$host_file_tab" read -r \
+        host_file_role \
+        host_file_expected \
+        host_file_target \
+        host_file_uid \
+        host_file_gid \
+        host_file_mode
+    do
+        host_file_prior_expected="$host_file_prior_plan/${host_file_expected##*/}"
+
+        [ -f "$host_file_prior_expected" ] ||
+            fail \
+                "approved prior host file is absent: $host_file_role ($host_file_prior_expected)"
+
+        host_file_update_state=$(
+            host_file_classify \
+                "$host_file_expected" \
+                "$host_file_target" \
+                "$host_file_uid" \
+                "$host_file_gid" \
+                "$host_file_mode"
+        ) || fail "unable to classify host file for update: $host_file_role"
+
+        case "$host_file_update_state" in
+            OWNED_MATCH)
+                ;;
+            OWNED_DRIFT)
+                host_file_prior_state=$(
+                    host_file_classify \
+                        "$host_file_prior_expected" \
+                        "$host_file_target" \
+                        "$host_file_uid" \
+                        "$host_file_gid" \
+                        "$host_file_mode"
+                ) || fail \
+                    "unable to classify host file against approved prior version: $host_file_role"
+
+                [ "$host_file_prior_state" = "OWNED_MATCH" ] ||
+                    fail \
+                        "host file does not match approved prior version: $host_file_role ($host_file_prior_state)"
+                ;;
+            ABSENT)
+                fail \
+                    "host file is absent and is not eligible for update: $host_file_role"
+                ;;
+            FOREIGN_COLLISION)
+                fail \
+                    "host file collides with a non-FI resource: $host_file_role"
+                ;;
+            UNKNOWN)
+                fail \
+                    "host file could not be classified safely: $host_file_role"
+                ;;
+            *)
+                fail \
+                    "unexpected host-file update state: $host_file_role ($host_file_update_state)"
+                ;;
+        esac
+    done < "$host_file_map"
+
+    # Update only files that exactly match the approved prior plan.
+    while IFS="$host_file_tab" read -r \
+        host_file_role \
+        host_file_expected \
+        host_file_target \
+        host_file_uid \
+        host_file_gid \
+        host_file_mode
+    do
+        host_file_prior_expected="$host_file_prior_plan/${host_file_expected##*/}"
+
+        host_file_update_state=$(
+            host_file_classify \
+                "$host_file_expected" \
+                "$host_file_target" \
+                "$host_file_uid" \
+                "$host_file_gid" \
+                "$host_file_mode"
+        ) || fail "unable to reclassify host file for update: $host_file_role"
+
+        case "$host_file_update_state" in
+            OWNED_MATCH)
+                pass "FI host file already matches new version: $host_file_target"
+                ;;
+            OWNED_DRIFT)
+                host_file_prior_state=$(
+                    host_file_classify \
+                        "$host_file_prior_expected" \
+                        "$host_file_target" \
+                        "$host_file_uid" \
+                        "$host_file_gid" \
+                        "$host_file_mode"
+                ) || fail \
+                    "unable to reclassify approved prior version: $host_file_role"
+
+                [ "$host_file_prior_state" = "OWNED_MATCH" ] ||
+                    fail \
+                        "host file changed after update preclassification: $host_file_role ($host_file_prior_state)"
+
+                host_file_prior_sha256=$(
+                    sha256 -q "$host_file_prior_expected"
+                ) || fail \
+                    "unable to hash approved prior host file: $host_file_role"
+
+                host_file_replace_owned \
+                    "$host_file_expected" \
+                    "$host_file_target" \
+                    "$host_file_uid" \
+                    "$host_file_gid" \
+                    "$host_file_mode" \
+                    "$host_file_role" \
+                    "$host_file_prior_sha256"
+                ;;
+            *)
+                fail \
+                    "host file changed after update preclassification: $host_file_role ($host_file_update_state)"
+                ;;
+        esac
+    done < "$host_file_map"
+
+    # Final exact-state verification.
+    while IFS="$host_file_tab" read -r \
+        host_file_role \
+        host_file_expected \
+        host_file_target \
+        host_file_uid \
+        host_file_gid \
+        host_file_mode
+    do
+        host_file_final_state=$(
+            host_file_classify \
+                "$host_file_expected" \
+                "$host_file_target" \
+                "$host_file_uid" \
+                "$host_file_gid" \
+                "$host_file_mode"
+        ) || fail "unable to verify updated host file: $host_file_role"
+
+        [ "$host_file_final_state" = "OWNED_MATCH" ] ||
+            fail \
+                "updated host file failed final verification: $host_file_role ($host_file_final_state)"
+    done < "$host_file_map"
+
+    host_file_cleanup_expected
+
+    pass "FI FreeBSD host-file update acceptance complete"
 }
 
 verify_host_files()

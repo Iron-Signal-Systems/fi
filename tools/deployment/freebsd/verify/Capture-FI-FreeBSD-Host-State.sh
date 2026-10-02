@@ -6,23 +6,26 @@ usage()
 {
     cat <<EOF_USAGE
 Usage:
-    $PROGRAM <admin-if> <receiver-external-if> <management-bridge> <workload-bridge> [label]
+    $PROGRAM <admin-if> <receiver-physical-if> <external-bridge> <external-host-if> <external-jail-if> <management-bridge> <workload-bridge> [label]
 
 Example:
-    $PROGRAM vtnet0 vtnet1 bridge10 bridge20 baseline
+    $PROGRAM vtnet0 vtnet1 bridge30 epre0a epre0b bridge10 bridge20 baseline
 EOF_USAGE
 }
 
-if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+if [ "$#" -lt 7 ] || [ "$#" -gt 8 ]; then
     usage
     exit 2
 fi
 
 ADMIN_IF=$1
 RECEIVER_IF=$2
-MGMT_BRIDGE=$3
-WORK_BRIDGE=$4
-LABEL=${5:-snapshot}
+EXTERNAL_BRIDGE=$3
+EXTERNAL_HOST_IF=$4
+EXTERNAL_JAIL_IF=$5
+MGMT_BRIDGE=$6
+WORK_BRIDGE=$7
+LABEL=${8:-snapshot}
 
 snapshot_heading()
 {
@@ -98,12 +101,19 @@ snapshot_command "IDENTITY" id
 
 snapshot_interface "$ADMIN_IF"
 snapshot_interface "$RECEIVER_IF"
+snapshot_interface "$EXTERNAL_BRIDGE"
+snapshot_interface "$EXTERNAL_HOST_IF"
+snapshot_interface "$EXTERNAL_JAIL_IF"
 snapshot_interface "$MGMT_BRIDGE"
 snapshot_interface "$WORK_BRIDGE"
 
 snapshot_command \
     "IPV4 ROUTING TABLE" \
     netstat -rn -f inet
+
+snapshot_command \
+    "IPV6 ROUTING TABLE" \
+    netstat -rn -f inet6
 
 snapshot_command \
     "RUNNING JAILS" \
@@ -150,15 +160,21 @@ for snapshot_path in \
     /etc/fstab.fi-ingest \
     /etc/fstab.fi-sor-db \
     /etc/devfs.rules.fi \
+    /etc/pf.conf \
     /usr/local/libexec/fi-vnet-pair \
+    /usr/local/etc/rc.d/fi_pf \
     /usr/local/etc/rc.d/fi_jails \
+    /etc/rc.conf.d/fi_pf \
     /etc/rc.conf.d/fi_jails \
-    /etc/rc.conf.d/devfs/90-fi
+    /etc/rc.conf.d/devfs/90-fi \
+    /var/run/fi_pf.runtime
 do
     snapshot_file "$snapshot_path"
 done
 
 snapshot_heading "DEDICATED INTERFACE ROUTE REFERENCES"
+
+printf '%s\n' "--- IPv4 ---"
 
 netstat -rn -f inet 2>/dev/null |
     awk -v interface="$RECEIVER_IF" '
@@ -167,13 +183,34 @@ netstat -rn -f inet 2>/dev/null |
         }
     '
 
+printf '%s\n' "--- IPv6 ---"
+
+netstat -rn -f inet6 2>/dev/null |
+    awk -v interface="$RECEIVER_IF" '
+        NR <= 3 || $NF == interface {
+            print
+        }
+    '
+
 snapshot_heading "DEDICATED INTERFACE BRIDGE REFERENCES"
 
-for snapshot_bridge in "$MGMT_BRIDGE" "$WORK_BRIDGE"
+for snapshot_bridge in \
+    "$EXTERNAL_BRIDGE" \
+    "$MGMT_BRIDGE" \
+    "$WORK_BRIDGE"
 do
     printf '%s:\n' "$snapshot_bridge"
 
-    ifconfig "$snapshot_bridge" 2>/dev/null |
+    bridge_state=$(
+        ifconfig "$snapshot_bridge" 2>/dev/null
+    )
+
+    if [ -z "$bridge_state" ]; then
+        printf '  bridge absent or inaccessible\n'
+        continue
+    fi
+
+    printf '%s\n' "$bridge_state" |
         awk -v interface="$RECEIVER_IF" '
             $1 == "member:" && $2 == interface {
                 print
@@ -188,7 +225,33 @@ do
         '
 done
 
-snapshot_heading "FI LIFECYCLE SERVICE"
+snapshot_command \
+    "PF FILTER RULES" \
+    pfctl -sr
+
+snapshot_command \
+    "PF NAT RULES" \
+    pfctl -sn
+
+snapshot_heading "PF BRIDGE FILTERING"
+
+for snapshot_sysctl in \
+    net.link.bridge.pfil_member \
+    net.link.bridge.pfil_bridge \
+    net.link.bridge.pfil_onlyip
+do
+    sysctl "$snapshot_sysctl" 2>&1 || true
+done
+
+snapshot_heading "FI PF SERVICE"
+
+if [ -x /usr/local/etc/rc.d/fi_pf ]; then
+    /usr/local/etc/rc.d/fi_pf onestatus 2>&1 || true
+else
+    printf 'ABSENT: /usr/local/etc/rc.d/fi_pf\n'
+fi
+
+snapshot_heading "FI JAIL LIFECYCLE SERVICE"
 
 if [ -x /usr/local/etc/rc.d/fi_jails ]; then
     /usr/local/etc/rc.d/fi_jails status 2>&1 || true

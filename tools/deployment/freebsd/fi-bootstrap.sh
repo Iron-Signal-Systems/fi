@@ -42,8 +42,14 @@ Usage:
     $PROGRAM apply-devfs <config-file>
     $PROGRAM verify-devfs <config-file>
     $PROGRAM apply-host-files <config-file>
+    $PROGRAM update-host-files <config-file> <approved-prior-plan-directory>
     $PROGRAM verify-host-files <config-file>
+    $PROGRAM apply-pf <config-file>
+    $PROGRAM adopt-pf <config-file> <approved-prior-pf-file>
+    $PROGRAM update-pf <config-file> <approved-prior-pf-file>
+    $PROGRAM verify-pf <config-file>
     $PROGRAM apply-lifecycle <config-file>
+    $PROGRAM update-lifecycle <config-file> <approved-prior-plan-directory>
     $PROGRAM verify-lifecycle <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
@@ -93,8 +99,40 @@ Current commands:
         Create or verify the deterministic FI production host files.
         This command does not start jails or activate lifecycle policy.
 
+    update-host-files
+        Update existing FI-owned host files only when they exactly match
+        the supplied approved prior rendered plan. Unexpected content,
+        metadata drift, absent resources, and foreign collisions fail closed.
+
     verify-host-files
         Verify the deterministic FI production host files without mutation.
+
+    apply-pf
+        Create or verify the deterministic FI persistent PF policy.
+        Existing unowned PF configuration is never claimed automatically.
+
+    adopt-pf
+        Replace an existing unowned PF policy only when it is byte-identical
+        to the explicitly supplied approved prior PF file.
+
+    update-pf
+        Advance an existing FI-owned PF policy only when it exactly matches
+        the explicitly supplied approved prior FI PF file.
+
+    verify-pf
+        Verify the deterministic FI persistent PF policy without mutation.
+
+    apply-lifecycle
+        Create or verify the deterministic FI lifecycle layer without
+        starting or stopping production services.
+
+    update-lifecycle
+        Advance the FI lifecycle layer only from an explicitly approved
+        prior rendered plan. New resources must be absent from both the
+        prior plan and the live host before they may be created.
+
+    verify-lifecycle
+        Verify the deterministic FI lifecycle layer without mutation.
 
     preflight-jail-roots
         Read and classify the three production jail-root destinations before apply.
@@ -112,7 +150,8 @@ The plan output directory must not already exist.
 
 Preflight, preflight-jail-roots, apply-zfs, apply-jail-roots, apply-identities,
 apply-directories, apply-devfs, verify-devfs, apply-host-files,
-verify-host-files, verify-jail-roots, and verify-zfs must run as root on the
+apply-pf, adopt-pf, update-pf, verify-pf, verify-host-files, verify-jail-roots,
+and verify-zfs must run as root on the
 intended FreeBSD host.
 
 apply-zfs does not create jail roots, users, devfs rules, jail configuration,
@@ -143,7 +182,7 @@ require_command()
 is_allowed_key()
 {
     case "$1" in
-        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
+        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_HOST_ADMIN_IF|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_EXTERNAL_BRIDGE|FI_RECEIVER_EXTERNAL_HOST_IF|FI_RECEIVER_EXTERNAL_JAIL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
             return 0
             ;;
         *)
@@ -472,6 +511,7 @@ validate_required_values()
         FI_ZPOOL \
         FI_RUNTIME_UID \
         FI_RUNTIME_GID \
+        FI_HOST_ADMIN_IF \
         FI_MGMT_BRIDGE \
         FI_WORK_BRIDGE \
         FI_MGMT_NETWORK \
@@ -481,6 +521,9 @@ validate_required_values()
         FI_RECEIVER_EXTERNAL_ADDRESS \
         FI_RECEIVER_EXTERNAL_GATEWAY \
         FI_RECEIVER_EXTERNAL_IF \
+        FI_RECEIVER_EXTERNAL_BRIDGE \
+        FI_RECEIVER_EXTERNAL_HOST_IF \
+        FI_RECEIVER_EXTERNAL_JAIL_IF \
         FI_RECEIVER_DNS_SERVER \
         FI_RECEIVER_DNS_SEARCH \
         FI_RECEIVER_MGMT_ADDRESS \
@@ -582,11 +625,15 @@ validate_config()
     validate_devfs_ruleset
     validate_host_file_destinations
 
+    validate_interface_name FI_HOST_ADMIN_IF
     validate_interface_name FI_MGMT_BRIDGE
     validate_interface_name FI_WORK_BRIDGE
     validate_interface_name FI_RECEIVER_EXTERNAL_IF
+    validate_interface_name FI_RECEIVER_EXTERNAL_BRIDGE
 
     for interface_key in \
+        FI_RECEIVER_EXTERNAL_HOST_IF \
+        FI_RECEIVER_EXTERNAL_JAIL_IF \
         FI_RECEIVER_MGMT_HOST_IF \
         FI_RECEIVER_MGMT_JAIL_IF \
         FI_RECEIVER_WORK_HOST_IF \
@@ -606,6 +653,9 @@ validate_config()
     assert_distinct_values \
         "VNET interface names" \
         FI_RECEIVER_EXTERNAL_IF \
+        FI_RECEIVER_EXTERNAL_BRIDGE \
+        FI_RECEIVER_EXTERNAL_HOST_IF \
+        FI_RECEIVER_EXTERNAL_JAIL_IF \
         FI_RECEIVER_MGMT_HOST_IF \
         FI_RECEIVER_MGMT_JAIL_IF \
         FI_RECEIVER_WORK_HOST_IF \
@@ -619,9 +669,23 @@ validate_config()
         FI_SOR_DB_WORK_HOST_IF \
         FI_SOR_DB_WORK_JAIL_IF
 
+    host_admin_if=$(get_value FI_HOST_ADMIN_IF)
     mgmt_bridge=$(get_value FI_MGMT_BRIDGE)
     work_bridge=$(get_value FI_WORK_BRIDGE)
     receiver_external_if=$(get_value FI_RECEIVER_EXTERNAL_IF)
+    receiver_external_bridge=$(get_value FI_RECEIVER_EXTERNAL_BRIDGE)
+
+    [ "$host_admin_if" != "$receiver_external_if" ] ||
+        fail "FI_HOST_ADMIN_IF conflicts with FI_RECEIVER_EXTERNAL_IF"
+
+    [ "$host_admin_if" != "$receiver_external_bridge" ] ||
+        fail "FI_HOST_ADMIN_IF conflicts with FI_RECEIVER_EXTERNAL_BRIDGE"
+
+    [ "$host_admin_if" != "$mgmt_bridge" ] ||
+        fail "FI_HOST_ADMIN_IF conflicts with FI_MGMT_BRIDGE"
+
+    [ "$host_admin_if" != "$work_bridge" ] ||
+        fail "FI_HOST_ADMIN_IF conflicts with FI_WORK_BRIDGE"
 
     [ "$receiver_external_if" != "$mgmt_bridge" ] ||
         fail "FI_RECEIVER_EXTERNAL_IF conflicts with FI_MGMT_BRIDGE"
@@ -629,10 +693,21 @@ validate_config()
     [ "$receiver_external_if" != "$work_bridge" ] ||
         fail "FI_RECEIVER_EXTERNAL_IF conflicts with FI_WORK_BRIDGE"
 
+    [ "$receiver_external_if" != "$receiver_external_bridge" ] ||
+        fail "FI_RECEIVER_EXTERNAL_IF conflicts with FI_RECEIVER_EXTERNAL_BRIDGE"
+
+    [ "$receiver_external_bridge" != "$mgmt_bridge" ] ||
+        fail "FI_RECEIVER_EXTERNAL_BRIDGE conflicts with FI_MGMT_BRIDGE"
+
+    [ "$receiver_external_bridge" != "$work_bridge" ] ||
+        fail "FI_RECEIVER_EXTERNAL_BRIDGE conflicts with FI_WORK_BRIDGE"
+
     [ "$mgmt_bridge" != "$work_bridge" ] ||
         fail "management and workload bridges must be distinct"
 
     for interface_key in \
+        FI_RECEIVER_EXTERNAL_HOST_IF \
+        FI_RECEIVER_EXTERNAL_JAIL_IF \
         FI_RECEIVER_MGMT_HOST_IF \
         FI_RECEIVER_MGMT_JAIL_IF \
         FI_RECEIVER_WORK_HOST_IF \
@@ -648,11 +723,17 @@ validate_config()
     do
         interface_value=$(get_value "$interface_key")
 
+        [ "$interface_value" != "$host_admin_if" ] ||
+            fail "$interface_key conflicts with FI_HOST_ADMIN_IF"
+
         [ "$interface_value" != "$mgmt_bridge" ] ||
             fail "$interface_key conflicts with FI_MGMT_BRIDGE"
 
         [ "$interface_value" != "$work_bridge" ] ||
             fail "$interface_key conflicts with FI_WORK_BRIDGE"
+
+        [ "$interface_value" != "$receiver_external_bridge" ] ||
+            fail "$interface_key conflicts with FI_RECEIVER_EXTERNAL_BRIDGE"
     done
 
     for cidr_key in \
@@ -864,6 +945,45 @@ render_plan()
         "$SCRIPT_DIR/devfs.d/fi-production.rules.template" \
         "$OUTPUT_DIR/devfs.rules.fi"
 
+    pf_ingest_work_address=$(get_value FI_INGEST_WORK_ADDRESS)
+    pf_ingest_work_ip=${pf_ingest_work_address%/*}
+
+    pf_sor_db_work_address=$(get_value FI_SOR_DB_WORK_ADDRESS)
+    pf_sor_db_work_ip=${pf_sor_db_work_address%/*}
+
+    printf '%s\t%s\n' \
+        "FI_INGEST_WORK_IP" \
+        "$pf_ingest_work_ip" \
+        >> "$CONFIG_MAP" ||
+        fail "unable to record derived FI_INGEST_WORK_IP"
+
+    printf '%s\t%s\n' \
+        "FI_SOR_DB_WORK_IP" \
+        "$pf_sor_db_work_ip" \
+        >> "$CONFIG_MAP" ||
+        fail "unable to record derived FI_SOR_DB_WORK_IP"
+
+    render_template \
+        "$SCRIPT_DIR/pf.d/fi.pf.conf.template" \
+        "$OUTPUT_DIR/pf.conf"
+
+    pf_policy_sha256=$(sha256 -q "$OUTPUT_DIR/pf.conf") ||
+        fail "unable to hash rendered PF policy"
+
+    printf '%s\t%s\n' \
+        "FI_PF_POLICY_SHA256" \
+        "$pf_policy_sha256" \
+        >> "$CONFIG_MAP" ||
+        fail "unable to record derived FI_PF_POLICY_SHA256"
+
+    render_template \
+        "$SCRIPT_DIR/lifecycle.d/fi-pf.rc.conf.template" \
+        "$OUTPUT_DIR/rc.conf.d.fi_pf"
+
+    render_template \
+        "$SCRIPT_DIR/lifecycle.d/fi-pf.rc.d.template" \
+        "$OUTPUT_DIR/rc.d.fi_pf"
+
     cat "$SCRIPT_DIR/fi-vnet-pair.sh" > "$OUTPUT_DIR/fi-vnet-pair" ||
         fail "unable to copy FI VNET helper into deployment plan"
 
@@ -893,6 +1013,9 @@ render_plan()
         fstab.fi-ingest \
         fstab.fi-sor-db \
         devfs.rules.fi \
+        pf.conf \
+        rc.conf.d.fi_pf \
+        rc.d.fi_pf \
         fi-vnet-pair \
         rc.conf.d.postgresql \
         rc.conf.d.fi_jails \
@@ -932,7 +1055,34 @@ main()
             config_file=$2
             OUTPUT_DIR=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-lifecycle|verify-lifecycle|verify-jail-roots|verify-zfs)
+        update-host-files)
+            if [ "$#" -ne 3 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            approved_prior_plan=$3
+            ;;
+        adopt-pf|update-pf)
+            if [ "$#" -ne 3 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            approved_prior_pf=$3
+            ;;
+        update-lifecycle)
+            if [ "$#" -ne 3 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            approved_prior_lifecycle_plan=$3
+            ;;
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -1059,7 +1209,7 @@ main()
             . "$SCRIPT_DIR/fi-host-devfs-apply.sh"
             devfs_require_commands
             ;;
-        apply-host-files|verify-host-files)
+        apply-host-files|update-host-files|verify-host-files)
             [ "$(id -u)" -eq 0 ] ||
                 fail "host-file operation must run as root on the intended FreeBSD host"
 
@@ -1069,7 +1219,22 @@ main()
             . "$SCRIPT_DIR/fi-host-file-apply.sh"
             host_file_require_commands
             ;;
-        apply-lifecycle|verify-lifecycle)
+        apply-pf|adopt-pf|update-pf|verify-pf)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "PF policy operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-file-apply.sh" ] ||
+                fail "host-file helper not found: $SCRIPT_DIR/fi-host-file-apply.sh"
+
+            [ -f "$SCRIPT_DIR/fi-host-pf-apply.sh" ] ||
+                fail "PF policy helper not found: $SCRIPT_DIR/fi-host-pf-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-file-apply.sh"
+            . "$SCRIPT_DIR/fi-host-pf-apply.sh"
+
+            pf_require_commands
+            ;;
+        apply-lifecycle|update-lifecycle|verify-lifecycle)
             [ "$(id -u)" -eq 0 ] ||
                 fail "lifecycle operation must run as root on the intended FreeBSD host"
 
@@ -1139,11 +1304,29 @@ main()
         apply-host-files)
             apply_host_files
             ;;
+        update-host-files)
+            update_host_files "$approved_prior_plan"
+            ;;
         verify-host-files)
             verify_host_files
             ;;
+        apply-pf)
+            apply_pf
+            ;;
+        adopt-pf)
+            adopt_pf "$approved_prior_pf"
+            ;;
+        update-pf)
+            update_pf "$approved_prior_pf"
+            ;;
+        verify-pf)
+            verify_pf
+            ;;
         apply-lifecycle)
             apply_lifecycle
+            ;;
+        update-lifecycle)
+            update_lifecycle "$approved_prior_lifecycle_plan"
             ;;
         verify-lifecycle)
             verify_lifecycle
