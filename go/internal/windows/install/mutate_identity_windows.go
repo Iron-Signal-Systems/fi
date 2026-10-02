@@ -7,6 +7,7 @@
 package install
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"sort"
@@ -26,49 +27,147 @@ var (
 	netLocalGroupDelMembersProc = netapi32DLL.NewProc("NetLocalGroupDelMembers")
 )
 
-func reconcileServer2016Rights(identities DesiredFIIdentities) (func() error, error) {
+type server2016RightsBackend struct {
+	enumerate func(string) ([]string, error)
+	setExact  func(string, []string) error
+}
+
+func reconcileServer2016Rights(
+	identities DesiredFIIdentities,
+) (func() error, error) {
+	return reconcileServer2016RightsWithBackend(
+		identities,
+		server2016RightsBackend{
+			enumerate: enumerateDirectAccountRights,
+			setExact:  setExactAccountRights,
+		},
+	)
+}
+
+func reconcileServer2016RightsWithBackend(
+	identities DesiredFIIdentities,
+	backend server2016RightsBackend,
+) (func() error, error) {
+	if backend.enumerate == nil ||
+		backend.setExact == nil {
+		return nil, errors.New(
+			"Server 2016 rights backend is incomplete",
+		)
+	}
+
 	type contract struct {
 		account string
 		rights  []string
 	}
+
 	contracts := []contract{
-		{account: identities.CollectorSender.Account, rights: []string{"SeServiceLogonRight"}},
-		{account: identities.USNReader.Account, rights: []string{"SeServiceLogonRight"}},
-		{account: identities.ObjReader.Account, rights: []string{"SeBackupPrivilege", "SeSecurityPrivilege", "SeServiceLogonRight"}},
+		{
+			account: identities.CollectorSender.Account,
+			rights: []string{
+				"SeServiceLogonRight",
+			},
+		},
+		{
+			account: identities.USNReader.Account,
+			rights: []string{
+				"SeServiceLogonRight",
+			},
+		},
+		{
+			account: identities.ObjReader.Account,
+			rights: []string{
+				"SeBackupPrivilege",
+				"SeSecurityPrivilege",
+				"SeServiceLogonRight",
+			},
+		},
 	}
 
-	original := make(map[string][]string, len(contracts))
+	original := make(
+		map[string][]string,
+		len(contracts),
+	)
+
 	for _, item := range contracts {
-		rights, err := enumerateDirectAccountRights(item.account)
+		rights, err := backend.enumerate(
+			item.account,
+		)
 		if err != nil {
 			return nil, err
 		}
-		original[item.account] = append([]string(nil), rights...)
+
+		original[item.account] = append(
+			[]string(nil),
+			rights...,
+		)
 	}
 
-	applied := make([]contract, 0, len(contracts))
+	applied := make(
+		[]contract,
+		0,
+		len(contracts),
+	)
+
+	rollbackApplied := func() error {
+		var found []error
+
+		for index := len(applied) - 1; index >= 0; index-- {
+			item := applied[index]
+
+			if err := backend.setExact(
+				item.account,
+				original[item.account],
+			); err != nil {
+				found = append(
+					found,
+					fmt.Errorf(
+						"restore direct rights for %s: %w",
+						item.account,
+						err,
+					),
+				)
+			}
+		}
+
+		return errors.Join(
+			found...,
+		)
+	}
+
 	for _, item := range contracts {
-		if err := setExactAccountRights(item.account, item.rights); err != nil {
-			for index := len(applied) - 1; index >= 0; index-- {
-				_ = setExactAccountRights(applied[index].account, original[applied[index].account])
+		// Take rollback ownership before mutation. setExact may partially
+		// change LSA state before returning an error.
+		applied = append(
+			applied,
+			item,
+		)
+
+		if err := backend.setExact(
+			item.account,
+			item.rights,
+		); err != nil {
+			base := fmt.Errorf(
+				"reconcile direct rights for %s: %w",
+				item.account,
+				err,
+			)
+
+			if rollbackErr := rollbackApplied(); rollbackErr != nil {
+				base = errors.Join(
+					base,
+					fmt.Errorf(
+						"rollback Server 2016 direct-right transaction: %w",
+						rollbackErr,
+					),
+				)
 			}
-			return nil, err
+
+			return nil, base
 		}
-		applied = append(applied, item)
 	}
 
-	return func() error {
-		var first error
-		for index := len(contracts) - 1; index >= 0; index-- {
-			item := contracts[index]
-			if err := setExactAccountRights(item.account, original[item.account]); err != nil && first == nil {
-				first = err
-			}
-		}
-		return first
-	}, nil
+	return rollbackApplied, nil
 }
-
 func setExactAccountRights(account string, desired []string) error {
 	current, err := enumerateDirectAccountRights(account)
 	if err != nil {
@@ -165,53 +264,159 @@ func mutateAccountRight(account string, right string, add bool) error {
 	return nil
 }
 
-func reconcileServer2016Groups(identities DesiredFIIdentities) (func() error, error) {
+type server2016GroupsBackend struct {
+	member        func(string, string) (bool, error)
+	setMembership func(string, string, bool) error
+}
+
+func reconcileServer2016Groups(
+	identities DesiredFIIdentities,
+) (func() error, error) {
+	return reconcileServer2016GroupsWithBackend(
+		identities,
+		server2016GroupsBackend{
+			member:        accountIsDirectLocalGroupMember,
+			setMembership: setDirectLocalGroupMembership,
+		},
+	)
+}
+
+func reconcileServer2016GroupsWithBackend(
+	identities DesiredFIIdentities,
+	backend server2016GroupsBackend,
+) (func() error, error) {
+	if backend.member == nil ||
+		backend.setMembership == nil {
+		return nil, errors.New(
+			"Server 2016 local-group backend is incomplete",
+		)
+	}
+
 	type contract struct {
 		account string
 		group   string
 		want    bool
 	}
+
 	contracts := []contract{
-		{account: identities.CollectorSender.Account, group: "Administrators", want: false},
-		{account: identities.CollectorSender.Account, group: "Event Log Readers", want: true},
-		{account: identities.USNReader.Account, group: "Administrators", want: true},
-		{account: identities.ObjReader.Account, group: "Administrators", want: false},
-		{account: identities.ObjReader.Account, group: "Backup Operators", want: false},
+		{
+			account: identities.CollectorSender.Account,
+			group:   "Administrators",
+			want:    false,
+		},
+		{
+			account: identities.CollectorSender.Account,
+			group:   "Event Log Readers",
+			want:    true,
+		},
+		{
+			account: identities.USNReader.Account,
+			group:   "Administrators",
+			want:    true,
+		},
+		{
+			account: identities.ObjReader.Account,
+			group:   "Administrators",
+			want:    false,
+		},
+		{
+			account: identities.ObjReader.Account,
+			group:   "Backup Operators",
+			want:    false,
+		},
 	}
 
-	original := make([]bool, len(contracts))
+	original := make(
+		[]bool,
+		len(contracts),
+	)
+
 	for index, item := range contracts {
-		member, err := accountIsDirectLocalGroupMember(item.group, item.account)
+		member, err := backend.member(
+			item.group,
+			item.account,
+		)
 		if err != nil {
 			return nil, err
 		}
 		original[index] = member
 	}
 
-	applied := 0
-	for index, item := range contracts {
-		if original[index] != item.want {
-			if err := setDirectLocalGroupMembership(item.group, item.account, item.want); err != nil {
-				for rollbackIndex := applied - 1; rollbackIndex >= 0; rollbackIndex-- {
-					_ = setDirectLocalGroupMembership(contracts[rollbackIndex].group, contracts[rollbackIndex].account, original[rollbackIndex])
-				}
-				return nil, err
+	applied := make(
+		[]int,
+		0,
+		len(contracts),
+	)
+
+	rollbackApplied := func() error {
+		var found []error
+
+		for position := len(applied) - 1; position >= 0; position-- {
+			index := applied[position]
+			item := contracts[index]
+
+			if err := backend.setMembership(
+				item.group,
+				item.account,
+				original[index],
+			); err != nil {
+				found = append(
+					found,
+					fmt.Errorf(
+						"restore direct local-group membership account=%s group=%s: %w",
+						item.account,
+						item.group,
+						err,
+					),
+				)
 			}
 		}
-		applied++
+
+		return errors.Join(
+			found...,
+		)
 	}
 
-	return func() error {
-		var first error
-		for index := len(contracts) - 1; index >= 0; index-- {
-			if err := setDirectLocalGroupMembership(contracts[index].group, contracts[index].account, original[index]); err != nil && first == nil {
-				first = err
-			}
+	for index, item := range contracts {
+		if original[index] == item.want {
+			continue
 		}
-		return first
-	}, nil
-}
 
+		// Take rollback ownership before mutation. NetAPI may change membership
+		// successfully and the authoritative read-back may then fail.
+		applied = append(
+			applied,
+			index,
+		)
+
+		if err := backend.setMembership(
+			item.group,
+			item.account,
+			item.want,
+		); err != nil {
+			base := fmt.Errorf(
+				"reconcile direct local-group membership account=%s group=%s: %w",
+				item.account,
+				item.group,
+				err,
+			)
+
+			if rollbackErr := rollbackApplied(); rollbackErr != nil {
+				base = errors.Join(
+					base,
+					fmt.Errorf(
+						"rollback Server 2016 local-group transaction: %w",
+						rollbackErr,
+					),
+				)
+			}
+
+			return nil, base
+		}
+	}
+
+	return rollbackApplied, nil
+}
 func setDirectLocalGroupMembership(group string, account string, want bool) error {
 	current, err := accountIsDirectLocalGroupMember(group, account)
 	if err != nil {
@@ -221,9 +426,23 @@ func setDirectLocalGroupMembership(group string, account string, want bool) erro
 		return nil
 	}
 
-	groupName, err := syscall.UTF16PtrFromString(group)
+	resolvedGroup, err := resolveLocalGroupName(
+		group,
+	)
 	if err != nil {
-		return fmt.Errorf("encode local group %q: %w", group, err)
+		return err
+	}
+
+	groupName, err := syscall.UTF16PtrFromString(
+		resolvedGroup,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"encode local group %q resolved as %q: %w",
+			group,
+			resolvedGroup,
+			err,
+		)
 	}
 	accountName, err := syscall.UTF16PtrFromString(account)
 	if err != nil {

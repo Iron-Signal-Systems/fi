@@ -150,3 +150,98 @@ func TestValidCNGKeyUniqueNameRejectsPathMaterial(t *testing.T) {
 		t.Fatal("valid CNG unique name rejected")
 	}
 }
+
+func TestCNGKeyACLHasReadOnlyRejectsSeparateOverprivilegedACE(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	const account = `ISS\gFI-ADMINBOX$`
+
+	state := ACLState{
+		Entries: []ACLEntry{
+			{
+				Account: account,
+				Mask:    cngKeyFileReadMask,
+				Type:    "ALLOW",
+			},
+			{
+				Account: account,
+				Mask:    fileFullControlMask,
+				Type:    "ALLOW",
+			},
+		},
+	}
+
+	if cngKeyACLHasReadOnly(
+		state,
+		account,
+	) {
+		t.Fatal(
+			"separate overprivileged ALLOW ACE was hidden by a valid Read ACE",
+		)
+	}
+
+	entry, found := cngKeyACLHasForbiddenAllow(
+		state,
+		account,
+	)
+	if !found {
+		t.Fatal(
+			"overprivileged ALLOW ACE was not identified",
+		)
+	}
+	if entry.Mask != fileFullControlMask {
+		t.Fatalf(
+			"forbidden mask=0x%08X want=0x%08X",
+			entry.Mask,
+			fileFullControlMask,
+		)
+	}
+}
+
+func TestCNGKeyACLHasReadOnlyAllowsUnrelatedAdministrativeACE(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	const account = `ISS\gFI-ADMINBOX$`
+
+	state := ACLState{
+		Entries: []ACLEntry{
+			{
+				Account: account,
+				Mask:    cngKeyFileReadMask,
+				Type:    "ALLOW",
+			},
+			{
+				Account: `BUILTIN\Administrators`,
+				Mask:    fileFullControlMask,
+				Type:    "ALLOW",
+			},
+			{
+				Account: `NT AUTHORITY\SYSTEM`,
+				Mask:    fileFullControlMask,
+				Type:    "ALLOW",
+			},
+		},
+	}
+
+	if !cngKeyACLHasReadOnly(
+		state,
+		account,
+	) {
+		t.Fatal(
+			"administrative FullControl ACEs incorrectly invalidated the FI gMSA Read-only contract",
+		)
+	}
+
+	if _, found := cngKeyACLHasForbiddenAllow(
+		state,
+		account,
+	); found {
+		t.Fatal(
+			"unrelated administrative ACE was attributed to the FI gMSA",
+		)
+	}
+}

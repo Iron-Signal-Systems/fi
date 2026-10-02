@@ -583,9 +583,23 @@ func discoverPKI(report *Report, trust config.TransportTrustConfig) {
 }
 
 func accountIsDirectLocalGroupMember(group string, account string) (bool, error) {
-	groupName, err := syscall.UTF16PtrFromString(group)
+	resolvedGroup, err := resolveLocalGroupName(
+		group,
+	)
 	if err != nil {
-		return false, fmt.Errorf("encode local group %q name: %w", group, err)
+		return false, err
+	}
+
+	groupName, err := syscall.UTF16PtrFromString(
+		resolvedGroup,
+	)
+	if err != nil {
+		return false, fmt.Errorf(
+			"encode local group %q resolved as %q: %w",
+			group,
+			resolvedGroup,
+			err,
+		)
 	}
 
 	var resume uintptr

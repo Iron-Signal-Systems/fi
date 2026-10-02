@@ -32,6 +32,33 @@ type approval2ServiceOwnership struct {
 	Original mgr.Config
 }
 
+func failApproval2SCMTransaction(
+	base error,
+	rollback func() error,
+) (func() error, func() error, error) {
+	if base == nil {
+		base = errors.New(
+			"Approval 2 SCM transaction failed",
+		)
+	}
+
+	if rollback == nil {
+		return nil, nil, base
+	}
+
+	if rollbackErr := rollback(); rollbackErr != nil {
+		base = errors.Join(
+			base,
+			fmt.Errorf(
+				"rollback Approval 2 SCM transaction: %w",
+				rollbackErr,
+			),
+		)
+	}
+
+	return nil, nil, base
+}
+
 func reconcileServer2016Services(
 	report Report,
 	identities DesiredFIIdentities,
@@ -130,23 +157,34 @@ func reconcileServer2016Services(
 		)
 	}
 
+	fail := func(
+		base error,
+	) (func() error, func() error, error) {
+		return failApproval2SCMTransaction(
+			base,
+			rollbackOwned,
+		)
+	}
+
 	for _, contract := range targets {
 		observed, found := findService(
 			report.Services,
 			contract.Name,
 		)
 		if !found {
-			_ = rollbackOwned()
-			return nil, nil, fmt.Errorf(
-				"authoritative SCM discovery for %s is unavailable",
-				contract.Name,
+			return fail(
+				fmt.Errorf(
+					"authoritative SCM discovery for %s is unavailable",
+					contract.Name,
+				),
 			)
 		}
 		if observed.Presence == presenceUnknown {
-			_ = rollbackOwned()
-			return nil, nil, fmt.Errorf(
-				"authoritative SCM presence for %s is unknown",
-				contract.Name,
+			return fail(
+				fmt.Errorf(
+					"authoritative SCM presence for %s is unknown",
+					contract.Name,
+				),
 			)
 		}
 
@@ -158,21 +196,23 @@ func reconcileServer2016Services(
 		case presenceAbsent:
 			if openErr == nil {
 				service.Close()
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"service %s appeared after Approval 2 review; no SCM mutation was performed for that target",
-					contract.Name,
+				return fail(
+					fmt.Errorf(
+						"service %s appeared after Approval 2 review; no SCM mutation was performed for that target",
+						contract.Name,
+					),
 				)
 			}
 			if !errors.Is(
 				openErr,
 				windows.ERROR_SERVICE_DOES_NOT_EXIST,
 			) {
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"preflight open absent service %s: %w",
-					contract.Name,
-					openErr,
+				return fail(
+					fmt.Errorf(
+						"preflight open absent service %s: %w",
+						contract.Name,
+						openErr,
+					),
 				)
 			}
 
@@ -189,11 +229,12 @@ func reconcileServer2016Services(
 				contract.Args...,
 			)
 			if err != nil {
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"create service %s: %w",
-					contract.Name,
-					err,
+				return fail(
+					fmt.Errorf(
+						"create service %s: %w",
+						contract.Name,
+						err,
+					),
 				)
 			}
 			created.Close()
@@ -210,32 +251,35 @@ func reconcileServer2016Services(
 				contract.Name,
 				contract.Account,
 			); err != nil {
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"mark created service %s as managed service account: %w",
-					contract.Name,
-					err,
+				return fail(
+					fmt.Errorf(
+						"mark created service %s as managed service account: %w",
+						contract.Name,
+						err,
+					),
 				)
 			}
 
 		case presencePresent:
 			if openErr != nil {
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"open reviewed existing service %s: %w",
-					contract.Name,
-					openErr,
+				return fail(
+					fmt.Errorf(
+						"open reviewed existing service %s: %w",
+						contract.Name,
+						openErr,
+					),
 				)
 			}
 
 			original, err := service.Config()
 			if err != nil {
 				service.Close()
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"snapshot service %s before reconciliation: %w",
-					contract.Name,
-					err,
+				return fail(
+					fmt.Errorf(
+						"snapshot service %s before reconciliation: %w",
+						contract.Name,
+						err,
+					),
 				)
 			}
 
@@ -245,11 +289,12 @@ func reconcileServer2016Services(
 			// uses a managed account, for which the password remains SCM-managed.
 			if observed.ManagedAccount != "true" {
 				service.Close()
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"refusing to reconcile existing service %s because prior managed-account state=%s cannot be rolled back safely",
-					contract.Name,
-					observed.ManagedAccount,
+				return fail(
+					fmt.Errorf(
+						"refusing to reconcile existing service %s because prior managed-account state=%s cannot be rolled back safely",
+						contract.Name,
+						observed.ManagedAccount,
+					),
 				)
 			}
 
@@ -262,19 +307,9 @@ func reconcileServer2016Services(
 			desired.SidType = contract.SIDType
 			desired.DelayedAutoStart = false
 
-			if err := service.UpdateConfig(
-				desired,
-			); err != nil {
-				service.Close()
-				_ = rollbackOwned()
-				return nil, nil, fmt.Errorf(
-					"reconcile service %s: %w",
-					contract.Name,
-					err,
-				)
-			}
-			service.Close()
-
+			// Take rollback ownership before ChangeServiceConfig. If the
+			// native call or a later verification fails, FI still owns the
+			// exact pre-mutation configuration snapshot.
 			owned = append(
 				owned,
 				approval2ServiceOwnership{
@@ -283,22 +318,41 @@ func reconcileServer2016Services(
 				},
 			)
 
+			if err := service.UpdateConfig(
+				desired,
+			); err != nil {
+				service.Close()
+				return fail(
+					fmt.Errorf(
+						"reconcile service %s: %w",
+						contract.Name,
+						err,
+					),
+				)
+			}
+			service.Close()
+
 		default:
 			if service != nil {
 				service.Close()
 			}
-			_ = rollbackOwned()
-			return nil, nil, fmt.Errorf(
-				"unsupported reviewed service presence=%s for %s",
-				observed.Presence,
-				contract.Name,
+			return fail(
+				fmt.Errorf(
+					"unsupported reviewed service presence=%s for %s",
+					observed.Presence,
+					contract.Name,
+				),
 			)
 		}
 
 		verificationManager, err := mgr.Connect()
 		if err != nil {
-			_ = rollbackOwned()
-			return nil, nil, err
+			return fail(
+				fmt.Errorf(
+					"connect to service control manager for post-mutation verification: %w",
+					err,
+				),
+			)
 		}
 		verified, err := discoverService(
 			verificationManager,
@@ -311,27 +365,29 @@ func reconcileServer2016Services(
 		)
 		verificationManager.Disconnect()
 		if err != nil {
-			_ = rollbackOwned()
-			return nil, nil, fmt.Errorf(
-				"verify service %s after SCM mutation: %w",
-				contract.Name,
-				err,
+			return fail(
+				fmt.Errorf(
+					"verify service %s after SCM mutation: %w",
+					contract.Name,
+					err,
+				),
 			)
 		}
 		if !approval2ServiceConfigMatches(
 			verified,
 			contract,
 		) {
-			_ = rollbackOwned()
-			return nil, nil, fmt.Errorf(
-				"service %s did not converge after SCM mutation: account=%q path=%q managed=%s start=%s sid=%s display=%q",
-				contract.Name,
-				verified.Account,
-				verified.BinaryPath,
-				verified.ManagedAccount,
-				verified.StartType,
-				verified.SIDType,
-				verified.DisplayName,
+			return fail(
+				fmt.Errorf(
+					"service %s did not converge after SCM mutation: account=%q path=%q managed=%s start=%s sid=%s display=%q",
+					contract.Name,
+					verified.Account,
+					verified.BinaryPath,
+					verified.ManagedAccount,
+					verified.StartType,
+					verified.SIDType,
+					verified.DisplayName,
+				),
 			)
 		}
 	}

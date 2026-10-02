@@ -234,6 +234,42 @@ func approval2OperationalConfigValue(
 	return value, nil
 }
 
+func joinApproval2RollbackFailure(
+	base error,
+	context string,
+	rollback func() error,
+) error {
+	if base == nil {
+		base = errors.New(
+			"Approval 2 mutation failed",
+		)
+	}
+
+	if rollback == nil {
+		return base
+	}
+
+	rollbackErr := rollback()
+	if rollbackErr == nil {
+		return base
+	}
+
+	context = strings.TrimSpace(
+		context,
+	)
+	if context == "" {
+		context = "Approval 2 rollback"
+	}
+
+	return errors.Join(
+		base,
+		fmt.Errorf(
+			"%s: %w",
+			context,
+			rollbackErr,
+		),
+	)
+}
 func createApproval2OperationalConfig(
 	report Report,
 	plan InstallPlan,
@@ -344,20 +380,30 @@ func createApproval2OperationalConfig(
 	if _, err := os.Lstat(
 		configPath,
 	); err == nil {
-		_ = rollbackDirectories()
-		return nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"Approval 2 CREATE refuses existing operational configuration %s",
 			configPath,
+		)
+
+		return nil, joinApproval2RollbackFailure(
+			base,
+			"rollback Approval 2 operational directories",
+			rollbackDirectories,
 		)
 	} else if !errors.Is(
 		err,
 		os.ErrNotExist,
 	) {
-		_ = rollbackDirectories()
-		return nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"inspect Approval 2 operational configuration destination %s: %w",
 			configPath,
 			err,
+		)
+
+		return nil, joinApproval2RollbackFailure(
+			base,
+			"rollback Approval 2 operational directories",
+			rollbackDirectories,
 		)
 	}
 
@@ -365,35 +411,65 @@ func createApproval2OperationalConfig(
 		".fi-new-" +
 		transactionID
 
-	_ = os.Remove(
-		stage,
-	)
+	removeStage := func() error {
+		err := removeFileWithRetry(
+			stage,
+			5*time.Second,
+		)
+		if err == nil ||
+			errors.Is(
+				err,
+				os.ErrNotExist,
+			) {
+			return nil
+		}
+
+		return fmt.Errorf(
+			"remove staged FI operational configuration %s: %w",
+			stage,
+			err,
+		)
+	}
+
+	rollbackStageAndDirectories := func() error {
+		return errors.Join(
+			removeStage(),
+			rollbackDirectories(),
+		)
+	}
+
+	if err := removeStage(); err != nil {
+		return nil, joinApproval2RollbackFailure(
+			err,
+			"rollback Approval 2 operational directories",
+			rollbackDirectories,
+		)
+	}
 
 	if err := writeApproval2ExclusiveFile(
 		stage,
 		encoded,
 	); err != nil {
-		_ = rollbackDirectories()
-		return nil, err
+		return nil, joinApproval2RollbackFailure(
+			err,
+			"rollback Approval 2 operational directories",
+			rollbackDirectories,
+		)
 	}
-
-	cleanupStage := true
-	defer func() {
-		if cleanupStage {
-			_ = os.Remove(
-				stage,
-			)
-		}
-	}()
 
 	staged, err := config.Load(
 		stage,
 	)
 	if err != nil {
-		_ = rollbackDirectories()
-		return nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"verify staged FI operational configuration: %w",
 			err,
+		)
+
+		return nil, joinApproval2RollbackFailure(
+			base,
+			"rollback staged FI operational configuration",
+			rollbackStageAndDirectories,
 		)
 	}
 
@@ -401,9 +477,12 @@ func createApproval2OperationalConfig(
 		staged,
 		value,
 	) {
-		_ = rollbackDirectories()
-		return nil, errors.New(
-			"staged FI operational configuration does not match the approved typed contract",
+		return nil, joinApproval2RollbackFailure(
+			errors.New(
+				"staged FI operational configuration does not match the approved typed contract",
+			),
+			"rollback staged FI operational configuration",
+			rollbackStageAndDirectories,
 		)
 	}
 
@@ -411,14 +490,18 @@ func createApproval2OperationalConfig(
 		stage,
 		configPath,
 	); err != nil {
-		_ = rollbackDirectories()
-		return nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"activate FI operational configuration %s: %w",
 			configPath,
 			err,
 		)
+
+		return nil, joinApproval2RollbackFailure(
+			base,
+			"rollback staged FI operational configuration",
+			rollbackStageAndDirectories,
+		)
 	}
-	cleanupStage = false
 
 	rollback := func() error {
 		var found []error
@@ -453,10 +536,15 @@ func createApproval2OperationalConfig(
 		configPath,
 	)
 	if err != nil {
-		_ = rollback()
-		return nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"verify activated FI operational configuration: %w",
 			err,
+		)
+
+		return nil, joinApproval2RollbackFailure(
+			base,
+			"rollback activated FI operational configuration",
+			rollback,
 		)
 	}
 
@@ -464,15 +552,17 @@ func createApproval2OperationalConfig(
 		activated,
 		value,
 	) {
-		_ = rollback()
-		return nil, errors.New(
-			"activated FI operational configuration does not match the approved typed contract",
+		return nil, joinApproval2RollbackFailure(
+			errors.New(
+				"activated FI operational configuration does not match the approved typed contract",
+			),
+			"rollback activated FI operational configuration",
+			rollback,
 		)
 	}
 
 	return rollback, nil
 }
-
 func prepareApproval2OwnedDirectories(
 	paths []string,
 ) ([]string, error) {
@@ -484,8 +574,8 @@ func prepareApproval2OwnedDirectories(
 		map[string]struct{},
 	)
 
-	rollback := func() {
-		_ = rollbackApproval2CreatedDirectories(
+	rollback := func() error {
+		return rollbackApproval2CreatedDirectories(
 			created,
 		)
 	}
@@ -499,9 +589,12 @@ func prepareApproval2OwnedDirectories(
 
 		if path == "" ||
 			path == "." {
-			rollback()
-			return nil, errors.New(
-				"Approval 2 FI-owned directory path is empty",
+			return nil, joinApproval2RollbackFailure(
+				errors.New(
+					"Approval 2 FI-owned directory path is empty",
+				),
+				"rollback previously created Approval 2 directories",
+				rollback,
 			)
 		}
 
@@ -517,8 +610,11 @@ func prepareApproval2OwnedDirectories(
 			path,
 		)
 		if err != nil {
-			rollback()
-			return nil, err
+			return nil, joinApproval2RollbackFailure(
+				err,
+				"rollback previously created Approval 2 directories",
+				rollback,
+			)
 		}
 
 		for _, directory := range added {
@@ -537,7 +633,6 @@ func prepareApproval2OwnedDirectories(
 
 	return created, nil
 }
-
 func prepareApproval2OwnedDirectory(
 	path string,
 ) ([]string, error) {
@@ -600,8 +695,8 @@ func prepareApproval2OwnedDirectory(
 		len(missing),
 	)
 
-	rollback := func() {
-		_ = rollbackApproval2CreatedDirectories(
+	rollback := func() error {
+		return rollbackApproval2CreatedDirectories(
 			created,
 		)
 	}
@@ -613,11 +708,16 @@ func prepareApproval2OwnedDirectory(
 			directory,
 			0o700,
 		); err != nil {
-			rollback()
-			return nil, fmt.Errorf(
+			base := fmt.Errorf(
 				"create Approval 2 FI-owned directory %s: %w",
 				directory,
 				err,
+			)
+
+			return nil, joinApproval2RollbackFailure(
+				base,
+				"rollback Approval 2 directory preparation",
+				rollback,
 			)
 		}
 
@@ -637,18 +737,22 @@ func prepareApproval2OwnedDirectory(
 				)
 			},
 		); err != nil {
-			rollback()
-			return nil, fmt.Errorf(
+			base := fmt.Errorf(
 				"protect Approval 2 FI-owned directory %s: %w",
 				directory,
 				err,
+			)
+
+			return nil, joinApproval2RollbackFailure(
+				base,
+				"rollback Approval 2 directory preparation",
+				rollback,
 			)
 		}
 	}
 
 	return created, nil
 }
-
 func rollbackApproval2CreatedDirectories(
 	created []string,
 ) error {

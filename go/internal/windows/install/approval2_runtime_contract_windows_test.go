@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestValidateGovernedRootsForInstallAcceptsExistingDirectory(t *testing.T) {
@@ -117,5 +119,113 @@ func TestRollbackApproval2CreatedDirectoriesRemovesPopulatedTree(t *testing.T) {
 
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("transaction-created root still exists; stat err=%v", err)
+	}
+}
+
+func TestValidateGovernedRootInstallPathMatchesConfigPathContract(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, root := range []string{
+		`C:\`,
+		`D:\Shares\Finance`,
+	} {
+		if err := validateGovernedRootInstallPath(
+			root,
+		); err != nil {
+			t.Fatalf(
+				"valid governed root %q rejected: %v",
+				root,
+				err,
+			)
+		}
+	}
+
+	for _, root := range []string{
+		"",
+		`relative\path`,
+		`\\server\share`,
+		`C:/Data`,
+		`C:\Data\..\Other`,
+		`C:\Data:file`,
+	} {
+		if err := validateGovernedRootInstallPath(
+			root,
+		); err == nil {
+			t.Fatalf(
+				"unsafe governed root %q unexpectedly accepted",
+				root,
+			)
+		}
+	}
+}
+
+func TestValidateGovernedRootAttributesRejectsReparseDirectory(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	err := validateGovernedRootAttributes(
+		`C:\FI-Lab`,
+		windows.FILE_ATTRIBUTE_DIRECTORY|
+			windows.FILE_ATTRIBUTE_REPARSE_POINT,
+	)
+	if err == nil {
+		t.Fatal(
+			"reparse-point governed root unexpectedly accepted",
+		)
+	}
+	if !strings.Contains(
+		err.Error(),
+		"reparse point",
+	) {
+		t.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
+	}
+}
+
+func TestValidateGovernedRootAttributesAcceptsPlainDirectory(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	if err := validateGovernedRootAttributes(
+		`C:\FI-Lab`,
+		windows.FILE_ATTRIBUTE_DIRECTORY,
+	); err != nil {
+		t.Fatalf(
+			"plain governed-root directory rejected: %v",
+			err,
+		)
+	}
+}
+
+func TestValidateGovernedRootsForInstallRejectsDuplicateDirectory(
+	t *testing.T,
+) {
+	root := t.TempDir()
+
+	err := ValidateGovernedRootsForInstall(
+		[]string{
+			root,
+			root + `\`,
+		},
+	)
+	if err == nil {
+		t.Fatal(
+			"duplicate governed root unexpectedly accepted",
+		)
+	}
+	if !strings.Contains(
+		err.Error(),
+		"duplicated",
+	) {
+		t.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
 	}
 }

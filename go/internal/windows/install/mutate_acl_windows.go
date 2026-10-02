@@ -25,6 +25,33 @@ type sddlACE struct {
 	SID  string
 }
 
+func joinACLMutationRollbackFailure(
+	base error,
+	rollback func() error,
+) error {
+	if base == nil {
+		base = errors.New(
+			"ACL mutation failed",
+		)
+	}
+
+	if rollback == nil {
+		return base
+	}
+
+	if rollbackErr := rollback(); rollbackErr != nil {
+		return errors.Join(
+			base,
+			fmt.Errorf(
+				"rollback FI ACL mutations: %w",
+				rollbackErr,
+			),
+		)
+	}
+
+	return base
+}
+
 func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan InstallPlan) (func() error, error) {
 	collectorSID, collectorBuffer, err := lookupAccountSID(identities.CollectorSender.Account)
 	if err != nil {
@@ -85,14 +112,25 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 
 	seen := make(map[string]struct{})
 	mutations := make([]aclMutation, 0, len(contracts))
+
+	rollbackMutations := func() error {
+		return rollbackACLMutations(
+			mutations,
+		)
+	}
+
 	for _, item := range contracts {
 		if !planTargetMutates(plan, "ACL", item.target) {
 			continue
 		}
 		path := filepath.Clean(strings.TrimSpace(item.path))
 		if path == "" || path == "." {
-			_ = rollbackACLMutations(mutations)
-			return nil, fmt.Errorf("refusing to reconcile an empty ACL path")
+			return nil, joinACLMutationRollbackFailure(
+				fmt.Errorf(
+					"refusing to reconcile an empty ACL path",
+				),
+				rollbackMutations,
+			)
 		}
 		key := strings.ToLower(path)
 		if _, ok := seen[key]; ok {
@@ -102,15 +140,28 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 
 		previous, err := captureNamedSecurityDescriptorSDDL(path)
 		if err != nil {
-			_ = rollbackACLMutations(mutations)
-			return nil, err
+			return nil, joinACLMutationRollbackFailure(
+				err,
+				rollbackMutations,
+			)
 		}
+		// Take rollback ownership before the native security-descriptor write.
+		// Windows may partially change the descriptor before returning an error.
+		mutations = append(
+			mutations,
+			aclMutation{
+				Path:         path,
+				PreviousSDDL: previous,
+			},
+		)
+
 		apply := func() error {
 			return setNamedSecurityDescriptorFromSDDL(
 				path,
 				item.sddl,
 			)
 		}
+
 		if item.useRestorePrivilege {
 			err = withEnabledProcessPrivilege(
 				"SeRestorePrivilege",
@@ -119,19 +170,13 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 		} else {
 			err = apply()
 		}
+
 		if err != nil {
-			_ = rollbackACLMutations(
-				mutations,
+			return nil, joinACLMutationRollbackFailure(
+				err,
+				rollbackMutations,
 			)
-			return nil, err
 		}
-		mutations = append(
-			mutations,
-			aclMutation{
-				Path:         path,
-				PreviousSDDL: previous,
-			},
-		)
 	}
 
 	cngMutations, err := reconcileServer2016CNGKeyACLs(

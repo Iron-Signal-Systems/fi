@@ -101,7 +101,7 @@ func main() {
 	); err != nil {
 		fmt.Fprintf(
 			os.Stderr,
-			"`nFI INSTALLER INPUT BLOCKED: %v`n",
+			"\nFI INSTALLER INPUT BLOCKED: %v\n",
 			err,
 		)
 		os.Exit(1)

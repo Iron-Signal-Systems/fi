@@ -495,16 +495,43 @@ func createApproval2TransportTrustFiles(
 	expectedCRLSHA256 string,
 	transactionID string,
 ) (func() error, error) {
+	return createApproval2TransportTrustFilesWithRename(
+		trustPath,
+		crlPath,
+		trustBytes,
+		crlDER,
+		expectedCRLSHA256,
+		transactionID,
+		os.Rename,
+	)
+}
+
+func createApproval2TransportTrustFilesWithRename(
+	trustPath string,
+	crlPath string,
+	trustBytes []byte,
+	crlDER []byte,
+	expectedCRLSHA256 string,
+	transactionID string,
+	renameFile func(string, string) error,
+) (func() error, error) {
 	trustPath = filepath.Clean(
 		strings.TrimSpace(
 			trustPath,
 		),
 	)
+
 	crlPath = filepath.Clean(
 		strings.TrimSpace(
 			crlPath,
 		),
 	)
+
+	if renameFile == nil {
+		return nil, errors.New(
+			"Approval 2 transport-trust rename operation is required",
+		)
+	}
 
 	if trustPath == "" ||
 		trustPath == "." ||
@@ -583,6 +610,7 @@ func createApproval2TransportTrustFiles(
 	digest := sha256.Sum256(
 		crlDER,
 	)
+
 	observedCRLSHA256 :=
 		hex.EncodeToString(
 			digest[:],
@@ -605,6 +633,7 @@ func createApproval2TransportTrustFiles(
 			Bytes: crlDER,
 		},
 	)
+
 	if len(crlPEM) == 0 {
 		return nil, errors.New(
 			"encode canonical transport CRL PEM returned no data",
@@ -619,102 +648,208 @@ func createApproval2TransportTrustFiles(
 		".fi-new-" +
 		transactionID
 
-	cleanupStages := func() {
-		_ = os.Remove(
+	cleanupStages := func() error {
+		return removeApproval2TransportTrustFiles(
 			crlStage,
-		)
-		_ = os.Remove(
 			trustStage,
 		)
 	}
-	defer cleanupStages()
 
-	if err := writeApproval2ExclusiveFile(
-		crlStage,
-		crlPEM,
-	); err != nil {
-		return nil, err
-	}
-
-	if err := verifyApproval2PersistedCRL(
-		crlStage,
-		crlDER,
-		expectedCRLSHA256,
-	); err != nil {
-		return nil, err
-	}
-
-	if err := writeApproval2ExclusiveFile(
-		trustStage,
-		trustBytes,
-	); err != nil {
-		return nil, err
-	}
-
-	if _, err := config.LoadTransportTrust(
-		trustStage,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"verify staged FI transport-trust configuration: %w",
-			err,
-		)
-	}
-
-	if err := os.Rename(
-		crlStage,
-		crlPath,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"activate transport CRL %s: %w",
-			crlPath,
-			err,
-		)
-	}
-
-	if err := os.Rename(
-		trustStage,
-		trustPath,
-	); err != nil {
-		_ = removeFileWithRetry(
-			crlPath,
-			5*time.Second,
-		)
-		return nil, fmt.Errorf(
-			"activate FI transport-trust configuration %s: %w",
-			trustPath,
-			err,
-		)
-	}
-
-	rollback := func() error {
+	rollbackActivated := func() error {
 		return removeApproval2CreatedTransportTrustFiles(
 			trustPath,
 			crlPath,
 		)
 	}
 
+	failStaged := func(
+		base error,
+	) (func() error, error) {
+		return nil, joinFIRecoveryFailures(
+			base,
+			fiRecoveryStep{
+				name: "cleanup staged Approval 2 transport-trust files",
+				run:  cleanupStages,
+			},
+		)
+	}
+
+	failActivated := func(
+		base error,
+	) (func() error, error) {
+		return nil, joinFIRecoveryFailures(
+			base,
+			fiRecoveryStep{
+				name: "rollback activated Approval 2 transport-trust files",
+				run:  rollbackActivated,
+			},
+			fiRecoveryStep{
+				name: "cleanup staged Approval 2 transport-trust files",
+				run:  cleanupStages,
+			},
+		)
+	}
+
+	if err := writeApproval2ExclusiveFile(
+		crlStage,
+		crlPEM,
+	); err != nil {
+		return failStaged(
+			err,
+		)
+	}
+
+	if err := verifyApproval2PersistedCRL(
+		crlStage,
+		crlDER,
+		expectedCRLSHA256,
+	); err != nil {
+		return failStaged(
+			err,
+		)
+	}
+
+	if err := writeApproval2ExclusiveFile(
+		trustStage,
+		trustBytes,
+	); err != nil {
+		return failStaged(
+			err,
+		)
+	}
+
+	if _, err := config.LoadTransportTrust(
+		trustStage,
+	); err != nil {
+		return failStaged(
+			fmt.Errorf(
+				"verify staged FI transport-trust configuration: %w",
+				err,
+			),
+		)
+	}
+
+	if err := activateApproval2TransportTrustFiles(
+		crlStage,
+		crlPath,
+		trustStage,
+		trustPath,
+		renameFile,
+	); err != nil {
+		return failActivated(
+			err,
+		)
+	}
+
 	if err := verifyApproval2PersistedCRL(
 		crlPath,
 		crlDER,
 		expectedCRLSHA256,
 	); err != nil {
-		_ = rollback()
-		return nil, err
+		return nil, joinFIRecoveryFailures(
+			err,
+			fiRecoveryStep{
+				name: "rollback activated Approval 2 transport-trust files",
+				run:  rollbackActivated,
+			},
+		)
 	}
 
 	if _, err := config.LoadTransportTrust(
 		trustPath,
 	); err != nil {
-		_ = rollback()
-		return nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"verify activated FI transport-trust configuration: %w",
+			err,
+		)
+
+		return nil, joinFIRecoveryFailures(
+			base,
+			fiRecoveryStep{
+				name: "rollback activated Approval 2 transport-trust files",
+				run:  rollbackActivated,
+			},
+		)
+	}
+
+	return rollbackActivated, nil
+}
+
+func activateApproval2TransportTrustFiles(
+	crlStage string,
+	crlPath string,
+	trustStage string,
+	trustPath string,
+	renameFile func(string, string) error,
+) error {
+	if renameFile == nil {
+		return errors.New(
+			"Approval 2 transport-trust rename operation is required",
+		)
+	}
+
+	if err := renameFile(
+		crlStage,
+		crlPath,
+	); err != nil {
+		return fmt.Errorf(
+			"activate transport CRL %s: %w",
+			crlPath,
 			err,
 		)
 	}
 
-	return rollback, nil
+	if err := renameFile(
+		trustStage,
+		trustPath,
+	); err != nil {
+		return fmt.Errorf(
+			"activate FI transport-trust configuration %s: %w",
+			trustPath,
+			err,
+		)
+	}
+
+	return nil
 }
 
+func removeApproval2TransportTrustFiles(
+	paths ...string,
+) error {
+	var found []error
+
+	for _, path := range paths {
+		path = strings.TrimSpace(
+			path,
+		)
+
+		if path == "" {
+			continue
+		}
+
+		if err := removeFileWithRetry(
+			path,
+			5*time.Second,
+		); err != nil &&
+			!errors.Is(
+				err,
+				os.ErrNotExist,
+			) {
+			found = append(
+				found,
+				fmt.Errorf(
+					"remove Approval 2 transport-trust file %s: %w",
+					path,
+					err,
+				),
+			)
+		}
+	}
+
+	return errors.Join(
+		found...,
+	)
+}
 func verifyApproval2PersistedCRL(
 	path string,
 	expectedDER []byte,
@@ -781,47 +916,80 @@ func writeApproval2ExclusiveFile(
 		)
 	}
 
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(
-				path,
-			)
+	removeStage := func() error {
+		err := removeFileWithRetry(
+			path,
+			5*time.Second,
+		)
+		if err == nil ||
+			errors.Is(
+				err,
+				os.ErrNotExist,
+			) {
+			return nil
 		}
-	}()
+
+		return fmt.Errorf(
+			"remove failed Approval 2 staged file %s: %w",
+			path,
+			err,
+		)
+	}
+
+	failWithOpenFile := func(
+		base error,
+	) error {
+		return joinFIRecoveryFailures(
+			base,
+			fiRecoveryStep{
+				name: "close failed Approval 2 staged file",
+				run:  file.Close,
+			},
+			fiRecoveryStep{
+				name: "remove failed Approval 2 staged file",
+				run:  removeStage,
+			},
+		)
+	}
 
 	if _, err := file.Write(
 		value,
 	); err != nil {
-		_ = file.Close()
-		return fmt.Errorf(
-			"write Approval 2 staged file %s: %w",
-			path,
-			err,
+		return failWithOpenFile(
+			fmt.Errorf(
+				"write Approval 2 staged file %s: %w",
+				path,
+				err,
+			),
 		)
 	}
 
 	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return fmt.Errorf(
-			"sync Approval 2 staged file %s: %w",
-			path,
-			err,
+		return failWithOpenFile(
+			fmt.Errorf(
+				"sync Approval 2 staged file %s: %w",
+				path,
+				err,
+			),
 		)
 	}
 
 	if err := file.Close(); err != nil {
-		return fmt.Errorf(
-			"close Approval 2 staged file %s: %w",
-			path,
-			err,
+		return joinFIRecoveryFailures(
+			fmt.Errorf(
+				"close Approval 2 staged file %s: %w",
+				path,
+				err,
+			),
+			fiRecoveryStep{
+				name: "remove failed Approval 2 staged file",
+				run:  removeStage,
+			},
 		)
 	}
 
-	cleanup = false
 	return nil
 }
-
 func requireApproval2PlainDirectory(
 	path string,
 ) error {
@@ -880,26 +1048,10 @@ func removeApproval2CreatedTransportTrustFiles(
 	trustPath string,
 	crlPath string,
 ) error {
-	var first error
-
-	for _, path := range []string{
+	return removeApproval2TransportTrustFiles(
 		trustPath,
 		crlPath,
-	} {
-		if err := removeFileWithRetry(
-			path,
-			5*time.Second,
-		); err != nil &&
-			!errors.Is(
-				err,
-				os.ErrNotExist,
-			) &&
-			first == nil {
-			first = err
-		}
-	}
-
-	return first
+	)
 }
 
 func validApproval2TransactionID(

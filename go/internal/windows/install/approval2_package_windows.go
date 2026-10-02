@@ -39,6 +39,7 @@ func replaceApproval2RuntimeBinaries(
 		0,
 		len(report.Package.Files),
 	)
+
 	for _, file := range report.Package.Files {
 		if !file.PayloadMatch ||
 			!file.PayloadAuthenticodeTrusted ||
@@ -48,6 +49,7 @@ func replaceApproval2RuntimeBinaries(
 				file.Role,
 			)
 		}
+
 		if strings.TrimSpace(
 			file.InstalledPath,
 		) == "" {
@@ -56,9 +58,11 @@ func replaceApproval2RuntimeBinaries(
 				file.Role,
 			)
 		}
+
 		if file.Match {
 			continue
 		}
+
 		replacements = append(
 			replacements,
 			fileReplacement{
@@ -70,6 +74,7 @@ func replaceApproval2RuntimeBinaries(
 	}
 
 	programDirectory := `C:\Program Files\FI`
+
 	if err := validateApproval2RuntimeBinaryDestinations(
 		replacements,
 		programDirectory,
@@ -77,23 +82,35 @@ func replaceApproval2RuntimeBinaries(
 		return nil, nil, err
 	}
 
-	createdProgramDirectories, err := prepareApproval2OwnedDirectories(
-		[]string{programDirectory},
-	)
+	createdProgramDirectories, err :=
+		prepareApproval2OwnedDirectories(
+			[]string{
+				programDirectory,
+			},
+		)
 	if err != nil {
 		return nil, nil, err
 	}
-	programDirectoryCreated := len(createdProgramDirectories) != 0
+
+	programDirectoryCreated :=
+		len(createdProgramDirectories) != 0
+
 	rollbackProgramDirectories := func() error {
 		return rollbackApproval2CreatedDirectories(
 			createdProgramDirectories,
 		)
 	}
 
-	snapshots, err := stopApproval2FIServicesForBinaryReplacement()
+	snapshots, err :=
+		stopApproval2FIServicesForBinaryReplacement()
 	if err != nil {
-		_ = rollbackProgramDirectories()
-		return nil, nil, err
+		return nil, nil, joinFIRecoveryFailures(
+			err,
+			fiRecoveryStep{
+				name: "rollback transaction-created FI program directories",
+				run:  rollbackProgramDirectories,
+			},
+		)
 	}
 
 	replaced, err := replaceFileSet(
@@ -101,27 +118,76 @@ func replaceApproval2RuntimeBinaries(
 		transactionID+"-runtime",
 	)
 	if err != nil {
-		_ = startFIServicesFromSnapshot(
-			snapshots,
+		return nil, nil, joinFIRecoveryFailures(
+			err,
+			fiRecoveryStep{
+				name: "restore FI service runtime snapshot",
+				run: func() error {
+					return startFIServicesFromSnapshot(
+						snapshots,
+					)
+				},
+			},
+			fiRecoveryStep{
+				name: "rollback transaction-created FI program directories",
+				run:  rollbackProgramDirectories,
+			},
 		)
-		_ = rollbackProgramDirectories()
-		return nil, nil, err
+	}
+
+	recoverPackage := func() error {
+		steps := []fiRecoveryStep{
+			{
+				name: "stop FI services before Approval 2 package rollback",
+				run:  stopApproval2ExistingFIServicesBestEffort,
+			},
+			{
+				name: "rollback Approval 2 runtime binaries",
+				run: func() error {
+					return rollbackReplacedFiles(
+						replaced,
+					)
+				},
+			},
+			{
+				name: "restore FI service runtime snapshot",
+				run: func() error {
+					return startFIServicesFromSnapshot(
+						snapshots,
+					)
+				},
+			},
+		}
+
+		if programDirectoryCreated {
+			steps = append(
+				steps,
+				fiRecoveryStep{
+					name: "rollback transaction-created FI program directories",
+					run:  rollbackProgramDirectories,
+				},
+			)
+		}
+
+		return runFIRecoverySteps(
+			steps...,
+		)
 	}
 
 	if err := startFIServicesFromSnapshot(
 		snapshots,
 	); err != nil {
-		_ = stopApproval2ExistingFIServicesBestEffort()
-		_ = rollbackReplacedFiles(
-			replaced,
-		)
-		_ = startFIServicesFromSnapshot(
-			snapshots,
-		)
-		_ = rollbackProgramDirectories()
-		return nil, nil, fmt.Errorf(
+		base := fmt.Errorf(
 			"restore running FI services after binary replacement: %w",
 			err,
+		)
+
+		return nil, nil, joinFIRecoveryFailures(
+			base,
+			fiRecoveryStep{
+				name: "rollback failed Approval 2 package activation",
+				run:  recoverPackage,
+			},
 		)
 	}
 
@@ -131,58 +197,18 @@ func replaceApproval2RuntimeBinaries(
 		if err := waitForFIBrokerPipes(
 			10 * time.Second,
 		); err != nil {
-			_ = stopApproval2ExistingFIServicesBestEffort()
-			_ = rollbackReplacedFiles(
-				replaced,
+			return nil, nil, joinFIRecoveryFailures(
+				err,
+				fiRecoveryStep{
+					name: "rollback Approval 2 package after broker-readiness failure",
+					run:  recoverPackage,
+				},
 			)
-			_ = startFIServicesFromSnapshot(
-				snapshots,
-			)
-			_ = rollbackProgramDirectories()
-			return nil, nil, err
 		}
 	}
 
 	rollback := func() error {
-		var found []error
-
-		if err := stopApproval2ExistingFIServicesBestEffort(); err != nil {
-			found = append(
-				found,
-				err,
-			)
-		}
-
-		if err := rollbackReplacedFiles(
-			replaced,
-		); err != nil {
-			found = append(
-				found,
-				err,
-			)
-		}
-
-		if err := startFIServicesFromSnapshot(
-			snapshots,
-		); err != nil {
-			found = append(
-				found,
-				err,
-			)
-		}
-
-		if programDirectoryCreated {
-			if err := rollbackProgramDirectories(); err != nil {
-				found = append(
-					found,
-					err,
-				)
-			}
-		}
-
-		return errors.Join(
-			found...,
-		)
+		return recoverPackage()
 	}
 
 	commit := func() error {
@@ -196,23 +222,35 @@ func replaceApproval2RuntimeBinaries(
 			programDirectory,
 		)
 		if err != nil {
-			_ = rollback()
-			return nil, nil, fmt.Errorf(
+			base := fmt.Errorf(
 				"inspect created FI program directory: %w",
 				err,
 			)
+
+			return nil, nil, joinFIRecoveryFailures(
+				base,
+				fiRecoveryStep{
+					name: "rollback Approval 2 package",
+					run:  rollback,
+				},
+			)
 		}
+
 		if !info.IsDir() {
-			_ = rollback()
-			return nil, nil, errors.New(
-				"FI program directory is not a directory after package activation",
+			return nil, nil, joinFIRecoveryFailures(
+				errors.New(
+					"FI program directory is not a directory after package activation",
+				),
+				fiRecoveryStep{
+					name: "rollback Approval 2 package",
+					run:  rollback,
+				},
 			)
 		}
 	}
 
 	return rollback, commit, nil
 }
-
 func validateApproval2RuntimeBinaryDestinations(
 	replacements []fileReplacement,
 	programDirectory string,
@@ -286,6 +324,24 @@ func stopApproval2FIServicesForBinaryReplacement() (
 		len(order),
 	)
 
+	recoverSnapshot := func() error {
+		return startFIServicesFromSnapshot(
+			snapshots,
+		)
+	}
+
+	fail := func(
+		base error,
+	) ([]serviceRuntimeSnapshot, error) {
+		return nil, joinFIRecoveryFailures(
+			base,
+			fiRecoveryStep{
+				name: "restore FI services after Approval 2 package-stop failure",
+				run:  recoverSnapshot,
+			},
+		)
+	}
+
 	for _, name := range order {
 		service, err := manager.OpenService(
 			name,
@@ -297,26 +353,26 @@ func stopApproval2FIServicesForBinaryReplacement() (
 			) {
 				continue
 			}
-			_ = startFIServicesFromSnapshot(
-				snapshots,
-			)
-			return nil, fmt.Errorf(
-				"open service %s for package stop: %w",
-				name,
-				err,
+
+			return fail(
+				fmt.Errorf(
+					"open service %s for package stop: %w",
+					name,
+					err,
+				),
 			)
 		}
 
 		status, err := service.Query()
 		if err != nil {
 			service.Close()
-			_ = startFIServicesFromSnapshot(
-				snapshots,
-			)
-			return nil, fmt.Errorf(
-				"query service %s before package stop: %w",
-				name,
-				err,
+
+			return fail(
+				fmt.Errorf(
+					"query service %s before package stop: %w",
+					name,
+					err,
+				),
 			)
 		}
 
@@ -333,25 +389,26 @@ func stopApproval2FIServicesForBinaryReplacement() (
 				svc.Stop,
 			); err != nil {
 				service.Close()
-				_ = startFIServicesFromSnapshot(
-					snapshots,
-				)
-				return nil, fmt.Errorf(
-					"stop service %s for package replacement: %w",
-					name,
-					err,
+
+				return fail(
+					fmt.Errorf(
+						"stop service %s for package replacement: %w",
+						name,
+						err,
+					),
 				)
 			}
+
 			if err := waitServiceState(
 				service,
 				svc.Stopped,
 				serviceTransitionTimeout,
 			); err != nil {
 				service.Close()
-				_ = startFIServicesFromSnapshot(
-					snapshots,
+
+				return fail(
+					err,
 				)
-				return nil, err
 			}
 		}
 
@@ -360,7 +417,6 @@ func stopApproval2FIServicesForBinaryReplacement() (
 
 	return snapshots, nil
 }
-
 func stopApproval2ExistingFIServicesBestEffort() error {
 	manager, err := mgr.Connect()
 	if err != nil {

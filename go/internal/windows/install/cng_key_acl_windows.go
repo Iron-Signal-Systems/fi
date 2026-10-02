@@ -102,11 +102,8 @@ func appendCNGKeyReadACE(
 	return sddl[:insertAt] + ace + sddl[insertAt:], nil
 }
 
-func cngKeyACLHasReadOnly(
-	state ACLState,
-	account string,
-) bool {
-	forbidden := uint32(
+func cngKeyACLForbiddenMask() uint32 {
+	return uint32(
 		windows.FILE_WRITE_DATA |
 			windows.FILE_APPEND_DATA |
 			windows.FILE_WRITE_EA |
@@ -115,15 +112,65 @@ func cngKeyACLHasReadOnly(
 			windows.WRITE_DAC |
 			windows.WRITE_OWNER,
 	)
-
-	return hasAllowMask(
-		state,
-		account,
-		cngKeyFileReadMask,
-		forbidden,
-	)
 }
 
+func cngKeyACLHasReadOnly(
+	state ACLState,
+	account string,
+) bool {
+	forbidden := cngKeyACLForbiddenMask()
+
+	var (
+		aggregate uint32
+		found     bool
+	)
+
+	for _, entry := range state.Entries {
+		if entry.Type != "ALLOW" ||
+			!accountMatches(
+				entry,
+				account,
+			) {
+			continue
+		}
+
+		found = true
+
+		// One acceptable Read ACE must not hide a second ALLOW ACE that grants
+		// the FI service identity write, delete, or ACL-administration rights.
+		if entry.Mask&forbidden != 0 {
+			return false
+		}
+
+		aggregate |= entry.Mask
+	}
+
+	return found &&
+		aggregate&cngKeyFileReadMask == cngKeyFileReadMask
+}
+
+func cngKeyACLHasForbiddenAllow(
+	state ACLState,
+	account string,
+) (ACLEntry, bool) {
+	forbidden := cngKeyACLForbiddenMask()
+
+	for _, entry := range state.Entries {
+		if entry.Type != "ALLOW" ||
+			!accountMatches(
+				entry,
+				account,
+			) {
+			continue
+		}
+
+		if entry.Mask&forbidden != 0 {
+			return entry, true
+		}
+	}
+
+	return ACLEntry{}, false
+}
 func cngKeyACLTargetsFromPlan(
 	plan InstallPlan,
 ) ([]cngKeyACLPlanTarget, error) {
@@ -739,16 +786,33 @@ func reconcileServer2016CNGKeyACLs(
 		)
 	}
 
+	fail := func(
+		base error,
+	) ([]cngKeyACLMutation, error) {
+		if rollbackErr := rollback(); rollbackErr != nil {
+			base = errors.Join(
+				base,
+				fmt.Errorf(
+					"rollback CNG key ACL mutations: %w",
+					rollbackErr,
+				),
+			)
+		}
+
+		return nil, base
+	}
+
 	for _, target := range targets {
 		path, err := machineCNGKeyFilePathForCertificateSHA256(
 			target.CertificateSHA256,
 		)
 		if err != nil {
-			_ = rollback()
-			return nil, fmt.Errorf(
-				"resolve %s file: %w",
-				target.Label,
-				err,
+			return fail(
+				fmt.Errorf(
+					"resolve %s file: %w",
+					target.Label,
+					err,
+				),
 			)
 		}
 
@@ -757,8 +821,9 @@ func reconcileServer2016CNGKeyACLs(
 			target.Label,
 		)
 		if err != nil {
-			_ = rollback()
-			return nil, err
+			return fail(
+				err,
+			)
 		}
 
 		if cngKeyACLHasReadOnly(
@@ -768,12 +833,27 @@ func reconcileServer2016CNGKeyACLs(
 			continue
 		}
 
+		if entry, found := cngKeyACLHasForbiddenAllow(
+			state,
+			account,
+		); found {
+			return fail(
+				fmt.Errorf(
+					"%s ACL grants forbidden rights to %s mask=0x%08X; refusing to append Read over an overprivileged existing ALLOW ACE",
+					target.Label,
+					account,
+					entry.Mask,
+				),
+			)
+		}
+
 		previous, err := captureNamedSecurityDescriptorSDDL(
 			path,
 		)
 		if err != nil {
-			_ = rollback()
-			return nil, err
+			return fail(
+				err,
+			)
 		}
 
 		desired, err := appendCNGKeyReadACE(
@@ -781,18 +861,14 @@ func reconcileServer2016CNGKeyACLs(
 			accountSID.String(),
 		)
 		if err != nil {
-			_ = rollback()
-			return nil, err
+			return fail(
+				err,
+			)
 		}
 
-		if err := setNamedDACLFromSDDL(
-			path,
-			desired,
-		); err != nil {
-			_ = rollback()
-			return nil, err
-		}
-
+		// Take rollback ownership before attempting the write.  If Windows
+		// reports an error after partially changing the DACL, the original
+		// descriptor is still restored.
 		mutations = append(
 			mutations,
 			cngKeyACLMutation{
@@ -801,30 +877,40 @@ func reconcileServer2016CNGKeyACLs(
 			},
 		)
 
+		if err := setNamedDACLFromSDDL(
+			path,
+			desired,
+		); err != nil {
+			return fail(
+				err,
+			)
+		}
+
 		verified, err := discoverACL(
 			path,
 			target.Label,
 		)
 		if err != nil {
-			_ = rollback()
-			return nil, err
+			return fail(
+				err,
+			)
 		}
 		if !cngKeyACLHasReadOnly(
 			verified,
 			account,
 		) {
-			_ = rollback()
-			return nil, fmt.Errorf(
-				"%s ACL mutation did not grant Read-only access to %s",
-				target.Label,
-				account,
+			return fail(
+				fmt.Errorf(
+					"%s ACL mutation did not grant Read-only access to %s",
+					target.Label,
+					account,
+				),
 			)
 		}
 	}
 
 	return mutations, nil
 }
-
 func restoreCNGKeyACLMutations(
 	mutations []cngKeyACLMutation,
 ) error {
