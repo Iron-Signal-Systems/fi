@@ -610,3 +610,15 @@ FI does not set `devfs_system_ruleset`.
 
 Rendering this policy does not install rc files, reload devfs, or start/stop
 any jail.
+
+## Receiver trust acceptance
+
+Real-host receiver PKI, trust custody, direct-root certificate validation,
+revocation validation, and Windows AD CS receiver-template issuance are recorded
+in [`RECEIVER-TRUST-ACCEPTANCE.md`](RECEIVER-TRUST-ACCEPTANCE.md).
+
+The receiver trust boundary is accepted through receiver identity, issuer, CRL,
+hostname, private-key, fullchain, and filesystem-custody validation.
+
+Overall receiver readiness remains fail-closed until a real authorized Windows
+source is present in the receiver source registry.

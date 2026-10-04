@@ -399,3 +399,17 @@ Record:
 - reboot snapshot when persistence acceptance is performed.
 
 A failed mandatory check leaves the real-host gate open.
+
+## Receiver trust acceptance record
+
+Receiver trust establishment is recorded separately in
+[`RECEIVER-TRUST-ACCEPTANCE.md`](RECEIVER-TRUST-ACCEPTANCE.md).
+
+That record includes the FreeBSD private-key and trust-custody boundary, the
+dedicated Windows AD CS `FI-Receiver-TLS` server-authentication template,
+direct-root issuance, root/CRL validation, receiver certificate/key binding,
+hostname and revocation validation, and the runtime `fi-receiver trust status`
+result.
+
+The accepted receiver-side state is intentionally `NOT_READY` until a real
+authorized source-registry entry is installed.
