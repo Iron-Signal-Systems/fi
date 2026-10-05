@@ -145,6 +145,84 @@ fi
 
 pass "address/network mismatch fails closed"
 
+BAD_PATH_PARENT="$WORK_ROOT/bad-path-parent.conf"
+
+sed \
+    's#FI_RECEIVER_ROOT="/usr/local/jails/containers/fi-receiver"#FI_RECEIVER_ROOT="/usr/local/jails/containers/../fi-receiver"#' \
+    "$FIXTURE" > "$BAD_PATH_PARENT" ||
+    fail "unable to create parent-path test fixture"
+
+if "$BOOTSTRAP" plan "$BAD_PATH_PARENT" "$WORK_ROOT/bad-path-parent-plan" \
+    >/dev/null 2>&1
+then
+    fail "parent path component was accepted"
+fi
+
+pass "parent path components are rejected"
+
+BAD_PATH_CURRENT="$WORK_ROOT/bad-path-current.conf"
+
+sed \
+    's#FI_RECEIVER_ROOT="/usr/local/jails/containers/fi-receiver"#FI_RECEIVER_ROOT="/usr/local/jails/containers/./fi-receiver"#' \
+    "$FIXTURE" > "$BAD_PATH_CURRENT" ||
+    fail "unable to create current-path test fixture"
+
+if "$BOOTSTRAP" plan "$BAD_PATH_CURRENT" "$WORK_ROOT/bad-path-current-plan" \
+    >/dev/null 2>&1
+then
+    fail "current path component was accepted"
+fi
+
+pass "current path components are rejected"
+
+BAD_PATH_DOUBLE="$WORK_ROOT/bad-path-double.conf"
+
+sed \
+    's#FI_RECEIVER_ROOT="/usr/local/jails/containers/fi-receiver"#FI_RECEIVER_ROOT="/usr/local/jails//containers/fi-receiver"#' \
+    "$FIXTURE" > "$BAD_PATH_DOUBLE" ||
+    fail "unable to create duplicate-separator test fixture"
+
+if "$BOOTSTRAP" plan "$BAD_PATH_DOUBLE" "$WORK_ROOT/bad-path-double-plan" \
+    >/dev/null 2>&1
+then
+    fail "duplicate path separator was accepted"
+fi
+
+pass "duplicate path separators are rejected"
+
+ACCEPTED_NAME_IDENTITY_CONTRACTS=""
+
+while IFS='|' read -r contract_name old_value new_value
+do
+    [ -n "$contract_name" ] || continue
+
+    bad_config="$WORK_ROOT/bad-contract-$contract_name.conf"
+
+    sed "s#$old_value#$new_value#" "$FIXTURE" > "$bad_config" ||
+        fail "unable to create $contract_name test fixture"
+
+    if "$BOOTSTRAP" plan         "$bad_config"         "$WORK_ROOT/bad-contract-$contract_name-plan"         >/dev/null 2>&1
+    then
+        if [ -n "$ACCEPTED_NAME_IDENTITY_CONTRACTS" ]; then
+            ACCEPTED_NAME_IDENTITY_CONTRACTS="$ACCEPTED_NAME_IDENTITY_CONTRACTS, "
+        fi
+
+        ACCEPTED_NAME_IDENTITY_CONTRACTS="${ACCEPTED_NAME_IDENTITY_CONTRACTS}${contract_name}"
+    fi
+done <<'EOF_NAME_IDENTITY'
+hostname-label|FI_HOSTNAME="fi-test.invalid"|FI_HOSTNAME="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.invalid"
+dns-label|FI_HOST_DNS_SEARCH="iss.local"|FI_HOST_DNS_SEARCH="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.local"
+uid-low|FI_RUNTIME_UID="4100"|FI_RUNTIME_UID="999"
+uid-high|FI_RUNTIME_UID="4100"|FI_RUNTIME_UID="32001"
+gid-low|FI_RUNTIME_GID="4100"|FI_RUNTIME_GID="999"
+gid-high|FI_RUNTIME_GID="4100"|FI_RUNTIME_GID="32001"
+EOF_NAME_IDENTITY
+
+[ -z "$ACCEPTED_NAME_IDENTITY_CONTRACTS" ] ||
+    fail "invalid name/identity contracts were accepted: $ACCEPTED_NAME_IDENTITY_CONTRACTS"
+
+pass "hostname, DNS label, UID, and GID limits fail closed"
+
 BAD_DEVFS="$WORK_ROOT/bad-devfs.conf"
 
 sed \

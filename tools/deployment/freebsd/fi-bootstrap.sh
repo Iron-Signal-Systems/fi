@@ -206,7 +206,7 @@ require_command()
 is_allowed_key()
 {
     case "$1" in
-        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_RUNTIME_SOURCE_ID|FI_HOST_ADMIN_IF|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_EXTERNAL_BRIDGE|FI_RECEIVER_EXTERNAL_HOST_IF|FI_RECEIVER_EXTERNAL_JAIL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_CUSTODY_TRANSPORT_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
+        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_RUNTIME_SOURCE_ID|FI_HOST_ADMIN_IF|FI_HOST_ADMIN_ADDRESS|FI_HOST_ADMIN_GATEWAY|FI_HOST_DNS_SERVER_1|FI_HOST_DNS_SERVER_2|FI_HOST_DNS_SEARCH|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_EXTERNAL_BRIDGE|FI_RECEIVER_EXTERNAL_HOST_IF|FI_RECEIVER_EXTERNAL_JAIL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_CUSTODY_TRANSPORT_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
             return 0
             ;;
         *)
@@ -262,6 +262,31 @@ validate_unsigned_nonzero()
     fi
 }
 
+validate_runtime_identity_number()
+{
+    runtime_identity_key=$1
+
+    validate_unsigned_nonzero "$runtime_identity_key"
+
+    runtime_identity_value=$(get_value "$runtime_identity_key")
+
+    printf '%s\n' "$runtime_identity_value" |
+        awk '
+            BEGIN {
+                valid = 0
+            }
+
+            $0 >= 1000 && $0 <= 32000 {
+                valid = 1
+            }
+
+            END {
+                exit !valid
+            }
+        ' ||
+        fail "$runtime_identity_key must be between 1000 and 32000"
+}
+
 validate_devfs_ruleset()
 {
     validate_unsigned_nonzero FI_DEVFS_RULESET
@@ -280,6 +305,12 @@ validate_absolute_path()
     printf '%s\n' "$path_value" |
         grep -Eq '^/[A-Za-z0-9._/@:-]+$' ||
         fail "$path_name is not an accepted absolute path: $path_value"
+
+    case "$path_value" in
+        *//*|*/./*|*/.|*/../*|*/..|*/)
+            fail "$path_name is not a canonical absolute path: $path_value"
+            ;;
+    esac
 }
 
 validate_dataset_name()
@@ -372,6 +403,41 @@ validate_ipv4_cidr()
         fail "$cidr_key is not a valid IPv4 CIDR value: $cidr_value"
 }
 
+validate_ipv4_address_in_cidr()
+{
+    cidr_key=$1
+    address_key=$2
+
+    cidr_value=$(get_value "$cidr_key")
+    address_value=$(get_value "$address_key")
+
+    awk \
+        -v cidr="$cidr_value" \
+        -v address="$address_value" '
+        function ip_number(a, b, c, d) {
+            return (a * 16777216) + (b * 65536) + (c * 256) + d
+        }
+
+        BEGIN {
+            split(cidr, cidr_parts, "/")
+            split(cidr_parts[1], cidr_octets, ".")
+            split(address, address_octets, ".")
+
+            prefix = cidr_parts[2]
+            block = 2 ^ (32 - prefix)
+
+            cidr_number = ip_number(cidr_octets[1], cidr_octets[2], cidr_octets[3], cidr_octets[4])
+
+            address_number = ip_number(address_octets[1], address_octets[2], address_octets[3], address_octets[4])
+
+            if (int(cidr_number / block) != int(address_number / block)) {
+                exit 1
+            }
+        }
+    ' ||
+        fail "$address_key is not contained in the network selected by $cidr_key"
+}
+
 validate_network_address()
 {
     network_key=$1
@@ -438,6 +504,43 @@ validate_address_in_network()
     ' ||
         fail "$address_key is not contained in $network_key"
 }
+assert_cidr_address_outside_network()
+{
+    network_key=$1
+    address_key=$2
+
+    network_value=$(get_value "$network_key")
+    address_value=$(get_value "$address_key")
+
+    awk \
+        -v network="$network_value" \
+        -v address="$address_value" '
+        function ip_number(a, b, c, d) {
+            return (a * 16777216) + (b * 65536) + (c * 256) + d
+        }
+
+        BEGIN {
+            split(network, network_parts, "/")
+            split(address, address_parts, "/")
+
+            split(network_parts[1], network_octets, ".")
+            split(address_parts[1], address_octets, ".")
+
+            prefix = network_parts[2]
+            block = 2 ^ (32 - prefix)
+
+            network_number = ip_number(network_octets[1], network_octets[2], network_octets[3], network_octets[4])
+
+            address_number = ip_number(address_octets[1], address_octets[2], address_octets[3], address_octets[4])
+
+            if (int(network_number / block) == int(address_number / block)) {
+                exit 1
+            }
+        }
+    ' ||
+        fail "$address_key overlaps $network_key"
+}
+
 assert_distinct_values()
 {
     distinct_description=$1
@@ -537,6 +640,10 @@ validate_required_values()
         FI_RUNTIME_GID \
         FI_RUNTIME_SOURCE_ID \
         FI_HOST_ADMIN_IF \
+        FI_HOST_ADMIN_ADDRESS \
+        FI_HOST_ADMIN_GATEWAY \
+        FI_HOST_DNS_SERVER_1 \
+        FI_HOST_DNS_SEARCH \
         FI_MGMT_BRIDGE \
         FI_WORK_BRIDGE \
         FI_MGMT_NETWORK \
@@ -593,20 +700,33 @@ validate_required_values()
 
 validate_dns_search_domain()
 {
-    dns_search_value=$(get_value FI_RECEIVER_DNS_SEARCH)
+    dns_search_key=$1
+    dns_search_value=$(get_value "$dns_search_key")
 
     [ "${#dns_search_value}" -le 253 ] ||
-        fail "FI_RECEIVER_DNS_SEARCH exceeds 253 characters"
+        fail "$dns_search_key exceeds 253 characters"
 
     printf '%s\n' "$dns_search_value" |
         grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' ||
-        fail "FI_RECEIVER_DNS_SEARCH is not an accepted DNS search domain: $dns_search_value"
+        fail "$dns_search_key is not an accepted DNS search domain: $dns_search_value"
 
     case "$dns_search_value" in
         *..*|*.-*|*-.*)
-            fail "FI_RECEIVER_DNS_SEARCH contains an invalid DNS label boundary: $dns_search_value"
+            fail "$dns_search_key contains an invalid DNS label boundary: $dns_search_value"
             ;;
     esac
+
+    printf '%s\n' "$dns_search_value" |
+        awk -F '.' '
+            {
+                for (i = 1; i <= NF; i++) {
+                    if (length($i) > 63) {
+                        exit 1
+                    }
+                }
+            }
+        ' ||
+        fail "$dns_search_key contains a DNS label longer than 63 characters: $dns_search_value"
 }
 
 validate_host_file_destinations()
@@ -637,6 +757,18 @@ validate_hostname()
             fail "FI_HOSTNAME contains an invalid hostname label boundary: $hostname_value"
             ;;
     esac
+
+    printf '%s\n' "$hostname_value" |
+        awk -F '.' '
+            {
+                for (i = 1; i <= NF; i++) {
+                    if (length($i) > 63) {
+                        exit 1
+                    }
+                }
+            }
+        ' ||
+        fail "FI_HOSTNAME contains a label longer than 63 characters: $hostname_value"
 }
 
 validate_runtime_source_id()
@@ -662,11 +794,12 @@ validate_config()
     validate_required_values
     validate_hostname
     validate_runtime_source_id
-    validate_dns_search_domain
+    validate_dns_search_domain FI_HOST_DNS_SEARCH
+    validate_dns_search_domain FI_RECEIVER_DNS_SEARCH
 
     validate_pool_name
-    validate_unsigned_nonzero FI_RUNTIME_UID
-    validate_unsigned_nonzero FI_RUNTIME_GID
+    validate_runtime_identity_number FI_RUNTIME_UID
+    validate_runtime_identity_number FI_RUNTIME_GID
     validate_devfs_ruleset
     validate_host_file_destinations
 
@@ -782,6 +915,7 @@ validate_config()
     done
 
     for cidr_key in \
+        FI_HOST_ADMIN_ADDRESS \
         FI_MGMT_NETWORK \
         FI_WORK_NETWORK \
         FI_RECEIVER_EXTERNAL_NETWORK \
@@ -800,6 +934,18 @@ validate_config()
     validate_network_address FI_WORK_NETWORK
     validate_network_address FI_RECEIVER_EXTERNAL_NETWORK
 
+    validate_ipv4_address FI_HOST_ADMIN_GATEWAY
+    validate_ipv4_address FI_HOST_DNS_SERVER_1
+
+    host_dns_server_2=$(get_value FI_HOST_DNS_SERVER_2)
+
+    if [ -n "$host_dns_server_2" ]; then
+        validate_ipv4_address FI_HOST_DNS_SERVER_2
+
+        [ "$host_dns_server_2" != "$(get_value FI_HOST_DNS_SERVER_1)" ] ||
+            fail "FI_HOST_DNS_SERVER_2 duplicates FI_HOST_DNS_SERVER_1"
+    fi
+
     validate_ipv4_address FI_MGMT_GATEWAY
     validate_ipv4_address FI_RECEIVER_EXTERNAL_GATEWAY
     validate_ipv4_address FI_RECEIVER_DNS_SERVER
@@ -816,6 +962,25 @@ validate_config()
     validate_address_in_network FI_MGMT_NETWORK FI_MGMT_GATEWAY
     validate_address_in_network FI_RECEIVER_EXTERNAL_NETWORK FI_RECEIVER_EXTERNAL_GATEWAY
     validate_address_in_network FI_RECEIVER_EXTERNAL_NETWORK FI_RECEIVER_EXTERNAL_ADDRESS
+
+    validate_ipv4_address_in_cidr FI_HOST_ADMIN_ADDRESS FI_HOST_ADMIN_GATEWAY
+    assert_cidr_address_outside_network FI_MGMT_NETWORK FI_HOST_ADMIN_ADDRESS
+    assert_cidr_address_outside_network FI_WORK_NETWORK FI_HOST_ADMIN_ADDRESS
+
+    host_admin_address=$(get_value FI_HOST_ADMIN_ADDRESS)
+    host_admin_ip=${host_admin_address%/*}
+
+    receiver_external_address=$(get_value FI_RECEIVER_EXTERNAL_ADDRESS)
+    receiver_external_ip=${receiver_external_address%/*}
+
+    [ "$host_admin_ip" != "$receiver_external_ip" ] ||
+        fail "FI_HOST_ADMIN_ADDRESS conflicts with FI_RECEIVER_EXTERNAL_ADDRESS"
+
+    [ "$host_admin_ip" != "$(get_value FI_HOST_ADMIN_GATEWAY)" ] ||
+        fail "FI_HOST_ADMIN_ADDRESS conflicts with FI_HOST_ADMIN_GATEWAY"
+
+    [ "$receiver_external_ip" != "$(get_value FI_RECEIVER_EXTERNAL_GATEWAY)" ] ||
+        fail "FI_RECEIVER_EXTERNAL_ADDRESS conflicts with FI_RECEIVER_EXTERNAL_GATEWAY"
 
     validate_address_in_network FI_MGMT_NETWORK FI_RECEIVER_MGMT_ADDRESS
     validate_address_in_network FI_WORK_NETWORK FI_RECEIVER_WORK_ADDRESS

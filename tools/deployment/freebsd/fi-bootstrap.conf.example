@@ -23,9 +23,16 @@ FI_RUNTIME_GID=""
 # Multi-source runtime is a later explicit contract.
 FI_RUNTIME_SOURCE_ID=""
 
-# Host administrative/LAN interface used for management-network NAT.
-# This is distinct from the dedicated receiver external interface.
+# Physical FreeBSD host administrative interface.
+# The installer may initially be reached through temporary addressing;
+# these values define the final persistent management identity.
+# This interface is distinct from the dedicated receiver external interface.
 FI_HOST_ADMIN_IF=""
+FI_HOST_ADMIN_ADDRESS=""
+FI_HOST_ADMIN_GATEWAY=""
+FI_HOST_DNS_SERVER_1=""
+FI_HOST_DNS_SERVER_2=""
+FI_HOST_DNS_SEARCH=""
 
 FI_MGMT_BRIDGE="bridge10"
 FI_WORK_BRIDGE="bridge20"
