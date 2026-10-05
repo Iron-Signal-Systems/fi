@@ -499,13 +499,27 @@ func supplementACLDiscoveryForPlan(
 	)
 }
 func discoverACLs(report *Report) {
+	if !discoverACLStates(
+		report,
+	) {
+		return
+	}
+
+	evaluateDesiredACLContracts(
+		report,
+	)
+}
+
+func discoverACLStates(
+	report *Report,
+) bool {
 	if report.Config.Presence == presenceAbsent {
 		report.addCheck(
 			checkInfo,
 			"FI DACL discovery",
 			"operational configuration is absent; FI-owned ACL roots will be planned from the proposed new-install configuration",
 		)
-		return
+		return false
 	}
 	if report.Config.Presence == presenceUnknown {
 		report.addCheck(
@@ -513,7 +527,7 @@ func discoverACLs(report *Report) {
 			"FI DACL discovery",
 			"operational configuration presence is unknown",
 		)
-		return
+		return false
 	}
 	if strings.TrimSpace(report.Config.Path) == "" {
 		report.addCheck(
@@ -521,7 +535,7 @@ func discoverACLs(report *Report) {
 			"FI DACL discovery",
 			"operational configuration path is unavailable",
 		)
-		return
+		return false
 	}
 
 	targets := []aclTarget{
@@ -668,7 +682,8 @@ func discoverACLs(report *Report) {
 			)
 		}
 	}
-	evaluateDesiredACLContracts(report)
+
+	return true
 }
 
 func isBroadPrincipal(sidText string) bool {

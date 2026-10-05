@@ -369,6 +369,20 @@ func aliasACLStateForVerification(
 	)
 }
 
+func evaluateServer2016ACLVerificationContracts(
+	report *Report,
+) {
+	aliasACLStateForVerification(
+		report,
+		"FI transport trust config",
+		"FI CRL refresher trust config file",
+		crlRefresherTrustConfigPath,
+	)
+
+	evaluateDesiredACLContracts(
+		report,
+	)
+}
 func verifyServer2016ACLMutations(
 	report Report,
 	plan InstallPlan,
@@ -378,15 +392,16 @@ func verifyServer2016ACLMutations(
 			report,
 		)
 
-	discoverACLs(
+	if !discoverACLStates(
 		&verification,
-	)
+	) {
+		return fmt.Errorf(
+			"ACL mutation verification could not establish physical ACL discovery state",
+		)
+	}
 
-	aliasACLStateForVerification(
+	evaluateServer2016ACLVerificationContracts(
 		&verification,
-		"FI transport trust config",
-		"FI CRL refresher trust config file",
-		crlRefresherTrustConfigPath,
 	)
 
 	verificationPlan :=
