@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"syscall"
 	"testing"
 
@@ -131,6 +132,20 @@ func TestIsPostgreSQLUnavailable(t *testing.T) {
 				Err: syscall.ENOENT,
 			},
 			want: true,
+		},
+		{
+			name: "missing local file is not postgres availability",
+			err: &os.PathError{
+				Op:   "open",
+				Path: "/usr/local/etc/fi/pki/trust/fi-root-ca.crt.pem",
+				Err:  syscall.ENOENT,
+			},
+			want: false,
+		},
+		{
+			name: "bare enoent is not postgres availability",
+			err:  syscall.ENOENT,
+			want: false,
 		},
 		{
 			name: "permission denied is configuration",

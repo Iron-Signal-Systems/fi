@@ -72,6 +72,14 @@ func IsPostgreSQLUnavailable(err error) bool {
 		return dnsErr.Timeout() || dnsErr.Temporary()
 	}
 
+	var opErr *net.OpError
+	if errors.As(err, &opErr) &&
+		opErr.Op == "dial" &&
+		opErr.Net == "unix" &&
+		errors.Is(opErr.Err, syscall.ENOENT) {
+		return true
+	}
+
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		switch errno {
@@ -83,7 +91,6 @@ func IsPostgreSQLUnavailable(err error) bool {
 			syscall.EHOSTUNREACH,
 			syscall.ENETDOWN,
 			syscall.ENETUNREACH,
-			syscall.ENOENT,
 			syscall.EPIPE,
 			syscall.ETIMEDOUT:
 			return true
