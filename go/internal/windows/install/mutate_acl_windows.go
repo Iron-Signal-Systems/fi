@@ -295,26 +295,41 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 	}, nil
 }
 
+func aclVerificationReport(
+	report Report,
+) Report {
+	return Report{
+		Config:   report.Config,
+		Host:     report.Host,
+		Join:     report.Join,
+		Services: report.Services,
+		Trust:    report.Trust,
+	}
+}
+
 func verifyServer2016ACLMutations(
 	report Report,
 	plan InstallPlan,
 ) error {
-	verification := Report{
-		Config:   report.Config,
-		Services: report.Services,
-		Trust:    report.Trust,
-	}
+	verification :=
+		aclVerificationReport(
+			report,
+		)
+
 	discoverACLs(
 		&verification,
 	)
 
-	verificationPlan := InstallPlan{}
+	verificationPlan :=
+		InstallPlan{}
+
 	planACLs(
 		&verificationPlan,
 		verification,
 	)
 
 	var remaining []string
+
 	for _, action := range verificationPlan.Actions {
 		if action.Authority != "ACL" ||
 			!planActionMutates(
@@ -327,6 +342,7 @@ func verifyServer2016ACLMutations(
 			) {
 			continue
 		}
+
 		remaining = append(
 			remaining,
 			fmt.Sprintf(
@@ -336,6 +352,7 @@ func verifyServer2016ACLMutations(
 			),
 		)
 	}
+
 	if len(remaining) != 0 {
 		return fmt.Errorf(
 			"ACL mutation did not converge before later installation phases: %s",
@@ -345,6 +362,7 @@ func verifyServer2016ACLMutations(
 			),
 		)
 	}
+
 	return nil
 }
 
