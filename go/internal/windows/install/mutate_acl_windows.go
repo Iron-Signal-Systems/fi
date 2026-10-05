@@ -307,6 +307,68 @@ func aclVerificationReport(
 	}
 }
 
+func aliasACLStateForVerification(
+	report *Report,
+	sourceLabel string,
+	aliasLabel string,
+	expectedPath string,
+) {
+	if report == nil {
+		return
+	}
+
+	if _, found :=
+		aclByLabel(
+			report,
+			aliasLabel,
+		); found {
+		return
+	}
+
+	state, found :=
+		aclByLabel(
+			report,
+			sourceLabel,
+		)
+	if !found {
+		return
+	}
+
+	sourcePath :=
+		strings.TrimSpace(
+			state.Path,
+		)
+
+	expectedPath =
+		strings.TrimSpace(
+			expectedPath,
+		)
+
+	if sourcePath == "" ||
+		expectedPath == "" {
+		return
+	}
+
+	if !strings.EqualFold(
+		filepath.Clean(
+			sourcePath,
+		),
+		filepath.Clean(
+			expectedPath,
+		),
+	) {
+		return
+	}
+
+	state.Label =
+		aliasLabel
+
+	report.ACLs = append(
+		report.ACLs,
+		state,
+	)
+}
+
 func verifyServer2016ACLMutations(
 	report Report,
 	plan InstallPlan,
@@ -318,6 +380,13 @@ func verifyServer2016ACLMutations(
 
 	discoverACLs(
 		&verification,
+	)
+
+	aliasACLStateForVerification(
+		&verification,
+		"FI transport trust config",
+		"FI CRL refresher trust config file",
+		crlRefresherTrustConfigPath,
 	)
 
 	verificationPlan :=
