@@ -12,7 +12,185 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
+
+func TestReplaceFileSetPreservesExistingDestinationSecurityDescriptor(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	root :=
+		t.TempDir()
+
+	source :=
+		filepath.Join(
+			root,
+			"source.exe",
+		)
+
+	destination :=
+		filepath.Join(
+			root,
+			"installed.exe",
+		)
+
+	if err := os.WriteFile(
+		source,
+		[]byte("new-content"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(
+		destination,
+		[]byte("old-content"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	descriptor, err :=
+		windows.GetNamedSecurityInfo(
+			destination,
+			windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if descriptor == nil {
+		t.Fatal(
+			"destination security descriptor is nil",
+		)
+	}
+
+	dacl, _, err :=
+		descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err :=
+		windows.SetNamedSecurityInfo(
+			destination,
+			windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION|
+				windows.PROTECTED_DACL_SECURITY_INFORMATION,
+			nil,
+			nil,
+			dacl,
+			nil,
+		); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err :=
+		captureNamedSecurityDescriptorSDDL(
+			destination,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	protectedDescriptor, err :=
+		windows.GetNamedSecurityInfo(
+			destination,
+			windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	control, _, err :=
+		protectedDescriptor.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if control&
+		windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal(
+			"test destination DACL is not protected before replacement",
+		)
+	}
+
+	replaced, err :=
+		replaceFileSet(
+			[]fileReplacement{
+				{
+					Source: source,
+
+					Destination: destination,
+				},
+			},
+			"preserve-security-descriptor",
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err :=
+		commitReplacedFiles(
+			replaced,
+		); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err :=
+		os.ReadFile(
+			destination,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) !=
+		"new-content" {
+		t.Fatalf(
+			"destination=%q want new-content",
+			string(got),
+		)
+	}
+
+	after, err :=
+		captureNamedSecurityDescriptorSDDL(
+			destination,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if after != before {
+		t.Fatalf(
+			"replacement security descriptor changed\nbefore=%s\nafter=%s",
+			before,
+			after,
+		)
+	}
+
+	for _, suffix := range []string{
+		".fi-new-preserve-security-descriptor",
+		".fi-old-preserve-security-descriptor",
+	} {
+		if _, err :=
+			os.Lstat(
+				destination + suffix,
+			); !os.IsNotExist(
+			err,
+		) {
+			t.Fatalf(
+				"transaction artifact remains %s; stat err=%v",
+				destination+suffix,
+				err,
+			)
+		}
+	}
+}
 
 func TestReplaceFileSetRollsBackEarlierReplacementOnLaterFailure(
 	t *testing.T,

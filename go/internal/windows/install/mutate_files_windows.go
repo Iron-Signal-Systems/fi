@@ -659,6 +659,46 @@ func replaceFileSet(
 		); err == nil {
 			hadOriginal = true
 
+			previousSDDL, captureErr :=
+				captureNamedSecurityDescriptorSDDL(
+					file.Destination,
+				)
+			if captureErr != nil {
+				return nil, failFileReplacementTransaction(
+					fmt.Errorf(
+						"capture installed file security descriptor before replacement %s: %w",
+						file.Destination,
+						captureErr,
+					),
+					replaced,
+					stage,
+				)
+			}
+
+			// A staged replacement is a newly created sibling file and
+			// therefore inherits the destination directory ACL. Preserve the
+			// exact owner, DACL, and inheritance-protection state of an
+			// existing installed file before the staged file is activated.
+			//
+			// This is required for installed files with narrower
+			// least-privilege contracts than their parent directory, such as
+			// fi-crl-refresh.exe.
+			if preserveErr :=
+				restoreNamedSecurityDescriptorFromSDDL(
+					stage,
+					previousSDDL,
+				); preserveErr != nil {
+				return nil, failFileReplacementTransaction(
+					fmt.Errorf(
+						"preserve installed file security descriptor on staged replacement %s: %w",
+						file.Destination,
+						preserveErr,
+					),
+					replaced,
+					stage,
+				)
+			}
+
 			if err := removeFileWithRetry(
 				backup,
 				5*time.Second,
