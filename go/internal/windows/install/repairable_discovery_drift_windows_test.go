@@ -65,3 +65,158 @@ func TestACLDiscoveryFailureStatus(
 		}
 	}
 }
+
+func TestNormalizeRepairableApproval2DiscoveryDrift(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	var report Report
+
+	report.Host.Computer =
+		"AdminBox"
+
+	report.Join.Name =
+		"ISS"
+
+	report.Services =
+		[]ServiceState{
+			{
+				Name:     "FICRLRefresher",
+				Presence: presenceAbsent,
+			},
+		}
+
+	const refresher = `ISS\gFI-CRL-ADMINBOX$`
+
+	report.Checks =
+		[]Check{
+			{
+				Name: "FICRLRefresher direct-right contract",
+				Detail: "account=" +
+					refresher +
+					" rights= expected=SeServiceLogonRight only",
+				Status: checkFail,
+			},
+			{
+				Name: "FI config directory desired ACL contract",
+				Detail: refresher +
+					" Read/Execute without write/ACL administration missing",
+				Status: checkFail,
+			},
+			{
+				Name: "FI program directory desired ACL contract",
+				Detail: refresher +
+					" Read/Execute without write/ACL administration missing",
+				Status: checkFail,
+			},
+		}
+
+	normalizeRepairableApproval2DiscoveryDrift(
+		&report,
+	)
+
+	for _, check := range report.Checks {
+		if check.Status != checkInfo {
+			t.Fatalf(
+				"%s status=%s want=%s detail=%s",
+				check.Name,
+				check.Status,
+				checkInfo,
+				check.Detail,
+			)
+		}
+	}
+}
+
+func TestNormalizeRepairableApproval2DiscoveryDriftFailsClosed(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	var report Report
+
+	report.Host.Computer =
+		"AdminBox"
+
+	report.Join.Name =
+		"ISS"
+
+	report.Services =
+		[]ServiceState{
+			{
+				Name:     "FICRLRefresher",
+				Presence: presenceAbsent,
+			},
+		}
+
+	const refresher = `ISS\gFI-CRL-ADMINBOX$`
+
+	report.Checks =
+		[]Check{
+			{
+				Name: "FICRLRefresher direct-right contract",
+				Detail: "account=" +
+					refresher +
+					" rights=SeBackupPrivilege expected=SeServiceLogonRight only",
+				Status: checkFail,
+			},
+			{
+				Name: "FI config directory desired ACL contract",
+				Detail: refresher +
+					" Read/Execute without write/ACL administration missing; SYSTEM FullControl missing",
+				Status: checkFail,
+			},
+		}
+
+	normalizeRepairableApproval2DiscoveryDrift(
+		&report,
+	)
+
+	for _, check := range report.Checks {
+		if check.Status != checkFail {
+			t.Fatalf(
+				"%s status=%s want=%s detail=%s",
+				check.Name,
+				check.Status,
+				checkFail,
+				check.Detail,
+			)
+		}
+	}
+
+	report.Services[0].Presence =
+		presencePresent
+
+	report.Checks =
+		[]Check{
+			{
+				Name: "FICRLRefresher direct-right contract",
+				Detail: "account=" +
+					refresher +
+					" rights= expected=SeServiceLogonRight only",
+				Status: checkFail,
+			},
+			{
+				Name: "FI program directory desired ACL contract",
+				Detail: refresher +
+					" Read/Execute without write/ACL administration missing",
+				Status: checkFail,
+			},
+		}
+
+	normalizeRepairableApproval2DiscoveryDrift(
+		&report,
+	)
+
+	for _, check := range report.Checks {
+		if check.Status != checkFail {
+			t.Fatalf(
+				"present service %s status=%s want=%s",
+				check.Name,
+				check.Status,
+				checkFail,
+			)
+		}
+	}
+}

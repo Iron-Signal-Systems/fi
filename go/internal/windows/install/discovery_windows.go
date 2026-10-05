@@ -2035,6 +2035,10 @@ func Discover() Report {
 	discoverPackage(&report)
 	discoverReleaseTrust(&report)
 
+	normalizeRepairableApproval2DiscoveryDrift(
+		&report,
+	)
+
 	report.addCheck(
 		checkInfo,
 		"installer mode",
