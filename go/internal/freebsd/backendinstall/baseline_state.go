@@ -73,63 +73,81 @@ func classifyFIRoot(
 		return state
 	}
 
-	managed, err := probe.Run(
-		"zfs",
-		"get",
-		"-H",
-		"-o",
-		"value,source",
-		"org.ironsignal.fi:managed",
-		target,
-	)
-	if err != nil {
-		state.Disposition = ResourceBlocked
-		state.Detail = fmt.Sprintf(
-			"existing FI ZFS root ownership cannot be established: %v",
-			err,
+	requiredLocalProperties := []struct {
+		name     string
+		expected string
+	}{
+		{"org.ironsignal.fi:managed", "1"},
+		{"org.ironsignal.fi:schema", "1"},
+		{"org.ironsignal.fi:role", "fi-root"},
+		{"mountpoint", "/var/db/fi"},
+		{"canmount", "on"},
+		{"atime", "off"},
+		{"exec", "off"},
+		{"setuid", "off"},
+		{"devices", "off"},
+	}
+
+	for _, property := range requiredLocalProperties {
+		result, err := probe.Run(
+			"zfs",
+			"get",
+			"-H",
+			"-o",
+			"value,source",
+			property.name,
+			target,
 		)
-		return state
+		if err != nil {
+			state.Disposition = ResourceBlocked
+			state.Detail = fmt.Sprintf(
+				"existing FI ZFS root property %s cannot be inspected: %v",
+				property.name,
+				err,
+			)
+			return state
+		}
+
+		fields := strings.Fields(result)
+
+		if len(fields) != 2 ||
+			fields[0] != property.expected ||
+			fields[1] != "local" {
+			state.Disposition = ResourceBlocked
+			state.Detail = fmt.Sprintf(
+				"existing FI ZFS root property %s does not match authoritative local state",
+				property.name,
+			)
+			return state
+		}
 	}
 
-	fields := strings.Fields(managed)
-
-	if len(fields) != 2 ||
-		fields[0] != "1" ||
-		fields[1] != "local" {
-		state.Disposition = ResourceBlocked
-		state.Detail = "existing dataset is not authoritatively FI-owned"
-		return state
-	}
-
-	mountpoint, err := probe.Run(
+	mounted, err := probe.Run(
 		"zfs",
 		"get",
 		"-H",
 		"-o",
 		"value",
-		"mountpoint",
+		"mounted",
 		target,
 	)
 	if err != nil {
 		state.Disposition = ResourceBlocked
 		state.Detail = fmt.Sprintf(
-			"existing FI ZFS root mountpoint cannot be inspected: %v",
+			"existing FI ZFS root mounted state cannot be inspected: %v",
 			err,
 		)
 		return state
 	}
 
-	if strings.TrimSpace(mountpoint) != "/var/db/fi" {
+	if strings.TrimSpace(mounted) != "yes" {
 		state.Disposition = ResourceBlocked
-		state.Detail = fmt.Sprintf(
-			"existing FI ZFS root has unexpected mountpoint: %s",
-			strings.TrimSpace(mountpoint),
-		)
+		state.Detail = "existing FI ZFS root is not mounted"
 		return state
 	}
 
 	state.Disposition = ResourceMatch
-	state.Detail = "existing FI-owned root matches baseline contract"
+	state.Detail = "existing FI-owned root matches installer contract"
 
 	return state
 }

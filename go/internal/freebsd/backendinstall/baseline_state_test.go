@@ -83,15 +83,7 @@ func TestDiscoverBaselineResourcesMatchesOnlyOwnedFIRoot(t *testing.T) {
 			output: "lo0 vtnet0 vtnet1 bridge10 bridge20 bridge30\n",
 		}
 
-	probe.responses["zfs get -H -o value,source org.ironsignal.fi:managed zroot/fi"] =
-		fakeHostProbeResponse{
-			output: "1\tlocal\n",
-		}
-
-	probe.responses["zfs get -H -o value mountpoint zroot/fi"] =
-		fakeHostProbeResponse{
-			output: "/var/db/fi\n",
-		}
+	setExpectedFIRootContractResponses(&probe)
 
 	states, err := discoverBaselineResources(
 		config,
@@ -180,7 +172,7 @@ func TestDiscoverBaselineResourcesBlocksForeignFIRoot(t *testing.T) {
 
 	if !strings.Contains(
 		states[0].Detail,
-		"not authoritatively FI-owned",
+		"org.ironsignal.fi:managed does not match authoritative local state",
 	) {
 		t.Fatalf(
 			"FI root detail = %q",
@@ -441,5 +433,119 @@ func TestFreeBSDReleaseBase(t *testing.T) {
 				expected,
 			)
 		}
+	}
+}
+
+func setExpectedFIRootContractResponses(probe *fakeHostProbe) {
+	probe.responses["zfs get -H -o value,source org.ironsignal.fi:managed zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "1\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source org.ironsignal.fi:schema zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "1\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source org.ironsignal.fi:role zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "fi-root\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source mountpoint zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "/var/db/fi\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source canmount zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "on\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source atime zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "off\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source exec zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "off\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source setuid zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "off\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value,source devices zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "off\tlocal\n",
+		}
+
+	probe.responses["zfs get -H -o value mounted zroot/fi"] =
+		fakeHostProbeResponse{
+			output: "yes\n",
+		}
+}
+
+func TestClassifyFIRootBlocksRootContractDrift(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		output  string
+	}{
+		{
+			name:    "wrong schema",
+			command: "zfs get -H -o value,source org.ironsignal.fi:schema zroot/fi",
+			output:  "2\tlocal\n",
+		},
+		{
+			name:    "wrong role",
+			command: "zfs get -H -o value,source org.ironsignal.fi:role zroot/fi",
+			output:  "other-role\tlocal\n",
+		},
+		{
+			name:    "inherited native property",
+			command: "zfs get -H -o value,source canmount zroot/fi",
+			output:  "on\tinherited from zroot\n",
+		},
+		{
+			name:    "wrong hardening property",
+			command: "zfs get -H -o value,source exec zroot/fi",
+			output:  "on\tlocal\n",
+		},
+		{
+			name:    "root not mounted",
+			command: "zfs get -H -o value mounted zroot/fi",
+			output:  "no\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := loadTestConfig(t)
+			probe := validFakeHostProbe()
+
+			setExpectedFIRootContractResponses(&probe)
+
+			probe.responses[test.command] = fakeHostProbeResponse{
+				output: test.output,
+			}
+
+			state := classifyFIRoot(
+				config,
+				probe,
+				"zroot\nzroot/fi\n",
+			)
+
+			if state.Disposition != ResourceBlocked {
+				t.Fatalf(
+					"FI root disposition = %s detail=%q, want %s",
+					state.Disposition,
+					state.Detail,
+					ResourceBlocked,
+				)
+			}
+		})
 	}
 }

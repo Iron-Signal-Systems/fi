@@ -133,3 +133,34 @@ func TestParseInvocationRejectsTooManyArguments(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyZFSRoot(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-zfs-root",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-zfs-root" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}

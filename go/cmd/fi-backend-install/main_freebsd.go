@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "preflight", "validate":
+	case "apply-zfs-root", "preflight", "validate":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root] [configuration-file]",
 			)
 		}
 
@@ -156,6 +156,35 @@ func main() {
 	}
 
 	switch request.command {
+	case "apply-zfs-root":
+		_, err := backendinstall.DiscoverHost(
+			config,
+		)
+		if err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST PREFLIGHT BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		if err := backendinstall.ApplyFIRoot(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI ZFS ROOT APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI ZFS root apply complete.",
+		)
+
 	case "preflight":
 		report, err := backendinstall.DiscoverHost(
 			config,
