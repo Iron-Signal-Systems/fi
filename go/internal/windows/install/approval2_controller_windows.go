@@ -72,6 +72,134 @@ type approval2ControllerStep struct {
 	rollback func() error
 }
 
+func approval2RuntimeSnapshotFromReport(
+	report Report,
+) ([]serviceRuntimeSnapshot, error) {
+	snapshots := make(
+		[]serviceRuntimeSnapshot,
+		0,
+		len(report.Services),
+	)
+
+	seen := make(
+		map[string]struct{},
+		len(report.Services),
+	)
+
+	for _, state := range report.Services {
+		name :=
+			strings.TrimSpace(
+				state.Name,
+			)
+
+		if name == "" {
+			return nil, errors.New(
+				"service runtime snapshot contains an empty service name",
+			)
+		}
+
+		key :=
+			strings.ToLower(
+				name,
+			)
+
+		if _, found :=
+			seen[key]; found {
+			return nil, fmt.Errorf(
+				"service runtime snapshot contains duplicate service %s",
+				name,
+			)
+		}
+
+		seen[key] =
+			struct{}{}
+
+		switch state.Presence {
+		case presenceAbsent:
+			continue
+
+		case presencePresent:
+
+		default:
+			return nil, fmt.Errorf(
+				"service %s presence=%s cannot be used as an Approval 2 rollback runtime snapshot",
+				name,
+				state.Presence,
+			)
+		}
+
+		snapshot :=
+			serviceRuntimeSnapshot{
+				Name: name,
+			}
+
+		switch state.State {
+		case "Running":
+			snapshot.WasRunning =
+				true
+
+		case "Stopped":
+			snapshot.WasRunning =
+				false
+
+		default:
+			return nil, fmt.Errorf(
+				"service %s runtime state=%s is not stable enough for Approval 2 rollback capture",
+				name,
+				state.State,
+			)
+		}
+
+		snapshots = append(
+			snapshots,
+			snapshot,
+		)
+	}
+
+	return snapshots, nil
+}
+
+func rollbackApproval2ControllerSteps(
+	steps []approval2ControllerStep,
+	restoreRuntime func() error,
+) []string {
+	found := make(
+		[]string,
+		0,
+		len(steps)+1,
+	)
+
+	for index := len(steps) - 1; index >= 0; index-- {
+		step :=
+			steps[index]
+
+		if step.rollback == nil {
+			continue
+		}
+
+		if err := step.rollback(); err != nil {
+			found = append(
+				found,
+				step.name+
+					": "+
+					err.Error(),
+			)
+		}
+	}
+
+	if restoreRuntime != nil {
+		if err := restoreRuntime(); err != nil {
+			found = append(
+				found,
+				"RUNTIME SNAPSHOT: "+
+					err.Error(),
+			)
+		}
+	}
+
+	return found
+}
+
 // executeApproval2ControllerWithBackend is deliberately separate from the
 // legacy one-plan ApplyServer2016ApprovedPlan path. The Approval-2 controller
 // consumes only the exact post-Approval-1 report, plan, typed PKI handoff, and
@@ -245,6 +373,42 @@ func executeApproval2ControllerWithBackend(
 		)
 	}
 
+	runtimeRollbackRequired :=
+		planHasMutationAuthority(
+			currentPlan,
+			"PACKAGE",
+		) ||
+			planHasMutationAuthority(
+				currentPlan,
+				"SCM",
+			) ||
+			planHasMutationAuthority(
+				currentPlan,
+				"RUNTIME",
+			)
+
+	runtimeSnapshot :=
+		make(
+			[]serviceRuntimeSnapshot,
+			0,
+		)
+
+	if runtimeRollbackRequired {
+		runtimeSnapshot, err =
+			approval2RuntimeSnapshotFromReport(
+				current,
+			)
+		if err != nil {
+			return result, fmt.Errorf(
+				"capture Approval 2 pre-mutation service runtime state: %w",
+				err,
+			)
+		}
+	}
+
+	runtimeMutationAttempted :=
+		false
+
 	startedAt := time.Now().UTC()
 
 	result.TransactionID = startedAt.Format(
@@ -264,27 +428,26 @@ func executeApproval2ControllerWithBackend(
 		error,
 	) {
 		result.RollbackAttempted =
-			len(steps) != 0
+			len(steps) != 0 ||
+				runtimeMutationAttempted
+
+		var restoreRuntime func() error
+
+		if runtimeMutationAttempted &&
+			len(runtimeSnapshot) != 0 {
+			restoreRuntime =
+				func() error {
+					return restoreApproval2FIServicesFromSnapshot(
+						runtimeSnapshot,
+					)
+				}
+		}
 
 		result.RollbackErrors =
-			result.RollbackErrors[:0]
-
-		for index := len(steps) - 1; index >= 0; index-- {
-			step := steps[index]
-
-			if step.rollback == nil {
-				continue
-			}
-
-			if rollbackErr := step.rollback(); rollbackErr != nil {
-				result.RollbackErrors = append(
-					result.RollbackErrors,
-					step.name+
-						": "+
-						rollbackErr.Error(),
-				)
-			}
-		}
+			rollbackApproval2ControllerSteps(
+				steps,
+				restoreRuntime,
+			)
 
 		if len(result.RollbackErrors) == 0 {
 			return result, cause
@@ -441,6 +604,9 @@ func executeApproval2ControllerWithBackend(
 			writer,
 			"APPLY LOCAL SYSTEM: release trust, package, rights, groups, services, ACLs, and runtime in rollback-safe order",
 		)
+
+		runtimeMutationAttempted =
+			runtimeRollbackRequired
 
 		additionalSteps, applied, err :=
 			extended.ApplyRemainingLocal(

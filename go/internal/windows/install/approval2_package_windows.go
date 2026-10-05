@@ -121,14 +121,6 @@ func replaceApproval2RuntimeBinaries(
 		return nil, nil, joinFIRecoveryFailures(
 			err,
 			fiRecoveryStep{
-				name: "restore FI service runtime snapshot",
-				run: func() error {
-					return startFIServicesFromSnapshot(
-						snapshots,
-					)
-				},
-			},
-			fiRecoveryStep{
 				name: "rollback transaction-created FI program directories",
 				run:  rollbackProgramDirectories,
 			},
@@ -146,14 +138,6 @@ func replaceApproval2RuntimeBinaries(
 				run: func() error {
 					return rollbackReplacedFiles(
 						replaced,
-					)
-				},
-			},
-			{
-				name: "restore FI service runtime snapshot",
-				run: func() error {
-					return startFIServicesFromSnapshot(
-						snapshots,
 					)
 				},
 			},
@@ -325,24 +309,6 @@ func stopApproval2FIServicesForBinaryReplacement() (
 		len(order),
 	)
 
-	recoverSnapshot := func() error {
-		return startFIServicesFromSnapshot(
-			snapshots,
-		)
-	}
-
-	fail := func(
-		base error,
-	) ([]serviceRuntimeSnapshot, error) {
-		return nil, joinFIRecoveryFailures(
-			base,
-			fiRecoveryStep{
-				name: "restore FI services after Approval 2 package-stop failure",
-				run:  recoverSnapshot,
-			},
-		)
-	}
-
 	for _, name := range order {
 		service, err := manager.OpenService(
 			name,
@@ -355,12 +321,10 @@ func stopApproval2FIServicesForBinaryReplacement() (
 				continue
 			}
 
-			return fail(
-				fmt.Errorf(
-					"open service %s for package stop: %w",
-					name,
-					err,
-				),
+			return snapshots, fmt.Errorf(
+				"open service %s for package stop: %w",
+				name,
+				err,
 			)
 		}
 
@@ -368,12 +332,10 @@ func stopApproval2FIServicesForBinaryReplacement() (
 		if err != nil {
 			service.Close()
 
-			return fail(
-				fmt.Errorf(
-					"query service %s before package stop: %w",
-					name,
-					err,
-				),
+			return snapshots, fmt.Errorf(
+				"query service %s before package stop: %w",
+				name,
+				err,
 			)
 		}
 
@@ -391,12 +353,10 @@ func stopApproval2FIServicesForBinaryReplacement() (
 			); err != nil {
 				service.Close()
 
-				return fail(
-					fmt.Errorf(
-						"stop service %s for package replacement: %w",
-						name,
-						err,
-					),
+				return snapshots, fmt.Errorf(
+					"stop service %s for package replacement: %w",
+					name,
+					err,
 				)
 			}
 
@@ -407,9 +367,7 @@ func stopApproval2FIServicesForBinaryReplacement() (
 			); err != nil {
 				service.Close()
 
-				return fail(
-					err,
-				)
+				return snapshots, err
 			}
 		}
 
@@ -417,6 +375,236 @@ func stopApproval2FIServicesForBinaryReplacement() (
 	}
 
 	return snapshots, nil
+}
+
+func restoreApproval2FIServicesFromSnapshot(
+	snapshots []serviceRuntimeSnapshot,
+) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	manager, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf(
+			"connect to service control manager for Approval 2 runtime restoration: %w",
+			err,
+		)
+	}
+	defer manager.Disconnect()
+
+	required := make(
+		map[string]bool,
+		len(snapshots),
+	)
+
+	for _, snapshot := range snapshots {
+		required[snapshot.Name] =
+			snapshot.WasRunning
+	}
+
+	var found []error
+
+	for _, name := range []string{
+		"FICollector",
+		"FIUSNReader",
+		"FIObjReader",
+		"FICRLRefresher",
+		"FISender",
+	} {
+		wantRunning, tracked :=
+			required[name]
+		if !tracked ||
+			wantRunning {
+			continue
+		}
+
+		service, err :=
+			manager.OpenService(
+				name,
+			)
+		if err != nil {
+			found = append(
+				found,
+				fmt.Errorf(
+					"open service %s for stopped-state restoration: %w",
+					name,
+					err,
+				),
+			)
+			continue
+		}
+
+		status, queryErr :=
+			service.Query()
+		if queryErr != nil {
+			service.Close()
+
+			found = append(
+				found,
+				fmt.Errorf(
+					"query service %s for stopped-state restoration: %w",
+					name,
+					queryErr,
+				),
+			)
+			continue
+		}
+
+		switch status.State {
+		case svc.Stopped:
+
+		case svc.StopPending:
+			queryErr =
+				waitServiceState(
+					service,
+					svc.Stopped,
+					serviceTransitionTimeout,
+				)
+
+		default:
+			_, queryErr =
+				service.Control(
+					svc.Stop,
+				)
+			if queryErr == nil {
+				queryErr =
+					waitServiceState(
+						service,
+						svc.Stopped,
+						serviceTransitionTimeout,
+					)
+			}
+		}
+
+		service.Close()
+
+		if queryErr != nil {
+			found = append(
+				found,
+				fmt.Errorf(
+					"restore service %s to Stopped: %w",
+					name,
+					queryErr,
+				),
+			)
+		}
+	}
+
+	for _, name := range []string{
+		"FIUSNReader",
+		"FIObjReader",
+		"FICollector",
+		"FICRLRefresher",
+		"FISender",
+	} {
+		wantRunning, tracked :=
+			required[name]
+		if !tracked ||
+			!wantRunning {
+			continue
+		}
+
+		service, err :=
+			manager.OpenService(
+				name,
+			)
+		if err != nil {
+			found = append(
+				found,
+				fmt.Errorf(
+					"open service %s for running-state restoration: %w",
+					name,
+					err,
+				),
+			)
+			continue
+		}
+
+		status, queryErr :=
+			service.Query()
+		if queryErr != nil {
+			service.Close()
+
+			found = append(
+				found,
+				fmt.Errorf(
+					"query service %s for running-state restoration: %w",
+					name,
+					queryErr,
+				),
+			)
+			continue
+		}
+
+		switch status.State {
+		case svc.Running:
+
+		case svc.StartPending:
+			queryErr =
+				waitServiceState(
+					service,
+					svc.Running,
+					serviceTransitionTimeout,
+				)
+
+		case svc.StopPending:
+			queryErr =
+				waitServiceState(
+					service,
+					svc.Stopped,
+					serviceTransitionTimeout,
+				)
+			if queryErr == nil {
+				queryErr =
+					service.Start()
+			}
+			if queryErr == nil {
+				queryErr =
+					waitServiceState(
+						service,
+						svc.Running,
+						serviceTransitionTimeout,
+					)
+			}
+
+		case svc.Stopped:
+			queryErr =
+				service.Start()
+			if queryErr == nil {
+				queryErr =
+					waitServiceState(
+						service,
+						svc.Running,
+						serviceTransitionTimeout,
+					)
+			}
+
+		default:
+			queryErr =
+				fmt.Errorf(
+					"service state=%d is not safe for automatic running-state restoration",
+					status.State,
+				)
+		}
+
+		service.Close()
+
+		if queryErr != nil {
+			found = append(
+				found,
+				fmt.Errorf(
+					"restore service %s to Running: %w",
+					name,
+					queryErr,
+				),
+			)
+		}
+	}
+
+	return errors.Join(
+		found...,
+	)
 }
 func stopApproval2ExistingFIServicesBestEffort() error {
 	manager, err := mgr.Connect()
