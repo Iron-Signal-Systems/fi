@@ -280,6 +280,8 @@ in that order.
 After startup prove:
 
 - all three production jails exist;
+- `fi-receiver` has `/var/db/fi/custody/transport` mounted read/write;
+- `fi-ingest` has no transport-custody mount;
 - no unexpected FI jail exists;
 - the System of Record has only its intended VNET interfaces;
 - ingest has only its intended VNET interfaces;

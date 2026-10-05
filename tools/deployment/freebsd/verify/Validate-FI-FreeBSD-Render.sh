@@ -238,6 +238,20 @@ cmp -s \
 
 pass "rendered VNET helper is byte-identical to reviewed source"
 
+grep -Fq \
+    "/var/db/fi/custody/transport" \
+    "$PLAN_A/fstab.fi-receiver" ||
+    fail "receiver fstab is missing transport custody"
+
+if grep -Fq \
+    "/var/db/fi/custody/transport" \
+    "$PLAN_A/fstab.fi-ingest"
+then
+    fail "ingest fstab unexpectedly receives transport custody"
+fi
+
+pass "transport custody is mounted only into the receiver plan"
+
 BAD_FSTAB="$WORK_ROOT/bad-fstab.conf"
 
 sed \

@@ -117,7 +117,7 @@ Verification must eventually also cover:
 - ingest-worker singleton behavior;
 - PostgreSQL reachability only across the authorized path;
 - denial of unauthorized PostgreSQL access;
-- custody/receipt/READY permissions;
+- generation custody, transport custody, receipt, and READY permissions;
 - service restart behavior;
 - jail restart recovery;
 - host restart recovery.
@@ -182,7 +182,7 @@ This offline acceptance path verifies:
 - empty uninitialized jail-directory classification;
 - rejection of pre-existing managed jail paths;
 - exact directory-schema `zfs set` mutation arguments;
-- initialization of exactly five host resources and three jail resources;
+- initialization of exactly six host resources and three jail resources;
 - exact second-apply no-op behavior;
 - layer-wide preclassification before mutation;
 - wrong-host rejection before mutation.

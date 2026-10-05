@@ -23,6 +23,7 @@ apply_directories()
     directory_sor_root=$(get_value FI_SOR_DB_ROOT)
 
     directory_custody_path=$(get_value FI_CUSTODY_GENERATION_HOST)
+    directory_transport_custody_path=$(get_value FI_CUSTODY_TRANSPORT_HOST)
     directory_recorded_path=$(get_value FI_RECORDED_HOST)
     directory_ready_path=$(get_value FI_READY_HOST)
     directory_receiver_config_path=$(get_value FI_RECEIVER_CONFIG_HOST)
@@ -38,6 +39,15 @@ apply_directories()
             "$directory_gid" \
             "0700"
     ) || fail "unable to classify custody generation directory"
+
+    directory_transport_custody_state=$(
+        directory_classify_host_source \
+            "$directory_pool/fi/custody/transport" \
+            "$directory_transport_custody_path" \
+            "$directory_uid" \
+            "$directory_gid" \
+            "0700"
+    ) || fail "unable to classify transport custody directory"
 
     directory_recorded_state=$(
         directory_classify_host_source \
@@ -107,6 +117,10 @@ apply_directories()
         "$directory_custody_state"
 
     directory_apply_precheck \
+        "transport custody directory" \
+        "$directory_transport_custody_state"
+
+    directory_apply_precheck \
         "recorded directory" \
         "$directory_recorded_state"
 
@@ -143,6 +157,14 @@ apply_directories()
         "$directory_gid" \
         "0700" \
         "custody generation directory"
+
+    directory_apply_host_source \
+        "$directory_pool/fi/custody/transport" \
+        "$directory_transport_custody_path" \
+        "$directory_uid" \
+        "$directory_gid" \
+        "0700" \
+        "transport custody directory"
 
     directory_apply_host_source \
         "$directory_pool/fi/recorded" \
@@ -443,7 +465,21 @@ directory_create_jail_paths()
     directory_create_gid=$4
 
     case "$directory_create_role" in
-        receiver|ingest)
+        receiver)
+            directory_create_paths \
+                "$directory_create_root/var/db/fi" "0" "0" "0755" \
+                "$directory_create_root/var/db/fi/custody" "0" "0" "0755" \
+                "$directory_create_root/var/db/fi/custody/generation" "0" "0" "0755" \
+                "$directory_create_root/var/db/fi/custody/transport" "0" "0" "0755" \
+                "$directory_create_root/var/db/fi/custody/recorded" "0" "0" "0755" \
+                "$directory_create_root/var/db/fi/custody/ready" "0" "0" "0755" \
+                "$directory_create_root/usr/local/etc/fi" "0" "0" "0755" \
+                "$directory_create_root/var/run/fi" \
+                    "$directory_create_uid" \
+                    "$directory_create_gid" \
+                    "0700"
+            ;;
+        ingest)
             directory_create_paths \
                 "$directory_create_root/var/db/fi" "0" "0" "0755" \
                 "$directory_create_root/var/db/fi/custody" "0" "0" "0755" \
@@ -534,7 +570,18 @@ directory_jail_paths_absent_state()
     directory_absent_role=$2
 
     case "$directory_absent_role" in
-        receiver|ingest)
+        receiver)
+            directory_paths_absent_state \
+                "$directory_absent_root/var/db/fi" \
+                "$directory_absent_root/var/db/fi/custody" \
+                "$directory_absent_root/var/db/fi/custody/generation" \
+                "$directory_absent_root/var/db/fi/custody/transport" \
+                "$directory_absent_root/var/db/fi/custody/recorded" \
+                "$directory_absent_root/var/db/fi/custody/ready" \
+                "$directory_absent_root/usr/local/etc/fi" \
+                "$directory_absent_root/var/run/fi"
+            ;;
+        ingest)
             directory_paths_absent_state \
                 "$directory_absent_root/var/db/fi" \
                 "$directory_absent_root/var/db/fi/custody" \
@@ -564,7 +611,21 @@ directory_jail_paths_exact_state()
     directory_exact_gid=$4
 
     case "$directory_exact_role" in
-        receiver|ingest)
+        receiver)
+            directory_paths_exact_state \
+                "$directory_exact_root/var/db/fi" "0" "0" "0755" \
+                "$directory_exact_root/var/db/fi/custody" "0" "0" "0755" \
+                "$directory_exact_root/var/db/fi/custody/generation" "0" "0" "0755" \
+                "$directory_exact_root/var/db/fi/custody/transport" "0" "0" "0755" \
+                "$directory_exact_root/var/db/fi/custody/recorded" "0" "0" "0755" \
+                "$directory_exact_root/var/db/fi/custody/ready" "0" "0" "0755" \
+                "$directory_exact_root/usr/local/etc/fi" "0" "0" "0755" \
+                "$directory_exact_root/var/run/fi" \
+                    "$directory_exact_uid" \
+                    "$directory_exact_gid" \
+                    "0700"
+            ;;
+        ingest)
             directory_paths_exact_state \
                 "$directory_exact_root/var/db/fi" "0" "0" "0755" \
                 "$directory_exact_root/var/db/fi/custody" "0" "0" "0755" \
@@ -747,6 +808,11 @@ directory_require_prerequisites()
         "$directory_pool/fi/custody/generation" \
         "custody-generation" \
         "$directory_custody_path"
+
+    directory_require_zfs_owned \
+        "$directory_pool/fi/custody/transport" \
+        "custody-transport" \
+        "$directory_transport_custody_path"
 
     directory_require_zfs_owned \
         "$directory_pool/fi/recorded" \

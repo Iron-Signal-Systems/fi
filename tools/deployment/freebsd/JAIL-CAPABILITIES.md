@@ -153,6 +153,7 @@ The initial application view is:
 
     fi-receiver
         custody/generation    RW
+        custody/transport     RW
         recorded              RW
         ready                 RW
         receiver config       RO

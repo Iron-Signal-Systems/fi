@@ -41,6 +41,7 @@ fi-dev
 ```text
                          fi-receiver     fi-ingest
 generation custody          RW              RO
+transport custody           RW              --
 recorded receipts           RW              RO
 READY markers               RW              RW
 receiver PKI/config         RO              --
@@ -219,6 +220,7 @@ It creates or verifies:
 
     <FI_ZPOOL>/fi/custody
     <FI_ZPOOL>/fi/custody/generation
+    <FI_ZPOOL>/fi/custody/transport
     <FI_ZPOOL>/fi/recorded
     <FI_ZPOOL>/fi/ready
     <FI_ZPOOL>/fi/config
@@ -378,8 +380,8 @@ directory layer after ZFS, jail-root, and jail-local identity acceptance.
 
 The layer manages:
 
-- ownership and mode of the custody, recorded, READY, receiver-config, and
-  ingest-config host dataset roots;
+- ownership and mode of generation custody, transport custody, recorded, READY,
+  receiver-config, and ingest-config host dataset roots;
 - required receiver and ingest jail mountpoint directories;
 - `/var/run/fi` for receiver and ingest with the configured FI runtime UID/GID;
 - the System-of-Record jail mountpoint hierarchy.

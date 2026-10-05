@@ -62,6 +62,13 @@ apply_zfs_hierarchy()
         "yes"
 
     zfs_apply_precheck_dataset \
+        "$zfs_apply_root/custody/transport" \
+        "custody-transport" \
+        "/var/db/fi/custody/transport" \
+        "on" \
+        "yes"
+
+    zfs_apply_precheck_dataset \
         "$zfs_apply_root/recorded" \
         "recorded" \
         "/var/db/fi/custody/recorded" \
@@ -132,6 +139,13 @@ apply_zfs_hierarchy()
         "$zfs_apply_root/custody/generation" \
         "custody-generation" \
         "/var/db/fi/custody/generation" \
+        "on" \
+        "yes"
+
+    zfs_apply_dataset \
+        "$zfs_apply_root/custody/transport" \
+        "custody-transport" \
+        "/var/db/fi/custody/transport" \
         "on" \
         "yes"
 
@@ -626,6 +640,13 @@ verify_zfs_hierarchy()
         "$zfs_verify_root/custody/generation" \
         "custody-generation" \
         "/var/db/fi/custody/generation" \
+        "on" \
+        "yes"
+
+    zfs_verify_dataset \
+        "$zfs_verify_root/custody/transport" \
+        "custody-transport" \
+        "/var/db/fi/custody/transport" \
         "on" \
         "yes"
 

@@ -344,6 +344,7 @@ preflight_host()
 
     for preflight_storage_key in \
         FI_CUSTODY_GENERATION_HOST \
+        FI_CUSTODY_TRANSPORT_HOST \
         FI_RECORDED_HOST \
         FI_READY_HOST \
         FI_RECEIVER_CONFIG_HOST \
@@ -358,6 +359,7 @@ preflight_host()
     for preflight_storage_dataset in \
         "$preflight_fi_dataset_root/custody" \
         "$preflight_fi_dataset_root/custody/generation" \
+        "$preflight_fi_dataset_root/custody/transport" \
         "$preflight_fi_dataset_root/recorded" \
         "$preflight_fi_dataset_root/ready" \
         "$preflight_fi_dataset_root/config" \

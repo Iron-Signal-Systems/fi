@@ -221,6 +221,9 @@ get_value()
         FI_CUSTODY_GENERATION_HOST)
             printf '%s\n' "/mock/fi/custody/generation"
             ;;
+        FI_CUSTODY_TRANSPORT_HOST)
+            printf '%s\n' "/mock/fi/custody/transport"
+            ;;
         FI_RECORDED_HOST)
             printf '%s\n' "/mock/fi/custody/recorded"
             ;;
@@ -264,6 +267,7 @@ directory_require_prerequisites()
 }
 
 STATE_CUSTODY="ABSENT"
+STATE_TRANSPORT_CUSTODY="ABSENT"
 STATE_RECORDED="ABSENT"
 STATE_READY="ABSENT"
 STATE_RECEIVER_CONFIG="ABSENT"
@@ -277,6 +281,9 @@ directory_classify_host_source()
     case "$1" in
         mockpool/fi/custody/generation)
             printf '%s\n' "$STATE_CUSTODY"
+            ;;
+        mockpool/fi/custody/transport)
+            printf '%s\n' "$STATE_TRANSPORT_CUSTODY"
             ;;
         mockpool/fi/recorded)
             printf '%s\n' "$STATE_RECORDED"
@@ -324,6 +331,9 @@ directory_initialize_host_source()
     case "$1" in
         mockpool/fi/custody/generation)
             STATE_CUSTODY="OWNED_MATCH"
+            ;;
+        mockpool/fi/custody/transport)
+            STATE_TRANSPORT_CUSTODY="OWNED_MATCH"
             ;;
         mockpool/fi/recorded)
             STATE_RECORDED="OWNED_MATCH"
@@ -377,21 +387,22 @@ apply_directories
 
 MUTATION_COUNT=$(wc -l < "$MUTATION_LOG" | tr -d ' ')
 
-[ "$MUTATION_COUNT" -eq 8 ] ||
-    test_fail "first directory apply expected eight resource mutations, observed $MUTATION_COUNT"
+[ "$MUTATION_COUNT" -eq 9 ] ||
+    test_fail "first directory apply expected nine resource mutations, observed $MUTATION_COUNT"
 
-test_pass "first directory apply initializes exactly five host and three jail resources"
+test_pass "first directory apply initializes exactly six host and three jail resources"
 
 apply_directories
 
 MUTATION_COUNT=$(wc -l < "$MUTATION_LOG" | tr -d ' ')
 
-[ "$MUTATION_COUNT" -eq 8 ] ||
+[ "$MUTATION_COUNT" -eq 9 ] ||
     test_fail "second directory apply performed additional mutation"
 
 test_pass "exact second directory apply is a no-op"
 
 STATE_CUSTODY="ABSENT"
+STATE_TRANSPORT_CUSTODY="ABSENT"
 STATE_RECORDED="ABSENT"
 STATE_READY="ABSENT"
 STATE_RECEIVER_CONFIG="ABSENT"

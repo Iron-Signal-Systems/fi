@@ -85,6 +85,7 @@ Persistent production FI data remains outside the jail root datasets.
 Host-visible paths:
 
     /var/db/fi/custody/generation
+    /var/db/fi/custody/transport
     /var/db/fi/custody/recorded
     /var/db/fi/custody/ready
     /var/db/fi/sor/postgres
@@ -99,6 +100,7 @@ These paths are backed by the datasets defined in `STORAGE-AUTHORITY.md`.
 The receiver jail receives:
 
     /var/db/fi/custody/generation    RW
+    /var/db/fi/custody/transport     RW
     /var/db/fi/custody/recorded      RW
     /var/db/fi/custody/ready         RW
     /usr/local/etc/fi                RO
@@ -190,6 +192,7 @@ It is not a host-shared production dataset.
 Removing a production jail must not remove or destroy:
 
     generation custody
+    transport custody
     recorded receipts
     READY state
     System of Record data
@@ -210,7 +213,7 @@ Deployment verification must prove:
 3. no authoritative FI dataset is a child of a production jail-root dataset;
 4. required destination mountpoints exist before jail creation;
 5. destination mountpoints are empty before their host mount is attached;
-6. receiver receives the expected three RW data mounts and one RO config mount;
+6. receiver receives the expected four RW data mounts and one RO config mount;
 7. ingest receives two RO data mounts, READY RW, and config RO;
 8. `fi-sor-db` alone receives the PostgreSQL data mount;
 9. no production FI dataset is mounted into `fi-dev`;

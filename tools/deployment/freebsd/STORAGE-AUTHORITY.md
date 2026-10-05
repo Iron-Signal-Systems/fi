@@ -18,6 +18,7 @@ Authoritative state must be preserved and protected.
 
 ```text
 generation custody
+transport custody (batch/recovery)
 recorded generation receipts
 FI System of Record PostgreSQL data
 receiver trust/configuration material
@@ -52,7 +53,8 @@ The initial production hierarchy is:
 ```text
 zroot/fi
 ├── custody
-│   └── generation
+│   ├── generation
+│   └── transport
 ├── recorded
 ├── ready
 ├── sor
@@ -80,6 +82,7 @@ The intended host-visible mountpoints are:
 
 ```text
 zroot/fi/custody/generation  /var/db/fi/custody/generation
+zroot/fi/custody/transport   /var/db/fi/custody/transport
 zroot/fi/recorded            /var/db/fi/custody/recorded
 zroot/fi/ready               /var/db/fi/custody/ready
 zroot/fi/sor/postgres        /var/db/fi/sor/postgres
@@ -96,6 +99,7 @@ Hierarchy-only parent datasets may use `canmount=off` where appropriate.
 Host source                       fi-receiver                  fi-ingest                    fi-sor-db
 --------------------------------  ---------------------------  ---------------------------  --------------------------
 custody/generation                /var/db/fi/custody/generation RW  /var/db/fi/custody/generation RO  --
+custody/transport                 /var/db/fi/custody/transport  RW  --                           --
 recorded                          /var/db/fi/custody/recorded   RW  /var/db/fi/custody/recorded   RO  --
 ready                             /var/db/fi/custody/ready      RW  /var/db/fi/custody/ready      RW  --
 config/receiver                   /usr/local/etc/fi             RO  --                           --
@@ -116,6 +120,17 @@ generation custody.
 
 The ingest jail must not be capable of modifying or deleting generation
 custody through its mounted filesystem view.
+
+## Transport custody
+
+Transport custody is authoritative durable input for ordinary batch and
+recovery transport.
+
+`fi-receiver` requires read/write access because receiver transport publishes
+accepted custody there.
+
+`fi-ingest` receives no filesystem view of transport custody. Adding such
+access requires a separately reviewed authority contract.
 
 ## Recorded receipts
 
@@ -262,6 +277,7 @@ At minimum, snapshot/recovery policy must distinguish:
 
 ```text
 generation custody      authoritative
+transport custody       authoritative
 recorded receipts       authoritative
 System of Record        authoritative
 receiver configuration  authoritative configuration

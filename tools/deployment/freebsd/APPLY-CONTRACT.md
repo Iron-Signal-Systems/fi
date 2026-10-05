@@ -221,7 +221,8 @@ The initial production hierarchy is:
 
     zroot/fi
     ├── custody
-    │   └── generation
+    │   ├── generation
+    │   └── transport
     ├── recorded
     ├── ready
     ├── config
@@ -276,6 +277,7 @@ The initial desired state is:
 | --- | --- | --- | --- | --- |
 | `custody` | `custody-parent` | `none` | `off` | `no` |
 | `custody/generation` | `custody-generation` | `/var/db/fi/custody/generation` | `on` | `yes` |
+| `custody/transport` | `custody-transport` | `/var/db/fi/custody/transport` | `on` | `yes` |
 | `recorded` | `recorded` | `/var/db/fi/custody/recorded` | `on` | `yes` |
 | `ready` | `ready` | `/var/db/fi/custody/ready` | `on` | `yes` |
 | `config` | `config-parent` | `none` | `off` | `no` |
@@ -1159,14 +1161,16 @@ The following FI-owned ZFS dataset roots receive exact Unix ownership and mode:
 | Configuration path | Owner | Group | Mode |
 | --- | ---: | ---: | ---: |
 | `FI_CUSTODY_GENERATION_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
+| `FI_CUSTODY_TRANSPORT_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
 | `FI_RECORDED_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
 | `FI_READY_HOST` | `FI_RUNTIME_UID` | `FI_RUNTIME_GID` | `0700` |
 | `FI_RECEIVER_CONFIG_HOST` | `0` | `FI_RUNTIME_GID` | `0750` |
 | `FI_INGEST_CONFIG_HOST` | `0` | `FI_RUNTIME_GID` | `0750` |
 
-The custody, recorded, and READY roots use the shared FI numeric identity so
-the existing owner-only FI object modes remain valid across the receiver and
-ingest jail views.
+The generation custody, transport custody, recorded, and READY roots use the
+shared FI numeric identity so owner-only FI object modes remain valid wherever
+those datasets are intentionally presented. Transport custody is presented only
+to `fi-receiver`; `fi-ingest` receives no transport-custody filesystem view.
 
 The configuration roots remain host-root-owned. Their FI runtime group permits
 the applicable jail-local service identity to traverse and read explicitly
@@ -1190,6 +1194,7 @@ paths are created inside `FI_RECEIVER_ROOT`:
 | `/var/db/fi` | `0` | `0` | `0755` | FI data namespace |
 | `/var/db/fi/custody` | `0` | `0` | `0755` | custody mount parent |
 | `/var/db/fi/custody/generation` | `0` | `0` | `0755` | nullfs mountpoint |
+| `/var/db/fi/custody/transport` | `0` | `0` | `0755` | nullfs mountpoint |
 | `/var/db/fi/custody/recorded` | `0` | `0` | `0755` | nullfs mountpoint |
 | `/var/db/fi/custody/ready` | `0` | `0` | `0755` | nullfs mountpoint |
 | `/usr/local/etc/fi` | `0` | `0` | `0755` | read-only config mountpoint |
