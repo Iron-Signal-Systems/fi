@@ -861,6 +861,10 @@ The corresponding bootstrap commands include:
     verify-host-files
     apply-lifecycle
     verify-lifecycle
+    apply-runtime
+    verify-runtime
+    adopt-runtime
+    update-runtime
 
 These layers retain exact host binding, fail-closed resource classification,
 no-clobber creation where applicable, independent post-mutation verification,
@@ -874,11 +878,75 @@ Production jail networking and lifecycle have been exercised on the real host,
 including dedicated receiver-interface return/reacquisition and PostgreSQL
 restart through normal jail rc.
 
-PF policy and FI application-service installation remain outside this
-checkpoint.
+PF policy and FI application-runtime installation are implemented
+deployment layers within the reviewed FreeBSD backend boundary. They retain
+their own fail-closed classification, publication, and independent verification
+contracts.
 
 Real-host production mutation remains subject to explicit pre-mutation review
 and post-apply acceptance.
+
+## Application runtime publication
+
+The FreeBSD application-runtime publication helper is:
+
+    tools/deployment/freebsd/fi-host-runtime-apply.sh
+
+The rendered runtime source is:
+
+    tools/deployment/freebsd/runtime.d/
+
+The managed receiver resources are:
+
+    /usr/local/libexec/fi-receiver-supervisor
+    /usr/local/etc/rc.d/fi_receiver
+    /etc/rc.conf.d/fi_receiver
+
+The managed ingest resources are:
+
+    /usr/local/libexec/fi-ingest-worker-run
+    /usr/local/etc/rc.d/fi_ingest_worker
+    /etc/rc.conf.d/fi_ingest_worker
+
+Their parent directories are required to be exact `root:wheel` mode `0755`.
+
+Runtime state transitions are deliberately separate:
+
+    ABSENT
+        -> apply-runtime
+        -> OWNED_MATCH
+
+    accepted legacy/pre-managed runtime
+        -> adopt-runtime with explicit approved-prior runtime
+        -> OWNED_MATCH
+
+    FI-managed approved version N
+        -> update-runtime with explicit approved prior version N
+        -> OWNED_MATCH at rendered version N+1
+
+    OWNED_MATCH
+        -> verify-runtime
+        -> no mutation
+
+`apply-runtime` accepts only an absent resource or the exact already-managed
+target state. It must not adopt foreign state or repair FI-owned drift.
+
+`adopt-runtime` requires every live resource selected for adoption to match the
+explicit approved-prior resource byte-for-byte and to have its exact approved
+metadata immediately before publication. Missing resources, FI-owned drift,
+unapproved differences, parent drift, and ambiguous state fail closed.
+
+`update-runtime` is only a managed transition. A live FI-owned resource may be
+replaced only when it still exactly matches the explicit approved prior
+version. Foreign state, absent state, unapproved FI-owned drift, parent drift,
+and ambiguous state fail closed.
+
+All managed resources are preclassified before the first publication mutation.
+Each replacement is revalidated immediately before publication and the complete
+runtime is independently verified afterward.
+
+Runtime publication does not start, stop, restart, or otherwise mutate the
+running application-service lifecycle.
 
 ## Read-only ZFS acceptance
 
@@ -1271,5 +1339,16 @@ The only initial directory mutation primitives are:
     chmod
     zfs set org.ironsignal.fi:directory-schema=1
 
-`/var/run/fi` is operational state. The later rc.d service layer must recreate
-it with the same exact owner and mode after boot when required.
+`/var/run/fi` is operational state. The rc.d service layer must recreate it
+after boot when absent with the configured FI runtime UID/GID and mode `0700`.
+
+Receiver and ingest prestart validation must fail closed when `/var/run/fi`
+already exists with the wrong owner, group, mode, path type, or symlink state.
+Existing drift must not be silently repaired by service startup.
+
+For ingest, `/var/run/fi/fi-ingest-worker.lock` is a `0600` regular file owned
+by the ingest runtime identity. The worker acquires an exclusive non-blocking
+advisory lock before PostgreSQL is opened and holds the corresponding file
+descriptor for the worker lifetime. Releasing the advisory lock does not
+require unlinking the pathname; a released lock file may therefore remain
+after a clean worker stop.

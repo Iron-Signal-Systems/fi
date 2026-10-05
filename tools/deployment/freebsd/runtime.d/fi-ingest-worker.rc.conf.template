@@ -1,0 +1,8 @@
+# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
+# FI-ROLE: ingest-worker-runtime-config
+
+fi_ingest_worker_enable="YES"
+
+fi_ingest_worker_source="@FI_RUNTIME_SOURCE_ID@"
+fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
+fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"

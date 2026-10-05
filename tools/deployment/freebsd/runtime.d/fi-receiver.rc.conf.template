@@ -1,0 +1,18 @@
+# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
+# FI-ROLE: receiver-runtime-config
+
+fi_receiver_enable="YES"
+
+fi_receiver_source="@FI_RUNTIME_SOURCE_ID@"
+fi_receiver_bind="@FI_RECEIVER_EXTERNAL_IP@:8443"
+
+fi_receiver_custody_root="/var/db/fi/custody/transport"
+fi_receiver_max_data_bytes="67108864"
+
+fi_receiver_generation_custody_root="/var/db/fi/custody/generation"
+fi_receiver_generation_recorded_root="/var/db/fi/custody/recorded"
+fi_receiver_generation_ready_root="/var/db/fi/custody/ready"
+
+fi_receiver_generation_max_canonical_bytes="68719476736"
+fi_receiver_generation_max_encoded_bytes="68719476736"
+fi_receiver_generation_max_manifest_bytes="1048576"

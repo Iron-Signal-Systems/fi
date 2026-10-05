@@ -413,5 +413,179 @@ direct-root issuance, root/CRL validation, receiver certificate/key binding,
 hostname and revocation validation, and the runtime `fi-receiver trust status`
 result.
 
-The accepted receiver-side state is intentionally `NOT_READY` until a real
-authorized source-registry entry is installed.
+The October 4 receiver-trust record intentionally ended `NOT_READY` because
+no real source-registry entry had yet been installed. That historical record
+remains unchanged.
+
+A real authorized source was subsequently installed and exercised during the
+October 5 acceptance described below.
+
+## October 5, 2026 - application runtime and live lifecycle acceptance
+
+Host:
+
+    fi-backend-b
+
+Repository base HEAD at the time of acceptance:
+
+    cb3856fef41ec31c81d2f45d85da52cf278b689b
+
+The application-runtime implementation exercised by this acceptance was
+uncommitted working-tree content on top of that base HEAD. Therefore
+`cb3856f` must not be represented as containing the runtime implementation.
+
+The accepted real source was:
+
+    adminbox.iss.local
+
+### End-to-end ingest path
+
+The live path was exercised through:
+
+    authorized Windows source
+        -> receiver mTLS/source authorization
+        -> transport custody
+        -> generation custody
+        -> recorded receipt
+        -> READY publication
+        -> relational ingest worker
+        -> restricted PostgreSQL connection
+        -> authoritative System of Record
+        -> READY retirement
+
+A real generation was accepted and committed to PostgreSQL. READY subsequently
+returned to zero.
+
+The ingest-to-PostgreSQL runtime connection used:
+
+    fi-ingest 10.77.20.21
+        -> fi-sor-db 10.77.20.22:5432
+
+with the reviewed isolated-VNET connection string using `sslmode=disable`.
+This setting is accepted only inside the FI workload network boundary enforced
+by the reviewed FI PF policy. Direct external PostgreSQL access remains
+prohibited.
+
+### Managed runtime publication
+
+The six managed receiver/ingest runtime resources were first brought under FI
+runtime ownership and subsequently updated through the explicit approved-prior
+managed-update path.
+
+The managed update changed only the two rc.d service files required for
+volatile runtime-directory recovery. The supervisor and runner processes were
+not restarted by runtime publication.
+
+Independent `verify-runtime` acceptance succeeded after publication.
+
+### Volatile runtime recovery
+
+Receiver acceptance proved that with `/var/run/fi` absent, normal rc.d startup
+recreated:
+
+    /var/run/fi
+        owner 4100
+        group 4100
+        mode  0700
+
+and restored the receiver supervisor and a listening receiver worker at:
+
+    192.168.1.219:8443
+
+Five consecutive listener observations succeeded.
+
+Ingest acceptance proved that with the worker stopped, its released singleton
+lock pathname could be removed and `/var/run/fi` made genuinely absent.
+Normal rc.d startup then recreated:
+
+    /var/run/fi
+        owner 4100
+        group 4100
+        mode  0700
+
+The ingest worker recreated:
+
+    /var/run/fi/fi-ingest-worker.lock
+        owner 4100
+        group 4100
+        mode  0600
+
+and held the exclusive lock through an open worker file descriptor.
+
+The ingest worker then re-established PostgreSQL connectivity and READY
+returned to zero.
+
+### Production jail lifecycle
+
+The accepted FI lifecycle controller stopped production jails in this order:
+
+    fi-receiver
+    fi-ingest
+    fi-sor-db
+
+All three were confirmed stopped. `fi-dev` remained running and was not part of
+the production lifecycle mutation.
+
+The same controller then started production jails in this order:
+
+    fi-sor-db
+    fi-ingest
+    fi-receiver
+
+The first health sample observed the System of Record and ingest ready while
+the receiver was still starting. The second sample observed all three
+application paths network-ready.
+
+Post-start acceptance proved:
+
+    PostgreSQL
+        10.77.20.22:5432 listening
+
+    ingest
+        connected to 10.77.20.22:5432
+
+    receiver
+        192.168.1.219:8443 listening
+
+    ingest /var/run/fi
+        4100:4100 mode 0700
+
+    receiver /var/run/fi
+        4100:4100 mode 0700
+
+    ingest singleton lock
+        4100:4100 mode 0600
+        held by the running ingest worker
+
+    READY
+        0
+
+    FI PF runtime policy
+        ready
+
+Both receiver and ingest supervisor identities changed across the complete jail
+stop/start cycle, proving recreation through normal jail rc rather than survival
+of the prior processes.
+
+### Repository regression gate
+
+After live acceptance:
+
+- receiver and ingest runtime boot-directory acceptance passed;
+- runtime apply acceptance passed;
+- runtime adoption acceptance passed;
+- runtime update acceptance passed;
+- all reviewed shell files passed `sh -n`;
+- `go test ./...` passed;
+- `git diff --check` passed.
+
+### Persistence boundary
+
+This October 5 result accepts the live application runtime, volatile runtime
+recovery, and complete managed production-jail stop/start lifecycle.
+
+It does not record Phase 8 host-reboot persistence acceptance.
+
+A full host reboot remains a separate acceptance event requiring the approved
+maintenance-window and console/out-of-band prerequisites already defined in
+Phase 8. Until that event is performed, no reboot snapshot is claimed.

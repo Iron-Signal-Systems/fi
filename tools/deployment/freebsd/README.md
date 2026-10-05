@@ -94,6 +94,15 @@ They must not fall back to a host-local Unix socket.
 
 Direct external PostgreSQL access is prohibited.
 
+The accepted FreeBSD deployment uses `sslmode=disable` for the
+`fi-ingest` to `fi-sor-db` PostgreSQL client connection. This is deliberate
+only inside the isolated FI VNET workload boundary enforced by the reviewed
+FI PF policy. PostgreSQL port 5432 is authorized only from the ingest workload
+path to the System of Record; receiver and external PostgreSQL access remain
+prohibited. Expanding PostgreSQL exposure beyond this boundary requires a
+separate transport-security review and must not inherit this setting by
+assumption.
+
 ## Deployment principle
 
 Deployment automation must be:
@@ -122,7 +131,10 @@ The FreeBSD bootstrap currently implements:
 - `apply-sor-postgresql` / `verify-sor-postgresql` — System-of-Record PostgreSQL rc-policy and PGDATA authority;
 - `apply-devfs` / `verify-devfs` — production devfs ruleset mutation and verification;
 - `apply-host-files` / `verify-host-files` — deterministic host-file installation and verification;
-- `apply-lifecycle` / `verify-lifecycle` — FI-specific lifecycle-policy installation and verification.
+- `apply-lifecycle` / `verify-lifecycle` — FI-specific lifecycle-policy installation and verification;
+- `apply-runtime` / `verify-runtime` — deterministic FI application-runtime installation and exact verification;
+- `adopt-runtime` — controlled adoption of an accepted pre-existing runtime from an explicit approved-prior runtime plan;
+- `update-runtime` — controlled transition from an approved prior FI-managed runtime to the newly rendered runtime.
 
 Configuration files are strict data files using:
 
@@ -283,19 +295,22 @@ The implemented FreeBSD deployment mutation boundary now includes:
 - System-of-Record PostgreSQL rc policy and PGDATA authority verification;
 - the dedicated production devfs ruleset;
 - deterministic jail, fstab, devfs, and VNET host files;
-- FI-specific production lifecycle policy.
+- FI-specific production lifecycle policy;
+- FI PF persistent/runtime policy and runtime controller;
+- FI receiver and ingest application-runtime service files.
 
 Each layer retains its own fail-closed classification, mutation, and
 verification boundary.
 
-PF policy and FI application-service installation remain outside this
+PF runtime policy and FI application-runtime installation are implemented
+as separate fail-closed deployment layers and are no longer outside this
 checkpoint.
 
 ### Non-mutation contract
 
 Read-only commands including `plan`, `preflight`, `preflight-jail-roots`,
 `verify-zfs`, `verify-jail-roots`, `verify-sor-postgresql`, `verify-devfs`,
-`verify-host-files`, and `verify-lifecycle` may not:
+`verify-host-files`, `verify-lifecycle`, and `verify-runtime` may not:
 
 - create or destroy ZFS datasets or snapshots;
 - clone jail roots;
@@ -385,6 +400,17 @@ The layer manages:
 - required receiver and ingest jail mountpoint directories;
 - `/var/run/fi` for receiver and ingest with the configured FI runtime UID/GID;
 - the System-of-Record jail mountpoint hierarchy.
+
+`/var/run/fi` is volatile operational state. The directory layer establishes
+its initial contract, but the receiver and ingest rc.d services must also
+recreate it after boot when absent. Both services require the runtime directory
+to be a real, non-symlink directory owned by the configured FI runtime UID/GID
+with mode `0700`; existing metadata drift fails closed rather than being
+silently repaired.
+
+The ingest worker creates `/var/run/fi/fi-ingest-worker.lock` as a `0600`
+regular file owned by the ingest runtime identity and holds an exclusive
+advisory lock for the lifetime of the worker.
 
 Initialization is recorded with the locally-set ZFS property:
 
@@ -613,6 +639,63 @@ FI does not set `devfs_system_ruleset`.
 Rendering this policy does not install rc files, reload devfs, or start/stop
 any jail.
 
+### Production application runtime
+
+The receiver and ingest application runtime is rendered from
+`tools/deployment/freebsd/runtime.d/` and published through the dedicated
+runtime deployment layer.
+
+The managed receiver files are:
+
+    /usr/local/libexec/fi-receiver-supervisor
+    /usr/local/etc/rc.d/fi_receiver
+    /etc/rc.conf.d/fi_receiver
+
+The managed ingest files are:
+
+    /usr/local/libexec/fi-ingest-worker-run
+    /usr/local/etc/rc.d/fi_ingest_worker
+    /etc/rc.conf.d/fi_ingest_worker
+
+Runtime parent directories are required to be `root:wheel` mode `0755`.
+Executable runtime files are `root:wheel` mode `0555`; rendered rc
+configuration files are `root:wheel` mode `0644`.
+
+Runtime publication uses four distinct operations:
+
+    apply-runtime
+        ABSENT -> exact FI-managed runtime
+
+    verify-runtime
+        read-only exact-state verification
+
+    adopt-runtime
+        accepted pre-existing runtime -> FI-managed runtime
+        only when the live file is byte-identical to the explicit
+        approved-prior runtime and has exact approved metadata
+
+    update-runtime
+        FI-managed approved version N -> rendered version N+1
+        only when the live file still exactly matches approved version N
+
+All runtime resources are preclassified before the first publication mutation.
+`FOREIGN_COLLISION`, unapproved FI-owned drift, parent-directory drift, missing
+resources where the selected operation requires existing state, and ambiguous
+state fail closed.
+
+Runtime publication does not start, stop, or restart application services.
+Service lifecycle remains an independent rc.d operation.
+
+The receiver and ingest rc.d services recreate `/var/run/fi` when it is absent.
+They do not repair an existing wrong owner, group, mode, symlink, or wrong path
+type. The accepted runtime directory contract is the configured FI runtime
+UID/GID with mode `0700`.
+
+The ingest worker's singleton lock is process ownership, not durable
+application state. The lock pathname may remain after a clean worker stop; the
+exclusive advisory lock is held only while the worker owns the corresponding
+open file descriptor.
+
 ## Receiver trust acceptance
 
 Real-host receiver PKI, trust custody, direct-root certificate validation,
@@ -622,5 +705,12 @@ in [`RECEIVER-TRUST-ACCEPTANCE.md`](RECEIVER-TRUST-ACCEPTANCE.md).
 The receiver trust boundary is accepted through receiver identity, issuer, CRL,
 hostname, private-key, fullchain, and filesystem-custody validation.
 
-Overall receiver readiness remains fail-closed until a real authorized Windows
-source is present in the receiver source registry.
+The October 4 receiver-trust acceptance record intentionally ended
+`NOT_READY` because no real source-registry entry was present at that time.
+That historical result is preserved unchanged.
+
+The October 5 real-host end-to-end acceptance used the authorized Windows
+source `adminbox.iss.local`, completed receiver/source authorization, and
+exercised the live receiver -> custody -> recorder -> READY -> ingest ->
+PostgreSQL path. Current runtime acceptance is recorded in
+[`REAL-HOST-ACCEPTANCE.md`](REAL-HOST-ACCEPTANCE.md).

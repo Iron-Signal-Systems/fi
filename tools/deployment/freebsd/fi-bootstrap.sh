@@ -51,6 +51,10 @@ Usage:
     $PROGRAM apply-lifecycle <config-file>
     $PROGRAM update-lifecycle <config-file> <approved-prior-plan-directory>
     $PROGRAM verify-lifecycle <config-file>
+    $PROGRAM apply-runtime <config-file>
+    $PROGRAM adopt-runtime <config-file> <approved-prior-runtime-directory>
+    $PROGRAM update-runtime <config-file> <approved-prior-runtime-directory>
+    $PROGRAM verify-runtime <config-file>
     $PROGRAM preflight-jail-roots <config-file>
     $PROGRAM verify-jail-roots <config-file>
     $PROGRAM verify-zfs <config-file>
@@ -134,6 +138,26 @@ Current commands:
     verify-lifecycle
         Verify the deterministic FI lifecycle layer without mutation.
 
+    apply-runtime
+        Create or verify the deterministic FI receiver and ingest service
+        directories and service files inside the application jail roots.
+        This command does not install FI binaries, provision credentials or
+        trust material, or start/stop services.
+
+    adopt-runtime
+        Replace existing unowned receiver and ingest service files only when
+        every live target is byte-identical to an explicitly approved prior
+        runtime directory. Adoption does not start or stop services.
+
+    update-runtime
+        Replace FI-owned receiver and ingest service files only when every
+        changed live target exactly matches an explicitly approved prior
+        managed runtime directory. Update does not start or stop services.
+
+    verify-runtime
+        Verify the deterministic FI receiver and ingest service directories
+        and service files without mutation.
+
     preflight-jail-roots
         Read and classify the three production jail-root destinations before apply.
         ABSENT and exact OWNED_MATCH states are accepted; no state is modified.
@@ -182,7 +206,7 @@ require_command()
 is_allowed_key()
 {
     case "$1" in
-        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_HOST_ADMIN_IF|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_EXTERNAL_BRIDGE|FI_RECEIVER_EXTERNAL_HOST_IF|FI_RECEIVER_EXTERNAL_JAIL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_CUSTODY_TRANSPORT_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
+        FI_HOSTNAME|FI_ZPOOL|FI_RUNTIME_UID|FI_RUNTIME_GID|FI_RUNTIME_SOURCE_ID|FI_HOST_ADMIN_IF|FI_MGMT_BRIDGE|FI_WORK_BRIDGE|FI_MGMT_NETWORK|FI_MGMT_GATEWAY|FI_WORK_NETWORK|FI_RECEIVER_EXTERNAL_NETWORK|FI_RECEIVER_EXTERNAL_ADDRESS|FI_RECEIVER_EXTERNAL_GATEWAY|FI_RECEIVER_EXTERNAL_IF|FI_RECEIVER_EXTERNAL_BRIDGE|FI_RECEIVER_EXTERNAL_HOST_IF|FI_RECEIVER_EXTERNAL_JAIL_IF|FI_RECEIVER_DNS_SERVER|FI_RECEIVER_DNS_SEARCH|FI_RECEIVER_MGMT_ADDRESS|FI_RECEIVER_WORK_ADDRESS|FI_INGEST_MGMT_ADDRESS|FI_INGEST_WORK_ADDRESS|FI_SOR_DB_MGMT_ADDRESS|FI_SOR_DB_WORK_ADDRESS|FI_JAIL_DATASET_ROOT|FI_JAIL_ROOT_BASE|FI_JAIL_TEMPLATE_SNAPSHOT|FI_RECEIVER_ROOT|FI_INGEST_ROOT|FI_SOR_DB_ROOT|FI_CUSTODY_GENERATION_HOST|FI_CUSTODY_TRANSPORT_HOST|FI_RECORDED_HOST|FI_READY_HOST|FI_RECEIVER_CONFIG_HOST|FI_INGEST_CONFIG_HOST|FI_SOR_POSTGRES_HOST|FI_RECEIVER_FSTAB|FI_INGEST_FSTAB|FI_SOR_DB_FSTAB|FI_DEVFS_RULESET|FI_RECEIVER_MGMT_HOST_IF|FI_RECEIVER_MGMT_JAIL_IF|FI_RECEIVER_WORK_HOST_IF|FI_RECEIVER_WORK_JAIL_IF|FI_INGEST_MGMT_HOST_IF|FI_INGEST_MGMT_JAIL_IF|FI_INGEST_WORK_HOST_IF|FI_INGEST_WORK_JAIL_IF|FI_SOR_DB_MGMT_HOST_IF|FI_SOR_DB_MGMT_JAIL_IF|FI_SOR_DB_WORK_HOST_IF|FI_SOR_DB_WORK_JAIL_IF)
             return 0
             ;;
         *)
@@ -511,6 +535,7 @@ validate_required_values()
         FI_ZPOOL \
         FI_RUNTIME_UID \
         FI_RUNTIME_GID \
+        FI_RUNTIME_SOURCE_ID \
         FI_HOST_ADMIN_IF \
         FI_MGMT_BRIDGE \
         FI_WORK_BRIDGE \
@@ -614,10 +639,29 @@ validate_hostname()
     esac
 }
 
+validate_runtime_source_id()
+{
+    runtime_source_id=$(get_value FI_RUNTIME_SOURCE_ID)
+
+    [ "${#runtime_source_id}" -le 253 ] ||
+        fail "FI_RUNTIME_SOURCE_ID exceeds 253 characters"
+
+    printf '%s\n' "$runtime_source_id" |
+        grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' ||
+        fail "FI_RUNTIME_SOURCE_ID contains unsupported characters: $runtime_source_id"
+
+    case "$runtime_source_id" in
+        *..*)
+            fail "FI_RUNTIME_SOURCE_ID contains an empty label: $runtime_source_id"
+            ;;
+    esac
+}
+
 validate_config()
 {
     validate_required_values
     validate_hostname
+    validate_runtime_source_id
     validate_dns_search_domain
 
     validate_pool_name
@@ -947,6 +991,15 @@ render_plan()
         "$SCRIPT_DIR/devfs.d/fi-production.rules.template" \
         "$OUTPUT_DIR/devfs.rules.fi"
 
+    receiver_external_address=$(get_value FI_RECEIVER_EXTERNAL_ADDRESS)
+    receiver_external_ip=${receiver_external_address%/*}
+
+    printf '%s\t%s\n' \
+        "FI_RECEIVER_EXTERNAL_IP" \
+        "$receiver_external_ip" \
+        >> "$CONFIG_MAP" ||
+        fail "unable to record derived FI_RECEIVER_EXTERNAL_IP"
+
     pf_ingest_work_address=$(get_value FI_INGEST_WORK_ADDRESS)
     pf_ingest_work_ip=${pf_ingest_work_address%/*}
 
@@ -1004,6 +1057,30 @@ render_plan()
         "$SCRIPT_DIR/lifecycle.d/fi-jails.rc.d.template" \
         "$OUTPUT_DIR/rc.d.fi_jails"
 
+    cat "$SCRIPT_DIR/runtime.d/fi-receiver-supervisor.sh" \
+        > "$OUTPUT_DIR/fi-receiver-supervisor" ||
+        fail "unable to copy receiver supervisor into deployment plan"
+
+    cat "$SCRIPT_DIR/runtime.d/fi-receiver.rc.d" \
+        > "$OUTPUT_DIR/rc.d.fi_receiver" ||
+        fail "unable to copy receiver rc service into deployment plan"
+
+    render_template \
+        "$SCRIPT_DIR/runtime.d/fi-receiver.rc.conf.template" \
+        "$OUTPUT_DIR/rc.conf.d.fi_receiver"
+
+    cat "$SCRIPT_DIR/runtime.d/fi-ingest-worker-run.sh" \
+        > "$OUTPUT_DIR/fi-ingest-worker-run" ||
+        fail "unable to copy ingest runner into deployment plan"
+
+    cat "$SCRIPT_DIR/runtime.d/fi-ingest-worker.rc.d" \
+        > "$OUTPUT_DIR/rc.d.fi_ingest_worker" ||
+        fail "unable to copy ingest rc service into deployment plan"
+
+    render_template \
+        "$SCRIPT_DIR/runtime.d/fi-ingest-worker.rc.conf.template" \
+        "$OUTPUT_DIR/rc.conf.d.fi_ingest_worker"
+
     : > "$OUTPUT_DIR/MANIFEST.sha256" ||
         fail "unable to create render manifest"
 
@@ -1022,7 +1099,13 @@ render_plan()
         rc.conf.d.postgresql \
         rc.conf.d.fi_jails \
         rc.conf.d.devfs.90-fi \
-        rc.d.fi_jails
+        rc.d.fi_jails \
+        fi-receiver-supervisor \
+        rc.d.fi_receiver \
+        rc.conf.d.fi_receiver \
+        fi-ingest-worker-run \
+        rc.d.fi_ingest_worker \
+        rc.conf.d.fi_ingest_worker
     do
         rendered_hash=$(sha256 -q "$OUTPUT_DIR/$rendered_name") ||
             fail "unable to hash rendered file: $rendered_name"
@@ -1084,7 +1167,25 @@ main()
             config_file=$2
             approved_prior_lifecycle_plan=$3
             ;;
-        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|verify-jail-roots|verify-zfs)
+        adopt-runtime)
+            if [ "$#" -ne 3 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            approved_prior_runtime_plan=$3
+            ;;
+        update-runtime)
+            if [ "$#" -ne 3 ]; then
+                usage
+                exit 2
+            fi
+
+            config_file=$2
+            approved_prior_runtime_plan=$3
+            ;;
+        preflight|preflight-jail-roots|apply-zfs|apply-jail-roots|apply-identities|apply-directories|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|apply-runtime|verify-runtime|verify-jail-roots|verify-zfs)
             if [ "$#" -ne 2 ]; then
                 usage
                 exit 2
@@ -1236,6 +1337,26 @@ main()
 
             pf_require_commands
             ;;
+        apply-runtime|adopt-runtime|update-runtime|verify-runtime)
+            [ "$(id -u)" -eq 0 ] ||
+                fail "runtime operation must run as root on the intended FreeBSD host"
+
+            [ -f "$SCRIPT_DIR/fi-host-file-apply.sh" ] ||
+                fail "host-file helper not found: $SCRIPT_DIR/fi-host-file-apply.sh"
+
+            [ -f "$SCRIPT_DIR/fi-host-lifecycle-apply.sh" ] ||
+                fail "lifecycle helper not found: $SCRIPT_DIR/fi-host-lifecycle-apply.sh"
+
+            [ -f "$SCRIPT_DIR/fi-host-runtime-apply.sh" ] ||
+                fail "runtime helper not found: $SCRIPT_DIR/fi-host-runtime-apply.sh"
+
+            . "$SCRIPT_DIR/fi-host-file-apply.sh"
+            . "$SCRIPT_DIR/fi-host-lifecycle-apply.sh"
+            . "$SCRIPT_DIR/fi-host-runtime-apply.sh"
+
+            runtime_require_commands
+            ;;
+
         apply-lifecycle|update-lifecycle|verify-lifecycle)
             [ "$(id -u)" -eq 0 ] ||
                 fail "lifecycle operation must run as root on the intended FreeBSD host"
@@ -1332,6 +1453,18 @@ main()
             ;;
         verify-lifecycle)
             verify_lifecycle
+            ;;
+        apply-runtime)
+            apply_runtime
+            ;;
+        adopt-runtime)
+            adopt_runtime "$approved_prior_runtime_plan"
+            ;;
+        update-runtime)
+            update_runtime "$approved_prior_runtime_plan"
+            ;;
+        verify-runtime)
+            verify_runtime
             ;;
         verify-zfs)
             verify_zfs_hierarchy
