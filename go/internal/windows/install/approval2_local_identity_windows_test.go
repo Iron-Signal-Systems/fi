@@ -470,6 +470,12 @@ func approval2LocalIdentityTestState() (
 			State:          "installed",
 		},
 		{
+			Account:        identities.CRLRefresher.Account,
+			Role:           identities.CRLRefresher.Role,
+			SAMAccountName: identities.CRLRefresher.SAMAccountName,
+			State:          "not_installed",
+		},
+		{
 			Account:        identities.USNReader.Account,
 			Role:           identities.USNReader.Role,
 			SAMAccountName: identities.USNReader.SAMAccountName,
@@ -495,6 +501,11 @@ func approval2LocalIdentityTestState() (
 			{
 				Action:    planActionReconcile,
 				Authority: "LOCAL ID",
+				Target:    identities.CRLRefresher.Account,
+			},
+			{
+				Action:    planActionReconcile,
+				Authority: "LOCAL ID",
 				Target:    identities.USNReader.Account,
 			},
 			{
@@ -510,6 +521,12 @@ func approval2LocalIdentityTestState() (
 
 func approval2LocalIdentityTestIdentities() DesiredFIIdentities {
 	return DesiredFIIdentities{
+		CRLRefresher: DesiredFIIdentity{
+			Account:        `ISS\gFI-CRL-ADMINBOX$`,
+			Role:           "FICRLRefresher",
+			SAMAccountName: "gFI-CRL-ADMINBOX$",
+		},
+
 		CollectorSender: DesiredFIIdentity{
 			Account:        `ISS\gFI-ADMINBOX$`,
 			Role:           "FICollector/FISender",
@@ -540,6 +557,7 @@ func newFakeApproval2LocalIdentityBackend(
 
 		present: map[string]bool{
 			identities.CollectorSender.SAMAccountName: true,
+			identities.CRLRefresher.SAMAccountName:    false,
 			identities.USNReader.SAMAccountName:       false,
 			identities.ObjReader.SAMAccountName:       false,
 		},

@@ -244,18 +244,41 @@ func applyServer2016Approval2RemainingLocal(
 		plan,
 		"ACL",
 	) {
-		current := Discover()
-		rollback, err := reconcileServer2016ACLs(
-			current,
-			plan.Identities,
-			plan,
-		)
+		filesystemRollback, err :=
+			prepareCRLRefresherSecurityFilesystem()
 		if err != nil {
 			return fail(
 				"ACL",
 				err,
 			)
 		}
+
+		current := Discover()
+
+		aclRollback, err :=
+			reconcileServer2016ACLs(
+				current,
+				plan.Identities,
+				plan,
+			)
+		if err != nil {
+			return fail(
+				"ACL",
+				errors.Join(
+					err,
+					filesystemRollback(),
+				),
+			)
+		}
+
+		rollback :=
+			func() error {
+				return errors.Join(
+					aclRollback(),
+					filesystemRollback(),
+				)
+			}
+
 		steps = append(
 			steps,
 			approval2ControllerStep{
@@ -263,6 +286,7 @@ func applyServer2016Approval2RemainingLocal(
 				rollback: rollback,
 			},
 		)
+
 		applied = append(
 			applied,
 			AppliedMutation{

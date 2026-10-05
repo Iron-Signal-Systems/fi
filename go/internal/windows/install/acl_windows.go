@@ -41,6 +41,50 @@ type aclTarget struct {
 
 const ownerRightsSID = "S-1-3-4"
 
+func aclTargetAbsenceRepairable(
+	label string,
+) bool {
+	switch label {
+	case "FI CRL activation directory",
+		"FI CRL active file",
+		"FI CRL refresher executable file",
+		"FI CRL refresher journal directory",
+		"FI CRL refresher journal file",
+		"FI CRL refresher trust config file":
+		return true
+
+	default:
+		return false
+	}
+}
+
+func aclDiscoveryFailureStatus(
+	label string,
+	err error,
+) string {
+	if !aclTargetAbsenceRepairable(
+		label,
+	) {
+		return checkFail
+	}
+
+	if errors.Is(
+		err,
+		os.ErrNotExist,
+	) ||
+		errors.Is(
+			err,
+			windows.ERROR_FILE_NOT_FOUND,
+		) ||
+		errors.Is(
+			err,
+			windows.ERROR_PATH_NOT_FOUND,
+		) {
+		return checkInfo
+	}
+
+	return checkFail
+}
 func aceTypeName(value uint8) string {
 	switch value {
 	case windows.ACCESS_ALLOWED_ACE_TYPE:
@@ -182,6 +226,278 @@ func discoverACL(path string, label string) (ACLState, error) {
 	return state, nil
 }
 
+func plannedACLTargets(
+	report Report,
+) []aclTarget {
+	targets := []aclTarget{
+		{
+			Label: "FI config directory",
+			Path:  filepath.Dir(report.Config.Path),
+		},
+		{
+			Label: "FI state directory",
+			Path:  report.Config.StateDir,
+		},
+		{
+			Label: "FI spool directory",
+			Path:  report.Config.SpoolDir,
+		},
+		{
+			Label: "FI stage directory",
+			Path:  report.Config.StageDir,
+		},
+		{
+			Label: "FI program directory",
+			Path:  `C:\Program Files\FI`,
+		},
+		{
+			Label: "FI CRL activation directory",
+			Path:  crlRefresherActivationDirectory,
+		},
+		{
+			Label: "FI CRL refresher journal directory",
+			Path:  crlRefresherJournalDirectory,
+		},
+		{
+			Label: "FI CRL refresher journal file",
+			Path:  crlRefresherJournalPath,
+		},
+		{
+			Label: "FI CRL refresher trust config file",
+			Path:  crlRefresherTrustConfigPath,
+		},
+		{
+			Label: "FI CRL refresher executable file",
+			Path:  crlRefresherExecutablePath,
+		},
+		{
+			Label: "FI CRL active file",
+			Path:  approval1TransportCRLDestination,
+		},
+	}
+
+	if report.ReleaseTrust.Installed.Present {
+		targets = append(
+			targets,
+			aclTarget{
+				Label: "FI release trust directory",
+				Path:  installedReleaseTrustRoot,
+			},
+		)
+	}
+
+	if legacyTransportTrustDirectoryRequired(
+		report,
+	) {
+		targets = append(
+			targets,
+			aclTarget{
+				Label: "FI PKI trust directory",
+				Path: filepath.Dir(
+					report.Trust.TransportCRLPath,
+				),
+			},
+		)
+	}
+
+	return targets
+}
+
+func desiredACLAccounts(
+	report Report,
+) (
+	string,
+	string,
+	string,
+	string,
+	error,
+) {
+	identities, err := DeriveDesiredFIIdentities(
+		report.Host.Computer,
+		report.Join.Name,
+	)
+	if err != nil {
+		return "", "", "", "", err
+	}
+
+	return identities.CollectorSender.Account,
+		identities.CRLRefresher.Account,
+		identities.USNReader.Account,
+		identities.ObjReader.Account,
+		nil
+}
+
+// supplementACLDiscoveryForPlan performs read-only DACL discovery when the
+// operational FI configuration is absent but planConfiguration has already
+// populated the proposed authoritative deployment paths.
+//
+// This is intentionally a planning supplement rather than inferred state:
+// every ACL decision is still based on a native security-descriptor read from
+// the exact path the operator supplied or an FI fixed/retained trust root.
+//
+// Missing SCM registrations do not suppress this discovery. Desired FI
+// identities are derived from the domain-joined host identity.
+func supplementACLDiscoveryForPlan(
+	report *Report,
+) {
+	if report == nil {
+		return
+	}
+
+	if report.Config.Presence != presenceAbsent {
+		return
+	}
+
+	// Before planConfiguration runs, these values are not authoritative.
+	// Do not guess paths from filesystem contents.
+	if strings.TrimSpace(
+		report.Config.Path,
+	) == "" ||
+		strings.TrimSpace(
+			report.Config.SpoolDir,
+		) == "" ||
+		strings.TrimSpace(
+			report.Config.StageDir,
+		) == "" ||
+		strings.TrimSpace(
+			report.Config.StateDir,
+		) == "" {
+		return
+	}
+
+	if _, found := findCheck(
+		*report,
+		"FI DACL planning supplement",
+	); found {
+		return
+	}
+
+	collector, crlRefresher, usnReader, objReader, err :=
+		desiredACLAccounts(
+			*report,
+		)
+	if err != nil {
+		report.addCheck(
+			checkFail,
+			"FI DACL planning supplement",
+			fmt.Sprintf(
+				"derive desired FI identities for ACL discovery: %v",
+				err,
+			),
+		)
+		return
+	}
+
+	seen := make(
+		map[string]struct{},
+	)
+
+	for _, target := range plannedACLTargets(
+		*report,
+	) {
+		path := strings.TrimSpace(
+			target.Path,
+		)
+
+		if path == "" {
+			report.addCheck(
+				checkFail,
+				target.Label+" DACL",
+				"path is unavailable",
+			)
+			continue
+		}
+
+		key := strings.ToLower(
+			filepath.Clean(
+				path,
+			),
+		)
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		state, err := discoverACL(
+			path,
+			target.Label,
+		)
+		if err != nil {
+			report.addCheck(
+				aclDiscoveryFailureStatus(
+					target.Label,
+					err,
+				),
+				target.Label+" DACL",
+				err.Error(),
+			)
+			continue
+		}
+
+		report.ACLs = append(
+			report.ACLs,
+			state,
+		)
+
+		report.addCheck(
+			checkPass,
+			target.Label+" DACL",
+			fmt.Sprintf(
+				"path=%s owner=%s protected=%t entries=%d",
+				state.Path,
+				state.Owner,
+				state.Protected,
+				len(state.Entries),
+			),
+		)
+
+		for _, entry := range state.Entries {
+			if entry.Type != "ALLOW" {
+				continue
+			}
+
+			if !isBroadPrincipal(
+				entry.SID,
+			) {
+				continue
+			}
+
+			if !maskIncludesWriteOrACLAdministration(
+				entry.Mask,
+			) {
+				continue
+			}
+
+			report.addCheck(
+				checkWarn,
+				target.Label+" broad write access",
+				fmt.Sprintf(
+					"account=%s sid=%s mask=0x%08X inherited=%t",
+					entry.Account,
+					entry.SID,
+					entry.Mask,
+					entry.Inherited,
+				),
+			)
+		}
+	}
+
+	evaluateDesiredACLContractsForAccounts(
+		report,
+		collector,
+		crlRefresher,
+		usnReader,
+		objReader,
+	)
+
+	report.addCheck(
+		checkInfo,
+		"FI DACL planning supplement",
+		"read-only DACL discovery used the proposed operational paths and retained FI trust roots independently of SCM service presence",
+	)
+}
 func discoverACLs(report *Report) {
 	if report.Config.Presence == presenceAbsent {
 		report.addCheck(
@@ -237,6 +553,30 @@ func discoverACLs(report *Report) {
 			Label: "FI program directory",
 			Path:  `C:\Program Files\FI`,
 		},
+		{
+			Label: "FI CRL activation directory",
+			Path:  crlRefresherActivationDirectory,
+		},
+		{
+			Label: "FI CRL refresher journal directory",
+			Path:  crlRefresherJournalDirectory,
+		},
+		{
+			Label: "FI CRL refresher journal file",
+			Path:  crlRefresherJournalPath,
+		},
+		{
+			Label: "FI CRL refresher trust config file",
+			Path:  crlRefresherTrustConfigPath,
+		},
+		{
+			Label: "FI CRL refresher executable file",
+			Path:  crlRefresherExecutablePath,
+		},
+		{
+			Label: "FI CRL active file",
+			Path:  approval1TransportCRLDestination,
+		},
 	}
 
 	if info, err := os.Stat(installedReleaseTrustRoot); err == nil && info.IsDir() {
@@ -281,7 +621,10 @@ func discoverACLs(report *Report) {
 		state, err := discoverACL(path, target.Label)
 		if err != nil {
 			report.addCheck(
-				checkFail,
+				aclDiscoveryFailureStatus(
+					target.Label,
+					err,
+				),
 				target.Label+" DACL",
 				err.Error(),
 			)
@@ -1048,21 +1391,77 @@ func evaluateReleaseTrustRoot(report *Report) {
 }
 
 func evaluateDesiredACLContracts(report *Report) {
-	collector := serviceAccount(report, "FICollector")
-	usnReader := serviceAccount(report, "FIUSNReader")
-	objReader := serviceAccount(report, "FIObjReader")
+	if report == nil {
+		return
+	}
 
+	_, crlRefresher, _, _, err :=
+		desiredACLAccounts(
+			*report,
+		)
+	if err != nil {
+		report.addCheck(
+			checkFail,
+			"FI desired ACL identities",
+			fmt.Sprintf(
+				"derive desired FI identities for ACL evaluation: %v",
+				err,
+			),
+		)
+		return
+	}
+
+	evaluateDesiredACLContractsForAccounts(
+		report,
+		serviceAccount(
+			report,
+			"FICollector",
+		),
+		crlRefresher,
+		serviceAccount(
+			report,
+			"FIUSNReader",
+		),
+		serviceAccount(
+			report,
+			"FIObjReader",
+		),
+	)
+
+	evaluateCRLRefresherACLContracts(
+		report,
+	)
+}
+
+func evaluateDesiredACLContractsForAccounts(
+	report *Report,
+	collector string,
+	crlRefresher string,
+	usnReader string,
+	objReader string,
+) {
 	evaluateReadOnlyRoot(
 		report,
 		"FI config directory",
 		true,
-		[]string{collector, usnReader, objReader},
+		[]string{
+			collector,
+			crlRefresher,
+			usnReader,
+			objReader,
+		},
 	)
+
 	evaluateReadOnlyRoot(
 		report,
 		"FI program directory",
 		true,
-		[]string{collector, usnReader, objReader},
+		[]string{
+			collector,
+			crlRefresher,
+			usnReader,
+			objReader,
+		},
 	)
 
 	evaluateWritableRoot(
@@ -1072,12 +1471,23 @@ func evaluateDesiredACLContracts(report *Report) {
 		true,
 		collector,
 	)
+
 	evaluateSpoolRoot(
 		report,
 		collector,
 	)
 
-	evaluateStageRoot(report, collector)
-	evaluatePKITrustRoot(report, collector)
-	evaluateReleaseTrustRoot(report)
+	evaluateStageRoot(
+		report,
+		collector,
+	)
+
+	evaluatePKITrustRoot(
+		report,
+		collector,
+	)
+
+	evaluateReleaseTrustRoot(
+		report,
+	)
 }

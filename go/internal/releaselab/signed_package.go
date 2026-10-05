@@ -145,6 +145,10 @@ func BuildSignedPackage(
 			Role: "FIObjReader",
 		},
 		{
+			Name: "fi-crl-refresh.exe",
+			Role: "FICRLRefresher",
+		},
+		{
 			Name: "fi-sender.exe",
 			Role: "FISender",
 		},

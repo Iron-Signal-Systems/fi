@@ -68,6 +68,12 @@ func reconcileServer2016RightsWithBackend(
 			},
 		},
 		{
+			account: identities.CRLRefresher.Account,
+			rights: []string{
+				"SeServiceLogonRight",
+			},
+		},
+		{
 			account: identities.USNReader.Account,
 			rights: []string{
 				"SeServiceLogonRight",
@@ -308,6 +314,21 @@ func reconcileServer2016GroupsWithBackend(
 			account: identities.CollectorSender.Account,
 			group:   "Event Log Readers",
 			want:    true,
+		},
+		{
+			account: identities.CRLRefresher.Account,
+			group:   "Administrators",
+			want:    false,
+		},
+		{
+			account: identities.CRLRefresher.Account,
+			group:   "Event Log Readers",
+			want:    false,
+		},
+		{
+			account: identities.CRLRefresher.Account,
+			group:   "Backup Operators",
+			want:    false,
 		},
 		{
 			account: identities.USNReader.Account,

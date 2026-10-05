@@ -324,7 +324,7 @@ func ApplyServer2016ApprovedPlan(writer io.Writer, before Report, plan InstallPl
 	) {
 		fmt.Fprintf(
 			writer,
-			"VERIFY SERVICE READINESS: all four FI services must remain Running for %s\n",
+			"VERIFY SERVICE READINESS: all five FI services must remain Running for %s\n",
 			approval2ServiceStabilityWindow,
 		)
 		if err := waitForFIServiceStability(

@@ -481,6 +481,9 @@ func startApproval2CreatedServices(
 	if err := start("FICollector"); err != nil {
 		return err
 	}
+	if err := start("FICRLRefresher"); err != nil {
+		return err
+	}
 	if err := start("FISender"); err != nil {
 		return err
 	}
@@ -516,6 +519,14 @@ func approval2Server2016ServiceContracts(
 			Name:        "FIObjReader",
 			Path:        `"C:\Program Files\FI\fi-obj.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+		},
+		{
+			Account:     identities.CRLRefresher.Account,
+			DisplayName: "FI CRL Refresher",
+			Executable:  `C:\Program Files\FI\fi-crl-refresh.exe`,
+			Name:        "FICRLRefresher",
+			Path:        `"C:\Program Files\FI\fi-crl-refresh.exe"`,
+			SIDType:     windows.SERVICE_SID_TYPE_NONE,
 		},
 		{
 			Account:     identities.CollectorSender.Account,

@@ -45,7 +45,7 @@ func TestLoadPackageManifestStrict(t *testing.T) {
 			value.ReleaseID,
 		)
 	}
-	if len(value.Files) != 4 {
+	if len(value.Files) != 5 {
 		t.Fatalf(
 			"files=%d",
 			len(value.Files),
@@ -188,6 +188,11 @@ func validTestPackageManifest() PackageManifest {
 			{
 				Name:   "fi-obj.exe",
 				Role:   "FIObjReader",
+				SHA256: hash,
+			},
+			{
+				Name:   "fi-crl-refresh.exe",
+				Role:   "FICRLRefresher",
 				SHA256: hash,
 			},
 			{

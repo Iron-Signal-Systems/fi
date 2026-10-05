@@ -122,6 +122,7 @@ func BuildPlanWithInputs(
 
 	planHostAndOS(&plan, report)
 	planConfiguration(&plan, &report, inputs)
+	supplementACLDiscoveryForPlan(&report)
 	planActiveDirectory(&plan, report, identities, identityErr)
 	planLocalGMSAs(&plan, report, identities, identityErr)
 	planPKI(&plan, report, inputs)
@@ -870,6 +871,27 @@ func planPKI(
 				Target:    "FI transport PKI",
 			},
 		)
+
+		if retainedTransportCRLMigrationRequired(
+			report,
+		) {
+			plan.Actions = append(
+				plan.Actions,
+				PlanAction{
+					Action:    planActionReconcile,
+					Authority: "CONFIG",
+					Detail:    "after Approval 2 migrate the validated retained transport CRL into the dedicated CRL activation namespace without changing PKI identity",
+					Target:    approval1TransportCRLDestination,
+				},
+				PlanAction{
+					Action:    planActionReconcile,
+					Authority: "CONFIG",
+					Detail:    "after Approval 2 rewrite only trust.transport_crl to the dedicated CRL activation namespace while preserving all pinned certificate hashes",
+					Target:    report.Trust.Path,
+				},
+			)
+		}
+
 		return
 	}
 
@@ -975,6 +997,35 @@ func planPrivileges(
 				Authority: "RIGHTS",
 				Detail:    "desired direct-right set is SeServiceLogonRight only; remove historical/unnecessary direct rights such as SeManageVolumePrivilege after Approval 2",
 				Target:    identities.CollectorSender.Account,
+			},
+		)
+	}
+
+	crlRights := directRights(
+		report,
+		identities.CRLRefresher.Account,
+	)
+	if containsFold(
+		crlRights,
+		"SeServiceLogonRight",
+	) && len(crlRights) == 1 {
+		plan.Actions = append(
+			plan.Actions,
+			PlanAction{
+				Action:    planActionNoChange,
+				Authority: "RIGHTS",
+				Detail:    "exact CRL refresher direct-right set is SeServiceLogonRight",
+				Target:    identities.CRLRefresher.Account,
+			},
+		)
+	} else {
+		plan.Actions = append(
+			plan.Actions,
+			PlanAction{
+				Action:    planActionReconcile,
+				Authority: "RIGHTS",
+				Detail:    "CRL refresher desired direct-right set is SeServiceLogonRight only",
+				Target:    identities.CRLRefresher.Account,
 			},
 		)
 	}
@@ -1091,6 +1142,27 @@ func planLocalGroups(
 			want:    true,
 		},
 		{
+			account: identities.CRLRefresher.Account,
+			check:   "FICRLRefresher direct local Administrator membership",
+			detail:  "CRL refresher must not be a direct member of local Administrators",
+			group:   "Administrators",
+			want:    false,
+		},
+		{
+			account: identities.CRLRefresher.Account,
+			check:   "FICRLRefresher direct Event Log Readers membership",
+			detail:  "CRL refresher does not require Windows Event Log Readers membership",
+			group:   "Event Log Readers",
+			want:    false,
+		},
+		{
+			account: identities.CRLRefresher.Account,
+			check:   "FICRLRefresher direct Backup Operators membership",
+			detail:  "CRL refresher must not receive Backup Operators membership",
+			group:   "Backup Operators",
+			want:    false,
+		},
+		{
 			account: identities.USNReader.Account,
 			check:   "FIUSNReader direct local Administrator membership",
 			detail:  "USN helper requires the narrowly scoped local-Administrator boundary on Server 2016",
@@ -1187,9 +1259,41 @@ func planACLs(
 			check:  "FI PKI trust directory desired ACL contract",
 			target: "FI PKI trust root",
 		},
+		{
+			check:  "FI CRL activation directory desired ACL contract",
+			target: crlRefresherActivationDirectory,
+		},
+		{
+			check:  "FI CRL active file desired ACL contract",
+			target: approval1TransportCRLDestination,
+		},
+		{
+			check:  "FI CRL refresher journal directory desired ACL contract",
+			target: crlRefresherJournalDirectory,
+		},
+		{
+			check:  "FI CRL refresher journal file desired ACL contract",
+			target: crlRefresherJournalPath,
+		},
+		{
+			check:  "FI CRL refresher trust config file desired ACL contract",
+			target: crlRefresherTrustConfigPath,
+		},
+		{
+			check:  "FI CRL refresher executable file desired ACL contract",
+			target: crlRefresherExecutablePath,
+		},
 	}
 
 	for _, contract := range contracts {
+		if contract.check ==
+			"FI PKI trust directory desired ACL contract" &&
+			!legacyTransportTrustDirectoryRequired(
+				report,
+			) {
+			continue
+		}
+
 		if strings.EqualFold(
 			strings.TrimSpace(contract.target),
 			notKnown,
@@ -1307,6 +1411,12 @@ func planServices(
 			name:    "FIObjReader",
 			path:    `"C:\Program Files\FI\fi-obj.exe"`,
 			sidType: "UNRESTRICTED",
+		},
+		{
+			account: identities.CRLRefresher.Account,
+			name:    "FICRLRefresher",
+			path:    `"C:\Program Files\FI\fi-crl-refresh.exe"`,
+			sidType: "NONE",
 		},
 		{
 			account: identities.CollectorSender.Account,
@@ -1681,7 +1791,7 @@ func planPackage(
 				Action:    planActionNoChange,
 				Authority: "PACKAGE",
 				Detail: fmt.Sprintf(
-					"all four bin payload files exactly match reviewed manifest release_id=%s",
+					"all five bin payload files exactly match reviewed manifest release_id=%s",
 					report.Package.ReleaseID,
 				),
 				Target: "release payload",
@@ -1747,7 +1857,7 @@ func planPackage(
 				Action:    planActionCreate,
 				Authority: "PACKAGE",
 				Detail: fmt.Sprintf(
-					"authoritative local discovery confirmed all four FI runtime executables are absent; install reviewed release_id=%s after Approval 2",
+					"authoritative local discovery confirmed all five FI runtime executables are absent; install reviewed release_id=%s after Approval 2",
 					report.Package.ReleaseID,
 				),
 				Target: "installed FI executables",

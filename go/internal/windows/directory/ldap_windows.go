@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/domaincontroller"
 )
 
 const (
@@ -38,19 +39,15 @@ const (
 	ldapBindTimeoutSeconds    = 30
 	ldapSearchTimeoutSeconds  = 30
 
-	dsDirectoryServiceRequired = 0x00000010
-	dsIsDNSName                = 0x00020000
-	dsReturnDNSName            = 0x40000000
-	maxDirectorySeedSIDs       = 16384
-	maxDirectoryPrincipals     = 65536
-	maxDirectoryMemberships    = 262144
-	directorySIDSearchBatch    = 64
-	maxLDAPStringUnits         = 1 << 20
+	maxDirectorySeedSIDs    = 16384
+	maxDirectoryPrincipals  = 65536
+	maxDirectoryMemberships = 262144
+	directorySIDSearchBatch = 64
+	maxLDAPStringUnits      = 1 << 20
 )
 
 var (
 	wldap32                = syscall.NewLazyDLL("wldap32.dll")
-	netapi32               = syscall.NewLazyDLL("netapi32.dll")
 	procLDAPSSLInitW       = wldap32.NewProc("ldap_sslinitW")
 	procLDAPConnect        = wldap32.NewProc("ldap_connect")
 	procLDAPSetOptionW     = wldap32.NewProc("ldap_set_optionW")
@@ -68,8 +65,6 @@ var (
 	procLDAPMsgFree        = wldap32.NewProc("ldap_msgfree")
 	procLDAPErr2StringW    = wldap32.NewProc("ldap_err2stringW")
 	procLdapGetLastError   = wldap32.NewProc("LdapGetLastError")
-	procDsGetDcNameW       = netapi32.NewProc("DsGetDcNameW")
-	procNetApiBufferFree   = netapi32.NewProc("NetApiBufferFree")
 )
 
 type berval struct {
@@ -82,18 +77,6 @@ type berval struct {
 type ldapTimeval struct {
 	Seconds      int32
 	Microseconds int32
-}
-
-type domainControllerInfoW struct {
-	DomainControllerName        *uint16
-	DomainControllerAddress     *uint16
-	DomainControllerAddressType uint32
-	DomainGUID                  [16]byte
-	DomainName                  *uint16
-	DNSForestName               *uint16
-	Flags                       uint32
-	DCSiteName                  *uint16
-	ClientSiteName              *uint16
 }
 
 // CollectCurrentDomainPrincipals resolves the supplied seed SIDs against the
@@ -308,43 +291,18 @@ func openLDAP(domainDNSName string) (uintptr, error) {
 	return ld, nil
 }
 
-func discoverDomainController(domainDNSName string) (string, error) {
-	domain, err := syscall.UTF16PtrFromString(domainDNSName)
+func discoverDomainController(
+	domainDNSName string,
+) (string, error) {
+	info, err :=
+		domaincontroller.Discover(
+			domainDNSName,
+		)
 	if err != nil {
-		return "", fmt.Errorf("domain DNS name: %w", err)
+		return "", err
 	}
 
-	var infoPointer *domainControllerInfoW
-	flags := uintptr(dsDirectoryServiceRequired | dsIsDNSName | dsReturnDNSName)
-	status, _, _ := procDsGetDcNameW.Call(
-		0,
-		uintptr(unsafe.Pointer(domain)),
-		0,
-		0,
-		flags,
-		uintptr(unsafe.Pointer(&infoPointer)),
-	)
-	runtime.KeepAlive(domain)
-	if status != 0 {
-		return "", fmt.Errorf("DsGetDcNameW(%s): Windows error %d", domainDNSName, status)
-	}
-	if infoPointer == nil {
-		return "", fmt.Errorf("DsGetDcNameW(%s): returned no domain controller", domainDNSName)
-	}
-	defer procNetApiBufferFree.Call(uintptr(unsafe.Pointer(infoPointer)))
-
-	info := infoPointer
-	name, err := utf16PointerString(info.DomainControllerName)
-	if err != nil {
-		return "", fmt.Errorf("DsGetDcNameW(%s) domain controller name: %w", domainDNSName, err)
-	}
-
-	// DOMAIN_CONTROLLER_INFO returns the name with a leading UNC prefix.
-	name = strings.TrimPrefix(name, `\\`)
-	if name == "" {
-		return "", fmt.Errorf("DsGetDcNameW(%s): returned empty domain controller DNS name", domainDNSName)
-	}
-	return name, nil
+	return info.DomainController, nil
 }
 
 func readRootDSE(ld uintptr) (string, string, error) {

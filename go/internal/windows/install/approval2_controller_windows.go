@@ -18,6 +18,8 @@ type Approval2ControllerResult struct {
 	Applied           []AppliedMutation
 	Approval          ApprovalBoundaryState
 	PostPlan          InstallPlan
+	RecordPath        string
+	RecordSHA256      string
 	Rediscovered      Report
 	RollbackAttempted bool
 	RollbackErrors    []string
@@ -386,10 +388,19 @@ func executeApproval2ControllerWithBackend(
 		currentPlan,
 		approval1.PKI.Handoff,
 	) {
-		fmt.Fprintln(
-			writer,
-			"APPLY CONFIG: bind the exact Approval 1 transport PKI handoff to local FI trust",
-		)
+		if retainedTransportCRLMigrationRequired(
+			current,
+		) {
+			fmt.Fprintln(
+				writer,
+				"APPLY CONFIG: migrate retained validated CRL into dedicated activation namespace and atomically update transport trust",
+			)
+		} else {
+			fmt.Fprintln(
+				writer,
+				"APPLY CONFIG: bind the exact Approval 1 transport PKI handoff to local FI trust",
+			)
+		}
 
 		rollback, err := backend.ApplyTransportTrust(
 			current,
@@ -674,6 +685,11 @@ func validateApproval2ControllerMutationScope(
 	crlConfig := 0
 	trustConfig := 0
 
+	migration :=
+		retainedTransportCRLMigrationRequired(
+			report,
+		)
+
 	for _, action := range plan.Actions {
 		if !planActionMutates(
 			action.Action,
@@ -692,17 +708,10 @@ func validateApproval2ControllerMutationScope(
 			}
 
 		case "CONFIG":
-			if action.Action != planActionCreate {
-				return fmt.Errorf(
-					"Approval 2 CONFIG supports CREATE only; action=%s target=%s",
-					action.Action,
+			target :=
+				strings.TrimSpace(
 					action.Target,
 				)
-			}
-
-			target := strings.TrimSpace(
-				action.Target,
-			)
 
 			switch {
 			case strings.EqualFold(
@@ -711,6 +720,14 @@ func validateApproval2ControllerMutationScope(
 					report.Config.Path,
 				),
 			):
+				if action.Action != planActionCreate {
+					return fmt.Errorf(
+						"Approval 2 operational CONFIG supports CREATE only; action=%s target=%s",
+						action.Action,
+						action.Target,
+					)
+				}
+
 				operationalConfig++
 
 			case strings.EqualFold(
@@ -719,7 +736,49 @@ func validateApproval2ControllerMutationScope(
 					report,
 				),
 			):
+				if action.Action != planActionCreate {
+					return fmt.Errorf(
+						"Approval 2 source CONFIG supports CREATE only; action=%s target=%s",
+						action.Action,
+						action.Target,
+					)
+				}
+
 				sourceConfig++
+
+			case migration &&
+				strings.EqualFold(
+					target,
+					strings.TrimSpace(
+						approval1TransportCRLDestination,
+					),
+				):
+				if action.Action != planActionReconcile {
+					return fmt.Errorf(
+						"Approval 2 retained CRL migration supports RECONCILE only; action=%s target=%s",
+						action.Action,
+						action.Target,
+					)
+				}
+
+				crlConfig++
+
+			case migration &&
+				strings.EqualFold(
+					target,
+					strings.TrimSpace(
+						report.Trust.Path,
+					),
+				):
+				if action.Action != planActionReconcile {
+					return fmt.Errorf(
+						"Approval 2 retained trust migration supports RECONCILE only; action=%s target=%s",
+						action.Action,
+						action.Target,
+					)
+				}
+
+				trustConfig++
 
 			case handoff.complete() &&
 				strings.EqualFold(
@@ -728,6 +787,14 @@ func validateApproval2ControllerMutationScope(
 						handoff.CRLDestinationPath,
 					),
 				):
+				if action.Action != planActionCreate {
+					return fmt.Errorf(
+						"Approval 2 new-install transport CRL CONFIG supports CREATE only; action=%s target=%s",
+						action.Action,
+						action.Target,
+					)
+				}
+
 				crlConfig++
 
 			case handoff.complete() &&
@@ -737,15 +804,25 @@ func validateApproval2ControllerMutationScope(
 						report.Trust.Path,
 					),
 				):
+				if action.Action != planActionCreate {
+					return fmt.Errorf(
+						"Approval 2 new-install transport trust CONFIG supports CREATE only; action=%s target=%s",
+						action.Action,
+						action.Target,
+					)
+				}
+
 				trustConfig++
 
 			default:
-				if !handoff.complete() {
+				if !handoff.complete() &&
+					!migration {
 					return fmt.Errorf(
-						"Approval 2 CONFIG mutation requires a complete typed Approval 1 PKI handoff: %w",
+						"Approval 2 CONFIG mutation requires a complete typed Approval 1 PKI handoff or an authoritative retained-CRL migration: %w",
 						handoff.validate(),
 					)
 				}
+
 				return fmt.Errorf(
 					"Approval 2 CONFIG target %q is not implemented by the current controller",
 					action.Target,
@@ -796,20 +873,31 @@ func validateApproval2ControllerMutationScope(
 
 	if crlConfig != 0 ||
 		trustConfig != 0 {
-		if err := handoff.validate(); err != nil {
-			return fmt.Errorf(
-				"Approval 2 transport CONFIG requires a complete typed Approval 1 PKI handoff: %w",
-				err,
-			)
-		}
+		if migration {
+			if crlConfig != 1 ||
+				trustConfig != 1 {
+				return fmt.Errorf(
+					"Approval 2 retained CRL migration requires exactly one CRL RECONCILE and one trust-config RECONCILE; crl=%d trust=%d",
+					crlConfig,
+					trustConfig,
+				)
+			}
+		} else {
+			if err := handoff.validate(); err != nil {
+				return fmt.Errorf(
+					"Approval 2 transport CONFIG requires a complete typed Approval 1 PKI handoff: %w",
+					err,
+				)
+			}
 
-		if crlConfig != 1 ||
-			trustConfig != 1 {
-			return fmt.Errorf(
-				"Approval 2 transport CONFIG requires exactly one approved CRL CREATE and one approved trust-config CREATE; crl=%d trust=%d",
-				crlConfig,
-				trustConfig,
-			)
+			if crlConfig != 1 ||
+				trustConfig != 1 {
+				return fmt.Errorf(
+					"Approval 2 transport CONFIG requires exactly one approved CRL CREATE and one approved trust-config CREATE; crl=%d trust=%d",
+					crlConfig,
+					trustConfig,
+				)
+			}
 		}
 	}
 
@@ -821,10 +909,6 @@ func approval2TransportConfigRequired(
 	plan InstallPlan,
 	handoff approval1PKIHandoff,
 ) bool {
-	if !handoff.complete() {
-		return false
-	}
-
 	for _, action := range plan.Actions {
 		if action.Authority != "CONFIG" ||
 			!planActionMutates(
@@ -832,6 +916,7 @@ func approval2TransportConfigRequired(
 			) {
 			continue
 		}
+
 		if approval2TransportConfigTarget(
 			report,
 			handoff,
@@ -849,13 +934,29 @@ func approval2TransportConfigTarget(
 	handoff approval1PKIHandoff,
 	target string,
 ) bool {
-	if !handoff.complete() {
-		return false
-	}
-
 	target = strings.TrimSpace(
 		target,
 	)
+
+	if retainedTransportCRLMigrationRequired(
+		report,
+	) {
+		return strings.EqualFold(
+			target,
+			strings.TrimSpace(
+				approval1TransportCRLDestination,
+			),
+		) || strings.EqualFold(
+			target,
+			strings.TrimSpace(
+				report.Trust.Path,
+			),
+		)
+	}
+
+	if !handoff.complete() {
+		return false
+	}
 
 	return strings.EqualFold(
 		target,

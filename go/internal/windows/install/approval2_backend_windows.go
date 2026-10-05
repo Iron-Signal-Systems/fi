@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type server2016Approval2Backend struct{}
@@ -103,6 +104,16 @@ func (backend *server2016Approval2Backend) ApplyTransportTrust(
 	) {
 		return nil, errors.New(
 			"Approval 2 plan does not authorize the exact transport-trust CONFIG pair",
+		)
+	}
+
+	if retainedTransportCRLMigrationRequired(
+		report,
+	) {
+		return migrateRetainedTransportTrust(
+			report,
+			transactionID,
+			time.Now().UTC(),
 		)
 	}
 
@@ -204,7 +215,7 @@ func executeServer2016Approval2Controller(
 
 	backend := &server2016Approval2Backend{}
 
-	return executeApproval2ControllerWithBackend(
+	return executeRecordedApproval2Controller(
 		writer,
 		approval1,
 		inputs,

@@ -69,6 +69,12 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 	}
 	_ = objBuffer
 
+	crlSID, crlBuffer, err := lookupAccountSID(identities.CRLRefresher.Account)
+	if err != nil {
+		return nil, err
+	}
+	_ = crlBuffer
+
 	type contract struct {
 		path                string
 		sddl                string
@@ -77,6 +83,7 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 	}
 	readOnlyServices := desiredProtectedDirectorySDDL([]sddlACE{
 		{Mask: fileReadExecuteMask, SID: collectorSID.String()},
+		{Mask: fileReadExecuteMask, SID: crlSID.String()},
 		{Mask: fileReadExecuteMask, SID: usnSID.String()},
 		{Mask: fileReadExecuteMask, SID: objSID.String()},
 	})
@@ -88,6 +95,35 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 	)
 	readOnlyCollector := desiredProtectedDirectorySDDL([]sddlACE{
 		{Mask: fileReadExecuteMask, SID: collectorSID.String()},
+	})
+
+	pkiCRL := desiredProtectedDirectorySDDL([]sddlACE{
+		{Mask: fileReadExecuteMask, SID: collectorSID.String()},
+		{Mask: fileModifyMask, SID: crlSID.String()},
+	})
+
+	activeCRL := desiredProtectedObjectSDDL([]sddlACE{
+		{Mask: fileReadExecuteMask, SID: collectorSID.String()},
+		{Mask: fileModifyMask, SID: crlSID.String()},
+	})
+
+	journalDirectory := desiredProtectedObjectSDDL([]sddlACE{
+		{Mask: fileReadExecuteMask, SID: crlSID.String()},
+	})
+
+	journalFile := desiredProtectedObjectSDDL([]sddlACE{
+		{Mask: crlRefresherJournalMask, SID: crlSID.String()},
+	})
+
+	trustConfigFile := desiredProtectedObjectSDDL([]sddlACE{
+		{Mask: fileReadExecuteMask, SID: collectorSID.String()},
+		{Mask: fileReadExecuteMask, SID: usnSID.String()},
+		{Mask: fileReadExecuteMask, SID: objSID.String()},
+		{Mask: fileReadExecuteMask, SID: crlSID.String()},
+	})
+
+	crlExecutable := desiredProtectedObjectSDDL([]sddlACE{
+		{Mask: fileReadExecuteMask, SID: crlSID.String()},
 	})
 
 	contracts := []contract{
@@ -102,13 +138,54 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 		},
 		{path: report.Config.StageDir, sddl: writableCollector, target: valueOrNotKnown(report.Config.StageDir)},
 	}
-	if strings.TrimSpace(report.Trust.TransportCRLPath) != "" {
-		contracts = append(contracts, contract{
-			path:   filepath.Dir(report.Trust.TransportCRLPath),
-			sddl:   readOnlyCollector,
-			target: "FI PKI trust root",
-		})
+	if legacyTransportTrustDirectoryRequired(
+		report,
+	) {
+		contracts = append(
+			contracts,
+			contract{
+				path: filepath.Dir(
+					report.Trust.TransportCRLPath,
+				),
+				sddl:   readOnlyCollector,
+				target: "FI PKI trust root",
+			},
+		)
 	}
+
+	contracts = append(
+		contracts,
+		contract{
+			path:   crlRefresherActivationDirectory,
+			sddl:   pkiCRL,
+			target: crlRefresherActivationDirectory,
+		},
+		contract{
+			path:   approval1TransportCRLDestination,
+			sddl:   activeCRL,
+			target: approval1TransportCRLDestination,
+		},
+		contract{
+			path:   crlRefresherJournalDirectory,
+			sddl:   journalDirectory,
+			target: crlRefresherJournalDirectory,
+		},
+		contract{
+			path:   crlRefresherJournalPath,
+			sddl:   journalFile,
+			target: crlRefresherJournalPath,
+		},
+		contract{
+			path:   crlRefresherTrustConfigPath,
+			sddl:   trustConfigFile,
+			target: crlRefresherTrustConfigPath,
+		},
+		contract{
+			path:   crlRefresherExecutablePath,
+			sddl:   crlExecutable,
+			target: crlRefresherExecutablePath,
+		},
+	)
 
 	seen := make(map[string]struct{})
 	mutations := make([]aclMutation, 0, len(contracts))

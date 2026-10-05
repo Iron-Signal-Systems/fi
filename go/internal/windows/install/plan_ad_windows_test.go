@@ -73,9 +73,9 @@ func TestPlanActiveDirectoryBlocksUnknownGMSADiscovery(t *testing.T) {
 			plan.Actions,
 		)
 	}
-	if blockedCount != 3 {
+	if blockedCount != 4 {
 		t.Fatalf(
-			"blocked_gmsa_actions=%d want=3 actions=%+v",
+			"blocked_gmsa_actions=%d want=4 actions=%+v",
 			blockedCount,
 			plan.Actions,
 		)
@@ -132,9 +132,9 @@ func TestPlanActiveDirectoryCreatesAuthoritativelyAbsentGMSAs(t *testing.T) {
 			created++
 		}
 	}
-	if created != 3 {
+	if created != 4 {
 		t.Fatalf(
-			"created_gmsa_actions=%d want=3 actions=%+v",
+			"created_gmsa_actions=%d want=4 actions=%+v",
 			created,
 			plan.Actions,
 		)
@@ -204,9 +204,9 @@ func TestPlanActiveDirectoryDoesNotCreateGMSAWithUnknownKDSState(t *testing.T) {
 			plan.Actions,
 		)
 	}
-	if gmsaBlocks != 3 {
+	if gmsaBlocks != 4 {
 		t.Fatalf(
-			"blocked_gmsa_actions=%d want=3 actions=%+v",
+			"blocked_gmsa_actions=%d want=4 actions=%+v",
 			gmsaBlocks,
 			plan.Actions,
 		)

@@ -14,25 +14,16 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/domaincontroller"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ldapsecure"
 	"golang.org/x/sys/windows"
 )
 
 const (
-	dsDirectoryServiceRequired = uint32(0x00000010)
-	dsWritableRequired         = uint32(0x00001000)
-	dsIsDNSName                = uint32(0x00020000)
-	dsReturnDNSName            = uint32(0x40000000)
-
-	ldapAuthNegotiate      = uintptr(0x0486)
-	ldapOptEncrypt         = uintptr(0x96)
-	ldapOptProtocolVersion = uintptr(0x11)
-	ldapOptSign            = uintptr(0x95)
-	ldapPort               = uintptr(389)
-	ldapScopeBase          = uintptr(0)
-	ldapScopeOneLevel      = uintptr(1)
-	ldapScopeSubtree       = uintptr(2)
-	ldapSuccess            = uintptr(0)
-	ldapVersion3           = uint32(3)
+	ldapScopeBase     = uintptr(0)
+	ldapScopeOneLevel = uintptr(1)
+	ldapScopeSubtree  = uintptr(2)
+	ldapSuccess       = uintptr(0)
 )
 
 type ActiveDirectoryGMSAState struct {
@@ -62,18 +53,6 @@ type ActiveDirectoryState struct {
 	GMSAs                      []ActiveDirectoryGMSAState
 	KDSRootKeyCount            uint32
 	KDSRootKeyKnown            bool
-}
-
-type domainControllerInfoW struct {
-	DomainControllerName        *uint16
-	DomainControllerAddress     *uint16
-	DomainControllerAddressType uint32
-	DomainGUID                  windows.GUID
-	DomainName                  *uint16
-	DNSForestName               *uint16
-	Flags                       uint32
-	DCSiteName                  *uint16
-	ClientSiteName              *uint16
 }
 
 type ldapBerval struct {
@@ -121,20 +100,15 @@ func ldapSearchReturnedNoEntries(err error) bool {
 var (
 	wldap32DLL = syscall.NewLazyDLL("wldap32.dll")
 
-	dsGetDcNameWProc      = netapi32ManagedServiceDLL.NewProc("DsGetDcNameW")
-	ldapBindSWProc        = wldap32DLL.NewProc("ldap_bind_sW")
 	ldapCountEntriesProc  = wldap32DLL.NewProc("ldap_count_entries")
 	ldapErr2StringWProc   = wldap32DLL.NewProc("ldap_err2stringW")
 	ldapFirstEntryProc    = wldap32DLL.NewProc("ldap_first_entry")
 	ldapGetDNWProc        = wldap32DLL.NewProc("ldap_get_dnW")
 	ldapGetValuesLenWProc = wldap32DLL.NewProc("ldap_get_values_lenW")
 	ldapGetValuesWProc    = wldap32DLL.NewProc("ldap_get_valuesW")
-	ldapInitWProc         = wldap32DLL.NewProc("ldap_initW")
 	ldapMemFreeWProc      = wldap32DLL.NewProc("ldap_memfreeW")
 	ldapMsgFreeProc       = wldap32DLL.NewProc("ldap_msgfree")
 	ldapSearchSWProc      = wldap32DLL.NewProc("ldap_search_sW")
-	ldapSetOptionWProc    = wldap32DLL.NewProc("ldap_set_optionW")
-	ldapUnbindSProc       = wldap32DLL.NewProc("ldap_unbind_s")
 	ldapValueFreeLenProc  = wldap32DLL.NewProc("ldap_value_free_len")
 	ldapValueFreeWProc    = wldap32DLL.NewProc("ldap_value_freeW")
 )
@@ -427,151 +401,47 @@ type discoveredDomainController struct {
 func discoverWritableDomainController(
 	domainDNS string,
 ) (discoveredDomainController, error) {
-	domain, err := syscall.UTF16PtrFromString(domainDNS)
+	info, err :=
+		domaincontroller.DiscoverWritable(
+			domainDNS,
+		)
 	if err != nil {
-		return discoveredDomainController{}, fmt.Errorf(
-			"encode domain DNS name %q: %w",
-			domainDNS,
-			err,
-		)
-	}
-
-	var infoPointer uintptr
-
-	status, _, _ := dsGetDcNameWProc.Call(
-		0,
-		uintptr(unsafe.Pointer(domain)),
-		0,
-		0,
-		uintptr(
-			dsDirectoryServiceRequired|
-				dsWritableRequired|
-				dsIsDNSName|
-				dsReturnDNSName,
-		),
-		uintptr(unsafe.Pointer(&infoPointer)),
-	)
-	if status != 0 {
-		return discoveredDomainController{}, fmt.Errorf(
-			"locate writable domain controller for %s: Win32=%d",
-			domainDNS,
-			uint32(status),
-		)
-	}
-	if infoPointer == 0 {
-		return discoveredDomainController{}, fmt.Errorf(
-			"locate writable domain controller for %s returned no information",
-			domainDNS,
-		)
-	}
-	defer windows.NetApiBufferFree(
-		(*byte)(unsafe.Pointer(infoPointer)),
-	)
-
-	info := (*domainControllerInfoW)(
-		unsafe.Pointer(infoPointer),
-	)
-
-	controller := strings.TrimPrefix(
-		windows.UTF16PtrToString(info.DomainControllerName),
-		`\\`,
-	)
-	if controller == "" {
-		return discoveredDomainController{}, fmt.Errorf(
-			"writable domain controller name is empty",
-		)
+		return discoveredDomainController{}, err
 	}
 
 	return discoveredDomainController{
-		ClientSite:       windows.UTF16PtrToString(info.ClientSiteName),
-		DCSite:           windows.UTF16PtrToString(info.DCSiteName),
-		DomainController: controller,
-		ForestDNS:        windows.UTF16PtrToString(info.DNSForestName),
+		ClientSite:       info.ClientSite,
+		DCSite:           info.DCSite,
+		DomainController: info.DomainController,
+		ForestDNS:        info.ForestDNS,
 	}, nil
 }
 
-func openLDAPSession(host string) (*ldapSession, error) {
-	hostPointer, err := syscall.UTF16PtrFromString(host)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"encode LDAP host %q: %w",
-			host,
-			err,
-		)
-	}
-
-	handle, _, callErr := ldapInitWProc.Call(
-		uintptr(unsafe.Pointer(hostPointer)),
-		ldapPort,
+func openLDAPSession(
+	host string,
+) (*ldapSession, error) {
+	handle, err := ldapsecure.Open(
+		host,
 	)
-	if handle == 0 {
-		return nil, fmt.Errorf(
-			"ldap_initW %s: %v",
-			host,
-			callErr,
-		)
+	if err != nil {
+		return nil, err
 	}
 
-	session := &ldapSession{handle: handle}
-
-	version := ldapVersion3
-	if status, _, _ := ldapSetOptionWProc.Call(
-		handle,
-		ldapOptProtocolVersion,
-		uintptr(unsafe.Pointer(&version)),
-	); status != ldapSuccess {
-		session.close()
-		return nil, fmt.Errorf(
-			"set LDAP protocol version: %s",
-			ldapErrorText(status),
-		)
-	}
-
-	on := uint32(1)
-	if status, _, _ := ldapSetOptionWProc.Call(
-		handle,
-		ldapOptSign,
-		uintptr(unsafe.Pointer(&on)),
-	); status != ldapSuccess {
-		session.close()
-		return nil, fmt.Errorf(
-			"enable LDAP signing: %s",
-			ldapErrorText(status),
-		)
-	}
-	if status, _, _ := ldapSetOptionWProc.Call(
-		handle,
-		ldapOptEncrypt,
-		uintptr(unsafe.Pointer(&on)),
-	); status != ldapSuccess {
-		session.close()
-		return nil, fmt.Errorf(
-			"enable LDAP sealing: %s",
-			ldapErrorText(status),
-		)
-	}
-
-	if status, _, _ := ldapBindSWProc.Call(
-		handle,
-		0,
-		0,
-		ldapAuthNegotiate,
-	); status != ldapSuccess {
-		session.close()
-		return nil, fmt.Errorf(
-			"bind LDAP using current Windows credentials: %s",
-			ldapErrorText(status),
-		)
-	}
-
-	return session, nil
+	return &ldapSession{
+		handle: handle,
+	}, nil
 }
 
 func (session *ldapSession) close() {
-	if session == nil || session.handle == 0 {
+	if session == nil ||
+		session.handle == 0 {
 		return
 	}
-	ldapUnbindSProc.Call(session.handle)
+
+	_ = ldapsecure.Close(
+		session.handle,
+	)
+
 	session.handle = 0
 }
 

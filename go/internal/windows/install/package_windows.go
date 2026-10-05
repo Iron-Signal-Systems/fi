@@ -449,7 +449,7 @@ func discoverPackage(report *Report) {
 		if !state.Match {
 			installedAllMatch = false
 			report.addCheck(
-				checkFail,
+				checkInfo,
 				file.Role+" installed binary manifest comparison",
 				fmt.Sprintf(
 					"%s expected=%s actual=%s",
@@ -596,10 +596,11 @@ func validatePackageManifest(
 	}
 
 	expected := map[string]string{
-		"ficollector": "fi.exe",
-		"fiobjreader": "fi-obj.exe",
-		"fisender":    "fi-sender.exe",
-		"fiusnreader": "fi-usn.exe",
+		"ficollector":    "fi.exe",
+		"fiobjreader":    "fi-obj.exe",
+		"ficrlrefresher": "fi-crl-refresh.exe",
+		"fisender":       "fi-sender.exe",
+		"fiusnreader":    "fi-usn.exe",
 	}
 
 	if len(manifest.Files) != len(expected) {

@@ -233,6 +233,7 @@ func discoverBinaries(report *Report) {
 		{name: "FICollector", path: `C:\Program Files\FI\fi.exe`},
 		{name: "FIUSNReader", path: `C:\Program Files\FI\fi-usn.exe`},
 		{name: "FIObjReader", path: `C:\Program Files\FI\fi-obj.exe`},
+		{name: "FICRLRefresher", path: `C:\Program Files\FI\fi-crl-refresh.exe`},
 		{name: "FISender", path: `C:\Program Files\FI\fi-sender.exe`},
 	}
 
@@ -491,7 +492,7 @@ func discoverPKI(report *Report, trust config.TransportTrustConfig) {
 		certstore.StoreRoot,
 		trust.RootCertificateSHA256,
 	)
-	_, issuerStore, err := loadLocalMachineTransportIssuer(
+	issuer, issuerStore, err := loadLocalMachineTransportIssuer(
 		trust.TransportIssuerSHA256,
 		trust.RootCertificateSHA256,
 	)
@@ -538,47 +539,10 @@ func discoverPKI(report *Report, trust config.TransportTrustConfig) {
 		trust.BatchSigningCertificateSHA256,
 	)
 
-	info, err := os.Stat(trust.TransportCRLPath)
-	if err != nil {
-		report.PKI = append(report.PKI, TrustObjectState{
-			Detail: err.Error(),
-			Name:   "transport CRL",
-			State:  checkFail,
-		})
-		report.addCheck(
-			checkFail,
-			"transport CRL",
-			err.Error(),
-		)
-		return
-	}
-	if info.IsDir() {
-		detail := fmt.Sprintf(
-			"%s is a directory",
-			trust.TransportCRLPath,
-		)
-		report.PKI = append(report.PKI, TrustObjectState{
-			Detail: detail,
-			Name:   "transport CRL",
-			State:  checkFail,
-		})
-		report.addCheck(
-			checkFail,
-			"transport CRL",
-			detail,
-		)
-		return
-	}
-
-	report.PKI = append(report.PKI, TrustObjectState{
-		Detail: trust.TransportCRLPath,
-		Name:   "transport CRL",
-		State:  checkPass,
-	})
-	report.addCheck(
-		checkPass,
-		"transport CRL",
+	recordTransportCRLCheck(
+		report,
 		trust.TransportCRLPath,
+		issuer,
 	)
 }
 
@@ -655,6 +619,7 @@ func discoverIdentityBoundary(
 	states map[string]ServiceState,
 ) {
 	collector := states["FICollector"].Account
+	crlRefresher := states["FICRLRefresher"].Account
 	usnReader := states["FIUSNReader"].Account
 	objReader := states["FIObjReader"].Account
 
@@ -675,6 +640,24 @@ func discoverIdentityBoundary(
 			group:   "Event Log Readers",
 			name:    "FICollector/FISender direct Event Log Readers membership",
 			want:    true,
+		},
+		{
+			account: crlRefresher,
+			group:   "Administrators",
+			name:    "FICRLRefresher direct local Administrator membership",
+			want:    false,
+		},
+		{
+			account: crlRefresher,
+			group:   "Event Log Readers",
+			name:    "FICRLRefresher direct Event Log Readers membership",
+			want:    false,
+		},
+		{
+			account: crlRefresher,
+			group:   "Backup Operators",
+			name:    "FICRLRefresher direct Backup Operators membership",
+			want:    false,
 		},
 		{
 			account: usnReader,
@@ -964,6 +947,10 @@ func discoverAccountRights(
 			role:    "FICollector/FISender",
 		},
 		{
+			account: states["FICRLRefresher"].Account,
+			role:    "FICRLRefresher",
+		},
+		{
 			account: states["FIUSNReader"].Account,
 			role:    "FIUSNReader",
 		},
@@ -1050,6 +1037,35 @@ func discoverAccountRights(
 				checkWarn,
 				"FICollector/FISender unnecessary direct right",
 				"SeManageVolumePrivilege is assigned directly; current FI design keeps raw-volume USN work in FIUSNReader and does not require this collector/sender right",
+			)
+		}
+	}
+
+	crlRights, crlOK := rightsByRole["FICRLRefresher"]
+	if crlOK {
+		if exactRights(
+			crlRights,
+			[]string{
+				"SeServiceLogonRight",
+			},
+		) {
+			report.addCheck(
+				checkPass,
+				"FICRLRefresher direct-right contract",
+				"SeServiceLogonRight is the only direct account right",
+			)
+		} else {
+			report.addCheck(
+				checkFail,
+				"FICRLRefresher direct-right contract",
+				fmt.Sprintf(
+					"account=%s rights=%s expected=SeServiceLogonRight only",
+					states["FICRLRefresher"].Account,
+					strings.Join(
+						crlRights,
+						", ",
+					),
+				),
 			)
 		}
 	}
@@ -1444,6 +1460,12 @@ func discoverServices(report *Report) {
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
 		},
 		{
+			DisplayName: "FI CRL Refresher",
+			Name:        "FICRLRefresher",
+			Path:        `"C:\Program Files\FI\fi-crl-refresh.exe"`,
+			SIDType:     windows.SERVICE_SID_TYPE_NONE,
+		},
+		{
 			DisplayName: "FI Sender",
 			Name:        "FISender",
 			Path:        `"C:\Program Files\FI\fi-sender.exe"`,
@@ -1596,17 +1618,17 @@ func discoverServices(report *Report) {
 		report.addCheck(
 			checkInfo,
 			"FI service-set discovery",
-			"all four FI services are authoritatively absent; service-dependent runtime checks are deferred to installation",
+			"all five FI services are authoritatively absent; service-dependent runtime checks are deferred to installation",
 		)
 		return
 	}
 
 	if presentCount != len(contracts) {
 		report.addCheck(
-			checkFail,
+			checkInfo,
 			"FI service-set discovery",
 			fmt.Sprintf(
-				"partial FI service set observed: present=%d absent=%d; reconcile as an existing/partial installation",
+				"partial FI service set observed: present=%d absent=%d; authoritative absence is repairable through the desired-state plan",
 				presentCount,
 				absentCount,
 			),
@@ -1615,11 +1637,115 @@ func discoverServices(report *Report) {
 	}
 
 	discoverServiceIdentityRelationships(report, states)
-	discoverIdentityBoundary(report, states)
-	discoverAccountRights(report, states)
 	discoverSenderOwnership(report, states)
 }
 
+func discoverDesiredIdentitySecurityBoundary(
+	report *Report,
+) {
+	identities, err := DeriveDesiredFIIdentities(
+		report.Host.Computer,
+		report.Join.Name,
+	)
+	if err != nil {
+		report.addCheck(
+			checkFail,
+			"FI desired identity security discovery",
+			err.Error(),
+		)
+		return
+	}
+
+	for _, identity := range desiredFIIdentityList(
+		identities,
+	) {
+		state, found := findLocalGMSA(
+			report.GMSAs,
+			identity.SAMAccountName,
+		)
+		if !found {
+			report.addCheck(
+				checkFail,
+				"FI desired identity security discovery",
+				fmt.Sprintf(
+					"local managed-service-account state is unavailable for %s",
+					identity.Account,
+				),
+			)
+			return
+		}
+
+		switch state.State {
+		case "installed":
+			// The account can be queried authoritatively for direct local
+			// group membership and LSA account rights.
+
+		case "pending_ad_creation", "not_installed":
+			report.addCheck(
+				checkInfo,
+				"FI desired identity security discovery",
+				fmt.Sprintf(
+					"deferred until all desired FI managed service accounts are locally installed; %s state=%s",
+					identity.Account,
+					state.State,
+				),
+			)
+			return
+
+		default:
+			report.addCheck(
+				checkFail,
+				"FI desired identity security discovery",
+				fmt.Sprintf(
+					"managed-service-account state for %s is not authoritative for security-boundary discovery: %s",
+					identity.Account,
+					valueOrNotKnown(
+						state.State,
+					),
+				),
+			)
+			return
+		}
+	}
+
+	// Rights and local-group policy belong to the desired FI identities, not
+	// to the presence of the SCM registrations. A missing service must not
+	// erase authoritative identity-security observations and thereby turn
+	// unknown state into an unrelated mutation.
+	states := map[string]ServiceState{
+		"FICollector": {
+			Account: identities.CollectorSender.Account,
+		},
+		"FISender": {
+			Account: identities.CollectorSender.Account,
+		},
+		"FICRLRefresher": {
+			Account: identities.CRLRefresher.Account,
+		},
+		"FIUSNReader": {
+			Account: identities.USNReader.Account,
+		},
+		"FIObjReader": {
+			Account: identities.ObjReader.Account,
+		},
+	}
+
+	discoverIdentityBoundary(
+		report,
+		states,
+	)
+
+	discoverAccountRights(
+		report,
+		states,
+	)
+
+	report.addCheck(
+		checkInfo,
+		"FI desired identity security discovery",
+		"direct local-group membership and LSA account-right discovery executed independently of FI service presence",
+	)
+}
 func discoverServiceIdentityRelationships(
 	report *Report,
 	states map[string]ServiceState,
@@ -1902,6 +2028,7 @@ func Discover() Report {
 	discoverServices(&report)
 	discoverActiveDirectory(&report)
 	discoverGMSAs(&report)
+	discoverDesiredIdentitySecurityBoundary(&report)
 	discoverBrokerPipes(&report)
 	discoverACLs(&report)
 	discoverBinaries(&report)

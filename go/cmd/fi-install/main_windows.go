@@ -130,8 +130,12 @@ func main() {
 		return
 	}
 
-	if plan.Mode == "NEW INSTALL" ||
-		!inputs.Empty() {
+	approval1Required, _ :=
+		install.ApprovalRequirements(
+			plan,
+		)
+
+	if approval1Required {
 		if err := executeNewInstall(
 			report,
 			plan,
@@ -139,11 +143,32 @@ func main() {
 		); err != nil {
 			fmt.Fprintf(
 				os.Stderr,
-				"\nFI NEW INSTALL FAILED: %v\n",
+				"\nFI APPROVAL-1/2 INSTALL FAILED: %v\n",
 				err,
 			)
 			os.Exit(1)
 		}
+
+		writeFinalState()
+		return
+	}
+
+	if install.RequiresServer2016Approval2Controller(
+		plan,
+	) {
+		if err := executeLocalApproval2(
+			report,
+			plan,
+			inputs,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"\nFI LOCAL REPAIR FAILED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
 		writeFinalState()
 		return
 	}
@@ -175,7 +200,7 @@ func executeNewInstall(
 	)
 	if !approval1Required {
 		return fmt.Errorf(
-			"new-install plan does not contain an Approval 1 AD/PKI boundary",
+			"install plan does not contain an Approval 1 AD/PKI boundary",
 		)
 	}
 
@@ -252,6 +277,70 @@ func executeNewInstall(
 		inputs,
 		approval2,
 	)
+	return err
+}
+
+func executeLocalApproval2(
+	report install.Report,
+	plan install.InstallPlan,
+	inputs install.PlanInputs,
+) error {
+	approval1Required, approval2Required :=
+		install.ApprovalRequirements(
+			plan,
+		)
+
+	if approval1Required {
+		return fmt.Errorf(
+			"local repair path refuses a plan containing Approval 1 AD/PKI mutations",
+		)
+	}
+
+	if !approval2Required {
+		return fmt.Errorf(
+			"local repair path requires at least one Approval 2 mutation",
+		)
+	}
+
+	if !install.RequiresServer2016Approval2Controller(
+		plan,
+	) {
+		return fmt.Errorf(
+			"plan does not require the local Approval 2 repair controller",
+		)
+	}
+
+	fmt.Fprintln(
+		os.Stdout,
+		"",
+	)
+	fmt.Fprintln(
+		os.Stdout,
+		"Approval 1: NOT REQUIRED - authoritative discovery contains no AD/PKI mutations.",
+	)
+
+	approval2, err := install.PromptApproval2Boundary(
+		os.Stdin,
+		os.Stdout,
+		report,
+		plan,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"Approval 2 failed: %w",
+			err,
+		)
+	}
+
+	_, err =
+		install.ExecuteServer2016LocalApproval2Controller(
+			os.Stdout,
+			report,
+			plan,
+			inputs,
+			approval2,
+		)
+
 	return err
 }
 

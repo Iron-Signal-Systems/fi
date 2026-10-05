@@ -35,6 +35,7 @@ func reconcileFIRuntimeServices(
 		"FIUSNReader",
 		"FIObjReader",
 		"FICollector",
+		"FICRLRefresher",
 		"FISender",
 	} {
 		if !planTargetMutates(

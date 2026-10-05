@@ -1010,6 +1010,7 @@ func stopFIServicesForBinaryReplacement() (
 		"FICollector",
 		"FIUSNReader",
 		"FIObjReader",
+		"FICRLRefresher",
 		"FISender",
 	}
 
@@ -1133,6 +1134,7 @@ func startFIServicesFromSnapshot(
 		"FIUSNReader",
 		"FIObjReader",
 		"FICollector",
+		"FICRLRefresher",
 		"FISender",
 	} {
 		if !required[name] {
@@ -1219,6 +1221,7 @@ func stopFIServicesBestEffort() error {
 		"FICollector",
 		"FIUSNReader",
 		"FIObjReader",
+		"FICRLRefresher",
 		"FISender",
 	} {
 		service, err := manager.OpenService(

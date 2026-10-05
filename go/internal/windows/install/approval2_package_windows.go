@@ -315,6 +315,7 @@ func stopApproval2FIServicesForBinaryReplacement() (
 		"FICollector",
 		"FIUSNReader",
 		"FIObjReader",
+		"FICRLRefresher",
 		"FISender",
 	}
 
@@ -429,6 +430,7 @@ func stopApproval2ExistingFIServicesBestEffort() error {
 		"FICollector",
 		"FIUSNReader",
 		"FIObjReader",
+		"FICRLRefresher",
 		"FISender",
 	} {
 		service, err := manager.OpenService(

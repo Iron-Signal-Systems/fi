@@ -12,14 +12,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"unsafe"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/transportcrl"
 	"golang.org/x/sys/windows"
 )
 
-const approval1TransportCRLDestination = `C:\ProgramData\FI\pki\trust\fi-transport-ca.crl.pem`
+const approval1TransportCRLDestination = `C:\ProgramData\FI\pki\crl\fi-transport-ca.crl.pem`
 
 type approval1TransportTrustMaterial struct {
 	CRLDestinationPath         string
@@ -331,113 +331,15 @@ func certificateRawSHA256(
 func selectApproval1TransportCRLDistributionPoint(
 	distributionPoints []string,
 ) (string, error) {
-	supported := make(
-		[]string,
-		0,
-		len(distributionPoints),
+	return transportcrl.SelectDistributionPoint(
+		distributionPoints,
 	)
-
-	seen := make(
-		map[string]struct{},
-	)
-
-	for _, raw := range distributionPoints {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-
-		if !approval1SupportedCRLDistributionPoint(raw) {
-			continue
-		}
-
-		key := strings.ToLower(raw)
-		if _, found := seen[key]; found {
-			continue
-		}
-
-		seen[key] = struct{}{}
-		supported = append(
-			supported,
-			raw,
-		)
-	}
-
-	switch len(supported) {
-	case 0:
-		return "", errors.New(
-			"transport certificate does not contain a supported HTTP, HTTPS, or AD LDAP CRL distribution point",
-		)
-	case 1:
-		return supported[0], nil
-	default:
-		return "", fmt.Errorf(
-			"transport certificate contains %d supported CRL distribution points; FI refuses ambiguous automatic CRL source selection: %v",
-			len(supported),
-			supported,
-		)
-	}
 }
 
 func approval1SupportedCRLDistributionPoint(
 	raw string,
 ) bool {
-	parsed, err := url.Parse(
-		strings.TrimSpace(raw),
+	return transportcrl.SupportedDistributionPoint(
+		raw,
 	)
-	if err != nil {
-		return false
-	}
-
-	switch strings.ToLower(
-		strings.TrimSpace(parsed.Scheme),
-	) {
-	case "http", "https":
-		return strings.TrimSpace(parsed.Host) != ""
-
-	case "ldap":
-		// FI supports the AD CS CDP form used by enterprise templates:
-		// ldap:///DISTINGUISHED-NAME?certificateRevocationList?base?FILTER
-		//
-		// An empty host is intentional; the Approval-1 backend already owns a
-		// signed/sealed LDAP session to an authoritatively discovered writable
-		// domain controller. The later CRL acquisition step will use that
-		// authenticated session rather than anonymous LDAP URL retrieval.
-		if strings.TrimSpace(parsed.Path) == "" || parsed.Path == "/" {
-			return false
-		}
-
-		queryParts := strings.Split(
-			parsed.RawQuery,
-			"?",
-		)
-		if len(queryParts) < 2 {
-			return false
-		}
-
-		attributeFound := false
-		for _, attribute := range strings.Split(
-			queryParts[0],
-			",",
-		) {
-			if strings.EqualFold(
-				strings.TrimSpace(attribute),
-				"certificateRevocationList",
-			) {
-				attributeFound = true
-				break
-			}
-		}
-		if !attributeFound {
-			return false
-		}
-
-		return strings.EqualFold(
-			strings.TrimSpace(queryParts[1]),
-			"base",
-		)
-
-	default:
-		return false
-	}
 }

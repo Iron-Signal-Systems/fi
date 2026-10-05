@@ -23,6 +23,7 @@ var approval2FIServiceStabilityOrder = []string{
 	"FIUSNReader",
 	"FIObjReader",
 	"FICollector",
+	"FICRLRefresher",
 	"FISender",
 }
 

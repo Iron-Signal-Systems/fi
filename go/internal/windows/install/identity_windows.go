@@ -12,6 +12,7 @@ import (
 )
 
 type DesiredFIIdentities struct {
+	CRLRefresher    DesiredFIIdentity
 	CollectorSender DesiredFIIdentity
 	ObjReader       DesiredFIIdentity
 	USNReader       DesiredFIIdentity
@@ -60,6 +61,14 @@ func DeriveDesiredFIIdentities(
 	if err != nil {
 		return DesiredFIIdentities{}, err
 	}
+	crlRefresher, err := desiredFIIdentity(
+		domainNetBIOS,
+		"FICRLRefresher",
+		"gFI-CRL-"+token+"$",
+	)
+	if err != nil {
+		return DesiredFIIdentities{}, err
+	}
 	usn, err := desiredFIIdentity(
 		domainNetBIOS,
 		"FIUSNReader",
@@ -78,6 +87,7 @@ func DeriveDesiredFIIdentities(
 	}
 
 	return DesiredFIIdentities{
+		CRLRefresher:    crlRefresher,
 		CollectorSender: collector,
 		ObjReader:       obj,
 		USNReader:       usn,
@@ -144,6 +154,7 @@ func desiredFIIdentityList(
 ) []DesiredFIIdentity {
 	return []DesiredFIIdentity{
 		identities.CollectorSender,
+		identities.CRLRefresher,
 		identities.USNReader,
 		identities.ObjReader,
 	}

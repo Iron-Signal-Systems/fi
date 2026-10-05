@@ -24,12 +24,14 @@ func TestInstallPlanModeAuthoritativeAbsenceIsNewInstall(
 			{Name: "FICollector", Presence: presenceAbsent},
 			{Name: "FIUSNReader", Presence: presenceAbsent},
 			{Name: "FIObjReader", Presence: presenceAbsent},
+			{Name: "FICRLRefresher", Presence: presenceAbsent},
 			{Name: "FISender", Presence: presenceAbsent},
 		},
 		Binaries: []BinaryState{
 			{Name: "FICollector", Presence: presenceAbsent},
 			{Name: "FIUSNReader", Presence: presenceAbsent},
 			{Name: "FIObjReader", Presence: presenceAbsent},
+			{Name: "FICRLRefresher", Presence: presenceAbsent},
 			{Name: "FISender", Presence: presenceAbsent},
 		},
 	}
@@ -55,12 +57,14 @@ func TestInstallPlanModeUnknownDoesNotBecomeNewInstall(
 			{Name: "FICollector", Presence: presenceUnknown},
 			{Name: "FIUSNReader", Presence: presenceAbsent},
 			{Name: "FIObjReader", Presence: presenceAbsent},
+			{Name: "FICRLRefresher", Presence: presenceAbsent},
 			{Name: "FISender", Presence: presenceAbsent},
 		},
 		Binaries: []BinaryState{
 			{Name: "FICollector", Presence: presenceAbsent},
 			{Name: "FIUSNReader", Presence: presenceAbsent},
 			{Name: "FIObjReader", Presence: presenceAbsent},
+			{Name: "FICRLRefresher", Presence: presenceAbsent},
 			{Name: "FISender", Presence: presenceAbsent},
 		},
 	}
@@ -226,6 +230,7 @@ func TestPlanServicesAuthoritativeAbsenceCreates(
 			{Name: "FICollector", Presence: presenceAbsent},
 			{Name: "FIUSNReader", Presence: presenceAbsent},
 			{Name: "FIObjReader", Presence: presenceAbsent},
+			{Name: "FICRLRefresher", Presence: presenceAbsent},
 			{Name: "FISender", Presence: presenceAbsent},
 		},
 	}
@@ -252,9 +257,9 @@ func TestPlanServicesAuthoritativeAbsenceCreates(
 			)
 		}
 	}
-	if creates != 4 {
+	if creates != 5 {
 		t.Fatalf(
-			"SCM CREATE actions=%d, want 4",
+			"SCM CREATE actions=%d, want 5",
 			creates,
 		)
 	}
@@ -278,6 +283,7 @@ func TestPlanServicesUnknownBlocksInsteadOfCreate(
 			{Name: "FICollector", Presence: presenceUnknown},
 			{Name: "FIUSNReader", Presence: presenceAbsent},
 			{Name: "FIObjReader", Presence: presenceAbsent},
+			{Name: "FICRLRefresher", Presence: presenceAbsent},
 			{Name: "FISender", Presence: presenceAbsent},
 		},
 	}
@@ -374,6 +380,12 @@ func TestPlanPackageUnknownInstalledStateBlocksInsteadOfCreateOrReconcile(
 			{
 				Name:     "FIObjReader",
 				Path:     `C:\Program Files\FI\fi-obj.exe`,
+				Presence: presenceAbsent,
+				SHA256:   notKnown,
+			},
+			{
+				Name:     "FICRLRefresher",
+				Path:     `C:\Program Files\FI\fi-crl-refresh.exe`,
 				Presence: presenceAbsent,
 				SHA256:   notKnown,
 			},

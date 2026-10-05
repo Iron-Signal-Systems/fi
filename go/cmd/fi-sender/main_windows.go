@@ -11,7 +11,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -221,23 +220,6 @@ func hasExtendedKeyUsage(
 	return false
 }
 
-func loadTransportCRL(path string) (*x509.RevocationList, error) {
-	encoded, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read FI transport CRL: %w", err)
-	}
-
-	der := encoded
-	if block, _ := pem.Decode(encoded); block != nil {
-		der = block.Bytes
-	}
-	crl, err := x509.ParseRevocationList(der)
-	if err != nil {
-		return nil, fmt.Errorf("parse FI transport CRL: %w", err)
-	}
-	return crl, nil
-}
-
 func prepareOutboundFrame(
 	config senderConfig,
 ) (transportsender.OutboundFrame, error) {
@@ -341,11 +323,12 @@ func runSender(
 		return result, err
 	}
 
-	crl, err := loadTransportCRL(config.TransportCRLPath)
+	crl, err := loadAndValidateTransportCRL(
+		config.TransportCRLPath,
+		issuer,
+		time.Now(),
+	)
 	if err != nil {
-		return result, err
-	}
-	if err := validateTransportCRL(crl, issuer, time.Now()); err != nil {
 		return result, err
 	}
 
@@ -439,7 +422,7 @@ func runSenderQueue(ctx context.Context, config senderConfig) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if !errors.Is(recoveryErr, transportsender.ErrRetryableTransport) {
+			if !retryableSenderTransportState(recoveryErr) {
 				return fmt.Errorf("FI queued recovery fail-stopped: %w", recoveryErr)
 			}
 			fmt.Fprintf(os.Stderr, "ERROR: FI queued recovery transport failed: %v\n", recoveryErr)
@@ -511,7 +494,7 @@ func runSenderQueue(ctx context.Context, config senderConfig) error {
 func queuedTransportFailureRetryable(result senderResult, err error) bool {
 	return err != nil &&
 		result.AcknowledgementOutcome == "" &&
-		errors.Is(err, transportsender.ErrRetryableTransport)
+		retryableSenderTransportState(err)
 }
 
 func retryableSenderNetworkError(err error) bool {
@@ -722,41 +705,6 @@ func validateSourceTransportIdentity(
 	}
 	if !hasExtendedKeyUsage(certificate, x509.ExtKeyUsageClientAuth) {
 		return errors.New("FI source transport certificate does not permit TLS client authentication")
-	}
-	return nil
-}
-
-func validateTransportCRL(
-	crl *x509.RevocationList,
-	issuer *x509.Certificate,
-	currentTime time.Time,
-) error {
-	if crl == nil {
-		return errors.New("FI transport CRL is required")
-	}
-	if issuer == nil {
-		return errors.New("FI transport issuer is required")
-	}
-	if currentTime.IsZero() {
-		return errors.New("current time is required for FI transport CRL validation")
-	}
-	if err := crl.CheckSignatureFrom(issuer); err != nil {
-		return fmt.Errorf("FI transport CRL signature validation failed: %w", err)
-	}
-	if crl.ThisUpdate.After(currentTime) {
-		return fmt.Errorf(
-			"FI transport CRL is not yet valid: thisUpdate=%s",
-			crl.ThisUpdate.UTC().Format(time.RFC3339),
-		)
-	}
-	if crl.NextUpdate.IsZero() {
-		return errors.New("FI transport CRL nextUpdate is required")
-	}
-	if !crl.NextUpdate.After(currentTime) {
-		return fmt.Errorf(
-			"FI transport CRL is expired: nextUpdate=%s",
-			crl.NextUpdate.UTC().Format(time.RFC3339),
-		)
 	}
 	return nil
 }

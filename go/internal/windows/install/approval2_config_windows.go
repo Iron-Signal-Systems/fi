@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -19,7 +18,7 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
-	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
+	"github.com/Iron-Signal-Systems/fi/go/internal/transportcrl"
 	"golang.org/x/sys/windows"
 )
 
@@ -627,17 +626,11 @@ func createApproval2TransportTrustFilesWithRename(
 		)
 	}
 
-	crlPEM := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "X509 CRL",
-			Bytes: crlDER,
-		},
+	crlPEM, err := transportcrl.EncodeCanonicalPEM(
+		crlDER,
 	)
-
-	if len(crlPEM) == 0 {
-		return nil, errors.New(
-			"encode canonical transport CRL PEM returned no data",
-		)
+	if err != nil {
+		return nil, err
 	}
 
 	crlStage := crlPath +
@@ -855,48 +848,12 @@ func verifyApproval2PersistedCRL(
 	expectedDER []byte,
 	expectedSHA256 string,
 ) error {
-	value, err := receivertrust.LoadCRL(
+	return transportcrl.VerifyPersistedPEM(
 		path,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"verify persisted transport CRL %s: %w",
-			path,
-			err,
-		)
-	}
-
-	if !bytes.Equal(
-		value.Raw,
 		expectedDER,
-	) {
-		return fmt.Errorf(
-			"persisted transport CRL %s does not reproduce the approved DER",
-			path,
-		)
-	}
-
-	digest := sha256.Sum256(
-		value.Raw,
-	)
-	observed := hex.EncodeToString(
-		digest[:],
-	)
-
-	if !strings.EqualFold(
-		observed,
 		expectedSHA256,
-	) {
-		return fmt.Errorf(
-			"persisted transport CRL SHA256=%s does not match approved SHA256=%s",
-			observed,
-			expectedSHA256,
-		)
-	}
-
-	return nil
+	)
 }
-
 func writeApproval2ExclusiveFile(
 	path string,
 	value []byte,
