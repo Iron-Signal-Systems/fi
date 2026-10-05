@@ -243,3 +243,27 @@ func TestParseInvocationExplicitApplyJailSubstrate(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyIdentities(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-identities",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-identities" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}

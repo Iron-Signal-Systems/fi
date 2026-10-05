@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-jail-roots", "apply-jail-substrate", "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
+	case "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities] [configuration-file]",
 			)
 		}
 
@@ -229,6 +229,23 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI jail substrate apply complete.",
+		)
+
+	case "apply-identities":
+		if err := backendinstall.ApplyIdentities(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI IDENTITY APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI jail-local identity apply complete.",
 		)
 
 	case "apply-jail-roots":
