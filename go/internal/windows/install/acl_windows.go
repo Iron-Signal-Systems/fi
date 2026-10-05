@@ -498,12 +498,119 @@ func supplementACLDiscoveryForPlan(
 		"read-only DACL discovery used the proposed operational paths and retained FI trust roots independently of SCM service presence",
 	)
 }
+func aliasACLStateForSemanticContract(
+	report *Report,
+	sourceLabel string,
+	aliasLabel string,
+	expectedPath string,
+) {
+	if report == nil {
+		return
+	}
+
+	if _, found :=
+		aclByLabel(
+			report,
+			aliasLabel,
+		); found {
+		return
+	}
+
+	state, found :=
+		aclByLabel(
+			report,
+			sourceLabel,
+		)
+	if !found {
+		return
+	}
+
+	sourcePath :=
+		strings.TrimSpace(
+			state.Path,
+		)
+
+	expectedPath =
+		strings.TrimSpace(
+			expectedPath,
+		)
+
+	if sourcePath == "" ||
+		expectedPath == "" {
+		return
+	}
+
+	if !strings.EqualFold(
+		filepath.Clean(
+			sourcePath,
+		),
+		filepath.Clean(
+			expectedPath,
+		),
+	) {
+		return
+	}
+
+	state.Label =
+		aliasLabel
+
+	report.ACLs = append(
+		report.ACLs,
+		state,
+	)
+}
+
+func supplementActiveCRLRefresherTrustConfigACLDiscovery(
+	report *Report,
+) {
+	if report == nil {
+		return
+	}
+
+	activeCRLPath :=
+		strings.TrimSpace(
+			report.Trust.TransportCRLPath,
+		)
+
+	expectedCRLPath :=
+		strings.TrimSpace(
+			approval1TransportCRLDestination,
+		)
+
+	if activeCRLPath == "" ||
+		expectedCRLPath == "" {
+		return
+	}
+
+	if !strings.EqualFold(
+		filepath.Clean(
+			activeCRLPath,
+		),
+		filepath.Clean(
+			expectedCRLPath,
+		),
+	) {
+		return
+	}
+
+	aliasACLStateForSemanticContract(
+		report,
+		"FI transport trust config",
+		"FI CRL refresher trust config file",
+		crlRefresherTrustConfigPath,
+	)
+}
+
 func discoverACLs(report *Report) {
 	if !discoverACLStates(
 		report,
 	) {
 		return
 	}
+
+	supplementActiveCRLRefresherTrustConfigACLDiscovery(
+		report,
+	)
 
 	evaluateDesiredACLContracts(
 		report,
