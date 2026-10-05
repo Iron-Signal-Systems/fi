@@ -195,3 +195,51 @@ func TestParseInvocationExplicitApplyZFSHierarchy(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyJailRoots(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-jail-roots",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-jail-roots" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
+
+func TestParseInvocationExplicitApplyJailSubstrate(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-jail-substrate",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-jail-substrate" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}

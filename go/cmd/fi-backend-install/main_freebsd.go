@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
+	case "apply-jail-roots", "apply-jail-substrate", "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots] [configuration-file]",
 			)
 		}
 
@@ -212,6 +212,40 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI ZFS hierarchy apply complete.",
+		)
+
+	case "apply-jail-substrate":
+		if err := backendinstall.ApplyJailSubstrate(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI JAIL SUBSTRATE APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI jail substrate apply complete.",
+		)
+
+	case "apply-jail-roots":
+		if err := backendinstall.ApplyJailRoots(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI JAIL ROOT APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI production jail-root apply complete.",
 		)
 
 	case "preflight":
