@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -242,6 +243,7 @@ func ApplyJailSubstrate(config Config) error {
 		config,
 		probe,
 		systemJailMutator{},
+		release,
 		specs,
 		archivePath,
 	)
@@ -324,6 +326,7 @@ func applyJailSubstrate(
 	config Config,
 	probe hostProbe,
 	mutator systemJailMutator,
+	release string,
 	specs []jailDatasetSpec,
 	archivePath string,
 ) error {
@@ -346,7 +349,17 @@ func applyJailSubstrate(
 
 	switch state {
 	case jailDatasetOwnedMatch:
-		// Template is already complete.
+		if err := validateTemplateAnchors(
+			template.Mountpoint,
+		); err != nil {
+			return err
+		}
+
+		if err := validateTemplateFilesystem(
+			template.Mountpoint,
+		); err != nil {
+			return err
+		}
 
 	case jailDatasetAbsent:
 		if archivePath == "" {
@@ -392,6 +405,40 @@ func applyJailSubstrate(
 		}
 
 		if err := validateTemplateAnchors(
+			writable.Mountpoint,
+		); err != nil {
+			return err
+		}
+
+		if err := mutator.UpdateTemplateDistset(
+			writable.Mountpoint,
+			release,
+		); err != nil {
+			return fmt.Errorf(
+				"update traditional FreeBSD jail template to current patch level: %w",
+				err,
+			)
+		}
+
+		if err := validateTemplateAnchors(
+			writable.Mountpoint,
+		); err != nil {
+			return fmt.Errorf(
+				"validate jail template after FreeBSD update: %w",
+				err,
+			)
+		}
+
+		if err := mutator.PrepareTemplateFilesystem(
+			writable.Mountpoint,
+		); err != nil {
+			return fmt.Errorf(
+				"prepare required jail template filesystem structure: %w",
+				err,
+			)
+		}
+
+		if err := validateTemplateFilesystem(
 			writable.Mountpoint,
 		); err != nil {
 			return err
@@ -1212,6 +1259,194 @@ func validateTemplateAnchors(root string) error {
 	return nil
 }
 
+func prepareExactDirectory(
+	target string,
+	uid int,
+	gid int,
+	mode os.FileMode,
+) error {
+	info, err := os.Lstat(target)
+
+	switch {
+	case err == nil:
+		if info.Mode()&os.ModeSymlink != 0 ||
+			!info.IsDir() {
+			return fmt.Errorf(
+				"required template path is not an exact directory: %s",
+				target,
+			)
+		}
+
+		exact, err := validateExactDirectory(
+			target,
+			uint64(uid),
+			uint64(gid),
+			mode,
+		)
+		if err != nil {
+			return err
+		}
+
+		if !exact {
+			return fmt.Errorf(
+				"required template directory exists with unexpected metadata: %s",
+				target,
+			)
+		}
+
+		return nil
+
+	case os.IsNotExist(err):
+
+	default:
+		return fmt.Errorf(
+			"inspect required template directory %s: %w",
+			target,
+			err,
+		)
+	}
+
+	parent := path.Dir(target)
+
+	parentInfo, err := os.Lstat(parent)
+	if err != nil {
+		return fmt.Errorf(
+			"inspect required template directory parent %s: %w",
+			parent,
+			err,
+		)
+	}
+
+	if parentInfo.Mode()&os.ModeSymlink != 0 ||
+		!parentInfo.IsDir() {
+		return fmt.Errorf(
+			"required template directory parent is not an exact directory: %s",
+			parent,
+		)
+	}
+
+	if err := os.Mkdir(
+		target,
+		mode,
+	); err != nil {
+		return fmt.Errorf(
+			"create required template directory %s: %w",
+			target,
+			err,
+		)
+	}
+
+	if err := os.Chown(
+		target,
+		uid,
+		gid,
+	); err != nil {
+		return fmt.Errorf(
+			"chown required template directory %s: %w",
+			target,
+			err,
+		)
+	}
+
+	if err := os.Chmod(
+		target,
+		mode,
+	); err != nil {
+		return fmt.Errorf(
+			"chmod required template directory %s: %w",
+			target,
+			err,
+		)
+	}
+
+	exact, err := validateExactDirectory(
+		target,
+		uint64(uid),
+		uint64(gid),
+		mode,
+	)
+	if err != nil {
+		return err
+	}
+
+	if !exact {
+		return fmt.Errorf(
+			"new required template directory did not verify: %s",
+			target,
+		)
+	}
+
+	return nil
+}
+
+func validateExactDirectory(
+	target string,
+	uid uint64,
+	gid uint64,
+	mode os.FileMode,
+) (bool, error) {
+	info, err := os.Lstat(target)
+
+	switch {
+	case err == nil:
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 ||
+		!info.IsDir() {
+		return false, nil
+	}
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf(
+			"unsupported stat result for template directory %s",
+			target,
+		)
+	}
+
+	if uint64(stat.Uid) != uid ||
+		uint64(stat.Gid) != gid ||
+		info.Mode().Perm() != mode.Perm() {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func validateTemplateFilesystem(root string) error {
+	target := path.Join(
+		root,
+		"usr/local/etc",
+	)
+
+	exact, err := validateExactDirectory(
+		target,
+		0,
+		0,
+		0o755,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"validate required template directory %s: %w",
+			target,
+			err,
+		)
+	}
+
+	if !exact {
+		return fmt.Errorf(
+			"required FreeBSD template directory does not match root:wheel 0755 contract: %s",
+			target,
+		)
+	}
+
+	return nil
+}
+
 // -----------------------------------------------------------------------------
 // System mutation
 // -----------------------------------------------------------------------------
@@ -1321,6 +1556,43 @@ func (mutator systemJailMutator) ExtractBase(
 		archive,
 		"-C",
 		destination,
+	)
+}
+
+func (mutator systemJailMutator) UpdateTemplateDistset(
+	root string,
+	release string,
+) error {
+	commandPath, err := systemCommandPath(
+		"freebsd-update",
+	)
+	if err != nil {
+		return err
+	}
+
+	return mutator.runChecked(
+		commandPath,
+		"-b",
+		root,
+		"--currently-running",
+		release,
+		"--not-running-from-cron",
+		"fetch",
+		"install",
+	)
+}
+
+func (mutator systemJailMutator) PrepareTemplateFilesystem(
+	root string,
+) error {
+	return prepareExactDirectory(
+		path.Join(
+			root,
+			"usr/local/etc",
+		),
+		0,
+		0,
+		0o755,
 	)
 }
 

@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
+	case "apply-directories", "check-host-update", "inspect-host-update", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|check-host-update|inspect-host-update] [configuration-file]",
 			)
 		}
 
@@ -229,6 +229,75 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI jail substrate apply complete.",
+		)
+
+	case "inspect-host-update":
+		report, err := backendinstall.InspectHostUpdate(
+			config,
+		)
+		if err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST UPDATE INSPECTION BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		if err := report.WriteText(
+			os.Stdout,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST UPDATE REPORT FAILED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+	case "check-host-update":
+		report, err := backendinstall.CheckHostUpdate(
+			config,
+		)
+		if err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST UPDATE CHECK BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		if err := report.WriteText(
+			os.Stdout,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST UPDATE REPORT FAILED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		if !report.Current {
+			os.Exit(2)
+		}
+
+	case "apply-directories":
+		if err := backendinstall.ApplyDirectories(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI DIRECTORY APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI filesystem directory apply complete.",
 		)
 
 	case "apply-identities":

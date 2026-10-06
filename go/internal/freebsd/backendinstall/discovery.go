@@ -380,6 +380,8 @@ func (systemHostProbe) Lstat(path string) (bool, error) {
 
 func systemCommandPath(name string) (string, error) {
 	switch name {
+	case "freebsd-update":
+		return "/usr/sbin/freebsd-update", nil
 	case "freebsd-version":
 		return "/bin/freebsd-version", nil
 	case "getent":
@@ -390,6 +392,8 @@ func systemCommandPath(name string) (string, error) {
 		return "/sbin/ifconfig", nil
 	case "jls":
 		return "/usr/sbin/jls", nil
+	case "pkg":
+		return "/usr/local/sbin/pkg", nil
 	case "uname":
 		return "/usr/bin/uname", nil
 	case "zfs":

@@ -267,3 +267,75 @@ func TestParseInvocationExplicitApplyIdentities(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyDirectories(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-directories",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-directories" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
+
+func TestParseInvocationExplicitInspectHostUpdate(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"inspect-host-update",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "inspect-host-update" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
+
+func TestParseInvocationExplicitCheckHostUpdate(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"check-host-update",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "check-host-update" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
