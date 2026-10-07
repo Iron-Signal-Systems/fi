@@ -418,3 +418,65 @@ func TestParseInvocationExplicitVerifySORPostgreSQL(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyDevfs(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-devfs",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-devfs" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifyDevfs(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"verify-devfs",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "verify-devfs" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}

@@ -380,6 +380,8 @@ func (systemHostProbe) Lstat(path string) (bool, error) {
 
 func systemCommandPath(name string) (string, error) {
 	switch name {
+	case "devfs":
+		return "/sbin/devfs", nil
 	case "freebsd-update":
 		return "/usr/sbin/freebsd-update", nil
 	case "freebsd-version":

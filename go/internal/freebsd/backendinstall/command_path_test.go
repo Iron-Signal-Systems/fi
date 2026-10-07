@@ -4,6 +4,7 @@ import "testing"
 
 func TestSystemCommandPath(t *testing.T) {
 	expected := map[string]string{
+		"devfs":           "/sbin/devfs",
 		"freebsd-version": "/bin/freebsd-version",
 		"getent":          "/usr/bin/getent",
 		"hostname":        "/bin/hostname",
