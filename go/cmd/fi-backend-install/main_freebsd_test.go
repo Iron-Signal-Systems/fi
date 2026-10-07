@@ -370,3 +370,51 @@ func TestParseInvocationExplicitApplySORPackage(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplySORPostgreSQL(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-sor-postgresql",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-sor-postgresql" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifySORPostgreSQL(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"verify-sor-postgresql",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "verify-sor-postgresql" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}

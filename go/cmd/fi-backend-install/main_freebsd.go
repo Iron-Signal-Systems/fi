@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-directories", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate":
+	case "apply-directories", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-sor-postgresql":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|check-host-update|inspect-host-update] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|verify-sor-postgresql|check-host-update|inspect-host-update] [configuration-file]",
 			)
 		}
 
@@ -282,6 +282,40 @@ func main() {
 		if !report.Current {
 			os.Exit(2)
 		}
+
+	case "apply-sor-postgresql":
+		if err := backendinstall.ApplySORPostgreSQL(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI SOR POSTGRESQL POLICY APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI System-of-Record PostgreSQL policy apply complete.",
+		)
+
+	case "verify-sor-postgresql":
+		if err := backendinstall.VerifySORPostgreSQL(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI SOR POSTGRESQL POLICY VERIFY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI System-of-Record PostgreSQL policy verification complete.",
+		)
 
 	case "apply-sor-package":
 		if err := backendinstall.ApplySORPackage(
