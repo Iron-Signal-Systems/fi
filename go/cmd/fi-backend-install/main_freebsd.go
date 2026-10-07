@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-devfs", "apply-directories", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-sor-postgresql":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|check-host-update|inspect-host-update] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|check-host-update|inspect-host-update] [configuration-file]",
 			)
 		}
 
@@ -315,6 +315,40 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI System-of-Record PostgreSQL policy verification complete.",
+		)
+
+	case "apply-host-files":
+		if err := backendinstall.ApplyHostFiles(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST-FILE APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD host-file apply complete.",
+		)
+
+	case "verify-host-files":
+		if err := backendinstall.VerifyHostFiles(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST-FILE VERIFY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD host-file verification complete.",
 		)
 
 	case "apply-devfs":

@@ -480,3 +480,65 @@ func TestParseInvocationExplicitVerifyDevfs(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyHostFiles(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-host-files",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-host-files" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifyHostFiles(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"verify-host-files",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "verify-host-files" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
