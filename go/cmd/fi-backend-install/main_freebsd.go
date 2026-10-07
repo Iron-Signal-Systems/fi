@@ -92,7 +92,7 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-directories", "check-host-update", "inspect-host-update", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-zfs-hierarchy", "apply-zfs-root", "preflight", "validate":
+	case "apply-directories", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +107,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|check-host-update|inspect-host-update] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|check-host-update|inspect-host-update] [configuration-file]",
 			)
 		}
 
@@ -282,6 +282,23 @@ func main() {
 		if !report.Current {
 			os.Exit(2)
 		}
+
+	case "apply-sor-package":
+		if err := backendinstall.ApplySORPackage(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI SOR PACKAGE APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI SOR PostgreSQL package apply complete.",
+		)
 
 	case "apply-directories":
 		if err := backendinstall.ApplyDirectories(

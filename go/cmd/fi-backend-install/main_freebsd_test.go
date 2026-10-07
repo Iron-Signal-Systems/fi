@@ -339,3 +339,34 @@ func TestParseInvocationExplicitCheckHostUpdate(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplySORPackage(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-sor-package",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-sor-package" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
