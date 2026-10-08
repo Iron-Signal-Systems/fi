@@ -590,3 +590,65 @@ func TestParseInvocationExplicitVerifyNetwork(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyPF(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-pf",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-pf" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifyPF(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"verify-pf",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "verify-pf" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
