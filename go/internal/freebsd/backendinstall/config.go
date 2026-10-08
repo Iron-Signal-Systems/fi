@@ -95,6 +95,7 @@ var allowedKeys = map[string]struct{}{
 	"FI_SOR_DB_WORK_JAIL_IF":       {},
 	"FI_SOR_POSTGRES_HOST":         {},
 	"FI_WORK_BRIDGE":               {},
+	"FI_WORK_HOST_ADDRESS":         {},
 	"FI_WORK_NETWORK":              {},
 	"FI_ZPOOL":                     {},
 }
@@ -157,6 +158,7 @@ var requiredKeys = []string{
 	"FI_SOR_DB_WORK_JAIL_IF",
 	"FI_SOR_POSTGRES_HOST",
 	"FI_WORK_BRIDGE",
+	"FI_WORK_HOST_ADDRESS",
 	"FI_WORK_NETWORK",
 	"FI_ZPOOL",
 }
@@ -877,6 +879,30 @@ func validateNetworks(config Config) error {
 		return err
 	}
 
+	workHost, err := parseIPv4Prefix(
+		"FI_WORK_HOST_ADDRESS",
+		config.Value("FI_WORK_HOST_ADDRESS"),
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	if workHost.Masked() != workNetwork {
+		return fmt.Errorf(
+			"FI_WORK_HOST_ADDRESS does not use FI_WORK_NETWORK prefix",
+		)
+	}
+
+	if err := requireAddressInNetwork(
+		"FI_WORK_NETWORK",
+		workNetwork,
+		"FI_WORK_HOST_ADDRESS",
+		workHost.Addr(),
+	); err != nil {
+		return err
+	}
+
 	addressContracts := []struct {
 		key     string
 		network netip.Prefix
@@ -891,7 +917,8 @@ func validateNetworks(config Config) error {
 	}
 
 	seen := map[netip.Addr]string{
-		mgmtGateway: "FI_MGMT_GATEWAY",
+		mgmtGateway:     "FI_MGMT_GATEWAY",
+		workHost.Addr(): "FI_WORK_HOST_ADDRESS",
 	}
 
 	for _, contract := range addressContracts {

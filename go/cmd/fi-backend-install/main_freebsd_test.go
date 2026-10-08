@@ -542,3 +542,51 @@ func TestParseInvocationExplicitVerifyHostFiles(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationExplicitApplyNetwork(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-network",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-network" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifyNetwork(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"verify-network",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "verify-network" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+}
