@@ -167,6 +167,19 @@ func VerifyHostFiles(
 	return nil
 }
 
+func exactManagedFileMode(
+	actual os.FileMode,
+	expected os.FileMode,
+) bool {
+	if actual.Perm() != expected.Perm() {
+		return false
+	}
+
+	special := os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+
+	return actual&special == 0
+}
+
 func classifyHostFile(
 	spec hostFileSpec,
 ) hostFileState {
@@ -213,7 +226,10 @@ func classifyHostFile(
 
 	if uint64(stat.Uid) != spec.UID ||
 		uint64(stat.Gid) != spec.GID ||
-		info.Mode().Perm() != spec.Mode.Perm() ||
+		!exactManagedFileMode(
+			info.Mode(),
+			spec.Mode,
+		) ||
 		uint64(stat.Nlink) != 1 {
 		return hostFileOwnedDrift
 	}

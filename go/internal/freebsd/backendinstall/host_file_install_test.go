@@ -359,3 +359,55 @@ func TestRenderHostFileAssetRejectsUnknownToken(t *testing.T) {
 		)
 	}
 }
+
+func TestExactManagedFileMode(t *testing.T) {
+	expected := os.FileMode(0o644)
+
+	if !exactManagedFileMode(
+		expected,
+		expected,
+	) {
+		t.Fatal(
+			"exact mode rejected",
+		)
+	}
+
+	cases := []struct {
+		name string
+		mode os.FileMode
+	}{
+		{
+			name: "setuid",
+			mode: expected | os.ModeSetuid,
+		},
+		{
+			name: "setgid",
+			mode: expected | os.ModeSetgid,
+		},
+		{
+			name: "sticky",
+			mode: expected | os.ModeSticky,
+		},
+		{
+			name: "permission drift",
+			mode: 0o600,
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(
+			test.name,
+			func(t *testing.T) {
+				if exactManagedFileMode(
+					test.mode,
+					expected,
+				) {
+					t.Fatalf(
+						"mode %v unexpectedly accepted",
+						test.mode,
+					)
+				}
+			},
+		)
+	}
+}
