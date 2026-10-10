@@ -43,6 +43,42 @@ release name is the same.
 
 ---
 
+## Native installer mutation profile
+
+Windows runtime characterization/Gate 1 acceptance and native installer mutation
+acceptance are related but distinct boundaries.
+
+The native installer currently recognizes exact discovery profiles for:
+
+```text
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
+```
+
+However, the current integrated installer prerequisite also requires the
+FIObjReader exact direct-right mutation contract to be enabled for the exact
+build.
+
+At the current installer commit:
+
+| Windows Server | Build | Installer desired-state mutation |
+|---|---:|---|
+| 2016 | 14393 | Enabled |
+| 2019 | 17763 | Enabled |
+| 2022 | 20348 | Fail-closed: FIObjReader mutation acceptance not enabled |
+| 2025 | 26100 | Fail-closed: FIObjReader mutation acceptance not enabled |
+
+This does not revoke or weaken the existing Gate 1 runtime characterization for
+Server 2022/2025. It means only that the current native installer is not yet
+authorized to perform the complete integrated mutation contract on those exact
+builds.
+
+See `docs/WINDOWS-INSTALLER.md`.
+
+---
+
 ## Common split-privilege architecture
 
 The accepted Gate 1 USN boundary uses the two service identities below.
