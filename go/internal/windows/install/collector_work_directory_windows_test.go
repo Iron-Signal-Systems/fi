@@ -334,3 +334,94 @@ func TestPlannedACLTargetsIncludeCollectorWorkDirectory(
 		"collector work directory missing from planned ACL targets",
 	)
 }
+
+
+func TestApproval2OperationalDirectoryPathsIncludeGenerationRawRoot(
+    t *testing.T,
+) {
+    t.Parallel()
+
+    root := t.TempDir()
+    spoolDir := filepath.Join(root, "spool")
+
+    proposal := ConfigState{
+        Path:     filepath.Join(root, "config", "fi.conf"),
+        SpoolDir: spoolDir,
+        StageDir: filepath.Join(root, "stage"),
+        StateDir: filepath.Join(root, "state"),
+    }
+
+    paths, err := approval2OperationalDirectoryPaths(
+        proposal,
+        approval1PKIHandoff{},
+    )
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    want := filepath.Join(root, "generation-raw")
+
+    for _, path := range paths {
+        if strings.EqualFold(
+            filepath.Clean(path),
+            filepath.Clean(want),
+        ) {
+            return
+        }
+    }
+
+    t.Fatalf(
+        "raw generation root %q absent from installer directories: %v",
+        want,
+        paths,
+    )
+}
+
+func TestPlanACLsIncludesRawAndParentACLTargets(
+    t *testing.T,
+) {
+    t.Parallel()
+
+    root := t.TempDir()
+    spoolDir := filepath.Join(root, "spool")
+
+    report := Report{
+        Config: ConfigState{
+            Path:     filepath.Join(root, "config", "fi.conf"),
+            SpoolDir: spoolDir,
+            StageDir: filepath.Join(root, "stage"),
+            StateDir: filepath.Join(root, "state"),
+        },
+    }
+
+    var plan InstallPlan
+    planACLs(&plan, report)
+
+    required := []string{
+        root,
+        filepath.Join(root, "generation-raw"),
+    }
+
+    for _, want := range required {
+        found := false
+
+        for _, action := range plan.Actions {
+            if action.Authority == "ACL" &&
+                strings.EqualFold(
+                    filepath.Clean(action.Target),
+                    filepath.Clean(want),
+                ) &&
+                action.Action == planActionReconcile {
+                found = true
+                break
+            }
+        }
+
+        if !found {
+            t.Errorf(
+                "required spool parent/raw generation ACL target %q missing",
+                want,
+            )
+        }
+    }
+}

@@ -1288,6 +1288,18 @@ func planACLs(
 			target: valueOrNotKnown(report.Config.SpoolDir),
 		},
 		{
+			check: spoolParentDirectoryACLLabel + " desired ACL contract",
+			target: valueOrNotKnown(
+				spoolParentDirectoryTarget(report.Config.SpoolDir),
+			),
+		},
+		{
+			check: generationRawDirectoryACLLabel + " desired ACL contract",
+			target: valueOrNotKnown(
+				generationRawDirectoryTarget(report.Config.SpoolDir),
+			),
+		},
+		{
 			check: collectorWorkDirectoryACLLabel +
 				" desired ACL contract",
 			target: valueOrNotKnown(

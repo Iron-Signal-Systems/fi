@@ -16,7 +16,11 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
 
-const collectorWorkDirectoryACLLabel = "FI collector work directory"
+const (
+	collectorWorkDirectoryACLLabel = "FI collector work directory"
+	generationRawDirectoryACLLabel = "FI raw generation directory"
+	spoolParentDirectoryACLLabel   = "FI active spool parent directory"
+)
 
 func approval2OperationalDirectoryPaths(
 	proposal ConfigState,
@@ -39,6 +43,10 @@ func approval2OperationalDirectoryPaths(
 		),
 		proposal.SpoolDir,
 		workDir,
+		filepath.Join(
+			filepath.Dir(workDir),
+			"generation-raw",
+		),
 		proposal.StageDir,
 		proposal.StateDir,
 	}
@@ -145,4 +153,22 @@ func collectorWorkDirectoryTarget(
 	}
 
 	return path
+}
+
+func spoolParentDirectoryTarget(spoolDir string) string {
+	workDir := collectorWorkDirectoryTarget(spoolDir)
+	if workDir == "" {
+		return ""
+	}
+
+	return filepath.Dir(workDir)
+}
+
+func generationRawDirectoryTarget(spoolDir string) string {
+	parent := spoolParentDirectoryTarget(spoolDir)
+	if parent == "" {
+		return ""
+	}
+
+	return filepath.Join(parent, "generation-raw")
 }

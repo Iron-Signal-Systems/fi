@@ -147,6 +147,23 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 			useRestorePrivilege: true,
 		},
 		{
+			path: spoolParentDirectoryTarget(
+				report.Config.SpoolDir,
+			),
+			target: spoolParentDirectoryTarget(
+				report.Config.SpoolDir,
+			),
+		},
+		{
+			path: generationRawDirectoryTarget(
+				report.Config.SpoolDir,
+			),
+			sddl: writableCollector,
+			target: generationRawDirectoryTarget(
+				report.Config.SpoolDir,
+			),
+		},
+		{
 			path: collectorWorkDirectoryTarget(
 				report.Config.SpoolDir,
 			),
@@ -252,6 +269,16 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 		)
 
 		apply := func() error {
+			if strings.EqualFold(
+				item.target,
+				spoolParentDirectoryTarget(report.Config.SpoolDir),
+			) {
+				return grantSpoolParentSenderAccess(
+					path,
+					collectorSID,
+				)
+			}
+
 			return setNamedSecurityDescriptorFromSDDL(
 				path,
 				item.sddl,
