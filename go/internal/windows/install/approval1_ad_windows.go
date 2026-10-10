@@ -265,9 +265,9 @@ func approval1ADCreateIdentities(
 	before Report,
 	plan InstallPlan,
 ) ([]DesiredFIIdentity, error) {
-	if before.Host.BuildNumber != 14393 {
+	if !installerMutationSupportedBuild(before.Host.BuildNumber) {
 		return nil, fmt.Errorf(
-			"Approval 1 AD mutation is characterized only for Windows Server 2016 build 14393; observed build=%d",
+			"Approval 1 AD mutation does not support Windows build %d",
 			before.Host.BuildNumber,
 		)
 	}

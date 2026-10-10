@@ -910,7 +910,7 @@ func newSupportingSourceTestWriter(t *testing.T) *spool.Writer {
 		t.TempDir(),
 		64,
 		spool.CollectorIdentity{
-			ExecutablePath:   `C:\test\fi.exe`,
+			ExecutablePath:   `C:\test\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("0", 64),
 		},
 	)

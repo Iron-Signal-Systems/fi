@@ -342,22 +342,13 @@ func createApproval2OperationalConfig(
 		return nil, err
 	}
 
-	directories := []string{
-		filepath.Dir(
-			proposal.Path,
-		),
-		proposal.SpoolDir,
-		proposal.StageDir,
-		proposal.StateDir,
-	}
-
-	if handoff.complete() {
-		directories = append(
-			directories,
-			filepath.Dir(
-				handoff.CRLDestinationPath,
-			),
+	directories, err :=
+		approval2OperationalDirectoryPaths(
+			proposal,
+			handoff,
 		)
+	if err != nil {
+		return nil, err
 	}
 
 	createdDirectories, err := prepareApproval2OwnedDirectories(

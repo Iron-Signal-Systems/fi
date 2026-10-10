@@ -34,8 +34,8 @@ type transactionStep struct {
 }
 
 func ValidateServer2016Apply(report Report, plan InstallPlan) error {
-	if report.Host.BuildNumber != 14393 {
-		return fmt.Errorf("mutation is characterized only for Windows Server 2016 build 14393; observed build=%d", report.Host.BuildNumber)
+	if !installerMutationSupportedBuild(report.Host.BuildNumber) {
+		return fmt.Errorf("mutation does not support Windows build %d", report.Host.BuildNumber)
 	}
 	if plan.HasBlockers() {
 		return fmt.Errorf("plan contains blockers")
@@ -324,7 +324,7 @@ func ApplyServer2016ApprovedPlan(writer io.Writer, before Report, plan InstallPl
 	) {
 		fmt.Fprintf(
 			writer,
-			"VERIFY SERVICE READINESS: all five FI services must remain Running for %s\n",
+			"VERIFY SERVICE READINESS: FI services must remain in their approved runtime states for %s\n",
 			approval2ServiceStabilityWindow,
 		)
 		if err := waitForFIServiceStability(
@@ -333,6 +333,27 @@ func ApplyServer2016ApprovedPlan(writer io.Writer, before Report, plan InstallPl
 			return writeFailureRecord(
 				fmt.Errorf(
 					"SERVICE READINESS: %w",
+					err,
+				),
+				nil,
+				nil,
+			)
+		}
+
+		fmt.Fprintf(
+			writer,
+			"VERIFY COLLECTOR READINESS: current transaction must produce ServiceStarted and a non-failed WindowsSecurityCatchUp record within %s\n",
+			approval2CollectorRuntimeReadinessTimeout,
+		)
+
+		if err := waitForFICollectorRuntimeReadinessFromRediscovery(
+			Discover,
+			transactionID,
+			approval2CollectorRuntimeReadinessTimeout,
+		); err != nil {
+			return writeFailureRecord(
+				fmt.Errorf(
+					"COLLECTOR READINESS: %w",
 					err,
 				),
 				nil,

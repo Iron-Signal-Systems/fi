@@ -763,16 +763,16 @@ func reconcileServer2016CNGKeyACLs(
 		)
 	}
 
-	accountSID, accountBuffer, err := lookupAccountSID(
-		account,
-	)
+	accountSID, err :=
+		authoritativeDesiredFIIdentitySID(
+			plan.Identities.CollectorSender,
+		)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"resolve collector/sender gMSA SID for CNG private-key ACL: %w",
+			"revalidate sealed collector/sender gMSA SID for CNG private-key ACL: %w",
 			err,
 		)
 	}
-	_ = accountBuffer
 
 	mutations := make(
 		[]cngKeyACLMutation,

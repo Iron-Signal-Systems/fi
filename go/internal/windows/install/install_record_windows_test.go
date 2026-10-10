@@ -35,7 +35,7 @@ func TestBuildInstallRecordCapturesApprovedMutationsAndVerification(
 				{
 					ActualSHA256:                        "OLD",
 					ExpectedSHA256:                      "NEW",
-					Name:                                "fi.exe",
+					Name:                                "fi-collector.exe",
 					PayloadAuthenticodeSignerAuthorized: true,
 					PayloadAuthenticodeSignerCertSHA256: "CERT",
 					PayloadAuthenticodeSignerID:         "signer-a",

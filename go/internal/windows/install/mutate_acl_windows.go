@@ -53,27 +53,37 @@ func joinACLMutationRollbackFailure(
 }
 
 func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan InstallPlan) (func() error, error) {
-	collectorSID, collectorBuffer, err := lookupAccountSID(identities.CollectorSender.Account)
+	collectorSID, err :=
+		authoritativeDesiredFIIdentitySID(
+			identities.CollectorSender,
+		)
 	if err != nil {
 		return nil, err
 	}
-	_ = collectorBuffer
-	usnSID, usnBuffer, err := lookupAccountSID(identities.USNReader.Account)
-	if err != nil {
-		return nil, err
-	}
-	_ = usnBuffer
-	objSID, objBuffer, err := lookupAccountSID(identities.ObjReader.Account)
-	if err != nil {
-		return nil, err
-	}
-	_ = objBuffer
 
-	crlSID, crlBuffer, err := lookupAccountSID(identities.CRLRefresher.Account)
+	crlSID, err :=
+		authoritativeDesiredFIIdentitySID(
+			identities.CRLRefresher,
+		)
 	if err != nil {
 		return nil, err
 	}
-	_ = crlBuffer
+
+	usnSID, err :=
+		authoritativeDesiredFIIdentitySID(
+			identities.USNReader,
+		)
+	if err != nil {
+		return nil, err
+	}
+
+	objSID, err :=
+		authoritativeDesiredFIIdentitySID(
+			identities.ObjReader,
+		)
+	if err != nil {
+		return nil, err
+	}
 
 	type contract struct {
 		path                string
@@ -135,6 +145,15 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 			sddl:                rotatingSpool,
 			target:              valueOrNotKnown(report.Config.SpoolDir),
 			useRestorePrivilege: true,
+		},
+		{
+			path: collectorWorkDirectoryTarget(
+				report.Config.SpoolDir,
+			),
+			sddl: writableCollector,
+			target: collectorWorkDirectoryTarget(
+				report.Config.SpoolDir,
+			),
 		},
 		{path: report.Config.StageDir, sddl: writableCollector, target: valueOrNotKnown(report.Config.StageDir)},
 	}

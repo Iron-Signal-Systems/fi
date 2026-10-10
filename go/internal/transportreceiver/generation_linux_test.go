@@ -612,7 +612,7 @@ func writeGenerationTransactionBatch(
 		DataSHA256:      dataSHA256,
 		DataFile:        dataName,
 		Collector: spool.CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("1a", 32),
 		},
 		CreatedAt:   "2026-09-18T18:00:00Z",

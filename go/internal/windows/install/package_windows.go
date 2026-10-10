@@ -596,11 +596,11 @@ func validatePackageManifest(
 	}
 
 	expected := map[string]string{
-		"ficollector":    "fi.exe",
-		"fiobjreader":    "fi-obj.exe",
-		"ficrlrefresher": "fi-crl-refresh.exe",
+		"ficollector":    "fi-collector.exe",
+		"fiobjreader":    "fi-obj-reader.exe",
+		"ficrlrefresher": "fi-crl-refresher.exe",
 		"fisender":       "fi-sender.exe",
-		"fiusnreader":    "fi-usn.exe",
+		"fiusnreader":    "fi-usn-reader.exe",
 	}
 
 	if len(manifest.Files) != len(expected) {

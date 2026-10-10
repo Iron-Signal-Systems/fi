@@ -23,8 +23,8 @@ const (
 	probeResultPath = `C:\ProgramData\FI\state\collector-token-boundary-probe.json`
 
 	configPath = `C:\ProgramData\FI\config\fi.conf`
-	fiPath     = `C:\Program Files\FI\fi.exe`
-	fiUSNPath  = `C:\Program Files\FI\fi-usn.exe`
+	fiPath     = `C:\Program Files\FI\fi-collector.exe`
+	fiUSNPath  = `C:\Program Files\FI\fi-usn-reader.exe`
 
 	programProbePath = `C:\Program Files\FI\fi-collector-boundary-probe.tmp`
 	stateProbePath   = `C:\ProgramData\FI\state\fi-collector-boundary-probe.tmp`
@@ -167,22 +167,22 @@ func runProbe() probeResult {
 	)
 
 	addDenied(
-		"FICollector cannot open fi.exe for write",
+		"FICollector cannot open fi-collector.exe for write",
 		openExisting(fiPath, windows.GENERIC_WRITE),
 	)
 
 	addDenied(
-		"FICollector cannot obtain DELETE access to fi.exe",
+		"FICollector cannot obtain DELETE access to fi-collector.exe",
 		openExisting(fiPath, deleteAccess),
 	)
 
 	addDenied(
-		"FICollector cannot open fi-usn.exe for write",
+		"FICollector cannot open fi-usn-reader.exe for write",
 		openExisting(fiUSNPath, windows.GENERIC_WRITE),
 	)
 
 	addDenied(
-		"FICollector cannot obtain DELETE access to fi-usn.exe",
+		"FICollector cannot obtain DELETE access to fi-usn-reader.exe",
 		openExisting(fiUSNPath, deleteAccess),
 	)
 

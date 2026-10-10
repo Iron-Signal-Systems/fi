@@ -19,7 +19,7 @@ import (
 const (
 	crlRefresherActivationDirectory = `C:\ProgramData\FI\pki\crl`
 
-	crlRefresherExecutablePath = `C:\Program Files\FI\fi-crl-refresh.exe`
+	crlRefresherExecutablePath = `C:\Program Files\FI\fi-crl-refresher.exe`
 
 	crlRefresherJournalDirectory = `C:\ProgramData\FI\crl-refresh`
 

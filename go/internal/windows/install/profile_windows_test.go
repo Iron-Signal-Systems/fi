@@ -44,3 +44,57 @@ func TestProfileForBuild(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallerMutationSupportedBuild(t *testing.T) {
+	tests := []struct {
+		build uint32
+		want  bool
+	}{
+		{build: 14393, want: true},
+		{build: 17763, want: true},
+		{build: 20348, want: true},
+		{build: 26100, want: true},
+		{build: 99999, want: false},
+	}
+
+	for _, test := range tests {
+		got := installerMutationSupportedBuild(
+			test.build,
+		)
+		if got != test.want {
+			t.Fatalf(
+				"build %d mutation supported=%t want=%t",
+				test.build,
+				got,
+				test.want,
+			)
+		}
+	}
+}
+
+func TestObjReaderRightsMutationEnabledBuild(t *testing.T) {
+	tests := []struct {
+		build uint32
+		want  bool
+	}{
+		{build: 14393, want: true},
+		{build: 17763, want: true},
+		{build: 20348, want: false},
+		{build: 26100, want: false},
+		{build: 99999, want: false},
+	}
+
+	for _, test := range tests {
+		got := objReaderRightsMutationEnabledBuild(
+			test.build,
+		)
+		if got != test.want {
+			t.Fatalf(
+				"build %d ObjReader mutation enabled=%t want=%t",
+				test.build,
+				got,
+				test.want,
+			)
+		}
+	}
+}

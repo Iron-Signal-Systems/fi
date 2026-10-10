@@ -12,10 +12,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"syscall"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
 
 const policyCreateAccount = uint32(0x00000010)
@@ -38,8 +34,65 @@ func reconcileServer2016Rights(
 	return reconcileServer2016RightsWithBackend(
 		identities,
 		server2016RightsBackend{
-			enumerate: enumerateDirectAccountRights,
-			setExact:  setExactAccountRights,
+			enumerate: func(
+				account string,
+			) ([]string, error) {
+				identity, found :=
+					desiredFIIdentityByAccount(
+						identities,
+						account,
+					)
+				if !found {
+					return nil, fmt.Errorf(
+						"approved FI identity is unavailable for rights discovery: %s",
+						account,
+					)
+				}
+
+				sid, err :=
+					authoritativeDesiredFIIdentitySID(
+						identity,
+					)
+				if err != nil {
+					return nil, err
+				}
+
+				return enumerateDirectAccountRightsSID(
+					sid,
+					account,
+				)
+			},
+
+			setExact: func(
+				account string,
+				desired []string,
+			) error {
+				identity, found :=
+					desiredFIIdentityByAccount(
+						identities,
+						account,
+					)
+				if !found {
+					return fmt.Errorf(
+						"approved FI identity is unavailable for rights mutation: %s",
+						account,
+					)
+				}
+
+				sid, err :=
+					authoritativeDesiredFIIdentitySID(
+						identity,
+					)
+				if err != nil {
+					return err
+				}
+
+				return setExactAccountRightsSID(
+					sid,
+					account,
+					desired,
+				)
+			},
 		},
 	)
 }
@@ -174,100 +227,58 @@ func reconcileServer2016RightsWithBackend(
 
 	return rollbackApplied, nil
 }
-func setExactAccountRights(account string, desired []string) error {
-	current, err := enumerateDirectAccountRights(account)
+func setExactAccountRights(
+	account string,
+	desired []string,
+) error {
+	sid, sidBuffer, err :=
+		lookupAccountSID(
+			account,
+		)
 	if err != nil {
 		return err
 	}
-	current = uniqueSortedFold(current)
-	desired = uniqueSortedFold(desired)
 
-	for _, right := range current {
-		if containsFold(desired, right) {
-			continue
-		}
-		if err := mutateAccountRight(account, right, false); err != nil {
-			return fmt.Errorf("remove %s from %s: %w", right, account, err)
-		}
-	}
-	for _, right := range desired {
-		if containsFold(current, right) {
-			continue
-		}
-		if err := mutateAccountRight(account, right, true); err != nil {
-			return fmt.Errorf("add %s to %s: %w", right, account, err)
-		}
-	}
+	result :=
+		setExactAccountRightsSID(
+			sid,
+			account,
+			desired,
+		)
 
-	observed, err := enumerateDirectAccountRights(account)
-	if err != nil {
-		return err
-	}
-	if !exactRights(observed, desired) {
-		return fmt.Errorf("post-change direct rights for %s are %v; expected %v", account, observed, desired)
-	}
-	return nil
+	runtime.KeepAlive(
+		sidBuffer,
+	)
+
+	return result
 }
 
-func mutateAccountRight(account string, right string, add bool) error {
-	sid, sidBuffer, err := lookupAccountSID(account)
+func mutateAccountRight(
+	account string,
+	right string,
+	add bool,
+) error {
+	sid, sidBuffer, err :=
+		lookupAccountSID(
+			account,
+		)
 	if err != nil {
 		return err
 	}
 
-	attributes := lsaObjectAttributes{Length: uint32(unsafe.Sizeof(lsaObjectAttributes{}))}
-	var policyHandle uintptr
-	status, _, _ := lsaOpenPolicyProc.Call(
-		0,
-		uintptr(unsafe.Pointer(&attributes)),
-		uintptr(policyLookupNames|policyCreateAccount),
-		uintptr(unsafe.Pointer(&policyHandle)),
+	result :=
+		mutateAccountRightSID(
+			sid,
+			account,
+			right,
+			add,
+		)
+
+	runtime.KeepAlive(
+		sidBuffer,
 	)
-	if status != 0 {
-		return lsaStatusError("open local security policy for mutation", status)
-	}
-	defer lsaCloseProc.Call(policyHandle)
 
-	buffer, err := windows.UTF16FromString(right)
-	if err != nil {
-		return fmt.Errorf("encode account right %q: %w", right, err)
-	}
-	if len(buffer) < 2 {
-		return fmt.Errorf("account right %q encoded to an empty value", right)
-	}
-	value := lsaUnicodeString{
-		Length:        uint16((len(buffer) - 1) * 2),
-		MaximumLength: uint16(len(buffer) * 2),
-		Buffer:        &buffer[0],
-	}
-
-	if add {
-		status, _, _ = lsaAddAccountRightsProc.Call(
-			policyHandle,
-			uintptr(unsafe.Pointer(sid)),
-			uintptr(unsafe.Pointer(&value)),
-			1,
-		)
-	} else {
-		status, _, _ = lsaRemoveAccountRightsProc.Call(
-			policyHandle,
-			uintptr(unsafe.Pointer(sid)),
-			0,
-			uintptr(unsafe.Pointer(&value)),
-			1,
-		)
-	}
-
-	runtime.KeepAlive(sidBuffer)
-	runtime.KeepAlive(buffer)
-	if status != 0 {
-		op := "remove local account right"
-		if add {
-			op = "add local account right"
-		}
-		return lsaStatusError(op, status)
-	}
-	return nil
+	return result
 }
 
 type server2016GroupsBackend struct {
@@ -281,8 +292,68 @@ func reconcileServer2016Groups(
 	return reconcileServer2016GroupsWithBackend(
 		identities,
 		server2016GroupsBackend{
-			member:        accountIsDirectLocalGroupMember,
-			setMembership: setDirectLocalGroupMembership,
+			member: func(
+				group string,
+				account string,
+			) (bool, error) {
+				identity, found :=
+					desiredFIIdentityByAccount(
+						identities,
+						account,
+					)
+				if !found {
+					return false, fmt.Errorf(
+						"approved FI identity is unavailable for local-group discovery: %s",
+						account,
+					)
+				}
+
+				sid, err :=
+					authoritativeDesiredFIIdentitySID(
+						identity,
+					)
+				if err != nil {
+					return false, err
+				}
+
+				return accountSIDIsDirectLocalGroupMember(
+					group,
+					sid,
+				)
+			},
+
+			setMembership: func(
+				group string,
+				account string,
+				want bool,
+			) error {
+				identity, found :=
+					desiredFIIdentityByAccount(
+						identities,
+						account,
+					)
+				if !found {
+					return fmt.Errorf(
+						"approved FI identity is unavailable for local-group mutation: %s",
+						account,
+					)
+				}
+
+				sid, err :=
+					authoritativeDesiredFIIdentitySID(
+						identity,
+					)
+				if err != nil {
+					return err
+				}
+
+				return setDirectLocalGroupMembershipSID(
+					group,
+					account,
+					sid,
+					want,
+				)
+			},
 		},
 	)
 }
@@ -438,76 +509,32 @@ func reconcileServer2016GroupsWithBackend(
 
 	return rollbackApplied, nil
 }
-func setDirectLocalGroupMembership(group string, account string, want bool) error {
-	current, err := accountIsDirectLocalGroupMember(group, account)
-	if err != nil {
-		return err
-	}
-	if current == want {
-		return nil
-	}
-
-	resolvedGroup, err := resolveLocalGroupName(
-		group,
-	)
+func setDirectLocalGroupMembership(
+	group string,
+	account string,
+	want bool,
+) error {
+	sid, sidBuffer, err :=
+		lookupAccountSID(
+			account,
+		)
 	if err != nil {
 		return err
 	}
 
-	groupName, err := syscall.UTF16PtrFromString(
-		resolvedGroup,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"encode local group %q resolved as %q: %w",
+	result :=
+		setDirectLocalGroupMembershipSID(
 			group,
-			resolvedGroup,
-			err,
+			account,
+			sid,
+			want,
 		)
-	}
-	accountName, err := syscall.UTF16PtrFromString(account)
-	if err != nil {
-		return fmt.Errorf("encode local account %q: %w", account, err)
-	}
-	info := localGroupMembersInfo3{DomainAndName: accountName}
 
-	var result uintptr
-	if want {
-		result, _, _ = netLocalGroupAddMembersProc.Call(
-			0,
-			uintptr(unsafe.Pointer(groupName)),
-			3,
-			uintptr(unsafe.Pointer(&info)),
-			1,
-		)
-	} else {
-		result, _, _ = netLocalGroupDelMembersProc.Call(
-			0,
-			uintptr(unsafe.Pointer(groupName)),
-			3,
-			uintptr(unsafe.Pointer(&info)),
-			1,
-		)
-	}
+	runtime.KeepAlive(
+		sidBuffer,
+	)
 
-	runtime.KeepAlive(groupName)
-	runtime.KeepAlive(accountName)
-	if uint32(result) != 0 {
-		op := "remove"
-		if want {
-			op = "add"
-		}
-		return fmt.Errorf("%s %s %s local group membership: status=%d", op, account, group, uint32(result))
-	}
-
-	observed, err := accountIsDirectLocalGroupMember(group, account)
-	if err != nil {
-		return err
-	}
-	if observed != want {
-		return fmt.Errorf("post-change local group membership account=%s group=%s observed=%t expected=%t", account, group, observed, want)
-	}
-	return nil
+	return result
 }
 
 func uniqueSortedFold(values []string) []string {

@@ -101,6 +101,30 @@ func PlanDigest(report Report, plan InstallPlan) (string, error) {
 	return strings.ToUpper(hex.EncodeToString(sum[:])), nil
 }
 
+func writeFailClosedApprovalPrompt(
+	writer io.Writer,
+	token string,
+	approval string,
+) {
+	fmt.Fprintf(
+		writer,
+		"\nType exactly: %s\n",
+		token,
+	)
+	fmt.Fprintln(
+		writer,
+		"Any other input is treated as rejection.",
+	)
+	fmt.Fprintf(
+		writer,
+		"The installer will exit with a non-zero status and %s will not be applied.\n",
+		approval,
+	)
+	fmt.Fprint(
+		writer,
+		"> ",
+	)
+}
 func PromptApprovals(reader io.Reader, writer io.Writer, report Report, plan InstallPlan) (ApprovalState, error) {
 	if reader == nil {
 		return ApprovalState{}, fmt.Errorf("approval input reader is required")
@@ -130,7 +154,7 @@ func PromptApprovals(reader io.Reader, writer io.Writer, report Report, plan Ins
 	if approval1 {
 		writeApprovalActions(writer, plan, approvalBoundaryInfrastructure)
 		token := approvalToken(approvalBoundaryInfrastructure, digest)
-		fmt.Fprintf(writer, "\nType exactly: %s\n> ", token)
+		writeFailClosedApprovalPrompt(writer, token, "Approval 1")
 		if !scanner.Scan() {
 			if scanner.Err() != nil {
 				return state, fmt.Errorf("read Approval 1: %w", scanner.Err())
@@ -148,7 +172,7 @@ func PromptApprovals(reader io.Reader, writer io.Writer, report Report, plan Ins
 	if approval2 {
 		writeApprovalActions(writer, plan, approvalBoundaryLocal)
 		token := approvalToken(approvalBoundaryLocal, digest)
-		fmt.Fprintf(writer, "\nType exactly: %s\n> ", token)
+		writeFailClosedApprovalPrompt(writer, token, "Approval 2")
 		if !scanner.Scan() {
 			if scanner.Err() != nil {
 				return state, fmt.Errorf("read Approval 2: %w", scanner.Err())
@@ -347,10 +371,13 @@ func PromptApprovalBoundary(
 		boundary,
 		boundarySHA256,
 	)
-	fmt.Fprintf(
+	writeFailClosedApprovalPrompt(
 		writer,
-		"\nType exactly: %s\n> ",
 		token,
+		fmt.Sprintf(
+			"Approval %d",
+			boundary,
+		),
 	)
 
 	scanner := bufio.NewScanner(reader)

@@ -367,25 +367,25 @@ func TestPlanPackageUnknownInstalledStateBlocksInsteadOfCreateOrReconcile(
 		Binaries: []BinaryState{
 			{
 				Name:     "FICollector",
-				Path:     `C:\Program Files\FI\fi.exe`,
+				Path:     `C:\Program Files\FI\fi-collector.exe`,
 				Presence: presenceUnknown,
 				SHA256:   notKnown,
 			},
 			{
 				Name:     "FIUSNReader",
-				Path:     `C:\Program Files\FI\fi-usn.exe`,
+				Path:     `C:\Program Files\FI\fi-usn-reader.exe`,
 				Presence: presenceAbsent,
 				SHA256:   notKnown,
 			},
 			{
 				Name:     "FIObjReader",
-				Path:     `C:\Program Files\FI\fi-obj.exe`,
+				Path:     `C:\Program Files\FI\fi-obj-reader.exe`,
 				Presence: presenceAbsent,
 				SHA256:   notKnown,
 			},
 			{
 				Name:     "FICRLRefresher",
-				Path:     `C:\Program Files\FI\fi-crl-refresh.exe`,
+				Path:     `C:\Program Files\FI\fi-crl-refresher.exe`,
 				Presence: presenceAbsent,
 				SHA256:   notKnown,
 			},

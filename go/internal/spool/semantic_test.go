@@ -220,7 +220,7 @@ func validSemanticTestManifest(
 		DataFile: "batch-20260918T160000.000000000Z-0011223344556677.jsonl",
 
 		Collector: CollectorIdentity{
-			ExecutablePath: "C:\\Program Files\\FI\\fi.exe",
+			ExecutablePath: "C:\\Program Files\\FI\\fi-collector.exe",
 
 			ExecutableSHA256: strings.Repeat(
 				"1",

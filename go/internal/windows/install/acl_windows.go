@@ -45,7 +45,8 @@ func aclTargetAbsenceRepairable(
 	label string,
 ) bool {
 	switch label {
-	case "FI CRL activation directory",
+	case collectorWorkDirectoryACLLabel,
+		"FI CRL activation directory",
 		"FI CRL active file",
 		"FI CRL refresher executable file",
 		"FI CRL refresher journal directory",
@@ -241,6 +242,12 @@ func plannedACLTargets(
 		{
 			Label: "FI spool directory",
 			Path:  report.Config.SpoolDir,
+		},
+		{
+			Label: collectorWorkDirectoryACLLabel,
+			Path: collectorWorkDirectoryTarget(
+				report.Config.SpoolDir,
+			),
 		},
 		{
 			Label: "FI stage directory",
@@ -665,6 +672,12 @@ func discoverACLStates(
 		{
 			Label: "FI spool directory",
 			Path:  report.Config.SpoolDir,
+		},
+		{
+			Label: collectorWorkDirectoryACLLabel,
+			Path: collectorWorkDirectoryTarget(
+				report.Config.SpoolDir,
+			),
 		},
 		{
 			Label: "FI stage directory",
@@ -1596,6 +1609,14 @@ func evaluateDesiredACLContractsForAccounts(
 
 	evaluateSpoolRoot(
 		report,
+		collector,
+	)
+
+	evaluateWritableRoot(
+		report,
+		collectorWorkDirectoryACLLabel,
+		true,
+		true,
 		collector,
 	)
 

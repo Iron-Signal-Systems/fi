@@ -28,7 +28,7 @@ func TestPlanServicesSeparatesConfigurationFromStoppedRuntime(
 		Services: []ServiceState{
 			{
 				Account:        `ISS\gFI-FS01$`,
-				BinaryPath:     `"C:\Program Files\FI\fi.exe" -service`,
+				BinaryPath:     `"C:\Program Files\FI\fi-collector.exe" -service`,
 				ManagedAccount: "true",
 				Name:           "FICollector",
 				SIDType:        "UNRESTRICTED",

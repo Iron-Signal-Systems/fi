@@ -395,9 +395,9 @@ func approval2LocalIdentityTargets(
 		return nil, nil
 	}
 
-	if report.Host.BuildNumber != 14393 {
+	if !installerMutationSupportedBuild(report.Host.BuildNumber) {
 		return nil, fmt.Errorf(
-			"Approval 2 local-identity mutation is characterized only for Windows Server 2016 build 14393; observed build=%d",
+			"Approval 2 local-identity mutation does not support Windows build %d",
 			report.Host.BuildNumber,
 		)
 	}

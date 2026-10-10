@@ -365,7 +365,7 @@ func TestLocalApproval2ControllerRejectsLegacyOnlyPlan(
 
 	if !strings.Contains(
 		err.Error(),
-		"does not require the Server 2016 local Approval 2 repair controller",
+		"Approval 2 mutating authority \"PACKAGE\" is not implemented by the current backend",
 	) {
 		t.Fatalf(
 			"unexpected error: %v",

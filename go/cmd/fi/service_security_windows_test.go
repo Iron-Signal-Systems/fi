@@ -166,17 +166,160 @@ func TestRunServiceWindowsSecurityLoopRejectsInvalidDependencies(t *testing.T) {
 	}
 }
 
-func TestRunServiceWindowsSecurityLoopPropagatesCollectorError(t *testing.T) {
-	expected := errors.New("synthetic Security collector failure")
-	source := &fakeServiceWindowsSecuritySource{err: expected}
-
-	err := runServiceWindowsSecurityLoop(
+func TestRunServiceWindowsSecurityLoopRecordsCollectorErrorAndRetries(
+	t *testing.T,
+) {
+	ctx, cancel := context.WithCancel(
 		context.Background(),
-		time.Minute,
-		source,
-		func(serviceRuntimeRecord) error { return nil },
 	)
-	if !errors.Is(err, expected) {
-		t.Fatalf("error = %v, want %v", err, expected)
+	defer cancel()
+
+	expected := errors.New(
+		"synthetic Security collector failure",
+	)
+
+	source := &fakeServiceWindowsSecuritySource{
+		err: expected,
+	}
+
+	records := make(
+		chan serviceRuntimeRecord,
+		4,
+	)
+
+	done := make(
+		chan error,
+		1,
+	)
+
+	appended := 0
+
+	go func() {
+		done <- runServiceWindowsSecurityLoop(
+			ctx,
+			20*time.Millisecond,
+			source,
+			func(
+				record serviceRuntimeRecord,
+			) error {
+				records <- record
+
+				appended++
+				if appended == 2 {
+					cancel()
+				}
+
+				return nil
+			},
+		)
+	}()
+
+	for index := 0; index < 2; index++ {
+		select {
+		case record := <-records:
+			if record.RecordKind !=
+				"WindowsSecurityCatchUp" {
+				t.Fatalf(
+					"record kind = %q",
+					record.RecordKind,
+				)
+			}
+
+			if record.Outcome !=
+				serviceOutcomeFailed {
+				t.Fatalf(
+					"outcome = %q, want %q",
+					record.Outcome,
+					serviceOutcomeFailed,
+				)
+			}
+
+			if record.Error !=
+				expected.Error() {
+				t.Fatalf(
+					"record error = %q, want %q",
+					record.Error,
+					expected.Error(),
+				)
+			}
+
+		case <-time.After(
+			2 * time.Second,
+		):
+			t.Fatal(
+				"Windows Security worker did not record and retry collector failure",
+			)
+		}
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+
+	case <-time.After(
+		2 * time.Second,
+	):
+		t.Fatal(
+			"Windows Security worker did not stop after cancellation",
+		)
+	}
+
+	calls, maxActive :=
+		source.snapshot()
+
+	if calls < 2 {
+		t.Fatalf(
+			"collector calls = %d, want at least 2",
+			calls,
+		)
+	}
+
+	if maxActive != 1 {
+		t.Fatalf(
+			"collector overlap = %d, want 1",
+			maxActive,
+		)
+	}
+}
+
+func TestRunServiceWindowsSecurityLoopPropagatesRuntimeRecordError(
+	t *testing.T,
+) {
+	expected := errors.New(
+		"synthetic runtime-record failure",
+	)
+
+	source :=
+		&fakeServiceWindowsSecuritySource{
+			summaries: []serviceWindowsSecurityCycleSummary{
+				{
+					Status: configuredSecurityComplete,
+				},
+			},
+		}
+
+	err :=
+		runServiceWindowsSecurityLoop(
+			context.Background(),
+			time.Minute,
+			source,
+			func(
+				serviceRuntimeRecord,
+			) error {
+				return expected
+			},
+		)
+
+	if !errors.Is(
+		err,
+		expected,
+	) {
+		t.Fatalf(
+			"error = %v, want %v",
+			err,
+			expected,
+		)
 	}
 }

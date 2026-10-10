@@ -14,7 +14,7 @@ func TestValidateApproval2RuntimeBinaryDestinations(t *testing.T) {
 	if err := validateApproval2RuntimeBinaryDestinations(
 		[]fileReplacement{
 			{
-				Destination: `C:\Program Files\FI\fi.exe`,
+				Destination: `C:\Program Files\FI\fi-collector.exe`,
 			},
 			{
 				Destination: `c:\program files\fi\fi-sender.exe`,
@@ -26,9 +26,9 @@ func TestValidateApproval2RuntimeBinaryDestinations(t *testing.T) {
 	}
 
 	for _, destination := range []string{
-		`C:\Program Files\FI-Other\fi.exe`,
-		`C:\Program Files\FI\subdir\fi.exe`,
-		`C:\Program Files\FI\..\Other\fi.exe`,
+		`C:\Program Files\FI-Other\fi-collector.exe`,
+		`C:\Program Files\FI\subdir\fi-collector.exe`,
+		`C:\Program Files\FI\..\Other\fi-collector.exe`,
 	} {
 		if err := validateApproval2RuntimeBinaryDestinations(
 			[]fileReplacement{

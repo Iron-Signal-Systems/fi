@@ -22,6 +22,7 @@ type DesiredFIIdentity struct {
 	Account        string
 	Role           string
 	SAMAccountName string
+	SID            string
 }
 
 func DeriveDesiredFIIdentities(

@@ -75,6 +75,14 @@ func replaceApproval2RuntimeBinaries(
 
 	programDirectory := `C:\Program Files\FI`
 
+	legacyRuntimeFiles, err :=
+		snapshotApproval2LegacyRuntimeFiles(
+			report,
+		)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	if err := validateApproval2RuntimeBinaryDestinations(
 		replacements,
 		programDirectory,
@@ -196,8 +204,19 @@ func replaceApproval2RuntimeBinaries(
 	}
 
 	commit := func() error {
-		return commitReplacedFiles(
-			replaced,
+		legacyCleanupErr :=
+			removeApproval2LegacyRuntimeFiles(
+				legacyRuntimeFiles,
+			)
+
+		replacementCommitErr :=
+			commitReplacedFiles(
+				replaced,
+			)
+
+		return errors.Join(
+			legacyCleanupErr,
+			replacementCommitErr,
 		)
 	}
 
@@ -234,6 +253,256 @@ func replaceApproval2RuntimeBinaries(
 	}
 
 	return rollback, commit, nil
+}
+
+type approval2LegacyRuntimeFile struct {
+	Path   string
+	SHA256 string
+}
+
+type approval2LegacyRuntimeSpec struct {
+	BinaryPath        string
+	DesiredBinaryPath string
+	FilePath          string
+	Service           string
+}
+
+func approval2LegacyRuntimePaths(
+	report Report,
+) []string {
+	specs :=
+		[]approval2LegacyRuntimeSpec{
+			{
+				BinaryPath:        `"C:\Program Files\FI\fi.exe" -service`,
+				DesiredBinaryPath: `"C:\Program Files\FI\fi-collector.exe" -service`,
+				FilePath:          `C:\Program Files\FI\fi.exe`,
+				Service:           "FICollector",
+			},
+			{
+				BinaryPath:        `"C:\Program Files\FI\fi-usn.exe"`,
+				DesiredBinaryPath: `"C:\Program Files\FI\fi-usn-reader.exe"`,
+				FilePath:          `C:\Program Files\FI\fi-usn.exe`,
+				Service:           "FIUSNReader",
+			},
+			{
+				BinaryPath:        `"C:\Program Files\FI\fi-obj.exe"`,
+				DesiredBinaryPath: `"C:\Program Files\FI\fi-obj-reader.exe"`,
+				FilePath:          `C:\Program Files\FI\fi-obj.exe`,
+				Service:           "FIObjReader",
+			},
+			{
+				BinaryPath:        `"C:\Program Files\FI\fi-crl-refresh.exe"`,
+				DesiredBinaryPath: `"C:\Program Files\FI\fi-crl-refresher.exe"`,
+				FilePath:          `C:\Program Files\FI\fi-crl-refresh.exe`,
+				Service:           "FICRLRefresher",
+			},
+		}
+
+	result :=
+		make(
+			[]string,
+			0,
+			len(specs),
+		)
+
+	for _, spec := range specs {
+		observed, found :=
+			findService(
+				report.Services,
+				spec.Service,
+			)
+
+		if !found ||
+			observed.Presence != presencePresent {
+			continue
+		}
+
+		legacySCMAuthority :=
+			strings.EqualFold(
+				strings.TrimSpace(
+					observed.BinaryPath,
+				),
+				spec.BinaryPath,
+			)
+
+		interruptedMigrationAuthority :=
+			observed.State == "Running" &&
+				observed.ProcessID != 0 &&
+				strings.EqualFold(
+					strings.TrimSpace(
+						observed.BinaryPath,
+					),
+					spec.DesiredBinaryPath,
+				) &&
+				sameWindowsExecutablePath(
+					observed.ProcessPath,
+					spec.FilePath,
+				)
+
+		if !legacySCMAuthority &&
+			!interruptedMigrationAuthority {
+			continue
+		}
+
+		result =
+			append(
+				result,
+				spec.FilePath,
+			)
+	}
+
+	return result
+}
+
+func removeApproval2LegacyRuntimeFiles(
+	files []approval2LegacyRuntimeFile,
+) error {
+	for _, file := range files {
+		info, err :=
+			os.Lstat(
+				file.Path,
+			)
+
+		if errors.Is(
+			err,
+			os.ErrNotExist,
+		) {
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf(
+				"inspect legacy FI runtime %s before retirement: %w",
+				file.Path,
+				err,
+			)
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 ||
+			!info.Mode().IsRegular() {
+			return fmt.Errorf(
+				"refusing to retire legacy FI runtime because it is not a regular non-symlink file: %s",
+				file.Path,
+			)
+		}
+
+		currentSHA256, err :=
+			fileSHA256(
+				file.Path,
+			)
+		if err != nil {
+			return fmt.Errorf(
+				"hash legacy FI runtime %s before retirement: %w",
+				file.Path,
+				err,
+			)
+		}
+
+		if !strings.EqualFold(
+			currentSHA256,
+			file.SHA256,
+		) {
+			return fmt.Errorf(
+				"refusing to retire changed legacy FI runtime %s: reviewed_sha256=%s current_sha256=%s",
+				file.Path,
+				file.SHA256,
+				currentSHA256,
+			)
+		}
+	}
+
+	var found []error
+
+	for _, file := range files {
+		err :=
+			removeFileWithRetry(
+				file.Path,
+				5*time.Second,
+			)
+
+		if err == nil ||
+			errors.Is(
+				err,
+				os.ErrNotExist,
+			) {
+			continue
+		}
+
+		found =
+			append(
+				found,
+				fmt.Errorf(
+					"retire legacy FI runtime %s: %w",
+					file.Path,
+					err,
+				),
+			)
+	}
+
+	return errors.Join(
+		found...,
+	)
+}
+
+func snapshotApproval2LegacyRuntimeFiles(
+	report Report,
+) ([]approval2LegacyRuntimeFile, error) {
+	paths :=
+		approval2LegacyRuntimePaths(
+			report,
+		)
+
+	result :=
+		make(
+			[]approval2LegacyRuntimeFile,
+			0,
+			len(paths),
+		)
+
+	for _, path := range paths {
+		info, err :=
+			os.Lstat(
+				path,
+			)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"inspect legacy FI runtime %s before migration: %w",
+				path,
+				err,
+			)
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 ||
+			!info.Mode().IsRegular() {
+			return nil, fmt.Errorf(
+				"legacy FI runtime is not a regular non-symlink file: %s",
+				path,
+			)
+		}
+
+		hash, err :=
+			fileSHA256(
+				path,
+			)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"hash legacy FI runtime %s before migration: %w",
+				path,
+				err,
+			)
+		}
+
+		result =
+			append(
+				result,
+				approval2LegacyRuntimeFile{
+					Path:   path,
+					SHA256: hash,
+				},
+			)
+	}
+
+	return result, nil
 }
 func validateApproval2RuntimeBinaryDestinations(
 	replacements []fileReplacement,

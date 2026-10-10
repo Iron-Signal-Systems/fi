@@ -146,11 +146,11 @@ func localApproval2SealedState(
 		)
 	}
 
-	if !RequiresServer2016Approval2Controller(
+	if !RequiresApproval2Controller(
 		plan,
 	) {
 		return Approval1ControllerResult{}, fmt.Errorf(
-			"plan does not require the Server 2016 local Approval 2 repair controller",
+			"plan does not require the local Approval 2 controller",
 		)
 	}
 

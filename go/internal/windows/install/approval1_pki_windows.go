@@ -325,9 +325,9 @@ func executeApproval1PKIEnrollmentTransactionWithBackend(
 		)
 	}
 
-	if before.Host.BuildNumber != 14393 {
+	if !installerMutationSupportedBuild(before.Host.BuildNumber) {
 		return Approval1PKITransactionResult{}, fmt.Errorf(
-			"Approval 1 PKI enrollment is characterized only for Windows Server 2016 build 14393; observed build=%d",
+			"Approval 1 PKI enrollment does not support Windows build %d",
 			before.Host.BuildNumber,
 		)
 	}
@@ -442,15 +442,39 @@ func executeApproval1PKIEnrollmentTransactionWithBackend(
 		)
 	}
 
+	authorization, err := prepareMachineCertificateEnrollmentAuthorization(
+		before,
+		backend,
+	)
+	if err != nil {
+		return Approval1PKITransactionResult{}, fmt.Errorf(
+			"prepare source-computer certificate enrollment authorization: %w",
+			err,
+		)
+	}
+
 	transport, err := ensureApproval1PKIIdentity(
 		backend,
 		transportContract,
 	)
 	if err != nil {
-		return Approval1PKITransactionResult{}, fmt.Errorf(
+		cause := fmt.Errorf(
 			"establish durable transport identity: %w",
 			err,
 		)
+		rollbackErr := rollbackMachineCertificateEnrollmentAuthorization(
+			authorization,
+		)
+		if rollbackErr != nil {
+			return Approval1PKITransactionResult{}, errors.Join(
+				cause,
+				fmt.Errorf(
+					"rollback transaction-owned source-computer enrollment-group membership: %w",
+					rollbackErr,
+				),
+			)
+		}
+		return Approval1PKITransactionResult{}, cause
 	}
 
 	// The transport identity has crossed its PKI-local acceptance boundary.

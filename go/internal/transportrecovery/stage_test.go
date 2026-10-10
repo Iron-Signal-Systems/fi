@@ -73,7 +73,7 @@ func writeTestPublishedBatch(t *testing.T, dir, batchID string, data []byte) str
 		DataSHA256:      hex.EncodeToString(digest[:]),
 		DataFile:        dataName,
 		Collector: spool.CollectorIdentity{
-			ExecutablePath:   `C:\\Program Files\\FI\\fi.exe`,
+			ExecutablePath:   `C:\\Program Files\\FI\\fi-collector.exe`,
 			ExecutableSHA256: "55" + repeatHex("00", 31),
 		},
 		CreatedAt:   "2026-09-15T00:00:00.000000000Z",

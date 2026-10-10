@@ -103,7 +103,7 @@ func writeGenerationTestBatch(t *testing.T, dir string, batchID string, data []b
 		DataSHA256:      hex.EncodeToString(digest[:]),
 		DataFile:        dataName,
 		Collector: spool.CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: "44" + generationRepeatHex("00", 31),
 		},
 		CreatedAt:   "2026-09-16T10:00:00.000000000Z",

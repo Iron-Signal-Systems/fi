@@ -339,7 +339,7 @@ func newPublicationWorkdirTestWriter(
 			spoolDir,
 			DefaultBatchSize,
 			CollectorIdentity{
-				ExecutablePath: `C:\Program Files\FI\fi.exe`,
+				ExecutablePath: `C:\Program Files\FI\fi-collector.exe`,
 				ExecutableSHA256: strings.Repeat(
 					"d",
 					64,

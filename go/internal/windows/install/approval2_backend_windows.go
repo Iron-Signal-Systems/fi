@@ -174,7 +174,13 @@ func (backend *server2016Approval2Backend) BuildPlan(
 	// existing-config protection. Post-mutation convergence therefore rebuilds
 	// from the installed configuration itself.
 	if report.Config.Presence == presencePresent {
-		inputs = PlanInputs{}
+		// ReceiverPending is transient Approval-2 execution state, not
+		// deployment configuration. Preserve only that control bit across
+		// authoritative installed-state rediscovery.
+		receiverPending := inputs.ReceiverPending
+		inputs = PlanInputs{
+			ReceiverPending: receiverPending,
+		}
 	}
 
 	plan := BuildPlanWithInputs(

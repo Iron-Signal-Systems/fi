@@ -9,6 +9,7 @@ package install
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -32,6 +33,7 @@ type InstallPlan struct {
 
 type PlanInputs struct {
 	GovernedRoots   []string
+	ReceiverPending bool
 	PKIChoice       string
 	ReceiverAddress string
 	ReceiverName    string
@@ -89,6 +91,12 @@ func BuildPlanWithInputs(
 		report.Host.Computer,
 		report.Join.Name,
 	)
+	if identityErr == nil {
+		identities, identityErr = bindDesiredFIIdentitySIDs(
+			report,
+			identities,
+		)
+	}
 	if identityErr != nil {
 		plan.Actions = append(
 			plan.Actions,
@@ -130,7 +138,7 @@ func BuildPlanWithInputs(
 	planLocalGroups(&plan, report, identities, identityErr)
 	planACLs(&plan, report)
 	planCNGKeyACLs(&plan, report)
-	planServices(&plan, report, identities, identityErr)
+	planServices(&plan, report, identities, identityErr, inputs.ReceiverPending)
 	planReleaseTrust(&plan, report)
 	planReleaseTrustACL(&plan, report)
 	planPackage(&plan, report)
@@ -524,6 +532,30 @@ func reportWithProposedConfig(
 func validateProposedConfigPaths(
 	proposal ConfigState,
 ) error {
+	systemDrive := strings.TrimSpace(
+		os.Getenv(
+			"SystemDrive",
+		),
+	)
+
+	if systemDrive != "" &&
+		strings.TrimSpace(
+			proposal.SpoolDir,
+		) != "" &&
+		strings.EqualFold(
+			filepath.Clean(
+				proposal.SpoolDir,
+			),
+			filepath.Clean(
+				systemDrive+`\`,
+			),
+		) {
+		return fmt.Errorf(
+			"FI spool directory must not be the Windows system-volume root %q; choose a dedicated directory or a non-system volume",
+			proposal.SpoolDir,
+		)
+	}
+
 	values := []struct {
 		name  string
 		path  string
@@ -932,7 +964,7 @@ func planPKI(
 			PlanAction{
 				Action:    planActionReconcile,
 				Authority: "PKI",
-				Detail:    "after Approval 1 enroll/provision this source from an existing FI PKI; exact enrollment authority remains a later mutation contract",
+				Detail:    "after Approval 1 ensure the source computer is authorized through existing group ISS-FI-Certificate-Enrollment, purge SYSTEM Kerberos LUID 0x3e7, then enroll and verify the machine transport and batch identities from the existing FI PKI",
 				Target:    "FI transport PKI",
 			},
 		)
@@ -1059,14 +1091,14 @@ func planPrivileges(
 		)
 	}
 
-	if report.Host.BuildNumber != 14393 {
+	if !objReaderRightsMutationEnabledBuild(report.Host.BuildNumber) {
 		plan.Actions = append(
 			plan.Actions,
 			PlanAction{
 				Action:    planActionBlocked,
 				Authority: "RIGHTS",
 				Detail: fmt.Sprintf(
-					"FIObjReader exact least-privilege contract has not yet been characterized for %s build %d; do not copy the Server 2016 privilege set",
+					"FIObjReader exact least-privilege contract has not yet been characterized for %s build %d",
 					report.Host.Profile.Name,
 					report.Host.BuildNumber,
 				),
@@ -1091,7 +1123,7 @@ func planPrivileges(
 			PlanAction{
 				Action:    planActionNoChange,
 				Authority: "RIGHTS",
-				Detail:    "Server 2016 direct-right set matches accepted FIObjReader contract",
+				Detail:    "release-specific direct-right set matches accepted FIObjReader contract",
 				Target:    identities.ObjReader.Account,
 			},
 		)
@@ -1101,7 +1133,7 @@ func planPrivileges(
 			PlanAction{
 				Action:    planActionReconcile,
 				Authority: "RIGHTS",
-				Detail:    "Server 2016 desired direct rights: SeServiceLogonRight, SeBackupPrivilege, SeSecurityPrivilege; SeRestorePrivilege and SeManageVolumePrivilege forbidden",
+				Detail:    "desired FIObjReader direct rights: SeServiceLogonRight, SeBackupPrivilege, SeSecurityPrivilege; SeRestorePrivilege and SeManageVolumePrivilege forbidden",
 				Target:    identities.ObjReader.Account,
 			},
 		)
@@ -1165,7 +1197,7 @@ func planLocalGroups(
 		{
 			account: identities.USNReader.Account,
 			check:   "FIUSNReader direct local Administrator membership",
-			detail:  "USN helper requires the narrowly scoped local-Administrator boundary on Server 2016",
+			detail:  "USN helper requires the characterized narrow local-Administrator boundary",
 			group:   "Administrators",
 			want:    true,
 		},
@@ -1254,6 +1286,15 @@ func planACLs(
 		{
 			check:  "FI spool directory desired ACL contract",
 			target: valueOrNotKnown(report.Config.SpoolDir),
+		},
+		{
+			check: collectorWorkDirectoryACLLabel +
+				" desired ACL contract",
+			target: valueOrNotKnown(
+				collectorWorkDirectoryTarget(
+					report.Config.SpoolDir,
+				),
+			),
 		},
 		{
 			check:  "FI PKI trust directory desired ACL contract",
@@ -1383,50 +1424,82 @@ func planServices(
 	report Report,
 	identities DesiredFIIdentities,
 	identityErr error,
+	receiverPendingOption ...bool,
 ) {
+	receiverPending := false
+	if len(receiverPendingOption) != 0 {
+		receiverPending = receiverPendingOption[0]
+	}
+
 	if identityErr != nil {
 		return
 	}
 
 	expected := []struct {
-		account string
-		name    string
-		path    string
-		sidType string
+		account      string
+		name         string
+		path         string
+		runtimeState string
+		sidType      string
+		startType    string
 	}{
 		{
-			account: identities.CollectorSender.Account,
-			name:    "FICollector",
-			path:    `"C:\Program Files\FI\fi.exe" -service`,
-			sidType: "UNRESTRICTED",
+			account:      identities.CollectorSender.Account,
+			name:         "FICollector",
+			path:         `"C:\Program Files\FI\fi-collector.exe" -service`,
+			runtimeState: "Running",
+			sidType:      "UNRESTRICTED",
+			startType:    "Automatic",
 		},
 		{
-			account: identities.USNReader.Account,
-			name:    "FIUSNReader",
-			path:    `"C:\Program Files\FI\fi-usn.exe"`,
-			sidType: "UNRESTRICTED",
+			account:      identities.USNReader.Account,
+			name:         "FIUSNReader",
+			path:         `"C:\Program Files\FI\fi-usn-reader.exe"`,
+			runtimeState: "Running",
+			sidType:      "UNRESTRICTED",
+			startType:    "Automatic",
 		},
 		{
-			account: identities.ObjReader.Account,
-			name:    "FIObjReader",
-			path:    `"C:\Program Files\FI\fi-obj.exe"`,
-			sidType: "UNRESTRICTED",
+			account:      identities.ObjReader.Account,
+			name:         "FIObjReader",
+			path:         `"C:\Program Files\FI\fi-obj-reader.exe"`,
+			runtimeState: "Running",
+			sidType:      "UNRESTRICTED",
+			startType:    "Automatic",
 		},
 		{
-			account: identities.CRLRefresher.Account,
-			name:    "FICRLRefresher",
-			path:    `"C:\Program Files\FI\fi-crl-refresh.exe"`,
-			sidType: "NONE",
+			account:      identities.CRLRefresher.Account,
+			name:         "FICRLRefresher",
+			path:         `"C:\Program Files\FI\fi-crl-refresher.exe"`,
+			runtimeState: "Running",
+			sidType:      "NONE",
+			startType:    "Automatic",
 		},
 		{
-			account: identities.CollectorSender.Account,
-			name:    "FISender",
-			path:    `"C:\Program Files\FI\fi-sender.exe"`,
-			sidType: "NONE",
+			account:      identities.CollectorSender.Account,
+			name:         "FISender",
+			path:         `"C:\Program Files\FI\fi-sender.exe"`,
+			runtimeState: "Running",
+			sidType:      "NONE",
+			startType:    "Automatic",
 		},
 	}
 
+	if receiverPending {
+		for index := range expected {
+			if expected[index].name == "FISender" {
+				expected[index].startType = "Manual"
+				expected[index].runtimeState = "Stopped"
+			}
+		}
+	}
+
 	for _, desired := range expected {
+		marker := ""
+		if receiverPending && desired.name == "FISender" {
+			marker = receiverPendingPlanMarker + "; "
+		}
+
 		observed, found := findService(
 			report.Services,
 			desired.name,
@@ -1456,15 +1529,19 @@ func planServices(
 			continue
 		}
 		if observed.Presence == presenceAbsent ||
-			(observed.Presence == "" &&
-				!serviceObserved(observed)) {
+			(observed.Presence == "" && !serviceObserved(observed)) {
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionCreate,
 					Authority: "SCM",
-					Detail:    "authoritative SCM discovery confirmed the service is absent; create automatic managed-account service with exact binary path, identity, and service-SID type after Approval 2",
-					Target:    desired.name,
+					Detail: fmt.Sprintf(
+						"%sauthoritative SCM discovery confirmed the service is absent; create managed-account service start=%s runtime=%s with exact binary path, identity, and service-SID type after Approval 2",
+						marker,
+						desired.startType,
+						desired.runtimeState,
+					),
+					Target: desired.name,
 				},
 			)
 			continue
@@ -1480,7 +1557,7 @@ func planServices(
 			) &&
 			observed.ManagedAccount == "true" &&
 			observed.SIDType == desired.sidType &&
-			observed.StartType == "Automatic"
+			observed.StartType == desired.startType
 
 		if configMatches {
 			plan.Actions = append(
@@ -1488,7 +1565,7 @@ func planServices(
 				PlanAction{
 					Action:    planActionNoChange,
 					Authority: "SCM",
-					Detail:    "service matches desired identity/path/start/SID configuration",
+					Detail:    marker + "service matches desired identity/path/start/SID configuration",
 					Target:    desired.name,
 				},
 			)
@@ -1499,9 +1576,11 @@ func planServices(
 					Action:    planActionReconcile,
 					Authority: "SCM",
 					Detail: fmt.Sprintf(
-						"desired account=%s path=%s managed=true start=Automatic sid=%s",
+						"%sdesired account=%s path=%s managed=true start=%s sid=%s",
+						marker,
 						desired.account,
 						desired.path,
+						desired.startType,
 						desired.sidType,
 					),
 					Target: desired.name,
@@ -1509,29 +1588,97 @@ func planServices(
 			)
 		}
 
-		if observed.State == "Running" {
+		runtimeMatches :=
+			observed.State ==
+				desired.runtimeState
+
+		runtimeDetail :=
+			marker +
+				"service runtime state is " +
+				desired.runtimeState
+
+		if runtimeMatches &&
+			desired.runtimeState == "Running" &&
+			observed.ProcessID != 0 {
+
+			expectedProcessPath, known :=
+				expectedFIServiceExecutablePath(
+					desired.name,
+				)
+
+			if !known {
+				plan.Actions =
+					append(
+						plan.Actions,
+						PlanAction{
+							Action:    planActionBlocked,
+							Authority: "RUNTIME",
+							Detail:    marker + "desired FI service executable path is not characterized",
+							Target:    desired.name,
+						},
+					)
+
+				continue
+			}
+
+			if !sameWindowsExecutablePath(
+				observed.ProcessPath,
+				expectedProcessPath,
+			) {
+				runtimeMatches =
+					false
+
+				runtimeDetail =
+					fmt.Sprintf(
+						"%sservice is Running but SCM PID=%d executes image=%s; expected image=%s; controlled restart after Approval 2",
+						marker,
+						observed.ProcessID,
+						valueOrNotKnown(
+							observed.ProcessPath,
+						),
+						expectedProcessPath,
+					)
+			} else {
+				runtimeDetail =
+					fmt.Sprintf(
+						"%sservice runtime state is Running and SCM PID=%d executes image=%s",
+						marker,
+						observed.ProcessID,
+						expectedProcessPath,
+					)
+			}
+		}
+
+		if runtimeMatches {
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionNoChange,
 					Authority: "RUNTIME",
-					Detail:    "service runtime state is Running",
+					Detail:    runtimeDetail,
 					Target:    desired.name,
 				},
 			)
 		} else {
+			if observed.State != desired.runtimeState {
+				runtimeDetail =
+					fmt.Sprintf(
+						"%sdesired runtime state=%s; observed state=%s; reconcile after Approval 2",
+						marker,
+						desired.runtimeState,
+						valueOrNotKnown(
+							observed.State,
+						),
+					)
+			}
+
 			plan.Actions = append(
 				plan.Actions,
 				PlanAction{
 					Action:    planActionReconcile,
 					Authority: "RUNTIME",
-					Detail: fmt.Sprintf(
-						"desired runtime state=Running; observed state=%s; start after Approval 2",
-						valueOrNotKnown(
-							observed.State,
-						),
-					),
-					Target: desired.name,
+					Detail:    runtimeDetail,
+					Target:    desired.name,
 				},
 			)
 		}
@@ -1838,18 +1985,42 @@ func planPackage(
 			},
 		)
 	case report.Package.InstalledHashesMatch:
-		plan.Actions = append(
-			plan.Actions,
-			PlanAction{
-				Action:    planActionNoChange,
-				Authority: "PACKAGE",
-				Detail: fmt.Sprintf(
-					"installed FI runtime hashes exactly match reviewed manifest release_id=%s",
-					report.Package.ReleaseID,
-				),
-				Target: "installed FI executables",
-			},
-		)
+		legacyRuntimePaths :=
+			approval2LegacyRuntimePaths(
+				report,
+			)
+
+		if len(legacyRuntimePaths) != 0 {
+			plan.Actions = append(
+				plan.Actions,
+				PlanAction{
+					Action:    planActionReconcile,
+					Authority: "PACKAGE",
+					Detail: fmt.Sprintf(
+						"installed FI runtime hashes match reviewed release_id=%s, but authoritative interrupted executable-name migration state requires controlled runtime convergence and retirement of hash-sealed legacy runtime(s): %s",
+						report.Package.ReleaseID,
+						strings.Join(
+							legacyRuntimePaths,
+							", ",
+						),
+					),
+					Target: "installed FI executables",
+				},
+			)
+		} else {
+			plan.Actions = append(
+				plan.Actions,
+				PlanAction{
+					Action:    planActionNoChange,
+					Authority: "PACKAGE",
+					Detail: fmt.Sprintf(
+						"installed FI runtime hashes exactly match reviewed manifest release_id=%s",
+						report.Package.ReleaseID,
+					),
+					Target: "installed FI executables",
+				},
+			)
+		}
 	case installedAllAbsent && report.Package.PayloadHashesMatch:
 		plan.Actions = append(
 			plan.Actions,

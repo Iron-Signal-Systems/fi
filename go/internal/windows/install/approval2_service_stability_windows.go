@@ -111,6 +111,20 @@ func waitForFIServiceStability(
 					err,
 				)
 			}
+
+			if current.name == "FISender" && status.State == svc.Stopped {
+				config, err := current.service.Config()
+				if err != nil {
+					return fmt.Errorf(
+						"query FISender configuration during receiver-pending stability verification: %w",
+						err,
+					)
+				}
+				if config.StartType == mgr.StartManual {
+					continue
+				}
+			}
+
 			if status.State != svc.Running {
 				return fmt.Errorf(
 					"FI service %s did not remain Running during %s stability window; state=%d",

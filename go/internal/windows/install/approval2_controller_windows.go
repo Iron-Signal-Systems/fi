@@ -640,11 +640,27 @@ func executeApproval2ControllerWithBackend(
 
 	post := backend.Rediscover()
 
+	if inputs.ReceiverPending {
+		var err error
+		post, err = NormalizeReceiverPendingReport(post)
+		if err != nil {
+			return rollbackAll(
+				fmt.Errorf(
+					"receiver-pending post-Approval-2 state is invalid: %w",
+					err,
+				),
+			)
+		}
+	}
+
 	postPlan := backend.BuildPlan(
 		post,
 		inputs,
 		approval1.PKI.Handoff,
 	)
+	if inputs.ReceiverPending {
+		postPlan = NormalizeReceiverPendingPlan(postPlan)
+	}
 
 	result.Rediscovered = post
 	result.PostPlan = postPlan
@@ -708,14 +724,25 @@ func executeApproval2ControllerWithBackend(
 		}
 	}
 
-	fmt.Fprintln(
-		writer,
-		"APPROVAL 2 RESULT: PASS",
-	)
-	fmt.Fprintln(
-		writer,
-		"Authoritative post-mutation discovery converged with no remaining mutations.",
-	)
+	if inputs.ReceiverPending {
+		fmt.Fprintln(
+			writer,
+			"APPROVAL 2 RESULT: PASS_WITH_RECEIVER_PENDING",
+		)
+		fmt.Fprintln(
+			writer,
+			"Authoritative local installation converged; FISender is intentionally Manual/Stopped pending a successful receiver mTLS activation probe.",
+		)
+	} else {
+		fmt.Fprintln(
+			writer,
+			"APPROVAL 2 RESULT: PASS",
+		)
+		fmt.Fprintln(
+			writer,
+			"Authoritative post-mutation discovery converged with no remaining mutations.",
+		)
+	}
 
 	return result, nil
 }
@@ -776,9 +803,9 @@ func validateApproval2ControllerPlan(
 	plan InstallPlan,
 	handoff approval1PKIHandoff,
 ) error {
-	if report.Host.BuildNumber != 14393 {
+	if !installerMutationSupportedBuild(report.Host.BuildNumber) {
 		return fmt.Errorf(
-			"Approval 2 controller is characterized only for Windows Server 2016 build 14393; observed build=%d",
+			"Approval 2 controller does not support Windows build %d",
 			report.Host.BuildNumber,
 		)
 	}

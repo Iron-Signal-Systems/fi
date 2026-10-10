@@ -12,7 +12,7 @@ import (
 
 func TestWriterBatchesAndVerifies(t *testing.T) {
 	writer, err := NewWriter(t.TempDir(), 4, CollectorIdentity{
-		ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+		ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 		ExecutableSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	})
 	if err != nil {
@@ -46,7 +46,7 @@ func TestWriterBatchesAndVerifies(t *testing.T) {
 
 func TestVerifyManifestDetectsTamper(t *testing.T) {
 	writer, err := NewWriter(t.TempDir(), 2, CollectorIdentity{
-		ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+		ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 		ExecutableSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	})
 	if err != nil {

@@ -31,7 +31,7 @@ func TestWriteManifestDoesNotPublishUnverifiedPair(t *testing.T) {
 		DataSHA256:      strings.Repeat("0", 64), // valid format, intentionally wrong digest
 		DataFile:        dataName,
 		Collector: CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("a", 64),
 		},
 		CreatedAt:   "2026-09-07T00:00:00.000000000Z",

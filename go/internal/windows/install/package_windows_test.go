@@ -113,7 +113,7 @@ func TestValidatePackageManifestRejectsPath(t *testing.T) {
 	t.Parallel()
 
 	manifest := validTestPackageManifest()
-	manifest.Files[0].Name = `bin\fi.exe`
+	manifest.Files[0].Name = `bin\fi-collector.exe`
 
 	err := validatePackageManifest(manifest)
 	if err == nil {
@@ -151,7 +151,7 @@ func TestPackagePayloadHashComparisonInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := filepath.Join(bin, "fi.exe")
+	payload := filepath.Join(bin, "fi-collector.exe")
 	if err := os.WriteFile(
 		payload,
 		[]byte("FI payload"),
@@ -176,22 +176,22 @@ func validTestPackageManifest() PackageManifest {
 		Architecture: "amd64",
 		Files: []PackageManifestFile{
 			{
-				Name:   "fi.exe",
+				Name:   "fi-collector.exe",
 				Role:   "FICollector",
 				SHA256: hash,
 			},
 			{
-				Name:   "fi-usn.exe",
+				Name:   "fi-usn-reader.exe",
 				Role:   "FIUSNReader",
 				SHA256: hash,
 			},
 			{
-				Name:   "fi-obj.exe",
+				Name:   "fi-obj-reader.exe",
 				Role:   "FIObjReader",
 				SHA256: hash,
 			},
 			{
-				Name:   "fi-crl-refresh.exe",
+				Name:   "fi-crl-refresher.exe",
 				Role:   "FICRLRefresher",
 				SHA256: hash,
 			},

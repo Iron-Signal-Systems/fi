@@ -682,7 +682,7 @@ func replaceFileSet(
 			//
 			// This is required for installed files with narrower
 			// least-privilege contracts than their parent directory, such as
-			// fi-crl-refresh.exe.
+			// fi-crl-refresher.exe.
 			if preserveErr :=
 				restoreNamedSecurityDescriptorFromSDDL(
 					stage,

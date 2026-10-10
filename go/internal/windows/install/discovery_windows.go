@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -106,6 +106,7 @@ type ServiceState struct {
 	Name           string
 	Presence       string
 	ProcessID      uint32
+	ProcessPath    string
 	SIDType        string
 	StartType      string
 	State          string
@@ -230,10 +231,10 @@ func discoverBinaries(report *Report) {
 		name string
 		path string
 	}{
-		{name: "FICollector", path: `C:\Program Files\FI\fi.exe`},
-		{name: "FIUSNReader", path: `C:\Program Files\FI\fi-usn.exe`},
-		{name: "FIObjReader", path: `C:\Program Files\FI\fi-obj.exe`},
-		{name: "FICRLRefresher", path: `C:\Program Files\FI\fi-crl-refresh.exe`},
+		{name: "FICollector", path: `C:\Program Files\FI\fi-collector.exe`},
+		{name: "FIUSNReader", path: `C:\Program Files\FI\fi-usn-reader.exe`},
+		{name: "FIObjReader", path: `C:\Program Files\FI\fi-obj-reader.exe`},
+		{name: "FICRLRefresher", path: `C:\Program Files\FI\fi-crl-refresher.exe`},
 		{name: "FISender", path: `C:\Program Files\FI\fi-sender.exe`},
 	}
 
@@ -546,72 +547,39 @@ func discoverPKI(report *Report, trust config.TransportTrustConfig) {
 	)
 }
 
-func accountIsDirectLocalGroupMember(group string, account string) (bool, error) {
-	resolvedGroup, err := resolveLocalGroupName(
-		group,
-	)
+func accountIsDirectLocalGroupMember(
+	group string,
+	account string,
+) (bool, error) {
+	sid, sidBuffer, err :=
+		lookupAccountSID(
+			account,
+		)
 	if err != nil {
+		if errors.Is(
+			err,
+			syscall.Errno(1332),
+		) {
+			// ERROR_NONE_MAPPED: the current security principal does not
+			// exist.  An orphaned historical SID must not be interpreted as
+			// direct membership of a newly recreated account with the same name.
+			return false, nil
+		}
+
 		return false, err
 	}
 
-	groupName, err := syscall.UTF16PtrFromString(
-		resolvedGroup,
-	)
-	if err != nil {
-		return false, fmt.Errorf(
-			"encode local group %q resolved as %q: %w",
+	member, memberErr :=
+		accountSIDIsDirectLocalGroupMember(
 			group,
-			resolvedGroup,
-			err,
-		)
-	}
-
-	var resume uintptr
-
-	for {
-		var buffer uintptr
-		var entriesRead uint32
-		var totalEntries uint32
-
-		status, _, _ := netLocalGroupGetMembersProc.Call(
-			0,
-			uintptr(unsafe.Pointer(groupName)),
-			3,
-			uintptr(unsafe.Pointer(&buffer)),
-			uintptr(maxPreferredSize),
-			uintptr(unsafe.Pointer(&entriesRead)),
-			uintptr(unsafe.Pointer(&totalEntries)),
-			uintptr(unsafe.Pointer(&resume)),
+			sid,
 		)
 
-		if buffer != 0 {
-			entrySize := unsafe.Sizeof(localGroupMembersInfo3{})
-			for index := uint32(0); index < entriesRead; index++ {
-				entry := (*localGroupMembersInfo3)(
-					unsafe.Pointer(buffer + uintptr(index)*entrySize),
-				)
-				member := windows.UTF16PtrToString(entry.DomainAndName)
-				if strings.EqualFold(member, account) {
-					_, _, _ = netApiBufferFreeProc.Call(buffer)
-					return true, nil
-				}
-			}
-			_, _, _ = netApiBufferFreeProc.Call(buffer)
-		}
+	runtime.KeepAlive(
+		sidBuffer,
+	)
 
-		switch syscall.Errno(status) {
-		case 0:
-			return false, nil
-		case errorMoreData:
-			continue
-		default:
-			return false, fmt.Errorf(
-				"enumerate local group %q members: status=%d",
-				group,
-				status,
-			)
-		}
-	}
+	return member, memberErr
 }
 
 func discoverIdentityBoundary(
@@ -852,77 +820,28 @@ func lsaStatusError(operation string, status uintptr) error {
 	)
 }
 
-func enumerateDirectAccountRights(account string) ([]string, error) {
-	sid, sidBuffer, err := lookupAccountSID(account)
+func enumerateDirectAccountRights(
+	account string,
+) ([]string, error) {
+	sid, sidBuffer, err :=
+		lookupAccountSID(
+			account,
+		)
 	if err != nil {
 		return nil, err
 	}
-	// Keep the backing storage alive through the LSA call.
-	_ = sidBuffer
 
-	attributes := lsaObjectAttributes{
-		Length: uint32(unsafe.Sizeof(lsaObjectAttributes{})),
-	}
-
-	var policyHandle uintptr
-
-	status, _, _ := lsaOpenPolicyProc.Call(
-		0,
-		uintptr(unsafe.Pointer(&attributes)),
-		uintptr(policyLookupNames),
-		uintptr(unsafe.Pointer(&policyHandle)),
-	)
-	if status != 0 {
-		return nil, lsaStatusError("open local security policy", status)
-	}
-	defer lsaCloseProc.Call(policyHandle)
-
-	var rightsPointer uintptr
-	var rightsCount uint32
-
-	status, _, _ = lsaEnumerateAccountRightsProc.Call(
-		policyHandle,
-		uintptr(unsafe.Pointer(sid)),
-		uintptr(unsafe.Pointer(&rightsPointer)),
-		uintptr(unsafe.Pointer(&rightsCount)),
-	)
-
-	if uint32(status) == statusObjectNameNotFound {
-		return []string{}, nil
-	}
-	if status != 0 {
-		return nil, lsaStatusError(
-			"enumerate direct account rights for "+account,
-			status,
+	rights, rightsErr :=
+		enumerateDirectAccountRightsSID(
+			sid,
+			account,
 		)
-	}
-	if rightsPointer == 0 || rightsCount == 0 {
-		return []string{}, nil
-	}
-	defer lsaFreeMemoryProc.Call(rightsPointer)
 
-	values := unsafe.Slice(
-		(*lsaUnicodeString)(unsafe.Pointer(rightsPointer)),
-		int(rightsCount),
+	runtime.KeepAlive(
+		sidBuffer,
 	)
 
-	rights := make([]string, 0, rightsCount)
-	for _, value := range values {
-		if value.Buffer == nil || value.Length == 0 {
-			continue
-		}
-		characters := unsafe.Slice(
-			value.Buffer,
-			int(value.Length/2),
-		)
-		right := windows.UTF16ToString(characters)
-		if strings.TrimSpace(right) != "" {
-			rights = append(rights, right)
-		}
-	}
-
-	sort.Strings(rights)
-	return rights, nil
+	return rights, rightsErr
 }
 
 func containsRight(rights []string, right string) bool {
@@ -1095,7 +1014,7 @@ func discoverAccountRights(
 		}
 	}
 
-	if report.Host.BuildNumber != 14393 {
+	if !objReaderRightsMutationEnabledBuild(report.Host.BuildNumber) {
 		report.addCheck(
 			checkInfo,
 			"FIObjReader release-specific rights",
@@ -1111,7 +1030,7 @@ func discoverAccountRights(
 	if !ok {
 		report.addCheck(
 			checkFail,
-			"FIObjReader Server 2016 rights contract",
+			"FIObjReader release-specific rights contract",
 			"direct account rights were not available",
 		)
 		return
@@ -1149,7 +1068,7 @@ func discoverAccountRights(
 	if len(failures) != 0 {
 		report.addCheck(
 			checkFail,
-			"FIObjReader Server 2016 rights contract",
+			"FIObjReader release-specific rights contract",
 			strings.Join(failures, "; "),
 		)
 		return
@@ -1157,7 +1076,7 @@ func discoverAccountRights(
 
 	report.addCheck(
 		checkPass,
-		"FIObjReader Server 2016 rights contract",
+		"FIObjReader release-specific rights contract",
 		"SeServiceLogonRight, SeBackupPrivilege, SeSecurityPrivilege present; SeRestorePrivilege and SeManageVolumePrivilege absent",
 	)
 }
@@ -1274,6 +1193,83 @@ func discoverBrokerPipes(report *Report) {
 	}
 }
 
+func runningProcessPathByID(
+	processID uint32,
+) (string, error) {
+	if processID == 0 {
+		return "", fmt.Errorf(
+			"process ID must be non-zero",
+		)
+	}
+
+	process, err :=
+		windows.OpenProcess(
+			windows.PROCESS_QUERY_LIMITED_INFORMATION,
+			false,
+			processID,
+		)
+	if err != nil {
+		return "", fmt.Errorf(
+			"open process PID=%d for image-path query: %w",
+			processID,
+			err,
+		)
+	}
+	defer windows.CloseHandle(
+		process,
+	)
+
+	buffer :=
+		make(
+			[]uint16,
+			32768,
+		)
+
+	size :=
+		uint32(
+			len(
+				buffer,
+			),
+		)
+
+	if err :=
+		windows.QueryFullProcessImageName(
+			process,
+			0,
+			&buffer[0],
+			&size,
+		); err != nil {
+
+		return "", fmt.Errorf(
+			"query full process image path PID=%d: %w",
+			processID,
+			err,
+		)
+	}
+
+	if size == 0 {
+		return "", fmt.Errorf(
+			"query full process image path PID=%d returned an empty path",
+			processID,
+		)
+	}
+
+	path :=
+		strings.TrimSpace(
+			windows.UTF16ToString(
+				buffer[:size],
+			),
+		)
+
+	if path == "" {
+		return "", fmt.Errorf(
+			"query full process image path PID=%d returned only whitespace",
+			processID,
+		)
+	}
+
+	return path, nil
+}
 func runningProcessIDsByName(name string) ([]uint32, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(
 		windows.TH32CS_SNAPPROCESS,
@@ -1425,7 +1421,7 @@ func discoverService(
 
 	managed := readManagedAccountState(contract.Name)
 
-	return ServiceState{
+	state := ServiceState{
 		Account:        value.ServiceStartName,
 		BinaryPath:     value.BinaryPathName,
 		DisplayName:    value.DisplayName,
@@ -1433,10 +1429,44 @@ func discoverService(
 		Name:           contract.Name,
 		Presence:       presencePresent,
 		ProcessID:      status.ProcessId,
+		ProcessPath:    "",
 		SIDType:        serviceSIDTypeName(value.SidType),
 		StartType:      serviceStartTypeName(value.StartType),
 		State:          serviceStateName(status.State),
-	}, nil
+	}
+
+	if status.State == svc.Running {
+		if status.ProcessId == 0 {
+			state.Presence = presenceUnknown
+			state.ProcessPath = notKnown
+
+			return state, fmt.Errorf(
+				"service %s is Running but SCM reports PID 0",
+				contract.Name,
+			)
+		}
+
+		processPath, err :=
+			runningProcessPathByID(
+				status.ProcessId,
+			)
+		if err != nil {
+			state.Presence = presenceUnknown
+			state.ProcessPath = notKnown
+
+			return state, fmt.Errorf(
+				"resolve running process image for service %s PID=%d: %w",
+				contract.Name,
+				status.ProcessId,
+				err,
+			)
+		}
+
+		state.ProcessPath =
+			processPath
+	}
+
+	return state, nil
 }
 
 func discoverServices(report *Report) {
@@ -1444,25 +1474,25 @@ func discoverServices(report *Report) {
 		{
 			DisplayName: "FI Collector",
 			Name:        "FICollector",
-			Path:        `"C:\Program Files\FI\fi.exe" -service`,
+			Path:        `"C:\Program Files\FI\fi-collector.exe" -service`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
 		},
 		{
 			DisplayName: "FIUSNReader",
 			Name:        "FIUSNReader",
-			Path:        `"C:\Program Files\FI\fi-usn.exe"`,
+			Path:        `"C:\Program Files\FI\fi-usn-reader.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
 		},
 		{
 			DisplayName: "FI Object Reader",
 			Name:        "FIObjReader",
-			Path:        `"C:\Program Files\FI\fi-obj.exe"`,
+			Path:        `"C:\Program Files\FI\fi-obj-reader.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
 		},
 		{
 			DisplayName: "FI CRL Refresher",
 			Name:        "FICRLRefresher",
-			Path:        `"C:\Program Files\FI\fi-crl-refresh.exe"`,
+			Path:        `"C:\Program Files\FI\fi-crl-refresher.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_NONE,
 		},
 		{

@@ -24,6 +24,7 @@ type approval2ServiceContract struct {
 	Name        string
 	Path        string
 	SIDType     uint32
+	StartType   uint32
 }
 
 type approval2ServiceOwnership struct {
@@ -66,6 +67,7 @@ func reconcileServer2016Services(
 ) (func() error, func() error, error) {
 	contracts := approval2Server2016ServiceContracts(
 		identities,
+		receiverPendingFromPlan(plan),
 	)
 
 	contractByName := make(
@@ -129,9 +131,9 @@ func reconcileServer2016Services(
 		return func() error { return nil }, func() error { return nil }, nil
 	}
 
-	if report.Host.BuildNumber != 14393 {
+	if !installerMutationSupportedBuild(report.Host.BuildNumber) {
 		return nil, nil, fmt.Errorf(
-			"Approval 2 SCM mutation is characterized only for Windows Server 2016 build 14393; observed=%d",
+			"Approval 2 SCM mutation does not support Windows build %d",
 			report.Host.BuildNumber,
 		)
 	}
@@ -223,7 +225,7 @@ func reconcileServer2016Services(
 					DisplayName:      contract.DisplayName,
 					ErrorControl:     mgr.ErrorNormal,
 					ServiceStartName: contract.Account,
-					StartType:        mgr.StartAutomatic,
+					StartType:        contract.StartType,
 					SidType:          contract.SIDType,
 				},
 				contract.Args...,
@@ -303,7 +305,7 @@ func reconcileServer2016Services(
 			desired.DisplayName = contract.DisplayName
 			desired.ServiceStartName = contract.Account
 			desired.Password = ""
-			desired.StartType = mgr.StartAutomatic
+			desired.StartType = contract.StartType
 			desired.SidType = contract.SIDType
 			desired.DelayedAutoStart = false
 
@@ -395,6 +397,7 @@ func reconcileServer2016Services(
 	activate := func() error {
 		return startApproval2CreatedServices(
 			owned,
+			identities,
 		)
 	}
 
@@ -403,13 +406,18 @@ func reconcileServer2016Services(
 
 func startApproval2CreatedServices(
 	owned []approval2ServiceOwnership,
+	identities DesiredFIIdentities,
 ) error {
 	created := make(
-		map[string]bool,
+		map[string]approval2ServiceContract,
 	)
+
 	for _, item := range owned {
-		if item.Created {
-			created[item.Contract.Name] = true
+		if item.Created &&
+			item.Contract.StartType ==
+				mgr.StartAutomatic {
+			created[item.Contract.Name] =
+				item.Contract
 		}
 	}
 
@@ -426,14 +434,20 @@ func startApproval2CreatedServices(
 	}
 	defer manager.Disconnect()
 
-	start := func(name string) error {
-		if !created[name] {
+	start := func(
+		name string,
+	) error {
+		contract, found :=
+			created[name]
+
+		if !found {
 			return nil
 		}
 
-		service, err := manager.OpenService(
-			name,
-		)
+		service, err :=
+			manager.OpenService(
+				name,
+			)
 		if err != nil {
 			return fmt.Errorf(
 				"open newly created service %s for initial start: %w",
@@ -443,7 +457,8 @@ func startApproval2CreatedServices(
 		}
 		defer service.Close()
 
-		status, err := service.Query()
+		status, err :=
+			service.Query()
 		if err != nil {
 			return fmt.Errorf(
 				"query newly created service %s before initial start: %w",
@@ -452,11 +467,25 @@ func startApproval2CreatedServices(
 			)
 		}
 
-		if status.State == svc.Running {
+		if status.State ==
+			svc.Running {
 			return nil
 		}
 
-		if err := service.Start(); err != nil {
+		if err :=
+			verifyApproval2ServiceStartBoundary(
+				contract,
+				identities,
+			); err != nil {
+			return fmt.Errorf(
+				"pre-start security gate for %s: %w",
+				name,
+				err,
+			)
+		}
+
+		if err :=
+			service.Start(); err != nil {
 			return fmt.Errorf(
 				"start newly created service %s: %w",
 				name,
@@ -471,20 +500,38 @@ func startApproval2CreatedServices(
 		)
 	}
 
-	if err := start("FIUSNReader"); err != nil {
-		return err
-	}
-	if err := start("FIObjReader"); err != nil {
+	if err :=
+		start(
+			"FIUSNReader",
+		); err != nil {
 		return err
 	}
 
-	if err := start("FICollector"); err != nil {
+	if err :=
+		start(
+			"FIObjReader",
+		); err != nil {
 		return err
 	}
-	if err := start("FICRLRefresher"); err != nil {
+
+	if err :=
+		start(
+			"FICollector",
+		); err != nil {
 		return err
 	}
-	if err := start("FISender"); err != nil {
+
+	if err :=
+		start(
+			"FICRLRefresher",
+		); err != nil {
+		return err
+	}
+
+	if err :=
+		start(
+			"FISender",
+		); err != nil {
 		return err
 	}
 
@@ -493,40 +540,55 @@ func startApproval2CreatedServices(
 
 func approval2Server2016ServiceContracts(
 	identities DesiredFIIdentities,
+	receiverPendingOption ...bool,
 ) []approval2ServiceContract {
+	receiverPending := false
+	if len(receiverPendingOption) != 0 {
+		receiverPending = receiverPendingOption[0]
+	}
+
+	senderStartType := uint32(mgr.StartAutomatic)
+	if receiverPending {
+		senderStartType = uint32(mgr.StartManual)
+	}
+
 	return []approval2ServiceContract{
 		{
 			Account:     identities.CollectorSender.Account,
 			Args:        []string{"-service"},
 			DisplayName: "FI Collector",
-			Executable:  `C:\Program Files\FI\fi.exe`,
+			Executable:  `C:\Program Files\FI\fi-collector.exe`,
 			Name:        "FICollector",
-			Path:        `"C:\Program Files\FI\fi.exe" -service`,
+			Path:        `"C:\Program Files\FI\fi-collector.exe" -service`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+			StartType:   mgr.StartAutomatic,
 		},
 		{
 			Account:     identities.USNReader.Account,
 			DisplayName: "FIUSNReader",
-			Executable:  `C:\Program Files\FI\fi-usn.exe`,
+			Executable:  `C:\Program Files\FI\fi-usn-reader.exe`,
 			Name:        "FIUSNReader",
-			Path:        `"C:\Program Files\FI\fi-usn.exe"`,
+			Path:        `"C:\Program Files\FI\fi-usn-reader.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+			StartType:   mgr.StartAutomatic,
 		},
 		{
 			Account:     identities.ObjReader.Account,
 			DisplayName: "FI Object Reader",
-			Executable:  `C:\Program Files\FI\fi-obj.exe`,
+			Executable:  `C:\Program Files\FI\fi-obj-reader.exe`,
 			Name:        "FIObjReader",
-			Path:        `"C:\Program Files\FI\fi-obj.exe"`,
+			Path:        `"C:\Program Files\FI\fi-obj-reader.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+			StartType:   mgr.StartAutomatic,
 		},
 		{
 			Account:     identities.CRLRefresher.Account,
 			DisplayName: "FI CRL Refresher",
-			Executable:  `C:\Program Files\FI\fi-crl-refresh.exe`,
+			Executable:  `C:\Program Files\FI\fi-crl-refresher.exe`,
 			Name:        "FICRLRefresher",
-			Path:        `"C:\Program Files\FI\fi-crl-refresh.exe"`,
+			Path:        `"C:\Program Files\FI\fi-crl-refresher.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_NONE,
+			StartType:   mgr.StartAutomatic,
 		},
 		{
 			Account:     identities.CollectorSender.Account,
@@ -535,6 +597,7 @@ func approval2Server2016ServiceContracts(
 			Name:        "FISender",
 			Path:        `"C:\Program Files\FI\fi-sender.exe"`,
 			SIDType:     windows.SERVICE_SID_TYPE_NONE,
+			StartType:   senderStartType,
 		},
 	}
 }
@@ -558,10 +621,21 @@ func approval2ServiceConfigMatches(
 		) &&
 		observed.DisplayName == contract.DisplayName &&
 		observed.ManagedAccount == "true" &&
-		observed.StartType == "Automatic" &&
+		observed.StartType == approval2ServiceStartTypeName(contract.StartType) &&
 		observed.SIDType == serviceSIDTypeName(
 			contract.SIDType,
 		)
+}
+
+func approval2ServiceStartTypeName(value uint32) string {
+	switch value {
+	case mgr.StartAutomatic:
+		return "Automatic"
+	case mgr.StartManual:
+		return "Manual"
+	default:
+		return fmt.Sprintf("%d", value)
+	}
 }
 
 func rollbackApproval2Services(

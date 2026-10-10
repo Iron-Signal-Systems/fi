@@ -133,19 +133,19 @@ func BuildSignedPackage(
 
 	payloadSpecs := []SignedPackagePayload{
 		{
-			Name: "fi.exe",
+			Name: "fi-collector.exe",
 			Role: "FICollector",
 		},
 		{
-			Name: "fi-usn.exe",
+			Name: "fi-usn-reader.exe",
 			Role: "FIUSNReader",
 		},
 		{
-			Name: "fi-obj.exe",
+			Name: "fi-obj-reader.exe",
 			Role: "FIObjReader",
 		},
 		{
-			Name: "fi-crl-refresh.exe",
+			Name: "fi-crl-refresher.exe",
 			Role: "FICRLRefresher",
 		},
 		{

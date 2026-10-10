@@ -88,10 +88,27 @@ func runServiceWindowsSecurityLoop(
 		ctx = context.Background()
 	}
 	if interval <= 0 {
-		return errors.New("service Windows Security interval must be greater than zero")
+		return errors.New(
+			"service Windows Security interval must be greater than zero",
+		)
 	}
 	if source == nil || appendRecord == nil {
-		return errors.New("service Windows Security runtime dependency is nil")
+		return errors.New(
+			"service Windows Security runtime dependency is nil",
+		)
+	}
+
+	waitForInterval := func() bool {
+		timer := time.NewTimer(interval)
+		defer timer.Stop()
+
+		select {
+		case <-ctx.Done():
+			return false
+
+		case <-timer.C:
+			return true
+		}
 	}
 
 	for {
@@ -100,12 +117,21 @@ func runServiceWindowsSecurityLoop(
 		}
 
 		summary, collectErr := source.Collect(ctx)
+
 		outcome := serviceOutcomeComplete
+
 		switch {
-		case collectErr != nil && errors.Is(collectErr, context.Canceled) && ctx.Err() != nil:
-			outcome = serviceOutcomeInterrupted
+		case collectErr != nil &&
+			errors.Is(
+				collectErr,
+				context.Canceled,
+			) &&
+			ctx.Err() != nil:
+			return nil
+
 		case collectErr != nil:
 			outcome = serviceOutcomeFailed
+
 		case summary.Status != configuredSecurityComplete:
 			outcome = serviceOutcomePartial
 		}
@@ -126,33 +152,36 @@ func runServiceWindowsSecurityLoop(
 			SecurityContinuityGap:      summary.ContinuityGap,
 			SecurityMoreAvailable:      summary.MoreAvailable,
 		}
+
 		if collectErr != nil {
 			record.Error = collectErr.Error()
 		}
 
-		appendErr := appendRecord(record)
-		if err := errors.Join(collectErr, appendErr); err != nil {
-			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		if err := appendRecord(record); err != nil {
+			return fmt.Errorf(
+				"persist Windows Security runtime record: %w",
+				err,
+			)
+		}
+
+		if collectErr != nil {
+			// Windows Security is an independently observable collection lane.
+			// A source-cycle failure must not terminate unrelated root or USN
+			// collection. Preserve the exact error durably, return to normal
+			// cadence, and retry. Failure to preserve that runtime record remains
+			// fatal because FI would otherwise lose observability of the fault.
+			if !waitForInterval() {
 				return nil
 			}
-			return err
+			continue
 		}
 
 		if summary.MoreAvailable {
 			continue
 		}
 
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+		if !waitForInterval() {
 			return nil
-		case <-timer.C:
 		}
 	}
 }

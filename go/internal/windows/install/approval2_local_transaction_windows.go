@@ -358,6 +358,17 @@ func applyServer2016Approval2RemainingLocal(
 				err,
 			)
 		}
+
+		if err := waitForFICollectorRuntimeReadinessFromRediscovery(
+			Discover,
+			transactionID,
+			approval2CollectorRuntimeReadinessTimeout,
+		); err != nil {
+			return fail(
+				"COLLECTOR READINESS",
+				err,
+			)
+		}
 	}
 
 	for _, action := range plan.Actions {

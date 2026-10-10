@@ -99,7 +99,7 @@ func TestRolloverRepairsInterruptedPublicationBeforeFreeze(
 			DataSHA256:      hex.EncodeToString(digest[:]),
 			DataFile:        dataName,
 			Collector: spool.CollectorIdentity{
-				ExecutablePath: `C:\Program Files\FI\fi.exe`,
+				ExecutablePath: `C:\Program Files\FI\fi-collector.exe`,
 				ExecutableSHA256: strings.Repeat(
 					"a",
 					64,

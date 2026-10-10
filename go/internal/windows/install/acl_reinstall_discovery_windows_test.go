@@ -71,6 +71,10 @@ func TestPlannedACLTargetsUseProposedConfigAndRetainedTrust(
 			`C:\ProgramData\FI\spool`,
 		),
 
+		"FI collector work directory": filepath.Clean(
+			`C:\ProgramData\FI\.fi-spool-collector-work`,
+		),
+
 		"FI stage directory": filepath.Clean(
 			`C:\ProgramData\FI\transport-v2-drain\stage`,
 		),
@@ -88,7 +92,7 @@ func TestPlannedACLTargetsUseProposedConfigAndRetainedTrust(
 		),
 
 		"FI CRL refresher executable file": filepath.Clean(
-			`C:\Program Files\FI\fi-crl-refresh.exe`,
+			`C:\Program Files\FI\fi-crl-refresher.exe`,
 		),
 
 		"FI CRL refresher journal directory": filepath.Clean(

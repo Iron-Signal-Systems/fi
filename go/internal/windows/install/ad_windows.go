@@ -34,6 +34,7 @@ type ActiveDirectoryGMSAState struct {
 	PasswordRetrievalTrustees   []GMSAMembershipTrustee
 	Role                        string
 	SAMAccountName              string
+	SID                         string
 	ServicePrincipalNames       []string
 	SupportedEncryptionTypes    string
 	UserAccountControl          string
@@ -566,6 +567,7 @@ func (session *ldapSession) findGMSA(
 		"msDS-GroupMSAMembership",
 		"msDS-SupportedEncryptionTypes",
 		"sAMAccountName",
+		"objectSid",
 		"servicePrincipalName",
 		"userAccountControl",
 	}
@@ -595,6 +597,30 @@ func (session *ldapSession) findGMSA(
 		DistinguishedName: dn,
 		Role:              role,
 	}
+
+	objectSID, err := session.getBinaryValue(
+		entry,
+		"objectSid",
+	)
+	if err != nil {
+		return ActiveDirectoryGMSAState{}, err
+	}
+
+	state.SID, err = sidStringFromBinary(
+		objectSID,
+	)
+	if err != nil {
+		return ActiveDirectoryGMSAState{}, fmt.Errorf(
+			"decode gMSA objectSid for %s: %w",
+			sam,
+			err,
+		)
+	}
+	state.SID = strings.ToUpper(
+		strings.TrimSpace(
+			state.SID,
+		),
+	)
 
 	state.SAMAccountName, err = session.getStringValue(
 		entry,

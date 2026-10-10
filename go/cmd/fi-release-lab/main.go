@@ -205,7 +205,7 @@ func runSignPackage(
 	binaryRoot := flags.String(
 		"bin",
 		"",
-		"directory containing unsigned fi.exe, fi-usn.exe, fi-obj.exe, and fi-sender.exe inputs",
+		"directory containing unsigned fi-collector.exe, fi-usn-reader.exe, fi-obj-reader.exe, and fi-sender.exe inputs",
 	)
 	output := flags.String(
 		"out",

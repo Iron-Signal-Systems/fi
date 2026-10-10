@@ -502,9 +502,9 @@ func validateApproval1ControllerPlan(
 	report Report,
 	plan InstallPlan,
 ) error {
-	if report.Host.BuildNumber != 14393 {
+	if !installerMutationSupportedBuild(report.Host.BuildNumber) {
 		return fmt.Errorf(
-			"Approval 1 controller is characterized only for Windows Server 2016 build 14393; observed build=%d",
+			"Approval 1 controller does not support Windows build %d",
 			report.Host.BuildNumber,
 		)
 	}
