@@ -46,6 +46,8 @@ func aclTargetAbsenceRepairable(
 ) bool {
 	switch label {
 	case collectorWorkDirectoryACLLabel,
+		generationRawDirectoryACLLabel,
+		spoolParentDirectoryACLLabel,
 		"FI CRL activation directory",
 		"FI CRL active file",
 		"FI CRL refresher executable file",
@@ -242,6 +244,14 @@ func plannedACLTargets(
 		{
 			Label: "FI spool directory",
 			Path:  report.Config.SpoolDir,
+		},
+		{
+			Label: spoolParentDirectoryACLLabel,
+			Path:  spoolParentDirectoryTarget(report.Config.SpoolDir),
+		},
+		{
+			Label: generationRawDirectoryACLLabel,
+			Path:  generationRawDirectoryTarget(report.Config.SpoolDir),
 		},
 		{
 			Label: collectorWorkDirectoryACLLabel,
@@ -672,6 +682,14 @@ func discoverACLStates(
 		{
 			Label: "FI spool directory",
 			Path:  report.Config.SpoolDir,
+		},
+		{
+			Label: spoolParentDirectoryACLLabel,
+			Path:  spoolParentDirectoryTarget(report.Config.SpoolDir),
+		},
+		{
+			Label: generationRawDirectoryACLLabel,
+			Path:  generationRawDirectoryTarget(report.Config.SpoolDir),
 		},
 		{
 			Label: collectorWorkDirectoryACLLabel,
@@ -1192,6 +1210,100 @@ func evaluateWritableRoot(
 	)
 }
 
+func evaluateSpoolParentDirectoryACL(
+	report *Report,
+	collector string,
+) {
+	state, found := aclByLabel(
+		report,
+		spoolParentDirectoryACLLabel,
+	)
+	if !found {
+		report.addCheck(
+			checkFail,
+			spoolParentDirectoryACLLabel+" desired ACL contract",
+			"DACL state was not discovered",
+		)
+		return
+	}
+
+	// FILE_ADD_SUBDIRECTORY is bit 0x00000004.
+	// Only this directory may be accessed by the sender ACE.
+	required := fileReadExecuteMask | uint32(0x00000004)
+
+	var failures []string
+	validAllow := false
+
+	if strings.TrimSpace(collector) == "" {
+		failures = append(
+			failures,
+			"collector/sender identity unavailable",
+		)
+	}
+
+	for _, entry := range state.Entries {
+		if !accountMatches(entry, collector) {
+			continue
+		}
+
+		if entry.Type == "DENY" {
+			failures = append(
+				failures,
+				"collector/sender has an explicit or inherited deny ACE",
+			)
+			continue
+		}
+
+		if entry.Type != "ALLOW" {
+			continue
+		}
+
+		if entry.Inherited || entry.Flags != 0 {
+			failures = append(
+				failures,
+				"collector/sender ACE must be explicit and non-inheritable",
+			)
+			continue
+		}
+
+		if entry.Mask&^required != 0 {
+			failures = append(
+				failures,
+				fmt.Sprintf(
+					"collector/sender parent ACE exceeds required rights: 0x%08X",
+					entry.Mask,
+				),
+			)
+			continue
+		}
+
+		if entry.Mask&required == required {
+			validAllow = true
+		}
+	}
+
+	if !validAllow {
+		failures = append(
+			failures,
+			"collector/sender requires explicit Read/Execute and FILE_ADD_SUBDIRECTORY",
+		)
+	}
+
+	if len(failures) != 0 {
+		report.addCheck(
+			checkFail,
+			spoolParentDirectoryACLLabel+" desired ACL contract",
+			strings.Join(failures, "; "),
+		)
+		return
+	}
+
+	report.addCheck(
+		checkPass,
+		spoolParentDirectoryACLLabel+" desired ACL contract",
+		"sender has explicit non-inheritable parent access without other direct rights",
+	)
+}
 func evaluateSpoolRoot(
 	report *Report,
 	collector string,
@@ -1609,6 +1721,18 @@ func evaluateDesiredACLContractsForAccounts(
 
 	evaluateSpoolRoot(
 		report,
+		collector,
+	)
+	evaluateSpoolParentDirectoryACL(
+		report,
+		collector,
+	)
+
+	evaluateWritableRoot(
+		report,
+		generationRawDirectoryACLLabel,
+		true,
+		true,
 		collector,
 	)
 

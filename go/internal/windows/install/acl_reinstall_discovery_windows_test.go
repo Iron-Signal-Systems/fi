@@ -71,6 +71,14 @@ func TestPlannedACLTargetsUseProposedConfigAndRetainedTrust(
 			`C:\ProgramData\FI\spool`,
 		),
 
+		"FI active spool parent directory": filepath.Clean(
+			`C:\ProgramData\FI`,
+		),
+
+		"FI raw generation directory": filepath.Clean(
+			`C:\ProgramData\FI\generation-raw`,
+		),
+
 		"FI collector work directory": filepath.Clean(
 			`C:\ProgramData\FI\.fi-spool-collector-work`,
 		),
