@@ -860,12 +860,6 @@ func printConfigSummary(
 		config.Value("FI_RECEIVER_EXTERNAL_GATEWAY"),
 	)
 
-	fmt.Fprintf(
-		output,
-		"    source:             %s\n",
-		config.Value("FI_RUNTIME_SOURCE_ID"),
-	)
-
 	fmt.Fprintln(output)
 	fmt.Fprintln(
 		output,

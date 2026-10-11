@@ -18,11 +18,6 @@ FI_ZPOOL="zroot"
 FI_RUNTIME_UID=""
 FI_RUNTIME_GID=""
 
-# Current application runtime is source-specific. This value selects the
-# authorized source operated by the receiver and ingest worker.
-# Multi-source runtime is a later explicit contract.
-FI_RUNTIME_SOURCE_ID=""
-
 # Physical FreeBSD host administrative interface.
 # The installer may initially be reached through temporary addressing;
 # these values define the final persistent management identity.

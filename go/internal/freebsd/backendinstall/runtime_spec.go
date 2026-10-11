@@ -298,19 +298,8 @@ func runtimeRenderValues(
 		return nil, err
 	}
 
-	source := config.Value(
-		"FI_RUNTIME_SOURCE_ID",
-	)
-
-	if source == "" {
-		return nil, fmt.Errorf(
-			"FI_RUNTIME_SOURCE_ID is empty",
-		)
-	}
-
 	return map[string]string{
 		"FI_RECEIVER_EXTERNAL_IP": receiverIP,
-		"FI_RUNTIME_SOURCE_ID":    source,
 		"FI_SOR_DB_WORK_IP":       sorIP,
 	}, nil
 }

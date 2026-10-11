@@ -217,6 +217,19 @@ func TestRuntimePlanDerivedAddresses(
 		ingest.Content,
 	)
 
+	if strings.Contains(
+		ingestContent,
+		"fi_ingest_worker_source",
+	) ||
+		strings.Contains(
+			ingestContent,
+			"FI_RUNTIME_SOURCE_ID",
+		) {
+		t.Fatal(
+			"ingest runtime config retained single-source state",
+		)
+	}
+
 	if !strings.Contains(
 		ingestContent,
 		"host="+sorIP+" port=5432",

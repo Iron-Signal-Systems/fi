@@ -41,6 +41,30 @@ func TestParseConfigRejectsDuplicateKey(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsRetiredRuntimeSourceID(t *testing.T) {
+	fixture := readFixture(t)
+	fixture += `
+FI_RUNTIME_SOURCE_ID="retired.test.invalid"
+`
+
+	_, err := ParseConfig(strings.NewReader(fixture))
+	if err == nil {
+		t.Fatal(
+			"ParseConfig() accepted retired FI_RUNTIME_SOURCE_ID",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"unknown configuration key",
+	) {
+		t.Fatalf(
+			"ParseConfig() error = %v",
+			err,
+		)
+	}
+}
+
 func TestParseConfigRejectsUnknownKey(t *testing.T) {
 	fixture := readFixture(t)
 	fixture += "\nFI_UNKNOWN=\"value\"\n"

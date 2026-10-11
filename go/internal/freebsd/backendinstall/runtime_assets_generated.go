@@ -239,7 +239,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: fb03353fd2a4ca09bbacb8b298896796896e461f5981dfd9ff8e44f0571528f6
+// SHA256: b2288d4c78aec9a81f4349197e9026d5e289cb2c69e89a459a07293bec914015
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -262,9 +262,6 @@ fail()
 
 . "$CONFIG"
 
-[ -n "${fi_ingest_worker_source:-}" ] ||
-    fail "fi_ingest_worker_source is required"
-
 [ -n "${fi_ingest_worker_postgres:-}" ] ||
     fail "fi_ingest_worker_postgres is required"
 
@@ -277,17 +274,10 @@ fail()
 [ -r "$fi_ingest_worker_pgpass" ] ||
     fail "PostgreSQL credential file is not readable"
 
-case "$fi_ingest_worker_source" in
-    *[!A-Za-z0-9._-]*)
-        fail "fi_ingest_worker_source contains unsupported characters"
-        ;;
-esac
-
 for trust_file in \
     /usr/local/etc/fi/pki/trust/fi-root-ca.crt.pem \
     /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crt.pem \
-    /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem \
-    "/usr/local/etc/fi/sources/${fi_ingest_worker_source}.conf"
+    /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem
 do
     [ -r "$trust_file" ] ||
         fail "required ingest trust file is not readable: $trust_file"
@@ -296,7 +286,6 @@ done
 export PGPASSFILE="$fi_ingest_worker_pgpass"
 
 exec "$BINARY" \
-    -source "$fi_ingest_worker_source" \
     -postgres "$fi_ingest_worker_postgres" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
@@ -414,13 +403,12 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: aa8d2fff34ec22d95be8e65673b3c2ad95e8425bd4542919faab351fb012694f
+// SHA256: 0e91bed0db6a901bfe68179469850eb2583f2a3bbbc038475da817cf4ae7309f
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
 fi_ingest_worker_enable="YES"
 
-fi_ingest_worker_source="@FI_RUNTIME_SOURCE_ID@"
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 `

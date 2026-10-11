@@ -33,7 +33,6 @@ var dnsNamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])
 var hostnamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`)
 var interfaceNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 var poolNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]*$`)
-var runtimeSourcePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var snapshotPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)+@[A-Za-z0-9_.:-]+$`)
 
 var allowedKeys = map[string]struct{}{
@@ -83,7 +82,6 @@ var allowedKeys = map[string]struct{}{
 	"FI_RECEIVER_WORK_JAIL_IF":     {},
 	"FI_RECORDED_HOST":             {},
 	"FI_RUNTIME_GID":               {},
-	"FI_RUNTIME_SOURCE_ID":         {},
 	"FI_RUNTIME_UID":               {},
 	"FI_SOR_DB_FSTAB":              {},
 	"FI_SOR_DB_MGMT_ADDRESS":       {},
@@ -146,7 +144,6 @@ var requiredKeys = []string{
 	"FI_RECEIVER_WORK_JAIL_IF",
 	"FI_RECORDED_HOST",
 	"FI_RUNTIME_GID",
-	"FI_RUNTIME_SOURCE_ID",
 	"FI_RUNTIME_UID",
 	"FI_SOR_DB_FSTAB",
 	"FI_SOR_DB_MGMT_ADDRESS",
@@ -379,12 +376,6 @@ func validateNames(config Config) error {
 		return err
 	}
 
-	if err := validateRuntimeSource(
-		config.Value("FI_RUNTIME_SOURCE_ID"),
-	); err != nil {
-		return err
-	}
-
 	if err := validateDNSName(
 		"FI_HOST_DNS_SEARCH",
 		config.Value("FI_HOST_DNS_SEARCH"),
@@ -403,28 +394,6 @@ func validateNames(config Config) error {
 		return fmt.Errorf(
 			"FI_ZPOOL is not an accepted pool name: %s",
 			config.Value("FI_ZPOOL"),
-		)
-	}
-
-	return nil
-}
-
-func validateRuntimeSource(value string) error {
-	if len(value) > 253 {
-		return fmt.Errorf("FI_RUNTIME_SOURCE_ID exceeds 253 characters")
-	}
-
-	if !runtimeSourcePattern.MatchString(value) {
-		return fmt.Errorf(
-			"FI_RUNTIME_SOURCE_ID contains unsupported characters: %s",
-			value,
-		)
-	}
-
-	if strings.Contains(value, "..") {
-		return fmt.Errorf(
-			"FI_RUNTIME_SOURCE_ID contains an empty label: %s",
-			value,
 		)
 	}
 
