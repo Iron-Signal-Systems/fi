@@ -23,7 +23,11 @@ func TestProcessPlanRetiresAcceptedReadyMarkerWithoutDatabaseWork(
 ) {
 	readyRoot := t.TempDir()
 	name := "generation-0123456789abcdef.record.json"
-	if _, err := generationready.Publish(readyRoot, name); err != nil {
+	if _, err := generationready.PublishForSource(
+		readyRoot,
+		"source-1",
+		name,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,7 +47,10 @@ func TestProcessPlanRetiresAcceptedReadyMarkerWithoutDatabaseWork(
 	var attempts uint64
 	if err := processPlan(
 		context.Background(),
-		workerConfig{ReadyRoot: readyRoot},
+		workerConfig{
+			ReadyRoot: readyRoot,
+			SourceID:  "source-1",
+		},
 		postgresConnection{},
 		plan,
 		true,
@@ -52,7 +59,11 @@ func TestProcessPlanRetiresAcceptedReadyMarkerWithoutDatabaseWork(
 		t.Fatal(err)
 	}
 
-	names, err := generationready.ReadReceiptNames(readyRoot, 64)
+	names, err := generationready.ReadReceiptNamesForSource(
+		readyRoot,
+		"source-1",
+		64,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +83,7 @@ func TestReadyPlanEmptyQueueNeedsNoDatabaseConnection(
 		workerConfig{
 			ReadyBatchSize: 64,
 			ReadyRoot:      t.TempDir(),
+			SourceID:       "source-1",
 		},
 		nil,
 	)

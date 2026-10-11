@@ -289,8 +289,9 @@ func publishGenerationReady(
 	readyRoot string,
 	recorded generationrecorder.DurableResult,
 ) (string, string) {
-	ready, err := generationready.Publish(
+	ready, err := generationready.PublishForSource(
 		readyRoot,
+		recorded.Receipt.Descriptor.SourceID,
 		filepath.Base(recorded.ReceiptPath),
 	)
 	if err != nil {

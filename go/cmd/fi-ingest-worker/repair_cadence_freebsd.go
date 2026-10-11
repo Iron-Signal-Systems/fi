@@ -149,8 +149,9 @@ func assessRepairPlan(
 		plan,
 		rejectionTimes,
 		func(receiptName string) (bool, error) {
-			return generationready.ReceiptNamePresent(
+			return generationready.ReceiptNamePresentForSource(
 				config.ReadyRoot,
+				config.SourceID,
 				receiptName,
 			)
 		},

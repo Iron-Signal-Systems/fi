@@ -759,8 +759,9 @@ func processPlan(
 			return nil
 		}
 
-		if err := generationready.RemoveReceiptNames(
+		if err := generationready.RemoveReceiptNamesForSource(
 			config.ReadyRoot,
+			config.SourceID,
 			retireNames,
 		); err != nil {
 			return err
@@ -1053,8 +1054,9 @@ func readyPlan(
 	uint64,
 	error,
 ) {
-	names, err := generationready.ReadReceiptNames(
+	names, err := generationready.ReadReceiptNamesForSource(
 		config.ReadyRoot,
+		config.SourceID,
 		config.ReadyBatchSize,
 	)
 	if err != nil {

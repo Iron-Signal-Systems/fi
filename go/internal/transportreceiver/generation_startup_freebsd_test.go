@@ -77,7 +77,12 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 		)
 	}
 
-	readyEntries, err := os.ReadDir(config.GenerationReadyRoot)
+	sourceReadyRoot := filepath.Join(
+		config.GenerationReadyRoot,
+		fixture.config.Custody.Receive.Source.SourceID,
+	)
+
+	readyEntries, err := os.ReadDir(sourceReadyRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +94,7 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 	}
 	if err := os.Remove(
 		filepath.Join(
-			config.GenerationReadyRoot,
+			sourceReadyRoot,
 			readyEntries[0].Name(),
 		),
 	); err != nil {
@@ -115,7 +120,7 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 		)
 	}
 
-	readyEntries, err = os.ReadDir(config.GenerationReadyRoot)
+	readyEntries, err = os.ReadDir(sourceReadyRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

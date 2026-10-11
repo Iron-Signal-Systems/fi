@@ -68,7 +68,12 @@ func TestReceiveGenerationAndAcknowledgeNewThenAlreadyRecorded(
 		)
 	}
 
-	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 1)
+	assertGenerationReadyCount(
+		t,
+		fixture.config.ReadyRoot,
+		fixture.config.Custody.Receive.Source.SourceID,
+		1,
+	)
 
 	decision, acknowledgement := readGenerationTransactionOutput(
 		t,
@@ -125,7 +130,12 @@ func TestReceiveGenerationAndAcknowledgeNewThenAlreadyRecorded(
 		)
 	}
 
-	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 1)
+	assertGenerationReadyCount(
+		t,
+		fixture.config.ReadyRoot,
+		fixture.config.Custody.Receive.Source.SourceID,
+		1,
+	)
 
 	_, acknowledgement = readGenerationTransactionOutput(
 		t,
@@ -191,7 +201,12 @@ func TestReceiveGenerationAndAcknowledgeRecorderFailureWritesNoAcknowledgement(
 		t,
 		fixture.config.Recorder.RootDir,
 	)
-	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 0)
+	assertGenerationReadyCount(
+		t,
+		fixture.config.ReadyRoot,
+		fixture.config.Custody.Receive.Source.SourceID,
+		0,
+	)
 }
 
 func TestReceiveGenerationAndAcknowledgeRejectsSourceBeforeTransfer(
@@ -242,7 +257,12 @@ func TestReceiveGenerationAndAcknowledgeRejectsSourceBeforeTransfer(
 		t,
 		fixture.config.Recorder.RootDir,
 	)
-	assertGenerationReadyCount(t, fixture.config.ReadyRoot, 0)
+	assertGenerationReadyCount(
+		t,
+		fixture.config.ReadyRoot,
+		fixture.config.Custody.Receive.Source.SourceID,
+		0,
+	)
 }
 
 func TestReceiveGenerationAndAcknowledgeRejectsOfferAboveCanonicalLimit(
@@ -818,17 +838,29 @@ func assertGenerationTransactionDirectoryEmpty(
 func assertGenerationReadyCount(
 	t *testing.T,
 	root string,
+	sourceID string,
 	want int,
 ) {
 	t.Helper()
 
-	entries, err := os.ReadDir(root)
+	sourceRoot := filepath.Join(
+		root,
+		sourceID,
+	)
+
+	entries, err := os.ReadDir(sourceRoot)
 	if err != nil {
+		if os.IsNotExist(err) && want == 0 {
+			return
+		}
+
 		t.Fatal(err)
 	}
+
 	if len(entries) != want {
 		t.Fatalf(
-			"generation ready entry count = %d, want %d",
+			"generation READY source=%q entry count = %d, want %d",
+			sourceID,
 			len(entries),
 			want,
 		)
