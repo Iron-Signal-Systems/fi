@@ -29,12 +29,19 @@ func TestDiscoverSafetyResourcesNeedsCreateOnBaselineHost(t *testing.T) {
 		)
 	}
 
-	if len(states) != 32 {
+	if len(states) != 33 {
 		t.Fatalf(
-			"state count = %d, want 32",
+			"state count = %d, want 33",
 			len(states),
 		)
 	}
+
+	expectedLifecyclePaths := map[string]string{
+		"FI PF boot policy":    "/etc/rc.conf.d/pf",
+		"FI devfs boot policy": "/etc/rc.conf.d/devfs",
+	}
+
+	observedLifecyclePaths := make(map[string]int)
 
 	for _, state := range states {
 		if state.Disposition != ResourceNeedsCreate {
@@ -44,6 +51,33 @@ func TestDiscoverSafetyResourcesNeedsCreateOnBaselineHost(t *testing.T) {
 				state.Target,
 				state.Disposition,
 				state.Detail,
+			)
+		}
+
+		expectedTarget, ok := expectedLifecyclePaths[state.Name]
+		if !ok {
+			continue
+		}
+
+		if state.Target != expectedTarget {
+			t.Fatalf(
+				"%s target = %q, want %q",
+				state.Name,
+				state.Target,
+				expectedTarget,
+			)
+		}
+
+		observedLifecyclePaths[state.Name]++
+	}
+
+	for name, target := range expectedLifecyclePaths {
+		if observedLifecyclePaths[name] != 1 {
+			t.Fatalf(
+				"%s target %q observed %d times, want exactly 1",
+				name,
+				target,
+				observedLifecyclePaths[name],
 			)
 		}
 	}

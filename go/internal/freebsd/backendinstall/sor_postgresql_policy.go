@@ -146,17 +146,53 @@ func VerifySORPostgreSQL(config Config) error {
 		return err
 	}
 
-	spec := sorPostgreSQLPolicySpecForConfig(config)
-	state := classifySORPostgreSQLPolicy(spec)
+	rcSpec := sorPostgreSQLPolicySpecForConfig(
+		config,
+	)
 
-	if state != sorPostgreSQLPolicyOwnedMatch {
+	rcState := classifySORPostgreSQLPolicy(
+		rcSpec,
+	)
+
+	if rcState != sorPostgreSQLPolicyOwnedMatch {
 		return fmt.Errorf(
 			"PostgreSQL rc policy is not OWNED_MATCH: %s",
-			state,
+			rcState,
 		)
 	}
 
-	return nil
+	identity, err := inspectSORPostgreSQLIdentity(
+		config.Value("FI_SOR_DB_ROOT"),
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"inspect PostgreSQL service identity for cluster verification: %w",
+			err,
+		)
+	}
+
+	clusterPolicy, err :=
+		buildSORPostgreSQLClusterPolicy(
+			config,
+		)
+	if err != nil {
+		return fmt.Errorf(
+			"build PostgreSQL cluster policy for verification: %w",
+			err,
+		)
+	}
+
+	clusterSpec := sorPostgreSQLClusterSpec{
+		GID:          identity.GID,
+		MajorVersion: sorPostgreSQLClusterMajorVersion,
+		PGData:       config.Value("FI_SOR_POSTGRES_HOST"),
+		UID:          identity.UID,
+	}
+
+	return verifySORPostgreSQLClusterState(
+		clusterSpec,
+		clusterPolicy,
+	)
 }
 
 // -----------------------------------------------------------------------------

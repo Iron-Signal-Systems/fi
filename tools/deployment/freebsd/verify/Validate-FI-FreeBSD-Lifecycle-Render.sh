@@ -61,8 +61,9 @@ PLAN="$WORK_ROOT/plan"
     fail "unable to render lifecycle plan"
 
 FI_RC="$PLAN/rc.conf.d.fi_jails"
-DEVFS_RC="$PLAN/rc.conf.d.devfs.90-fi"
+DEVFS_RC="$PLAN/rc.conf.d.devfs"
 FI_SERVICE="$PLAN/rc.d.fi_jails"
+PF_RC="$PLAN/rc.conf.d.pf"
 FI_PF_RC="$PLAN/rc.conf.d.fi_pf"
 FI_PF_SERVICE="$PLAN/rc.d.fi_pf"
 
@@ -74,6 +75,7 @@ for required_file in \
     "$FI_RC" \
     "$DEVFS_RC" \
     "$FI_SERVICE" \
+    "$PF_RC" \
     "$FI_PF_RC" \
     "$FI_PF_SERVICE" \
     "$RECEIVER" \
@@ -83,6 +85,21 @@ do
     [ -f "$required_file" ] ||
         fail "required lifecycle artifact absent: $required_file"
 done
+
+require_line \
+    "$PF_RC" \
+    '# FI-ROLE: pf-boot-policy' \
+    "base PF boot policy has exact lifecycle role"
+
+require_line \
+    "$PF_RC" \
+    'pf_enable="YES"' \
+    "base PF is enabled for boot"
+
+require_line \
+    "$PF_RC" \
+    'pf_rules="/etc/pf.conf"' \
+    "base PF boot policy binds the accepted rules path"
 
 pass "all lifecycle artifacts render"
 
@@ -228,21 +245,17 @@ devfs_eval=$(
 
 pass "devfs lifecycle fragment preserves site rulesets without duplication"
 
-require_line \
+for jail_file in \
+    "$SOR" \
     "$INGEST" \
-    '    depend = "fi-sor-db";' \
-    "ingest depends on System of Record"
+    "$RECEIVER"
+do
+    if grep -Fq 'depend =' "$jail_file"; then
+        fail "FI production jail definitions must not use jail depend pseudo-parameters"
+    fi
+done
 
-require_line \
-    "$RECEIVER" \
-    '    depend = "fi-ingest";' \
-    "receiver depends on ingest"
-
-if grep -Fq 'depend =' "$SOR"; then
-    fail "System of Record must not have an FI jail dependency"
-fi
-
-pass "System of Record is the FI dependency root"
+pass "FI production jail definitions defer dependency authority to FI controller"
 
 if grep -Eq '@FI_[A-Z0-9_]+@' \
     "$FI_RC" \

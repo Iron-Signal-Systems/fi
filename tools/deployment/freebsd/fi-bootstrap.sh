@@ -1201,6 +1201,10 @@ render_plan()
         fail "unable to record derived FI_PF_POLICY_SHA256"
 
     render_template \
+        "$SCRIPT_DIR/lifecycle.d/pf.rc.conf.template" \
+        "$OUTPUT_DIR/rc.conf.d.pf"
+
+    render_template \
         "$SCRIPT_DIR/lifecycle.d/fi-pf.rc.conf.template" \
         "$OUTPUT_DIR/rc.conf.d.fi_pf"
 
@@ -1220,7 +1224,7 @@ render_plan()
 
     render_template \
         "$SCRIPT_DIR/lifecycle.d/devfs.rc.conf.template" \
-        "$OUTPUT_DIR/rc.conf.d.devfs.90-fi"
+        "$OUTPUT_DIR/rc.conf.d.devfs"
 
     render_template \
         "$SCRIPT_DIR/lifecycle.d/fi-jails.rc.d.template" \
@@ -1262,12 +1266,13 @@ render_plan()
         fstab.fi-sor-db \
         devfs.rules.fi \
         pf.conf \
+        rc.conf.d.pf \
         rc.conf.d.fi_pf \
         rc.d.fi_pf \
         fi-vnet-pair \
         rc.conf.d.postgresql \
         rc.conf.d.fi_jails \
-        rc.conf.d.devfs.90-fi \
+        rc.conf.d.devfs \
         rc.d.fi_jails \
         fi-receiver-supervisor \
         rc.d.fi_receiver \

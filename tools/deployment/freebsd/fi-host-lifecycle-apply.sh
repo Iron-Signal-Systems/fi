@@ -180,6 +180,11 @@ lifecycle_parent_install_absent()
 lifecycle_parent_map()
 {
     printf '%s\t%s\t%s\t%s\t%s\n' \
+        "local-etc-directory" \
+        "/usr/local/etc" \
+        "0" "0" "0755"
+
+    printf '%s\t%s\t%s\t%s\t%s\n' \
         "local-rc-directory" \
         "/usr/local/etc/rc.d" \
         "0" "0" "0755"
@@ -189,10 +194,6 @@ lifecycle_parent_map()
         "/etc/rc.conf.d" \
         "0" "0" "0755"
 
-    printf '%s\t%s\t%s\t%s\t%s\n' \
-        "devfs-rc-conf-directory" \
-        "/etc/rc.conf.d/devfs" \
-        "0" "0" "0755"
 }
 
 lifecycle_prepare_expected()
@@ -251,8 +252,15 @@ lifecycle_resource_map()
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "devfs-boot-policy" \
-        "$LIFECYCLE_PLAN/rc.conf.d.devfs.90-fi" \
-        "/etc/rc.conf.d/devfs/90-fi" \
+        "$LIFECYCLE_PLAN/rc.conf.d.devfs" \
+        "/etc/rc.conf.d/devfs" \
+        "0" "0" "0644"
+
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "pf-boot-policy" \
+        "$LIFECYCLE_PLAN/rc.conf.d.pf" \
+        "/etc/rc.conf.d/pf" \
         "0" "0" "0644"
 }
 

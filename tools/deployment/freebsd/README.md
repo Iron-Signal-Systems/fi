@@ -128,13 +128,42 @@ The FreeBSD bootstrap currently implements:
 - `preflight-jail-roots` / `apply-jail-roots` / `verify-jail-roots` — production jail-root readiness, creation, and verification;
 - `apply-identities` — jail-local FI runtime identity creation and verification;
 - `apply-directories` — production filesystem-directory initialization and verification;
-- `apply-sor-postgresql` / `verify-sor-postgresql` — System-of-Record PostgreSQL rc-policy and PGDATA authority;
+- `apply-sor-postgresql` / `verify-sor-postgresql` — shell-bootstrap System-of-Record PostgreSQL rc-policy and PGDATA authority;
 - `apply-devfs` / `verify-devfs` — production devfs ruleset mutation and verification;
 - `apply-host-files` / `verify-host-files` — deterministic host-file installation and verification;
 - `apply-lifecycle` / `verify-lifecycle` — FI-specific lifecycle-policy installation and verification;
 - `apply-runtime` / `verify-runtime` — deterministic FI application-runtime installation and exact verification;
 - `adopt-runtime` — controlled adoption of an accepted pre-existing runtime from an explicit approved-prior runtime plan;
 - `update-runtime` — controlled transition from an approved prior FI-managed runtime to the newly rendered runtime.
+
+PostgreSQL cluster initialization is intentionally owned by the Go backend
+installer rather than duplicated in the shell bootstrap:
+
+    fi-backend-install initialize-sor-postgresql <configuration-file>
+
+This is a one-time activation transaction, not an early configuration-file
+publication step. Before first initialization it verifies the accepted devfs,
+host-file, host-network, persistent-PF, and lifecycle substrate. The mutation
+path then requires all three FI production jails stopped and requires
+`fi_pf onestatus` to report ready before temporarily starting only
+`fi-sor-db`.
+
+The initializer runs `oneinitdb` inside the real SOR jail, validates PostgreSQL
+control data, returns the SOR jail to stopped state, and only then publishes the
+FI cluster/runtime/authentication policy. Exact already-initialized FI-owned
+state is an idempotent no-op; partial, foreign, unmanaged, drifted, absent, or
+unknown state fails closed as appropriate.
+
+The Go backend installer's:
+
+    fi-backend-install verify-sor-postgresql <configuration-file>
+
+is the stronger read-only cluster verification path. It verifies the initialized
+PostgreSQL cluster and FI cluster policy in addition to the rc-policy/PGDATA
+authority checks.
+
+`fi-bootstrap.sh` does not currently expose `initialize-sor-postgresql` and must
+not grow a second shell implementation of this transaction.
 
 Configuration files are strict data files using:
 
@@ -293,6 +322,7 @@ The implemented FreeBSD deployment mutation boundary now includes:
 - jail-local FI runtime identities;
 - FI-controlled production directories;
 - System-of-Record PostgreSQL rc policy and PGDATA authority verification;
+- Go-owned PostgreSQL cluster initialization and cluster-policy verification;
 - the dedicated production devfs ruleset;
 - deterministic jail, fstab, devfs, and VNET host files;
 - FI-specific production lifecycle policy;
@@ -569,7 +599,19 @@ Initial apply preclassifies the complete layer and fails closed on owned drift,
 foreign collisions, or unknown state.
 
 Absent files are published through same-directory temporary files and atomic
-no-clobber hard links. Existing destinations are never overwritten.
+no-clobber hard links. Initial apply never overwrites an existing destination.
+
+`update-host-files` is the explicit FI-owned version-transition path. It
+requires a complete approved-prior snapshot of all eight managed files.
+Already-current resources remain untouched. A drifted FI-owned resource may
+advance only when the live file exactly matches the approved prior content and
+required metadata.
+
+Missing live resources, foreign collisions, unknown state, wrong approved-prior
+content, incomplete prior snapshots, additional prior resources, and metadata
+drift all fail closed.
+
+All three FI production jails must be stopped before host-file transition.
 
 `verify-host-files` is the read-only acceptance path and requires all eight
 files to classify as exact `OWNED_MATCH`.
@@ -616,7 +658,7 @@ Each operation invokes the base FreeBSD jail service with `onestart` or
 `onestop` for exactly one named jail and then independently verifies runtime
 state with `jls`.
 
-The jail configuration additionally carries explicit dependencies:
+The FI jail controller carries the explicit application dependency authority:
 
     fi-receiver -> fi-ingest -> fi-sor-db
 
@@ -627,9 +669,15 @@ The FI controller requires the base `jail` rc service. This places it after
 the base jail service during startup and before it during reverse shutdown
 ordering.
 
+Persistent base PF boot configuration uses:
+
+    /etc/rc.conf.d/pf
+
+It enables the base FreeBSD `pf` service and binds `/etc/pf.conf`.
+
 Persistent FI devfs loading uses:
 
-    /etc/rc.conf.d/devfs/90-fi
+    /etc/rc.conf.d/devfs
 
 The devfs fragment enables ruleset loading and adds `/etc/devfs.rules.fi` to
 the site's existing `devfs_rulesets` list only when it is not already present.

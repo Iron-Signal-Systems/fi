@@ -258,9 +258,14 @@ lifecycle_prepare_expected()
         'fi_jails_enable="YES"'
 
     make_expected \
-        "$LIFECYCLE_PLAN/rc.conf.d.devfs.90-fi" \
+        "$LIFECYCLE_PLAN/rc.conf.d.devfs" \
         "devfs-boot-policy" \
         'devfs_load_rulesets="YES"'
+
+    make_expected \
+        "$LIFECYCLE_PLAN/rc.conf.d.pf" \
+        "pf-boot-policy" \
+        'pf_enable="YES"'
 }
 
 lifecycle_cleanup_expected()
@@ -284,12 +289,6 @@ lifecycle_parent_map()
         "$TEST_GID" \
         "0755"
 
-    printf '%s\t%s\t%s\t%s\t%s\n' \
-        "devfs-rc-conf-directory" \
-        "$TEST_ROOT/live/rc-conf/devfs" \
-        "$TEST_UID" \
-        "$TEST_GID" \
-        "0755"
 }
 
 lifecycle_resource_map()
@@ -328,8 +327,16 @@ lifecycle_resource_map()
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "devfs-boot-policy" \
-        "$LIFECYCLE_PLAN/rc.conf.d.devfs.90-fi" \
-        "$TEST_ROOT/live/rc-conf/devfs/90-fi" \
+        "$LIFECYCLE_PLAN/rc.conf.d.devfs" \
+        "$TEST_ROOT/live/rc-conf/devfs" \
+        "$TEST_UID" \
+        "$TEST_GID" \
+        "0644"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "pf-boot-policy" \
+        "$LIFECYCLE_PLAN/rc.conf.d.pf" \
+        "$TEST_ROOT/live/rc-conf/pf" \
         "$TEST_UID" \
         "$TEST_GID" \
         "0644"
@@ -347,7 +354,8 @@ for lifecycle_test_spec in \
     "rc.d.fi_jails|$TEST_ROOT/live/rc-local/fi_jails|0555" \
     "rc.conf.d.fi_pf|$TEST_ROOT/live/rc-conf/fi_pf|0644" \
     "rc.conf.d.fi_jails|$TEST_ROOT/live/rc-conf/fi_jails|0644" \
-    "rc.conf.d.devfs.90-fi|$TEST_ROOT/live/rc-conf/devfs/90-fi|0644"
+    "rc.conf.d.devfs|$TEST_ROOT/live/rc-conf/devfs|0644" \
+    "rc.conf.d.pf|$TEST_ROOT/live/rc-conf/pf|0644"
 do
     lifecycle_test_expected_name=${lifecycle_test_spec%%|*}
     lifecycle_test_rest=${lifecycle_test_spec#*|}
@@ -386,7 +394,11 @@ inode_enable_before=$(
 )
 
 inode_devfs_before=$(
-    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs"
+)
+
+inode_pf_boot_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/pf"
 )
 
 apply_lifecycle >/dev/null
@@ -408,14 +420,19 @@ inode_enable_after=$(
 )
 
 inode_devfs_after=$(
-    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs"
+)
+
+inode_pf_boot_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/pf"
 )
 
 [ "$inode_pf_controller_before" = "$inode_pf_controller_after" ] &&
 [ "$inode_controller_before" = "$inode_controller_after" ] &&
 [ "$inode_pf_enable_before" = "$inode_pf_enable_after" ] &&
 [ "$inode_enable_before" = "$inode_enable_after" ] &&
-[ "$inode_devfs_before" = "$inode_devfs_after" ] ||
+[ "$inode_devfs_before" = "$inode_devfs_after" ] &&
+[ "$inode_pf_boot_before" = "$inode_pf_boot_after" ] ||
     test_fail "exact second lifecycle apply replaced managed files"
 
 test_pass "exact second lifecycle apply is a no-op"
@@ -430,15 +447,13 @@ chmod 0755 "$TEST_ROOT/live"
 
 mkdir "$TEST_ROOT/live/rc-local"
 mkdir "$TEST_ROOT/live/rc-conf"
-mkdir "$TEST_ROOT/live/rc-conf/devfs"
 
 chmod 0755 \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf" \
-    "$TEST_ROOT/live/rc-conf/devfs"
+    "$TEST_ROOT/live/rc-conf"
 
 printf '%s\n' "foreign=true" \
-    > "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    > "$TEST_ROOT/live/rc-conf/devfs"
 
 if (
     apply_lifecycle >/dev/null 2>&1
@@ -519,7 +534,7 @@ make_expected \
     'fi_jails_enable="YES"'
 
 make_expected \
-    "$UPDATE_PRIOR/rc.conf.d.devfs.90-fi" \
+    "$UPDATE_PRIOR/rc.conf.d.devfs" \
     "devfs-boot-policy" \
     'devfs_load_rulesets="YES"'
 
@@ -527,13 +542,12 @@ rm -rf "$TEST_ROOT/live"
 
 mkdir -p \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf/devfs" ||
+    "$TEST_ROOT/live/rc-conf" ||
     test_fail "unable to create lifecycle update live fixture"
 
 chmod 0755 \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf" \
-    "$TEST_ROOT/live/rc-conf/devfs"
+    "$TEST_ROOT/live/rc-conf"
 
 cp \
     "$UPDATE_PRIOR/rc.d.fi_jails" \
@@ -544,14 +558,14 @@ cp \
     "$TEST_ROOT/live/rc-conf/fi_jails"
 
 cp \
-    "$UPDATE_PRIOR/rc.conf.d.devfs.90-fi" \
-    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    "$UPDATE_PRIOR/rc.conf.d.devfs" \
+    "$TEST_ROOT/live/rc-conf/devfs"
 
 chmod 0555 "$TEST_ROOT/live/rc-local/fi_jails"
 
 chmod 0644 \
     "$TEST_ROOT/live/rc-conf/fi_jails" \
-    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    "$TEST_ROOT/live/rc-conf/devfs"
 
 update_lifecycle "$UPDATE_PRIOR" >/dev/null
 
@@ -562,7 +576,8 @@ for lifecycle_test_spec in \
     "rc.d.fi_jails|$TEST_ROOT/live/rc-local/fi_jails|0555" \
     "rc.conf.d.fi_pf|$TEST_ROOT/live/rc-conf/fi_pf|0644" \
     "rc.conf.d.fi_jails|$TEST_ROOT/live/rc-conf/fi_jails|0644" \
-    "rc.conf.d.devfs.90-fi|$TEST_ROOT/live/rc-conf/devfs/90-fi|0644"
+    "rc.conf.d.devfs|$TEST_ROOT/live/rc-conf/devfs|0644" \
+    "rc.conf.d.pf|$TEST_ROOT/live/rc-conf/pf|0644"
 do
     lifecycle_test_expected_name=${lifecycle_test_spec%%|*}
     lifecycle_test_rest=${lifecycle_test_spec#*|}
@@ -603,7 +618,11 @@ inode_jails_enable_before=$(
 )
 
 inode_devfs_before=$(
-    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs"
+)
+
+inode_pf_boot_before=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/pf"
 )
 
 update_lifecycle "$UPDATE_PRIOR" >/dev/null
@@ -625,14 +644,19 @@ inode_jails_enable_after=$(
 )
 
 inode_devfs_after=$(
-    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/devfs"
+)
+
+inode_pf_boot_after=$(
+    stat -f '%i' "$TEST_ROOT/live/rc-conf/pf"
 )
 
 [ "$inode_pf_controller_before" = "$inode_pf_controller_after" ] &&
 [ "$inode_jails_controller_before" = "$inode_jails_controller_after" ] &&
 [ "$inode_pf_enable_before" = "$inode_pf_enable_after" ] &&
 [ "$inode_jails_enable_before" = "$inode_jails_enable_after" ] &&
-[ "$inode_devfs_before" = "$inode_devfs_after" ] ||
+[ "$inode_devfs_before" = "$inode_devfs_after" ] &&
+[ "$inode_pf_boot_before" = "$inode_pf_boot_after" ] ||
     test_fail "exact second lifecycle update replaced managed resources"
 
 test_pass "exact second lifecycle update is a no-op"
@@ -647,12 +671,11 @@ rm -rf "$TEST_ROOT/live"
 
 mkdir -p \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf/devfs"
+    "$TEST_ROOT/live/rc-conf"
 
 chmod 0755 \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf" \
-    "$TEST_ROOT/live/rc-conf/devfs"
+    "$TEST_ROOT/live/rc-conf"
 
 cp \
     "$UPDATE_PRIOR/rc.d.fi_jails" \
@@ -663,7 +686,7 @@ cp \
     "$TEST_ROOT/live/rc-conf/fi_jails"
 
 make_expected \
-    "$TEST_ROOT/live/rc-conf/devfs/90-fi" \
+    "$TEST_ROOT/live/rc-conf/devfs" \
     "devfs-boot-policy" \
     'devfs_load_rulesets="NO"'
 
@@ -671,7 +694,7 @@ chmod 0555 "$TEST_ROOT/live/rc-local/fi_jails"
 
 chmod 0644 \
     "$TEST_ROOT/live/rc-conf/fi_jails" \
-    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    "$TEST_ROOT/live/rc-conf/devfs"
 
 if (
     update_lifecycle "$UPDATE_PRIOR" >/dev/null 2>&1
@@ -686,7 +709,8 @@ cmp -s \
         "failed lifecycle update replaced approved earlier resource before later rejection"
 
 [ ! -e "$TEST_ROOT/live/rc-local/fi_pf" ] &&
-[ ! -e "$TEST_ROOT/live/rc-conf/fi_pf" ] ||
+[ ! -e "$TEST_ROOT/live/rc-conf/fi_pf" ] &&
+[ ! -e "$TEST_ROOT/live/rc-conf/pf" ] ||
     test_fail \
         "failed lifecycle update created new PF resources before complete-layer acceptance"
 
@@ -702,24 +726,23 @@ rm -rf "$TEST_ROOT/live"
 
 mkdir -p \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf/devfs"
+    "$TEST_ROOT/live/rc-conf"
 
 chmod 0755 \
     "$TEST_ROOT/live/rc-local" \
-    "$TEST_ROOT/live/rc-conf" \
-    "$TEST_ROOT/live/rc-conf/devfs"
+    "$TEST_ROOT/live/rc-conf"
 
 cp \
     "$UPDATE_PRIOR/rc.conf.d.fi_jails" \
     "$TEST_ROOT/live/rc-conf/fi_jails"
 
 cp \
-    "$UPDATE_PRIOR/rc.conf.d.devfs.90-fi" \
-    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    "$UPDATE_PRIOR/rc.conf.d.devfs" \
+    "$TEST_ROOT/live/rc-conf/devfs"
 
 chmod 0644 \
     "$TEST_ROOT/live/rc-conf/fi_jails" \
-    "$TEST_ROOT/live/rc-conf/devfs/90-fi"
+    "$TEST_ROOT/live/rc-conf/devfs"
 
 if (
     update_lifecycle "$UPDATE_PRIOR" >/dev/null 2>&1
@@ -728,7 +751,8 @@ if (
 fi
 
 [ ! -e "$TEST_ROOT/live/rc-local/fi_pf" ] &&
-[ ! -e "$TEST_ROOT/live/rc-conf/fi_pf" ] ||
+[ ! -e "$TEST_ROOT/live/rc-conf/fi_pf" ] &&
+[ ! -e "$TEST_ROOT/live/rc-conf/pf" ] ||
     test_fail \
         "missing old lifecycle resource allowed creation of new PF resources"
 

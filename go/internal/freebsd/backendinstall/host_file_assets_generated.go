@@ -16,8 +16,6 @@ fi-receiver {
 
     persist;
 
-    depend = "fi-ingest";
-
     exec.prestart = "/usr/local/libexec/fi-vnet-pair create-receiver @FI_RECEIVER_EXTERNAL_IF@ @FI_RECEIVER_EXTERNAL_BRIDGE@ @FI_RECEIVER_EXTERNAL_HOST_IF@ @FI_RECEIVER_EXTERNAL_JAIL_IF@ jail:fi-receiver:external @FI_RECEIVER_MGMT_HOST_IF@ @FI_RECEIVER_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-receiver:mgmt @FI_RECEIVER_WORK_HOST_IF@ @FI_RECEIVER_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-receiver:work";
 
     vnet;
@@ -60,8 +58,6 @@ fi-ingest {
     host.hostname = "fi-ingest";
 
     persist;
-
-    depend = "fi-sor-db";
 
     exec.prestart = "/usr/local/libexec/fi-vnet-pair create-dual @FI_INGEST_MGMT_HOST_IF@ @FI_INGEST_MGMT_JAIL_IF@ @FI_MGMT_BRIDGE@ jail:fi-ingest:mgmt @FI_INGEST_WORK_HOST_IF@ @FI_INGEST_WORK_JAIL_IF@ @FI_WORK_BRIDGE@ jail:fi-ingest:work";
 

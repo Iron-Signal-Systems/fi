@@ -395,6 +395,41 @@ func TestParseInvocationExplicitApplySORPostgreSQL(t *testing.T) {
 	}
 }
 
+func TestParseInvocationExplicitInitializeSORPostgreSQL(
+	t *testing.T,
+) {
+	request, err := parseInvocation(
+		[]string{
+			"initialize-sor-postgresql",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command !=
+		"initialize-sor-postgresql" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath !=
+		"/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
 func TestParseInvocationExplicitVerifySORPostgreSQL(t *testing.T) {
 	request, err := parseInvocation(
 		[]string{
@@ -415,6 +450,42 @@ func TestParseInvocationExplicitVerifySORPostgreSQL(t *testing.T) {
 		t.Fatalf(
 			"command = %q",
 			request.command,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifySORDatabase(
+	t *testing.T,
+) {
+	request, err :=
+		parseInvocation(
+			[]string{
+				"verify-sor-database",
+				"/root/fi-backend.conf",
+			},
+			strings.NewReader(""),
+			&bytes.Buffer{},
+		)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command !=
+		"verify-sor-database" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath !=
+		"/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
 		)
 	}
 }
@@ -649,6 +720,124 @@ func TestParseInvocationExplicitVerifyPF(t *testing.T) {
 		t.Fatalf(
 			"configPath = %q",
 			request.configPath,
+		)
+	}
+}
+
+func TestParseInvocationExplicitApplyLifecycle(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"apply-lifecycle",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "apply-lifecycle" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
+func TestParseInvocationExplicitVerifyLifecycle(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"verify-lifecycle",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "verify-lifecycle" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
+func TestParseInvocationExplicitUpdateHostFiles(t *testing.T) {
+	request, err := parseInvocation(
+		[]string{
+			"update-host-files",
+			"/root/fi-backend.conf",
+			"/root/fi-approved-prior-host-files",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command != "update-host-files" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath != "/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+
+	if request.approvedPriorHostFiles != "/root/fi-approved-prior-host-files" {
+		t.Fatalf(
+			"approvedPriorHostFiles = %q",
+			request.approvedPriorHostFiles,
+		)
+	}
+}
+
+func TestParseInvocationUpdateHostFilesRequiresPriorDirectory(t *testing.T) {
+	_, err := parseInvocation(
+		[]string{
+			"update-host-files",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+
+	if err == nil {
+		t.Fatal(
+			"update-host-files accepted missing approved-prior directory",
 		)
 	}
 }

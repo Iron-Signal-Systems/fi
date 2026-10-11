@@ -112,7 +112,8 @@ FI production lifecycle authority is:
     /usr/local/etc/rc.d/fi_jails
     /etc/rc.conf.d/fi_pf
     /etc/rc.conf.d/fi_jails
-    /etc/rc.conf.d/devfs/90-fi
+    /etc/rc.conf.d/devfs
+    /etc/rc.conf.d/pf
 
 FI persistent packet-filter authority is:
 
@@ -136,7 +137,7 @@ The production shutdown order is:
     fi-ingest
     fi-sor-db
 
-The explicit jail dependency chain is:
+The FI controller-enforced application dependency chain is:
 
     fi-sor-db
         -> fi-ingest
@@ -254,20 +255,63 @@ The comparison with the baseline must prove:
 - PF runtime has not been activated merely by persistent-policy installation;
 - the dedicated production devfs ruleset is exact;
 - the FI-managed PostgreSQL rc policy remains exact;
-- authoritative PGDATA ownership and mode remain exact.
+- authoritative PGDATA ownership and mode remain exact;
+- for first-deployment PostgreSQL initialization, PGDATA still classifies as
+  exact `EMPTY` and has not been initialized by any configuration-installation
+  layer;
+- no FI PostgreSQL cluster-authority marker has been published before the
+  controlled initialization transaction.
 
-## Phase 5 - controlled first start
+## Phase 5 - PostgreSQL initialization and controlled first start
 
 Activate the reviewed FI PF runtime policy first:
 
     /usr/local/etc/rc.d/fi_pf start
 
-Before production-jail startup, `fi_pf onestatus` must report ready and the
-runtime bridge-filtering state must be exact.
+Before any PostgreSQL initialization or normal production-jail startup,
+`fi_pf onestatus` must report ready and the runtime bridge-filtering state must
+be exact.
 
-Then start FI through the dedicated FI jail lifecycle controller.
+With all three production FI jails still stopped, run the exact validated Go
+backend-installer candidate:
 
-Do not start the three production jails independently for initial acceptance.
+    <validated-fi-backend-install> initialize-sor-postgresql <configuration-file>
+
+This command is the only accepted first-initialization path. It may temporarily
+start only `fi-sor-db` for `oneinitdb` and control-data validation. It must
+return with `fi-sor-db`, `fi-ingest`, and `fi-receiver` all stopped.
+
+Accept PostgreSQL initialization only when all of the following are true:
+
+- the initializer reports success;
+- PostgreSQL `pg_controldata` was semantically accepted by the initializer with
+  cluster state `shut down`, block size `8192`, and data-page checksum version
+  `1`;
+- all three production FI jails are stopped after the transaction;
+- no SOR initialization VNET artifact remains after the controlled SOR-jail
+  stop;
+- PGDATA classifies as an initialized PostgreSQL 18 cluster;
+- `postmaster.pid` is absent;
+- `.fi-cluster` is exact FI-owned initialization authority;
+- `fi-postgresql.conf` is exact FI-owned runtime policy;
+- `pg_hba.conf` is exact FI-owned authentication policy;
+- generated `postgresql.conf` contains exactly one FI-managed include block;
+- the read-only Go verification command succeeds:
+
+      <validated-fi-backend-install> verify-sor-postgresql <configuration-file>
+
+Before normal lifecycle startup, repeat:
+
+    <validated-fi-backend-install> initialize-sor-postgresql <configuration-file>
+
+and require the exact initialized FI-owned state to be accepted as an idempotent
+no-op.
+
+Only after PostgreSQL initialization and read-only verification are accepted
+may FI be started through the dedicated FI jail lifecycle controller.
+
+Outside the controlled one-jail PostgreSQL initialization transaction, do not
+start the three production jails independently for initial acceptance.
 
 The jail controller must establish:
 

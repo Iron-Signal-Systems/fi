@@ -166,7 +166,8 @@ for snapshot_path in \
     /usr/local/etc/rc.d/fi_jails \
     /etc/rc.conf.d/fi_pf \
     /etc/rc.conf.d/fi_jails \
-    /etc/rc.conf.d/devfs/90-fi \
+    /etc/rc.conf.d/devfs \
+    /etc/rc.conf.d/pf \
     /var/run/fi_pf.runtime
 do
     snapshot_file "$snapshot_path"

@@ -388,9 +388,38 @@ type at a managed destination is `FOREIGN_COLLISION`.
 
 Inspection failure is `UNKNOWN`.
 
-The layer preclassifies all eight resources before its first production
-mutation. Every `ABSENT` resource is classified again immediately before
-creation.
+`apply-host-files` is the initial-creation path. It never reconciles
+`OWNED_DRIFT`.
+
+`update-host-files` is the explicit version-transition path for the complete
+eight-resource host-file layer.
+
+The approved-prior directory must contain exactly one regular prior file for
+each managed destination and no additional resources.
+
+Before the first mutation, the complete live host-file layer is classified
+against the new deterministic specification. Any live `OWNED_DRIFT` resource
+must also match its approved-prior content and required metadata exactly.
+
+An already-current `OWNED_MATCH` resource is left untouched.
+
+`ABSENT`, `FOREIGN_COLLISION`, `UNKNOWN`, incomplete approved-prior snapshots,
+unexpected approved-prior resources, or live state that does not exactly match
+the approved prior version fail closed.
+
+All three FI production jails must be stopped before `update-host-files` may
+mutate the host-file layer.
+
+Each changed resource is staged in its destination directory, assigned exact
+ownership and mode, synced and independently verified, then the live file is
+reclassified against approved-prior authority immediately before publication.
+
+Approved updates publish by same-directory atomic rename. After transition, all
+eight managed host files must classify as exact `OWNED_MATCH`.
+
+The initial-creation path preclassifies all eight resources before its first
+production mutation. Every `ABSENT` resource is classified again immediately
+before creation.
 
 Creation uses a same-directory temporary regular file. FI writes the complete
 expected content, applies final ownership and mode, and verifies the temporary
@@ -639,28 +668,35 @@ Each start or stop uses the base jail rc service for exactly one named jail.
 The controller independently checks the resulting state with `jls` rather
 than accepting the wrapper command return alone as runtime acceptance.
 
-The jail definitions additionally enforce:
+The FI jail controller is the sole application dependency authority.
 
-    fi-ingest
-        depend = "fi-sor-db"
+The production jail definitions intentionally do not use the jail(8) `depend`
+pseudo-parameter. FI starts each production jail through the base jail rc
+service one named jail at a time, and each jail is defined in its own
+`/etc/jail.conf.d/<name>.conf` file. A dependency on a jail defined in another
+per-jail configuration file is therefore not resolvable by that invocation.
 
-    fi-receiver
-        depend = "fi-ingest"
-
-The System of Record is the FI dependency root.
-
-The resulting application dependency chain is:
+The controller enforces the application dependency chain:
 
     fi-sor-db
         -> fi-ingest
         -> fi-receiver
 
+Each successful start is independently verified with `jls` before the next
+dependency is allowed to start. Shutdown uses the exact reverse order.
+
 FI therefore owns its own production application lifecycle without selecting,
 reordering, or enabling unrelated site jails.
 
+The persistent base FreeBSD PF boot policy is:
+
+    /etc/rc.conf.d/pf
+
+It enables the base `pf` service and binds it to `/etc/pf.conf`.
+
 The persistent FI devfs lifecycle fragment is:
 
-    /etc/rc.conf.d/devfs/90-fi
+    /etc/rc.conf.d/devfs
 
 It requires:
 
@@ -767,7 +803,94 @@ file followed by an atomic no-clobber hard link. The final policy must be
 owned by UID `0`, GID `0`, mode `0644`, with link count `1`.
 
 `apply-sor-postgresql` requires `fi-sor-db` to be stopped before policy
-mutation. `verify-sor-postgresql` is read-only.
+mutation. The policy apply operation does not initialize PGDATA and does not
+start the jail.
+
+### System-of-Record PostgreSQL cluster initialization
+
+PostgreSQL cluster initialization is a separate activation transaction owned by
+the Go backend installer:
+
+    fi-backend-install initialize-sor-postgresql <configuration-file>
+
+It is deliberately not implemented independently by `fi-bootstrap.sh`. The
+shell bootstrap continues to own its reviewed shell deployment layers; it must
+not duplicate the PostgreSQL cluster classifier, initialization transaction, or
+FI cluster-policy publisher.
+
+Before the Go initializer may perform first initialization, it must independently
+verify:
+
+- the PostgreSQL rc policy is exact `OWNED_MATCH`;
+- the authoritative PGDATA directory and package-provided PostgreSQL identity
+  remain exact;
+- the production devfs layer verifies;
+- deterministic host files verify;
+- host network policy verifies;
+- persistent FI PF policy verifies;
+- lifecycle policy verifies.
+
+The mutation path additionally requires all three production FI jails to be
+stopped and requires:
+
+    /usr/local/etc/rc.d/fi_pf onestatus
+
+to report ready before `fi-sor-db` may be started for initialization.
+
+Initial PGDATA authorization is fail-closed:
+
+    EMPTY
+        -> controlled initialization is permitted
+
+    INITIALIZED + exact FI cluster policy
+        -> idempotent no-op
+
+    INITIALIZED + unmanaged/drifted/foreign policy
+        -> blocked
+
+    ABSENT
+    PARTIAL
+    UNKNOWN
+        -> blocked
+
+The controlled initialization transaction:
+
+1. proves all production FI jails are stopped;
+2. proves FI PF runtime readiness;
+3. starts only `fi-sor-db`;
+4. executes PostgreSQL `oneinitdb` inside that real jail;
+5. validates `pg_controldata` and requires:
+   - cluster state `shut down`;
+   - database block size `8192`;
+   - data-page checksum version `1`;
+6. stops `fi-sor-db` and independently proves it stopped;
+7. requires the resulting initialized cluster to remain otherwise unmanaged;
+8. publishes the FI PostgreSQL runtime/authentication policy;
+9. publishes `.fi-cluster` last as initialization authority;
+10. requires final `INITIALIZED + OWNED_MATCH`.
+
+The initializer owns deterministic:
+
+    <PGDATA>/.fi-cluster
+    <PGDATA>/fi-postgresql.conf
+    <PGDATA>/pg_hba.conf
+
+and one exact FI-managed include block in PostgreSQL's generated
+`postgresql.conf`.
+
+PostgreSQL continues to own the remainder of generated `postgresql.conf`.
+
+A failed or ambiguous initialization leaves the operation failed closed. Any
+failure after temporary SOR-jail startup invokes emergency stop-and-verification
+before returning.
+
+The Go installer command:
+
+    fi-backend-install verify-sor-postgresql <configuration-file>
+
+is the read-only initialized-cluster verification path. It requires the
+PostgreSQL rc policy, initialized PostgreSQL 18 cluster, and FI cluster policy
+to classify as exact accepted state. It does not start a jail.
 
 The PostgreSQL jail additionally requires private jail-local System V IPC
 namespaces:
@@ -788,18 +911,31 @@ continued separation of receiver and ingest IPC authority.
 
 Mutations must occur in dependency order.
 
-The intended apply sequence is:
+The intended configuration and activation sequence is:
 
 1. validate the complete apply contract and desired state;
 2. create/verify production ZFS hierarchy;
 3. create/verify jail-root clones;
 4. create/verify jail-local runtime identities;
 5. create/verify required jail-local directories;
-6. establish/verify System-of-Record PostgreSQL policy and PGDATA authority;
+6. establish/verify System-of-Record PostgreSQL rc policy and PGDATA authority;
 7. create/verify dedicated production devfs rules;
-8. install/verify deterministic host jail/fstab files;
-9. establish/verify production lifecycle policy;
-10. run post-apply acceptance.
+8. install/verify deterministic host jail/fstab/VNET files;
+9. establish/verify host-network policy;
+10. establish/verify persistent FI PF policy;
+11. establish/verify production lifecycle policy;
+12. install/verify required FI application runtime;
+13. complete post-configuration quiescent acceptance with all production FI
+    jails stopped;
+14. activate and verify FI PF runtime policy;
+15. initialize/verify the PostgreSQL cluster through the Go backend installer
+    while normal FI jail startup remains stopped;
+16. begin normal FI jail lifecycle startup;
+17. run post-start acceptance.
+
+PostgreSQL cluster initialization is therefore not part of the early PostgreSQL
+rc-policy apply step. It is a controlled activation operation after the complete
+jail/network/PF/lifecycle substrate has been accepted.
 
 Later steps must not begin when an earlier dependency fails.
 
@@ -839,7 +975,9 @@ and verification boundaries for:
 - production jail-root clones;
 - jail-local FI runtime identities;
 - FI-controlled filesystem directories;
-- System-of-Record PostgreSQL policy and PGDATA authority;
+- System-of-Record PostgreSQL rc policy and PGDATA authority;
+- Go-owned one-time PostgreSQL cluster initialization and cluster-policy
+  verification;
 - the dedicated production devfs ruleset;
 - deterministic production host files;
 - FI-specific lifecycle policy.
@@ -869,6 +1007,12 @@ The corresponding bootstrap commands include:
 These layers retain exact host binding, fail-closed resource classification,
 no-clobber creation where applicable, independent post-mutation verification,
 and idempotent handling of exact `OWNED_MATCH` state.
+
+The shell bootstrap command list above intentionally does not contain
+`initialize-sor-postgresql`. PostgreSQL cluster initialization is owned by the
+Go backend installer because it requires the initialized-cluster classifier,
+controlled real-jail `oneinitdb` transaction, semantic `pg_controldata`
+validation, emergency jail cleanup, and atomic FI cluster-policy publication.
 
 The System-of-Record PostgreSQL path additionally binds PGDATA authority to
 the package-provided `postgres` UID/GID and mode `0700`, without using the

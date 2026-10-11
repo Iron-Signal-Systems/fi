@@ -17,8 +17,9 @@ import (
 )
 
 type invocation struct {
-	command    string
-	configPath string
+	approvedPriorHostFiles string
+	command                string
+	configPath             string
 }
 
 // -----------------------------------------------------------------------------
@@ -92,7 +93,20 @@ func parseInvocation(
 	}
 
 	switch args[0] {
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "apply-network", "verify-network", "apply-pf", "verify-pf":
+	case "update-host-files":
+		if len(args) != 3 {
+			return invocation{}, fmt.Errorf(
+				"usage: fi-backend-install update-host-files <configuration-file> <approved-prior-host-files-directory>",
+			)
+		}
+
+		return invocation{
+			approvedPriorHostFiles: args[2],
+			command:                args[0],
+			configPath:             args[1],
+		}, nil
+
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -107,7 +121,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|verify-sor-postgresql|apply-devfs|verify-devfs|apply-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle] [configuration-file]",
 			)
 		}
 
@@ -300,6 +314,23 @@ func main() {
 			"FI System-of-Record PostgreSQL policy apply complete.",
 		)
 
+	case "initialize-sor-postgresql":
+		if err := backendinstall.InitializeSORPostgreSQL(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI SOR POSTGRESQL INITIALIZATION BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI System-of-Record PostgreSQL initialization complete.",
+		)
+
 	case "verify-sor-postgresql":
 		if err := backendinstall.VerifySORPostgreSQL(
 			config,
@@ -315,6 +346,23 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI System-of-Record PostgreSQL policy verification complete.",
+		)
+
+	case "verify-sor-database":
+		if err := backendinstall.VerifySORPostgreSQLDatabase(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI SOR DATABASE VERIFY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI System-of-Record PostgreSQL database verification complete.",
 		)
 
 	case "apply-pf":
@@ -351,6 +399,40 @@ func main() {
 			"FI persistent PF policy verification complete.",
 		)
 
+	case "apply-lifecycle":
+		if err := backendinstall.ApplyLifecycle(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI LIFECYCLE APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD lifecycle apply complete.",
+		)
+
+	case "verify-lifecycle":
+		if err := backendinstall.VerifyLifecycle(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI LIFECYCLE VERIFY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD lifecycle verification complete.",
+		)
+
 	case "apply-host-files":
 		if err := backendinstall.ApplyHostFiles(
 			config,
@@ -366,6 +448,24 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI FreeBSD host-file apply complete.",
+		)
+
+	case "update-host-files":
+		if err := backendinstall.UpdateHostFiles(
+			config,
+			request.approvedPriorHostFiles,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI HOST-FILE UPDATE BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD host-file update complete.",
 		)
 
 	case "verify-host-files":

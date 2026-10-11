@@ -290,9 +290,9 @@ This offline verifier proves:
 - one-jail-at-a-time base jail-service invocation;
 - independent `jls` runtime verification;
 - FI rc ordering after the base jail service;
-- explicit ingest dependency on System of Record;
-- explicit receiver dependency on ingest;
-- System of Record as the dependency root;
+- absence of jail(8) `depend` pseudo-parameters from FI production jail definitions;
+- controller-owned `fi-sor-db -> fi-ingest -> fi-receiver` dependency ordering;
+- System of Record as the controller dependency root;
 - persistent loading of `/etc/devfs.rules.fi`;
 - preservation of existing site `devfs_rulesets`;
 - duplicate-safe FI rules-file append behavior;
