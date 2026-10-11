@@ -20,15 +20,50 @@ func applySORPostgreSQLDatabaseMigrations(
 		[]byte,
 	) error,
 ) error {
-	if policy.DatabaseName == "" {
-		return fmt.Errorf(
-			"PostgreSQL migration database is required",
-		)
+	if err :=
+		validateSORPostgreSQLDatabaseMigrations(
+			policy,
+			assets,
+		); err != nil {
+		return err
 	}
 
 	if execute == nil {
 		return fmt.Errorf(
 			"PostgreSQL migration executor is required",
+		)
+	}
+
+	for index := range policy.Migrations {
+		asset :=
+			assets[index]
+
+		if err :=
+			execute(
+				policy.DatabaseName,
+				policy.OwnerRole.Name,
+				[]byte(
+					asset.SQL,
+				),
+			); err != nil {
+			return fmt.Errorf(
+				"apply PostgreSQL migration %s: %w",
+				asset.Name,
+				err,
+			)
+		}
+	}
+
+	return nil
+}
+
+func validateSORPostgreSQLDatabaseMigrations(
+	policy sorPostgreSQLDatabasePolicy,
+	assets []sorPostgreSQLDatabaseMigrationAsset,
+) error {
+	if policy.DatabaseName == "" {
+		return fmt.Errorf(
+			"PostgreSQL migration database is required",
 		)
 	}
 
@@ -122,21 +157,6 @@ func applySORPostgreSQLDatabaseMigrations(
 				asset.Name,
 				actual,
 				expected.SHA256,
-			)
-		}
-
-		if err :=
-			execute(
-				policy.DatabaseName,
-				policy.OwnerRole.Name,
-				[]byte(
-					asset.SQL,
-				),
-			); err != nil {
-			return fmt.Errorf(
-				"apply PostgreSQL migration %s: %w",
-				asset.Name,
-				err,
 			)
 		}
 	}

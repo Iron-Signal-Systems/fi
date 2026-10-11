@@ -430,6 +430,41 @@ func TestParseInvocationExplicitInitializeSORPostgreSQL(
 	}
 }
 
+func TestParseInvocationExplicitInitializeSORDatabase(
+	t *testing.T,
+) {
+	request, err := parseInvocation(
+		[]string{
+			"initialize-sor-database",
+			"/root/fi-backend.conf",
+		},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+	)
+	if err != nil {
+		t.Fatalf(
+			"parseInvocation() error = %v",
+			err,
+		)
+	}
+
+	if request.command !=
+		"initialize-sor-database" {
+		t.Fatalf(
+			"command = %q",
+			request.command,
+		)
+	}
+
+	if request.configPath !=
+		"/root/fi-backend.conf" {
+		t.Fatalf(
+			"configPath = %q",
+			request.configPath,
+		)
+	}
+}
+
 func TestParseInvocationExplicitVerifySORPostgreSQL(t *testing.T) {
 	request, err := parseInvocation(
 		[]string{

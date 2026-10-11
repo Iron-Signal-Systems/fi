@@ -174,9 +174,9 @@ func TestApplySORPostgreSQLDatabaseMigrationsRejectsNameMismatch(
 		)
 	}
 
-	if executeCalls != 1 {
+	if executeCalls != 0 {
 		t.Fatalf(
-			"executor calls = %d, want 1",
+			"executor calls = %d, want 0",
 			executeCalls,
 		)
 	}
@@ -232,9 +232,9 @@ func TestApplySORPostgreSQLDatabaseMigrationsRejectsDeclaredHashMismatch(
 		)
 	}
 
-	if executeCalls != 1 {
+	if executeCalls != 0 {
 		t.Fatalf(
-			"executor calls = %d, want 1",
+			"executor calls = %d, want 0",
 			executeCalls,
 		)
 	}
@@ -278,9 +278,9 @@ func TestApplySORPostgreSQLDatabaseMigrationsRejectsEmbeddedHashMismatch(
 		)
 	}
 
-	if executeCalls != 1 {
+	if executeCalls != 0 {
 		t.Fatalf(
-			"executor calls = %d, want 1",
+			"executor calls = %d, want 0",
 			executeCalls,
 		)
 	}
@@ -288,6 +288,60 @@ func TestApplySORPostgreSQLDatabaseMigrationsRejectsEmbeddedHashMismatch(
 	if !strings.Contains(
 		err.Error(),
 		"embedded SHA256",
+	) {
+		t.Fatalf(
+			"error = %q",
+			err,
+		)
+	}
+}
+
+func TestApplySORPostgreSQLDatabaseMigrationsRejectsLaterEmptySQL(
+	t *testing.T,
+) {
+	assets :=
+		testSORPostgreSQLDatabaseMigrationApplicatorAssets()
+
+	policy :=
+		testSORPostgreSQLDatabaseMigrationApplicatorPolicy(
+			assets,
+		)
+
+	assets[1].SQL = " \t\r\n "
+
+	executeCalls := 0
+
+	err :=
+		applySORPostgreSQLDatabaseMigrations(
+			policy,
+			assets,
+			func(
+				string,
+				string,
+				[]byte,
+			) error {
+				executeCalls++
+
+				return nil
+			},
+		)
+
+	if err == nil {
+		t.Fatal(
+			"migration applicator accepted empty later SQL",
+		)
+	}
+
+	if executeCalls != 0 {
+		t.Fatalf(
+			"executor calls = %d, want 0",
+			executeCalls,
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"SQL is empty",
 	) {
 		t.Fatalf(
 			"error = %q",
@@ -450,6 +504,54 @@ func TestApplySORPostgreSQLDatabaseMigrationsRequiresAuthority(
 		t.Fatalf(
 			"empty policy error = %v",
 			err,
+		)
+	}
+}
+
+func TestValidateSORPostgreSQLDatabaseMigrationsExactSet(
+	t *testing.T,
+) {
+	assets :=
+		testSORPostgreSQLDatabaseMigrationApplicatorAssets()
+
+	policy :=
+		testSORPostgreSQLDatabaseMigrationApplicatorPolicy(
+			assets,
+		)
+
+	if err :=
+		validateSORPostgreSQLDatabaseMigrations(
+			policy,
+			assets,
+		); err != nil {
+		t.Fatalf(
+			"validate migrations: %v",
+			err,
+		)
+	}
+}
+
+func TestValidateSORPostgreSQLDatabaseMigrationsRejectsLaterDrift(
+	t *testing.T,
+) {
+	assets :=
+		testSORPostgreSQLDatabaseMigrationApplicatorAssets()
+
+	policy :=
+		testSORPostgreSQLDatabaseMigrationApplicatorPolicy(
+			assets,
+		)
+
+	assets[1].Name =
+		"unexpected.sql"
+
+	if err :=
+		validateSORPostgreSQLDatabaseMigrations(
+			policy,
+			assets,
+		); err == nil {
+		t.Fatal(
+			"migration validator accepted later asset drift",
 		)
 	}
 }
