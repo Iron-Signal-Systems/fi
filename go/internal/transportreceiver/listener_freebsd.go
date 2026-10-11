@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
@@ -48,6 +49,7 @@ type Config struct {
 	GenerationReadyRoot         string
 	GenerationRecordedRoot      string
 	LookupSource                SourceLookup
+	MaxConcurrentConnections    uint64
 	MaxDataBytes                uint64
 	RecoveryMaxCanonicalBytes   uint64
 	RecoveryMaxEncodedBytes     uint64
@@ -88,6 +90,78 @@ type Result struct {
 	TLSVersion                string
 }
 
+const (
+	DefaultMaxConcurrentConnections uint64 = 8
+	MaxConcurrentConnections        uint64 = 1024
+)
+
+// ConnectionErrorHandler receives one connection-local failure. A connection
+// failure never closes the persistent listener.
+type ConnectionErrorHandler func(error)
+
+// ResultHandler receives one completed FI transport transaction.
+type ResultHandler func(Result)
+
+// Listen accepts FI transport connections until the context is canceled or the
+// listening socket fails. Each accepted connection is independently
+// authenticated and authorized. Connection-local authentication, protocol,
+// custody, recorder, or acknowledgement failures remain fail-closed for that
+// transaction and do not terminate the listener.
+func Listen(
+	ctx context.Context,
+	config Config,
+	onResult ResultHandler,
+	onConnectionError ConnectionErrorHandler,
+) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+
+	if err := validateConfig(config); err != nil {
+		return err
+	}
+
+	listener, err := net.Listen(
+		"tcp",
+		config.BindAddress,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"listen on %s: %w",
+			config.BindAddress,
+			err,
+		)
+	}
+
+	limit := config.MaxConcurrentConnections
+	if limit == 0 {
+		limit = DefaultMaxConcurrentConnections
+	}
+
+	tlsConfig := newServerTLSConfig(
+		config,
+	)
+
+	return serveListener(
+		ctx,
+		listener,
+		limit,
+		func(
+			connectionContext context.Context,
+			connection net.Conn,
+		) (Result, error) {
+			return receiveConnection(
+				connectionContext,
+				config,
+				tlsConfig,
+				connection,
+			)
+		},
+		onResult,
+		onConnectionError,
+	)
+}
+
 // ListenOnce accepts, authenticates, and receives one FI transport transaction.
 //
 // The transport client must first pass FI mTLS authorization. The authenticated
@@ -100,9 +174,9 @@ type Result struct {
 // Validation failure, custody conflict, recorder failure, storage failure, or
 // context cancellation therefore produces no generation success acknowledgement.
 //
-// This is intentionally single-connection while the Phase 2 transport contract
-// is being established. Long-running receiver lifecycle belongs to the later
-// receiver runtime.
+// ListenOnce remains the one-transaction compatibility path. Production runtime
+// uses Listen so one connection failure cannot terminate service for other
+// enrolled sources.
 func ListenOnce(
 	ctx context.Context,
 	config Config,
@@ -115,7 +189,10 @@ func ListenOnce(
 		return Result{}, err
 	}
 
-	listener, err := net.Listen("tcp", config.BindAddress)
+	listener, err := net.Listen(
+		"tcp",
+		config.BindAddress,
+	)
 	if err != nil {
 		return Result{}, fmt.Errorf(
 			"listen on %s: %w",
@@ -125,72 +202,14 @@ func ListenOnce(
 	}
 	defer listener.Close()
 
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{
-			config.ServerCertificate,
-		},
-		ClientAuth: tls.RequireAnyClientCert,
-		ClientCAs:  clientCAPool(config.TransportIssuer),
-		MinVersion: tls.VersionTLS12,
-		VerifyConnection: func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return errors.New("FI client certificate is required")
-			}
-
-			leaf := state.PeerCertificates[0]
-
-			var intermediates []*x509.Certificate
-			if len(state.PeerCertificates) > 1 {
-				intermediates = state.PeerCertificates[1:]
-			}
-
-			source, found, err := resolveTransportSource(
-				config,
-				leaf,
-			)
-			if err != nil {
-				return fmt.Errorf(
-					"resolve FI transport source: %w",
-					err,
-				)
-			}
-
-			if !found {
-				return errors.New(
-					"FI transport certificate is not enrolled",
-				)
-			}
-
-			outcome, err := transporttrust.VerifyTransportCertificate(
-				leaf,
-				intermediates,
-				config.Root,
-				config.TransportIssuer,
-				config.TransportCRL,
-				source,
-				time.Now(),
-			)
-			if err != nil {
-				return err
-			}
-
-			if outcome != transporttrust.AuthorizationAuthorized {
-				return fmt.Errorf(
-					"FI source authorization rejected: %s",
-					outcome,
-				)
-			}
-
-			return nil
-		},
-	}
-
-	stopContextWatch := closeListenerOnContext(ctx, listener)
+	stopContextWatch :=
+		closeListenerOnContext(
+			ctx,
+			listener,
+		)
+	defer stopContextWatch()
 
 	connection, err := listener.Accept()
-
-	stopContextWatch()
-
 	if err != nil {
 		if ctx.Err() != nil {
 			return Result{}, fmt.Errorf(
@@ -204,36 +223,155 @@ func ListenOnce(
 			err,
 		)
 	}
+
+	return receiveConnection(
+		ctx,
+		config,
+		newServerTLSConfig(config),
+		connection,
+	)
+}
+
+func newServerTLSConfig(
+	config Config,
+) *tls.Config {
+	return &tls.Config{
+		Certificates: []tls.Certificate{
+			config.ServerCertificate,
+		},
+		ClientAuth: tls.RequireAnyClientCert,
+		ClientCAs:  clientCAPool(config.TransportIssuer),
+		MinVersion: tls.VersionTLS12,
+		VerifyConnection: func(
+			state tls.ConnectionState,
+		) error {
+			if len(state.PeerCertificates) == 0 {
+				return errors.New(
+					"FI client certificate is required",
+				)
+			}
+
+			leaf := state.PeerCertificates[0]
+
+			var intermediates []*x509.Certificate
+			if len(state.PeerCertificates) > 1 {
+				intermediates =
+					state.PeerCertificates[1:]
+			}
+
+			source, found, err :=
+				resolveTransportSource(
+					config,
+					leaf,
+				)
+			if err != nil {
+				return fmt.Errorf(
+					"resolve FI transport source: %w",
+					err,
+				)
+			}
+
+			if !found {
+				return errors.New(
+					"FI transport certificate is not enrolled",
+				)
+			}
+
+			outcome, err :=
+				transporttrust.VerifyTransportCertificate(
+					leaf,
+					intermediates,
+					config.Root,
+					config.TransportIssuer,
+					config.TransportCRL,
+					source,
+					time.Now(),
+				)
+			if err != nil {
+				return err
+			}
+
+			if outcome !=
+				transporttrust.AuthorizationAuthorized {
+				return fmt.Errorf(
+					"FI source authorization rejected: %s",
+					outcome,
+				)
+			}
+
+			return nil
+		},
+	}
+}
+
+func receiveConnection(
+	ctx context.Context,
+	config Config,
+	tlsConfig *tls.Config,
+	connection net.Conn,
+) (Result, error) {
+	if connection == nil {
+		return Result{},
+			errors.New(
+				"FI accepted connection is required",
+			)
+	}
+
+	if tlsConfig == nil {
+		return Result{},
+			errors.New(
+				"FI server TLS configuration is required",
+			)
+	}
+
 	defer connection.Close()
 
-	tlsConnection := tls.Server(connection, tlsConfig)
+	tlsConnection :=
+		tls.Server(
+			connection,
+			tlsConfig,
+		)
 	defer tlsConnection.Close()
 
-	handshakeContext, cancel := context.WithTimeout(
-		ctx,
-		15*time.Second,
-	)
+	stopConnectionWatch :=
+		closeConnectionOnContext(
+			ctx,
+			tlsConnection,
+		)
+	defer stopConnectionWatch()
+
+	handshakeContext, cancel :=
+		context.WithTimeout(
+			ctx,
+			15*time.Second,
+		)
 	defer cancel()
 
-	if err := tlsConnection.HandshakeContext(handshakeContext); err != nil {
+	if err :=
+		tlsConnection.HandshakeContext(
+			handshakeContext,
+		); err != nil {
 		return Result{}, fmt.Errorf(
 			"TLS handshake rejected: %w",
 			err,
 		)
 	}
 
-	state := tlsConnection.ConnectionState()
+	state :=
+		tlsConnection.ConnectionState()
 
 	if len(state.PeerCertificates) == 0 {
-		return Result{}, errors.New(
-			"authenticated FI connection has no client certificate",
-		)
+		return Result{},
+			errors.New(
+				"authenticated FI connection has no client certificate",
+			)
 	}
 
-	source, found, err := resolveTransportSource(
-		config,
-		state.PeerCertificates[0],
-	)
+	source, found, err :=
+		resolveTransportSource(
+			config,
+			state.PeerCertificates[0],
+		)
 	if err != nil {
 		return Result{}, fmt.Errorf(
 			"resolve authenticated FI transport source: %w",
@@ -242,25 +380,27 @@ func ListenOnce(
 	}
 
 	if !found {
-		return Result{}, errors.New(
-			"authenticated FI transport certificate is not enrolled",
-		)
+		return Result{},
+			errors.New(
+				"authenticated FI transport certificate is not enrolled",
+			)
 	}
 
 	transactionConfig := config
 	transactionConfig.Source = source
 
-	stopConnectionWatch := closeConnectionOnContext(ctx, tlsConnection)
-	defer stopConnectionWatch()
+	buffered :=
+		bufio.NewReader(
+			tlsConnection,
+		)
 
-	buffered := bufio.NewReader(tlsConnection)
-
-	result, err := receiveAuthenticatedApplication(
-		buffered,
-		tlsConnection,
-		transactionConfig,
-		time.Now(),
-	)
+	result, err :=
+		receiveAuthenticatedApplication(
+			buffered,
+			tlsConnection,
+			transactionConfig,
+			time.Now(),
+		)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Result{}, fmt.Errorf(
@@ -275,10 +415,146 @@ func ListenOnce(
 		)
 	}
 
-	result.CipherSuite = tls.CipherSuiteName(state.CipherSuite)
-	result.TLSVersion = tlsVersion(state.Version)
+	result.CipherSuite =
+		tls.CipherSuiteName(
+			state.CipherSuite,
+		)
+	result.TLSVersion =
+		tlsVersion(
+			state.Version,
+		)
 
 	return result, nil
+}
+
+func serveListener(
+	ctx context.Context,
+	listener net.Listener,
+	maxConcurrent uint64,
+	handler func(
+		context.Context,
+		net.Conn,
+	) (Result, error),
+	onResult ResultHandler,
+	onConnectionError ConnectionErrorHandler,
+) error {
+	if ctx == nil {
+		return errors.New(
+			"FI listener context is required",
+		)
+	}
+
+	if listener == nil {
+		return errors.New(
+			"FI listener is required",
+		)
+	}
+
+	if maxConcurrent == 0 ||
+		maxConcurrent >
+			MaxConcurrentConnections {
+		return fmt.Errorf(
+			"FI maximum concurrent connections must be between 1 and %d",
+			MaxConcurrentConnections,
+		)
+	}
+
+	if handler == nil {
+		return errors.New(
+			"FI connection handler is required",
+		)
+	}
+
+	stopContextWatch :=
+		closeListenerOnContext(
+			ctx,
+			listener,
+		)
+	defer stopContextWatch()
+	defer listener.Close()
+
+	semaphore := make(
+		chan struct{},
+		int(maxConcurrent),
+	)
+
+	var (
+		callbackMutex sync.Mutex
+		workers       sync.WaitGroup
+	)
+
+	defer workers.Wait()
+
+	for {
+		select {
+		case semaphore <- struct{}{}:
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		connection, err :=
+			listener.Accept()
+		if err != nil {
+			<-semaphore
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			return fmt.Errorf(
+				"accept connection: %w",
+				err,
+			)
+		}
+
+		remoteAddress :=
+			connection.RemoteAddr().String()
+
+		workers.Add(1)
+
+		go func() {
+			defer workers.Done()
+			defer func() {
+				<-semaphore
+			}()
+			defer connection.Close()
+
+			result, err :=
+				handler(
+					ctx,
+					connection,
+				)
+
+			if err != nil {
+				if ctx.Err() != nil ||
+					onConnectionError == nil {
+					return
+				}
+
+				callbackMutex.Lock()
+				onConnectionError(
+					fmt.Errorf(
+						"connection %s: %w",
+						remoteAddress,
+						err,
+					),
+				)
+				callbackMutex.Unlock()
+
+				return
+			}
+
+			if ctx.Err() != nil ||
+				onResult == nil {
+				return
+			}
+
+			callbackMutex.Lock()
+			onResult(result)
+			callbackMutex.Unlock()
+		}()
+	}
 }
 
 func resolveSourceID(
@@ -562,6 +838,14 @@ func validateConfig(config Config) error {
 
 	if config.CustodyRoot == "" {
 		return errors.New("durable custody root directory is required")
+	}
+
+	if config.MaxConcurrentConnections >
+		MaxConcurrentConnections {
+		return fmt.Errorf(
+			"maximum concurrent connection count exceeds %d",
+			MaxConcurrentConnections,
+		)
 	}
 
 	if config.MaxDataBytes == 0 {

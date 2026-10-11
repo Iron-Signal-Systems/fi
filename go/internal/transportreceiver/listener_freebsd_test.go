@@ -11,6 +11,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"io"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +21,284 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportack"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
+
+func TestServeListenerContinuesAfterConnectionError(
+	t *testing.T,
+) {
+	ctx, cancel := context.WithCancel(
+		context.Background(),
+	)
+	defer cancel()
+
+	listener, err := net.Listen(
+		"tcp",
+		"127.0.0.1:0",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results := make(
+		chan Result,
+		1,
+	)
+	connectionErrors := make(
+		chan error,
+		1,
+	)
+	done := make(
+		chan error,
+		1,
+	)
+
+	go func() {
+		done <- serveListener(
+			ctx,
+			listener,
+			2,
+			func(
+				_ context.Context,
+				connection net.Conn,
+			) (Result, error) {
+				var marker [1]byte
+
+				if _, err := io.ReadFull(
+					connection,
+					marker[:],
+				); err != nil {
+					return Result{}, err
+				}
+
+				if marker[0] == 'B' {
+					return Result{},
+						errors.New(
+							"intentional bad connection",
+						)
+				}
+
+				return Result{
+					SourceID: "iss-fs-22.iss.local",
+				}, nil
+			},
+			func(result Result) {
+				results <- result
+			},
+			func(err error) {
+				connectionErrors <- err
+			},
+		)
+	}()
+
+	dialAndWrite := func(marker byte) {
+		t.Helper()
+
+		connection, err := net.Dial(
+			"tcp",
+			listener.Addr().String(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := connection.Write(
+			[]byte{marker},
+		); err != nil {
+			_ = connection.Close()
+			t.Fatal(err)
+		}
+
+		if err := connection.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dialAndWrite('B')
+
+	select {
+	case err := <-connectionErrors:
+		if !strings.Contains(
+			err.Error(),
+			"intentional bad connection",
+		) {
+			t.Fatalf(
+				"connection error = %q",
+				err,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"bad connection was not reported",
+		)
+	}
+
+	dialAndWrite('G')
+
+	select {
+	case result := <-results:
+		if result.SourceID !=
+			"iss-fs-22.iss.local" {
+			t.Fatalf(
+				"result source = %q",
+				result.SourceID,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"listener did not accept good connection after bad connection",
+		)
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(
+			err,
+			context.Canceled,
+		) {
+			t.Fatalf(
+				"serveListener() error = %v, want context cancellation",
+				err,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"persistent listener did not stop after cancellation",
+		)
+	}
+}
+
+func TestServeListenerRunsConcurrentlyWithinBound(
+	t *testing.T,
+) {
+	ctx, cancel := context.WithCancel(
+		context.Background(),
+	)
+	defer cancel()
+
+	listener, err := net.Listen(
+		"tcp",
+		"127.0.0.1:0",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(
+		chan struct{},
+		3,
+	)
+	release := make(
+		chan struct{},
+		3,
+	)
+	done := make(
+		chan error,
+		1,
+	)
+
+	go func() {
+		done <- serveListener(
+			ctx,
+			listener,
+			2,
+			func(
+				_ context.Context,
+				_ net.Conn,
+			) (Result, error) {
+				started <- struct{}{}
+				<-release
+				return Result{}, nil
+			},
+			nil,
+			nil,
+		)
+	}()
+
+	connections := make(
+		[]net.Conn,
+		0,
+		3,
+	)
+
+	for range 3 {
+		connection, err := net.Dial(
+			"tcp",
+			listener.Addr().String(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		connections = append(
+			connections,
+			connection,
+		)
+	}
+
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+
+	for range 2 {
+		select {
+		case <-started:
+
+		case <-time.After(2 * time.Second):
+			t.Fatal(
+				"two connections did not run concurrently",
+			)
+		}
+	}
+
+	select {
+	case <-started:
+		t.Fatal(
+			"third connection exceeded concurrency bound",
+		)
+
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	release <- struct{}{}
+
+	select {
+	case <-started:
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"third connection did not start after capacity became available",
+		)
+	}
+
+	release <- struct{}{}
+	release <- struct{}{}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(
+			err,
+			context.Canceled,
+		) {
+			t.Fatalf(
+				"serveListener() error = %v, want context cancellation",
+				err,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"persistent listener did not stop after cancellation",
+		)
+	}
+}
 
 func TestListenOnceRejectsNilContext(t *testing.T) {
 	_, err := ListenOnce(
@@ -170,6 +451,14 @@ func TestValidateConfig(t *testing.T) {
 				value.CustodyRoot = ""
 			},
 			wantErr: "durable custody root directory is required",
+		},
+		{
+			name: "concurrency exceeds structural maximum",
+			mutate: func(value *Config) {
+				value.MaxConcurrentConnections =
+					MaxConcurrentConnections + 1
+			},
+			wantErr: "maximum concurrent connection count exceeds",
 		},
 		{
 			name: "missing maximum data bytes",
