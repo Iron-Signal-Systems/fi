@@ -876,3 +876,137 @@ func TestParseInvocationUpdateHostFilesRequiresPriorDirectory(t *testing.T) {
 		)
 	}
 }
+
+func TestParseInvocationRuntimeCommands(
+	t *testing.T,
+) {
+	commands := []string{
+		"apply-runtime",
+		"verify-runtime",
+	}
+
+	for _, command := range commands {
+		t.Run(
+			command,
+			func(t *testing.T) {
+				request, err := parseInvocation(
+					[]string{
+						command,
+						"/root/fi-backend.conf",
+					},
+					strings.NewReader(""),
+					&bytes.Buffer{},
+				)
+				if err != nil {
+					t.Fatalf(
+						"parseInvocation() error = %v",
+						err,
+					)
+				}
+
+				if request.command != command {
+					t.Fatalf(
+						"command = %q, want %q",
+						request.command,
+						command,
+					)
+				}
+
+				if request.configPath !=
+					"/root/fi-backend.conf" {
+					t.Fatalf(
+						"configPath = %q",
+						request.configPath,
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestParseInvocationRuntimeTransitionCommands(
+	t *testing.T,
+) {
+	commands := []string{
+		"adopt-runtime",
+		"update-runtime",
+	}
+
+	for _, command := range commands {
+		t.Run(
+			command,
+			func(t *testing.T) {
+				request, err := parseInvocation(
+					[]string{
+						command,
+						"/root/fi-backend.conf",
+						"/root/approved-runtime",
+					},
+					strings.NewReader(""),
+					&bytes.Buffer{},
+				)
+				if err != nil {
+					t.Fatalf(
+						"parseInvocation() error = %v",
+						err,
+					)
+				}
+
+				if request.command != command {
+					t.Fatalf(
+						"command = %q, want %q",
+						request.command,
+						command,
+					)
+				}
+
+				if request.configPath !=
+					"/root/fi-backend.conf" {
+					t.Fatalf(
+						"configPath = %q",
+						request.configPath,
+					)
+				}
+
+				if request.approvedPriorRuntime !=
+					"/root/approved-runtime" {
+					t.Fatalf(
+						"approvedPriorRuntime = %q",
+						request.approvedPriorRuntime,
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestParseInvocationRuntimeTransitionRequiresPrior(
+	t *testing.T,
+) {
+	commands := []string{
+		"adopt-runtime",
+		"update-runtime",
+	}
+
+	for _, command := range commands {
+		t.Run(
+			command,
+			func(t *testing.T) {
+				_, err := parseInvocation(
+					[]string{
+						command,
+						"/root/fi-backend.conf",
+					},
+					strings.NewReader(""),
+					&bytes.Buffer{},
+				)
+
+				if err == nil {
+					t.Fatal(
+						"parseInvocation accepted runtime transition without approved prior directory",
+					)
+				}
+			},
+		)
+	}
+}

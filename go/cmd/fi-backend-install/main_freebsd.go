@@ -18,6 +18,7 @@ import (
 
 type invocation struct {
 	approvedPriorHostFiles string
+	approvedPriorRuntime   string
 	command                string
 	configPath             string
 }
@@ -93,6 +94,20 @@ func parseInvocation(
 	}
 
 	switch args[0] {
+	case "adopt-runtime", "update-runtime":
+		if len(args) != 3 {
+			return invocation{}, fmt.Errorf(
+				"usage: fi-backend-install %s <configuration-file> <approved-prior-runtime-directory>",
+				args[0],
+			)
+		}
+
+		return invocation{
+			approvedPriorRuntime: args[2],
+			command:              args[0],
+			configPath:           args[1],
+		}, nil
+
 	case "update-host-files":
 		if len(args) != 3 {
 			return invocation{}, fmt.Errorf(
@@ -106,7 +121,7 @@ func parseInvocation(
 			configPath:             args[1],
 		}, nil
 
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -121,7 +136,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|initialize-sor-database|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|initialize-sor-database|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|apply-runtime|verify-runtime|adopt-runtime|update-runtime] [configuration-file]",
 			)
 		}
 
@@ -448,6 +463,76 @@ func main() {
 		fmt.Fprintln(
 			os.Stdout,
 			"FI FreeBSD lifecycle verification complete.",
+		)
+
+	case "adopt-runtime":
+		if err := backendinstall.AdoptRuntime(
+			config,
+			request.approvedPriorRuntime,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI RUNTIME ADOPTION BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD application runtime adoption complete.",
+		)
+
+	case "update-runtime":
+		if err := backendinstall.UpdateRuntime(
+			config,
+			request.approvedPriorRuntime,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI RUNTIME UPDATE BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD application runtime update complete.",
+		)
+
+	case "apply-runtime":
+		if err := backendinstall.ApplyRuntime(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI RUNTIME APPLY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD application runtime apply complete.",
+		)
+
+	case "verify-runtime":
+		if err := backendinstall.VerifyRuntime(
+			config,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"FI RUNTIME VERIFY BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		fmt.Fprintln(
+			os.Stdout,
+			"FI FreeBSD application runtime verification complete.",
 		)
 
 	case "apply-host-files":
