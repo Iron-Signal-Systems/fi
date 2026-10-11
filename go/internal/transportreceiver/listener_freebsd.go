@@ -22,6 +22,12 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
+// SourceResolver resolves one presented transport certificate to one
+// explicitly enrolled FI source authorization.
+type SourceResolver func(
+	certificate *x509.Certificate,
+) (transporttrust.SourceAuthorization, bool, error)
+
 // Config defines the Phase 2 receiver transport-listener requirements.
 type Config struct {
 	BatchCRL                    *x509.RevocationList
@@ -39,6 +45,7 @@ type Config struct {
 	RecoveryMaxCanonicalBytes   uint64
 	RecoveryMaxEncodedBytes     uint64
 	RecoveryMaxMembers          uint64
+	ResolveSource               SourceResolver
 	Root                        *x509.Certificate
 	ServerCertificate           tls.Certificate
 	Source                      transporttrust.SourceAuthorization
@@ -130,13 +137,30 @@ func ListenOnce(
 				intermediates = state.PeerCertificates[1:]
 			}
 
+			source, found, err := resolveTransportSource(
+				config,
+				leaf,
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"resolve FI transport source: %w",
+					err,
+				)
+			}
+
+			if !found {
+				return errors.New(
+					"FI transport certificate is not enrolled",
+				)
+			}
+
 			outcome, err := transporttrust.VerifyTransportCertificate(
 				leaf,
 				intermediates,
 				config.Root,
 				config.TransportIssuer,
 				config.TransportCRL,
-				config.Source,
+				source,
 				time.Now(),
 			)
 			if err != nil {
@@ -192,6 +216,33 @@ func ListenOnce(
 	}
 
 	state := tlsConnection.ConnectionState()
+
+	if len(state.PeerCertificates) == 0 {
+		return Result{}, errors.New(
+			"authenticated FI connection has no client certificate",
+		)
+	}
+
+	source, found, err := resolveTransportSource(
+		config,
+		state.PeerCertificates[0],
+	)
+	if err != nil {
+		return Result{}, fmt.Errorf(
+			"resolve authenticated FI transport source: %w",
+			err,
+		)
+	}
+
+	if !found {
+		return Result{}, errors.New(
+			"authenticated FI transport certificate is not enrolled",
+		)
+	}
+
+	transactionConfig := config
+	transactionConfig.Source = source
+
 	stopConnectionWatch := closeConnectionOnContext(ctx, tlsConnection)
 	defer stopConnectionWatch()
 
@@ -200,7 +251,7 @@ func ListenOnce(
 	result, err := receiveAuthenticatedApplication(
 		buffered,
 		tlsConnection,
-		config,
+		transactionConfig,
 		time.Now(),
 	)
 	if err != nil {
@@ -221,6 +272,33 @@ func ListenOnce(
 	result.TLSVersion = tlsVersion(state.Version)
 
 	return result, nil
+}
+
+func resolveTransportSource(
+	config Config,
+	certificate *x509.Certificate,
+) (
+	transporttrust.SourceAuthorization,
+	bool,
+	error,
+) {
+	if certificate == nil {
+		return transporttrust.SourceAuthorization{},
+			false,
+			errors.New("FI transport certificate is required")
+	}
+
+	if config.ResolveSource != nil {
+		return config.ResolveSource(certificate)
+	}
+
+	if config.Source.SourceID == "" {
+		return transporttrust.SourceAuthorization{},
+			false,
+			errors.New("FI source resolver is required")
+	}
+
+	return config.Source, true, nil
 }
 
 func receiveAuthenticatedApplication(
@@ -437,8 +515,10 @@ func validateConfig(config Config) error {
 		return errors.New("FI root certificate is required")
 	}
 
-	if config.Source.SourceID == "" {
-		return errors.New("FI source authorization is required")
+	if config.ResolveSource == nil && config.Source.SourceID == "" {
+		return errors.New(
+			"FI source authorization or resolver is required",
+		)
 	}
 
 	if config.TransportCRL == nil {
@@ -464,6 +544,11 @@ func validateConfig(config Config) error {
 		return err
 	}
 
+	validationSource := config.Source
+	if validationSource.SourceID == "" && config.ResolveSource != nil {
+		validationSource.SourceID = "resolver-validated-source"
+	}
+
 	return validateCustodyConfig(CustodyConfig{
 		Intake: IntakeConfig{
 			BatchCRL:     config.BatchCRL,
@@ -471,7 +556,7 @@ func validateConfig(config Config) error {
 			CurrentTime:  time.Unix(1, 0),
 			MaxDataBytes: config.MaxDataBytes,
 			Root:         config.Root,
-			Source:       config.Source,
+			Source:       validationSource,
 		},
 		RootDir: config.CustodyRoot,
 	})

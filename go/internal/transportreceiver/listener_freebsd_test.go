@@ -208,7 +208,21 @@ func TestValidateConfig(t *testing.T) {
 			mutate: func(value *Config) {
 				value.Source = transporttrust.SourceAuthorization{}
 			},
-			wantErr: "FI source authorization is required",
+			wantErr: "FI source authorization or resolver is required",
+		},
+		{
+			name: "resolver without static source",
+			mutate: func(value *Config) {
+				value.Source = transporttrust.SourceAuthorization{}
+				value.ResolveSource = func(
+					certificate *x509.Certificate,
+				) (transporttrust.SourceAuthorization, bool, error) {
+					return transporttrust.SourceAuthorization{
+						Enabled:  true,
+						SourceID: "iss-fs-22.iss.local",
+					}, true, nil
+				}
+			},
 		},
 		{
 			name: "missing transport CRL",
@@ -277,5 +291,138 @@ func validTestConfig(t *testing.T) Config {
 		},
 		TransportCRL:    &x509.RevocationList{},
 		TransportIssuer: &x509.Certificate{},
+	}
+}
+
+func TestResolveTransportSourceUsesResolver(
+	t *testing.T,
+) {
+	certificate := &x509.Certificate{
+		Raw: []byte("FI multi-source client certificate"),
+	}
+
+	expected := transporttrust.SourceAuthorization{
+		Enabled:  true,
+		SourceID: "iss-fs-22.iss.local",
+	}
+
+	config := Config{
+		ResolveSource: func(
+			presented *x509.Certificate,
+		) (
+			transporttrust.SourceAuthorization,
+			bool,
+			error,
+		) {
+			if presented != certificate {
+				t.Fatal(
+					"resolver received unexpected certificate",
+				)
+			}
+
+			return expected, true, nil
+		},
+	}
+
+	resolved, found, err := resolveTransportSource(
+		config,
+		certificate,
+	)
+	if err != nil {
+		t.Fatalf(
+			"resolveTransportSource() error = %v",
+			err,
+		)
+	}
+
+	if !found {
+		t.Fatal(
+			"resolveTransportSource() found = false",
+		)
+	}
+
+	if resolved.SourceID != expected.SourceID {
+		t.Fatalf(
+			"resolved SourceID = %q, want %q",
+			resolved.SourceID,
+			expected.SourceID,
+		)
+	}
+}
+
+func TestResolveTransportSourceRejectsUnknownCertificate(
+	t *testing.T,
+) {
+	config := Config{
+		ResolveSource: func(
+			certificate *x509.Certificate,
+		) (
+			transporttrust.SourceAuthorization,
+			bool,
+			error,
+		) {
+			return transporttrust.SourceAuthorization{},
+				false,
+				nil
+		},
+	}
+
+	_, found, err := resolveTransportSource(
+		config,
+		&x509.Certificate{
+			Raw: []byte("unknown FI client certificate"),
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"resolveTransportSource() error = %v",
+			err,
+		)
+	}
+
+	if found {
+		t.Fatal(
+			"unknown FI certificate resolved to a source",
+		)
+	}
+}
+
+func TestResolveTransportSourcePreservesStaticSourceCompatibility(
+	t *testing.T,
+) {
+	expected := transporttrust.SourceAuthorization{
+		Enabled:  true,
+		SourceID: "iss-fs-01.iss.local",
+	}
+
+	config := Config{
+		Source: expected,
+	}
+
+	resolved, found, err := resolveTransportSource(
+		config,
+		&x509.Certificate{
+			Raw: []byte("legacy single-source certificate"),
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"resolveTransportSource() error = %v",
+			err,
+		)
+	}
+
+	if !found {
+		t.Fatal(
+			"static FI source did not resolve",
+		)
+	}
+
+	if resolved.SourceID != expected.SourceID {
+		t.Fatalf(
+			"resolved SourceID = %q, want %q",
+			resolved.SourceID,
+			expected.SourceID,
+		)
 	}
 }
