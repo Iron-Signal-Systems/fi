@@ -99,10 +99,7 @@ database_unexpected AS (
     FROM target_database AS database
     CROSS JOIN roles
     CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(
-            database.datacl,
-            ARRAY[]::aclitem[]
-        )
+        database.datacl
     ) AS acl
     WHERE acl.grantee <> 0
       AND acl.grantee <> database.datdba
@@ -113,10 +110,7 @@ schema_unexpected AS (
     FROM target_schema AS schema
     CROSS JOIN roles
     CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(
-            schema.nspacl,
-            ARRAY[]::aclitem[]
-        )
+        schema.nspacl
     ) AS acl
     WHERE acl.grantee <> 0
       AND acl.grantee <> schema.nspowner
@@ -126,10 +120,7 @@ public_schema_unexpected AS (
     SELECT count(*)::integer AS count
     FROM default_public_schema AS schema
     CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(
-            schema.nspacl,
-            ARRAY[]::aclitem[]
-        )
+        schema.nspacl
     ) AS acl
     WHERE acl.privilege_type = 'CREATE'
       AND acl.grantee <> schema.nspowner
@@ -139,10 +130,7 @@ table_unexpected AS (
     FROM target_tables AS table_object
     CROSS JOIN roles
     CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(
-            table_object.relacl,
-            ARRAY[]::aclitem[]
-        )
+        table_object.relacl
     ) AS acl
     WHERE acl.grantee <> table_object.relowner
       AND NOT (
@@ -160,10 +148,7 @@ column_unexpected AS (
     JOIN pg_catalog.pg_attribute AS attribute
       ON attribute.attrelid = table_object.oid
     CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(
-            attribute.attacl,
-            ARRAY[]::aclitem[]
-        )
+        attribute.attacl
     ) AS acl
     WHERE attribute.attnum > 0
       AND NOT attribute.attisdropped
@@ -174,10 +159,7 @@ sequence_unexpected AS (
     FROM target_sequences AS sequence_object
     CROSS JOIN roles
     CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(
-            sequence_object.relacl,
-            ARRAY[]::aclitem[]
-        )
+        sequence_object.relacl
     ) AS acl
     WHERE acl.grantee <> sequence_object.relowner
       AND NOT (

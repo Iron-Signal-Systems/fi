@@ -197,6 +197,28 @@ func TestSORPostgreSQLDatabaseExplicitPrivilegeObserverSQLContracts(
 			"acl.privilege_type = 'CREATE'",
 		}
 
+	if strings.Contains(
+		query,
+		"ARRAY[]::aclitem[]",
+	) {
+		t.Fatal(
+			"explicit ACL SQL contains zero-dimensional empty ACL array",
+		)
+	}
+
+	if strings.Count(
+		query,
+		"pg_catalog.aclexplode(",
+	) != 6 {
+		t.Fatalf(
+			"explicit ACL expansion count = %d, want 6",
+			strings.Count(
+				query,
+				"pg_catalog.aclexplode(",
+			),
+		)
+	}
+
 	for _, fragment := range required {
 		if !strings.Contains(
 			query,
