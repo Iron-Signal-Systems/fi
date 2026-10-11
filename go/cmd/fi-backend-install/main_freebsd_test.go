@@ -1010,3 +1010,90 @@ func TestParseInvocationRuntimeTransitionRequiresPrior(
 		)
 	}
 }
+
+func TestParseInvocationApplicationBinaryCommands(
+	t *testing.T,
+) {
+	commands := []string{
+		"apply-binaries",
+		"verify-binaries",
+	}
+
+	for _, command := range commands {
+		t.Run(
+			command,
+			func(t *testing.T) {
+				request, err := parseInvocation(
+					[]string{
+						command,
+						"/root/fi-backend.conf",
+						"/tmp/fi-release",
+					},
+					strings.NewReader(""),
+					&bytes.Buffer{},
+				)
+				if err != nil {
+					t.Fatalf(
+						"parseInvocation() error = %v",
+						err,
+					)
+				}
+
+				if request.command != command {
+					t.Fatalf(
+						"command = %q, want %q",
+						request.command,
+						command,
+					)
+				}
+
+				if request.configPath !=
+					"/root/fi-backend.conf" {
+					t.Fatalf(
+						"configPath = %q",
+						request.configPath,
+					)
+				}
+
+				if request.applicationBinaryRelease !=
+					"/tmp/fi-release" {
+					t.Fatalf(
+						"applicationBinaryRelease = %q",
+						request.applicationBinaryRelease,
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestParseInvocationApplicationBinaryCommandsRequireRelease(
+	t *testing.T,
+) {
+	commands := []string{
+		"apply-binaries",
+		"verify-binaries",
+	}
+
+	for _, command := range commands {
+		t.Run(
+			command,
+			func(t *testing.T) {
+				_, err := parseInvocation(
+					[]string{
+						command,
+						"/root/fi-backend.conf",
+					},
+					strings.NewReader(""),
+					&bytes.Buffer{},
+				)
+
+				if err == nil {
+					t.Fatal(
+						"parseInvocation accepted application binary command without release directory",
+					)
+				}
+			},
+		)
+	}
+}
