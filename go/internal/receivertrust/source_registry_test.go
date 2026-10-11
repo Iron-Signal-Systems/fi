@@ -198,6 +198,13 @@ func sourceRegistryCertificateSHA256(
 	return hex.EncodeToString(sum[:])
 }
 
+func sourceRegistryTextSHA256(
+	value string,
+) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
 func writeSourceRegistryConfig(
 	t *testing.T,
 	registry string,
@@ -224,10 +231,14 @@ batch_signing_issuing_ca_sha256: %s
 		sourceID,
 		enabled,
 		sourceID,
-		strings.Repeat("1", 64),
+		sourceRegistryTextSHA256(
+			"transport:"+strings.ToLower(sourceID),
+		),
 		sourceRegistryCertificateSHA256(t, transportIssuer),
 		sourceID,
-		strings.Repeat("2", 64),
+		sourceRegistryTextSHA256(
+			"batch:"+strings.ToLower(sourceID),
+		),
 		sourceRegistryCertificateSHA256(t, batchIssuer),
 	)
 
