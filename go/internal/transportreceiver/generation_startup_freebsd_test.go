@@ -10,10 +10,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
+	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestRecoverGenerationStartupDisabledNoOp(
@@ -249,4 +251,131 @@ func writeStartupGenerationCustody(
 	}
 
 	return custody
+}
+
+func TestRecoverGenerationStartupUsesSourceLookup(
+	t *testing.T,
+) {
+	fixture := newGenerationTransactionFixture(
+		t,
+		false,
+	)
+
+	config := listenerGenerationConfigFromFixture(
+		t,
+		fixture,
+	)
+
+	expected := config.Source
+
+	config.Source =
+		transporttrust.SourceAuthorization{}
+
+	lookupCount := 0
+
+	config.LookupSource = func(
+		sourceID string,
+	) (
+		transporttrust.SourceAuthorization,
+		bool,
+	) {
+		lookupCount++
+
+		if sourceID != expected.SourceID {
+			t.Fatalf(
+				"LookupSource sourceID = %q, want %q",
+				sourceID,
+				expected.SourceID,
+			)
+		}
+
+		return expected, true
+	}
+
+	writeStartupGenerationCustody(
+		t,
+		fixture,
+	)
+
+	result, err := RecoverGenerationStartup(
+		config,
+		fixture.config.Custody.Receive.CurrentTime,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Discovered != 1 ||
+		result.RecordedNew != 1 {
+		t.Fatalf(
+			"startup result = %#v, want discovered=1 recorded=1",
+			result,
+		)
+	}
+
+	if lookupCount == 0 {
+		t.Fatal(
+			"startup recovery did not use source lookup",
+		)
+	}
+}
+
+func TestRecoverGenerationStartupRejectsUnknownSource(
+	t *testing.T,
+) {
+	fixture := newGenerationTransactionFixture(
+		t,
+		false,
+	)
+
+	config := listenerGenerationConfigFromFixture(
+		t,
+		fixture,
+	)
+
+	config.Source =
+		transporttrust.SourceAuthorization{}
+
+	config.LookupSource = func(
+		sourceID string,
+	) (
+		transporttrust.SourceAuthorization,
+		bool,
+	) {
+		return transporttrust.SourceAuthorization{},
+			false
+	}
+
+	writeStartupGenerationCustody(
+		t,
+		fixture,
+	)
+
+	result, err := RecoverGenerationStartup(
+		config,
+		fixture.config.Custody.Receive.CurrentTime,
+	)
+	if err == nil {
+		t.Fatal(
+			"unknown restart source was accepted",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"is not enrolled",
+	) {
+		t.Fatalf(
+			"startup error = %q, want enrollment rejection",
+			err,
+		)
+	}
+
+	if result.Discovered != 1 ||
+		result.RecordedNew != 0 {
+		t.Fatalf(
+			"startup result = %#v, want discovered=1 recorded=0",
+			result,
+		)
+	}
 }

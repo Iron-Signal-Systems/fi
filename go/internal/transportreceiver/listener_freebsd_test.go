@@ -426,3 +426,124 @@ func TestResolveTransportSourcePreservesStaticSourceCompatibility(
 		)
 	}
 }
+
+func TestResolveSourceIDUsesLookup(
+	t *testing.T,
+) {
+	expected := transporttrust.SourceAuthorization{
+		Enabled:  true,
+		SourceID: "iss-fs-22.iss.local",
+	}
+
+	config := Config{
+		LookupSource: func(
+			sourceID string,
+		) (
+			transporttrust.SourceAuthorization,
+			bool,
+		) {
+			if sourceID != expected.SourceID {
+				t.Fatalf(
+					"LookupSource sourceID = %q, want %q",
+					sourceID,
+					expected.SourceID,
+				)
+			}
+
+			return expected, true
+		},
+	}
+
+	resolved, found, err := resolveSourceID(
+		config,
+		expected.SourceID,
+	)
+	if err != nil {
+		t.Fatalf(
+			"resolveSourceID() error = %v",
+			err,
+		)
+	}
+
+	if !found {
+		t.Fatal(
+			"resolveSourceID() found = false",
+		)
+	}
+
+	if resolved.SourceID != expected.SourceID {
+		t.Fatalf(
+			"resolved SourceID = %q, want %q",
+			resolved.SourceID,
+			expected.SourceID,
+		)
+	}
+}
+
+func TestResolveSourceIDRejectsUnknownSource(
+	t *testing.T,
+) {
+	config := Config{
+		LookupSource: func(
+			sourceID string,
+		) (
+			transporttrust.SourceAuthorization,
+			bool,
+		) {
+			return transporttrust.SourceAuthorization{},
+				false
+		},
+	}
+
+	_, found, err := resolveSourceID(
+		config,
+		"iss-fs-99.iss.local",
+	)
+	if err != nil {
+		t.Fatalf(
+			"resolveSourceID() error = %v",
+			err,
+		)
+	}
+
+	if found {
+		t.Fatal(
+			"unknown source resolved from registry",
+		)
+	}
+}
+
+func TestResolveSourceIDRejectsIdentityMismatch(
+	t *testing.T,
+) {
+	config := Config{
+		LookupSource: func(
+			sourceID string,
+		) (
+			transporttrust.SourceAuthorization,
+			bool,
+		) {
+			return transporttrust.SourceAuthorization{
+				Enabled:  true,
+				SourceID: "ISS-FS-22.iss.local",
+			}, true
+		},
+	}
+
+	_, found, err := resolveSourceID(
+		config,
+		"iss-fs-22.iss.local",
+	)
+
+	if err == nil {
+		t.Fatal(
+			"source lookup identity mismatch was accepted",
+		)
+	}
+
+	if found {
+		t.Fatal(
+			"source lookup identity mismatch returned found=true",
+		)
+	}
+}

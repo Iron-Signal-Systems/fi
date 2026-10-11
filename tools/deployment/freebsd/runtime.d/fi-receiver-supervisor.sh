@@ -24,8 +24,6 @@ fail()
 
 . "$CONFIG"
 
-[ -n "${fi_receiver_source:-}" ] ||
-    fail "fi_receiver_source is required"
 
 [ -n "${fi_receiver_bind:-}" ] ||
     fail "fi_receiver_bind is required"
@@ -57,11 +55,6 @@ fail()
 [ -x "$BINARY" ] ||
     fail "receiver binary is absent or not executable: $BINARY"
 
-case "$fi_receiver_source" in
-    *[!A-Za-z0-9._-]*)
-        fail "fi_receiver_source contains unsupported characters"
-        ;;
-esac
 
 child_pid=""
 
@@ -90,8 +83,7 @@ do
         -generation-ready-root "$fi_receiver_generation_ready_root" \
         -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
         -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
-        -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes" \
-        -source "$fi_receiver_source" &
+        -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes" &
 
     child_pid=$!
 

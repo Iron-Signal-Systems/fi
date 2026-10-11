@@ -7,7 +7,7 @@
 package backendinstall
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh
-// SHA256: f76cce4afca67b8744545f9819258673d0a2e9dc63130ae091887b1e8195c9ff
+// SHA256: 9af734d2cac8bf8ba6f96dc152e47ed30eb0ed8e6a2f6863fb4c60e2317c672a
 const runtimeAssetReceiverSupervisor = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -34,8 +34,6 @@ fail()
 
 . "$CONFIG"
 
-[ -n "${fi_receiver_source:-}" ] ||
-    fail "fi_receiver_source is required"
 
 [ -n "${fi_receiver_bind:-}" ] ||
     fail "fi_receiver_bind is required"
@@ -67,11 +65,6 @@ fail()
 [ -x "$BINARY" ] ||
     fail "receiver binary is absent or not executable: $BINARY"
 
-case "$fi_receiver_source" in
-    *[!A-Za-z0-9._-]*)
-        fail "fi_receiver_source contains unsupported characters"
-        ;;
-esac
 
 child_pid=""
 
@@ -100,8 +93,7 @@ do
         -generation-ready-root "$fi_receiver_generation_ready_root" \
         -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
         -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
-        -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes" \
-        -source "$fi_receiver_source" &
+        -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes" &
 
     child_pid=$!
 
@@ -226,13 +218,12 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver.rc.conf.template
-// SHA256: f7a796a4dbfc2756fc0b2197d81e578579d2b2363b63b8b3bca2df3d02ec357e
+// SHA256: 9f3772891690391ea74b8b3d3a3232bdb60b7ec6bdcbab9f3a3fa60c3ee7d4cc
 const runtimeAssetReceiverRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: receiver-runtime-config
 
 fi_receiver_enable="YES"
 
-fi_receiver_source="@FI_RUNTIME_SOURCE_ID@"
 fi_receiver_bind="@FI_RECEIVER_EXTERNAL_IP@:8443"
 
 fi_receiver_custody_root="/var/db/fi/custody/transport"

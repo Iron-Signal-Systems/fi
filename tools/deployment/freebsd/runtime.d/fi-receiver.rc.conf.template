@@ -3,7 +3,6 @@
 
 fi_receiver_enable="YES"
 
-fi_receiver_source="@FI_RUNTIME_SOURCE_ID@"
 fi_receiver_bind="@FI_RECEIVER_EXTERNAL_IP@:8443"
 
 fi_receiver_custody_root="/var/db/fi/custody/transport"

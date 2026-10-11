@@ -69,7 +69,17 @@ func RecoverGenerationStartup(
 		currentTime,
 	)
 
-	if err := validateGenerationReceiveConfig(transactionConfig); err != nil {
+	validationConfig := transactionConfig
+
+	if validationConfig.Custody.Receive.Source.SourceID == "" &&
+		config.LookupSource != nil {
+		validationConfig.Custody.Receive.Source.SourceID =
+			"registry-startup-validation"
+	}
+
+	if err := validateGenerationReceiveConfig(
+		validationConfig,
+	); err != nil {
 		return GenerationStartupResult{}, fmt.Errorf(
 			"validate FI generation startup receiver boundary: %w",
 			err,
@@ -77,7 +87,7 @@ func RecoverGenerationStartup(
 	}
 
 	recovery, err := transportgeneration.RecoverDurableCustodyRoot(
-		transactionConfig.Custody,
+		validationConfig.Custody,
 	)
 	if err != nil {
 		return GenerationStartupResult{}, fmt.Errorf(
@@ -92,11 +102,58 @@ func RecoverGenerationStartup(
 	}
 
 	for _, discovered := range recovery.Objects {
+		objectConfig := transactionConfig
+
+		if config.LookupSource != nil {
+			descriptor, err :=
+				transportgeneration.ReadDiscoveredCustodyDescriptor(
+					discovered,
+					config.GenerationCustodyRoot,
+				)
+			if err != nil {
+				return result, fmt.Errorf(
+					"inspect restart-discovered FI generation custody %q: %w",
+					discovered.Path,
+					err,
+				)
+			}
+
+			source, found, err := resolveSourceID(
+				config,
+				descriptor.SourceID,
+			)
+			if err != nil {
+				return result, fmt.Errorf(
+					"resolve restart-discovered FI generation source %q: %w",
+					descriptor.SourceID,
+					err,
+				)
+			}
+
+			if !found {
+				return result, fmt.Errorf(
+					"restart-discovered FI generation source %q is not enrolled",
+					descriptor.SourceID,
+				)
+			}
+
+			objectConfig.Custody.Receive.Source = source
+		}
+
+		if err := validateGenerationReceiveConfig(
+			objectConfig,
+		); err != nil {
+			return result, fmt.Errorf(
+				"validate restart-discovered FI generation source boundary: %w",
+				err,
+			)
+		}
+
 		recorded, err :=
 			generationrecorder.RecordDiscoveredCustodyDurably(
 				discovered,
-				transactionConfig.Custody,
-				transactionConfig.Recorder,
+				objectConfig.Custody,
+				objectConfig.Recorder,
 			)
 		if err != nil {
 			return result, fmt.Errorf(

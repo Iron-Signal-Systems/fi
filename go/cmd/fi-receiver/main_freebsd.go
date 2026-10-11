@@ -14,14 +14,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportreceiver"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func main() {
@@ -41,7 +38,7 @@ func fail(err error) {
 func printTransportUsage() {
 	fmt.Fprintln(
 		os.Stderr,
-		"usage: fi-receiver -transport-listen -bind <address:port> -custody-root <path> -max-data-bytes <bytes> [-recovery-max-canonical-bytes <bytes> -recovery-max-encoded-bytes <bytes> -recovery-max-members <count>] [-generation-enable -generation-custody-root <path> -generation-recorded-root <path> -generation-max-canonical-bytes <bytes> -generation-max-encoded-bytes <bytes> -generation-max-manifest-bytes <bytes>] -source <source-id>",
+		"usage: fi-receiver -transport-listen -bind <address:port> -custody-root <path> -max-data-bytes <bytes> [-recovery-max-canonical-bytes <bytes> -recovery-max-encoded-bytes <bytes> -recovery-max-members <count>] [-generation-enable -generation-custody-root <path> -generation-recorded-root <path> -generation-max-canonical-bytes <bytes> -generation-max-encoded-bytes <bytes> -generation-max-manifest-bytes <bytes>]",
 	)
 }
 
@@ -176,12 +173,6 @@ func runTransportCommand() {
 		"maximum collector manifest bytes accepted inside one FI generation; requires -generation-enable",
 	)
 
-	sourceID := flags.String(
-		"source",
-		"",
-		"authorized FI source ID, for example iss-fs-01.iss.local",
-	)
-
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
@@ -222,10 +213,6 @@ func runTransportCommand() {
 		fail(err)
 	}
 
-	if err := validateSourceID(*sourceID); err != nil {
-		fail(err)
-	}
-
 	readiness := receivertrust.InspectReadiness()
 	if !readiness.Ready {
 		detail := readiness.Detail
@@ -236,27 +223,6 @@ func runTransportCommand() {
 		fail(fmt.Errorf(
 			"receiver trust not ready: %s",
 			detail,
-		))
-	}
-
-	sourceConfigPath := filepath.Join(
-		receivertrust.SourceRegistryPath,
-		*sourceID+".conf",
-	)
-
-	sourceConfig, err := transporttrust.LoadSourceConfig(sourceConfigPath)
-	if err != nil {
-		fail(err)
-	}
-
-	if !strings.EqualFold(
-		sourceConfig.Authorization.SourceID,
-		*sourceID,
-	) {
-		fail(fmt.Errorf(
-			"source config identity %q does not match requested source %q",
-			sourceConfig.Authorization.SourceID,
-			*sourceID,
 		))
 	}
 
@@ -306,6 +272,18 @@ func runTransportCommand() {
 		fail(err)
 	}
 
+	sourceRegistry, err := receivertrust.LoadSourceRegistry(
+		receivertrust.SourceRegistryPath,
+		transportIssuer,
+		batchIssuer,
+	)
+	if err != nil {
+		fail(fmt.Errorf(
+			"load FI source authorization registry: %w",
+			err,
+		))
+	}
+
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -318,13 +296,14 @@ func runTransportCommand() {
 		BatchIssuer:               batchIssuer,
 		BindAddress:               *bindAddress,
 		CustodyRoot:               *custodyRoot,
+		LookupSource:              sourceRegistry.Lookup,
 		MaxDataBytes:              *maxDataBytes,
 		RecoveryMaxCanonicalBytes: *recoveryMaxCanonicalBytes,
 		RecoveryMaxEncodedBytes:   *recoveryMaxEncodedBytes,
 		RecoveryMaxMembers:        *recoveryMaxMembers,
+		ResolveSource:             sourceRegistry.ResolveTransportCertificate,
 		Root:                      root,
 		ServerCertificate:         serverCertificate,
-		Source:                    sourceConfig.Authorization,
 		TransportCRL:              transportCRL,
 		TransportIssuer:           transportIssuer,
 	}
@@ -633,22 +612,4 @@ func runTrustCommand(args []string) {
 	if !readiness.Ready && readiness.Detail != "" {
 		fmt.Printf("  %s\n", readiness.Detail)
 	}
-}
-
-func validateSourceID(sourceID string) error {
-	if sourceID == "" {
-		return errors.New("-source is required")
-	}
-
-	if strings.ContainsAny(sourceID, `/\`) {
-		return errors.New(
-			"source ID must not contain path separators",
-		)
-	}
-
-	if sourceID == "." || sourceID == ".." {
-		return errors.New("invalid source ID")
-	}
-
-	return nil
 }

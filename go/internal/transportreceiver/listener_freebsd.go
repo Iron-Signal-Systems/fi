@@ -22,6 +22,12 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
+// SourceLookup resolves one canonical FI source ID to one explicitly
+// enrolled source authorization.
+type SourceLookup func(
+	sourceID string,
+) (transporttrust.SourceAuthorization, bool)
+
 // SourceResolver resolves one presented transport certificate to one
 // explicitly enrolled FI source authorization.
 type SourceResolver func(
@@ -41,6 +47,7 @@ type Config struct {
 	GenerationMaxManifestBytes  uint64
 	GenerationReadyRoot         string
 	GenerationRecordedRoot      string
+	LookupSource                SourceLookup
 	MaxDataBytes                uint64
 	RecoveryMaxCanonicalBytes   uint64
 	RecoveryMaxEncodedBytes     uint64
@@ -272,6 +279,56 @@ func ListenOnce(
 	result.TLSVersion = tlsVersion(state.Version)
 
 	return result, nil
+}
+
+func resolveSourceID(
+	config Config,
+	sourceID string,
+) (
+	transporttrust.SourceAuthorization,
+	bool,
+	error,
+) {
+	if sourceID == "" {
+		return transporttrust.SourceAuthorization{},
+			false,
+			errors.New("FI source ID is required")
+	}
+
+	if config.LookupSource != nil {
+		source, found := config.LookupSource(sourceID)
+		if !found {
+			return transporttrust.SourceAuthorization{},
+				false,
+				nil
+		}
+
+		if source.SourceID != sourceID {
+			return transporttrust.SourceAuthorization{},
+				false,
+				fmt.Errorf(
+					"FI source lookup returned identity %q for requested source %q",
+					source.SourceID,
+					sourceID,
+				)
+		}
+
+		return source, true, nil
+	}
+
+	if config.Source.SourceID == "" {
+		return transporttrust.SourceAuthorization{},
+			false,
+			errors.New("FI source lookup is required")
+	}
+
+	if config.Source.SourceID != sourceID {
+		return transporttrust.SourceAuthorization{},
+			false,
+			nil
+	}
+
+	return config.Source, true, nil
 }
 
 func resolveTransportSource(

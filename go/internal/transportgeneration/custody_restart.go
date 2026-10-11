@@ -2,7 +2,6 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-
 package transportgeneration
 
 import (
@@ -162,6 +161,109 @@ func RecoverDurableCustodyRoot(
 	}
 
 	return result, nil
+}
+
+// ReadDiscoveredCustodyDescriptor reads only the bounded FIGT header and
+// signed-metadata envelope needed to identify one restart-discovered source.
+//
+// This does not authorize the generation. The returned source identity is used
+// only to select the enrolled authorization applied by the subsequent complete
+// durable-custody validation pass.
+func ReadDiscoveredCustodyDescriptor(
+	discovered DiscoveredCustody,
+	root string,
+) (
+	Descriptor,
+	error,
+) {
+	if err := validateDiscoveredCustody(
+		discovered,
+		root,
+	); err != nil {
+		return Descriptor{}, err
+	}
+
+	before, err := os.Lstat(discovered.Path)
+	if err != nil {
+		return Descriptor{}, fmt.Errorf(
+			"inspect discovered FI generation custody object: %w",
+			err,
+		)
+	}
+
+	if err := validateGenerationCustodyFileInfo(
+		before,
+		discovered.Bytes,
+	); err != nil {
+		return Descriptor{}, err
+	}
+
+	file, err := os.Open(discovered.Path)
+	if err != nil {
+		return Descriptor{}, fmt.Errorf(
+			"open discovered FI generation custody object: %w",
+			err,
+		)
+	}
+
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+
+		return Descriptor{}, fmt.Errorf(
+			"stat opened discovered FI generation custody object: %w",
+			err,
+		)
+	}
+
+	if !os.SameFile(before, opened) {
+		_ = file.Close()
+
+		return Descriptor{}, errors.New(
+			"discovered FI generation custody object changed while being opened",
+		)
+	}
+
+	offer, readErr := readDiscoveredCustodyOffer(
+		file,
+		discovered,
+	)
+
+	closeErr := file.Close()
+
+	if readErr != nil {
+		return Descriptor{}, readErr
+	}
+
+	if closeErr != nil {
+		return Descriptor{}, fmt.Errorf(
+			"close discovered FI generation custody object: %w",
+			closeErr,
+		)
+	}
+
+	after, err := os.Lstat(discovered.Path)
+	if err != nil {
+		return Descriptor{}, fmt.Errorf(
+			"reinspect discovered FI generation custody object: %w",
+			err,
+		)
+	}
+
+	if !os.SameFile(before, after) {
+		return Descriptor{}, errors.New(
+			"discovered FI generation custody object changed during identity inspection",
+		)
+	}
+
+	if err := validateGenerationCustodyFileInfo(
+		after,
+		discovered.Bytes,
+	); err != nil {
+		return Descriptor{}, err
+	}
+
+	return offer.Descriptor, nil
 }
 
 // ReadDiscoveredDurableCustodyArtifacts reopens one restart-discovered custody
