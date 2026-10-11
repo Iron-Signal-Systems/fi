@@ -20,6 +20,7 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationready"
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
+	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
 	"github.com/Iron-Signal-Systems/fi/go/internal/workerlock"
 	"github.com/jackc/pgx/v5"
@@ -44,18 +45,13 @@ type workerConfig struct {
 	RetryAfter             time.Duration
 	RetryBatchSize         uint64
 	SourceID               string
+	SourceIDs              []string
 }
 
 func main() {
 	flags := flag.NewFlagSet(
 		"fi-ingest-worker",
 		flag.ExitOnError,
-	)
-
-	sourceID := flags.String(
-		"source",
-		"",
-		"authorized FI source ID",
 	)
 
 	connectionString := flags.String(
@@ -162,8 +158,7 @@ func main() {
 
 	_ = flags.Parse(os.Args[1:])
 
-	if flags.NArg() != 0 ||
-		strings.TrimSpace(*sourceID) == "" {
+	if flags.NArg() != 0 {
 		usage()
 	}
 
@@ -223,6 +218,31 @@ func main() {
 		)
 	}
 
+	batchIssuer, err := receivertrust.LoadCertificate(
+		receivertrust.BatchIssuerPath,
+	)
+	if err != nil {
+		fail(err)
+	}
+
+	sourceRegistry, err := receivertrust.LoadBatchSourceRegistry(
+		receivertrust.SourceRegistryPath,
+		batchIssuer,
+	)
+	if err != nil {
+		fail(err)
+	}
+
+	sourceIDs := sourceRegistry.EnabledSourceIDs()
+
+	if len(sourceIDs) == 0 {
+		fail(
+			errors.New(
+				"FI ingest source registry contains no enabled sources",
+			),
+		)
+	}
+
 	ctx, stop :=
 		signal.NotifyContext(
 			context.Background(),
@@ -249,7 +269,7 @@ func main() {
 		RepairInterval:         *repairInterval,
 		RetryAfter:             *retryAfter,
 		RetryBatchSize:         *retryBatchSize,
-		SourceID:               *sourceID,
+		SourceIDs:              sourceIDs,
 	}
 
 	if err := runWorker(ctx, config); err != nil &&
@@ -382,7 +402,14 @@ func runWorker(
 	}
 
 	fmt.Println("===== FI RELATIONAL INGEST WORKER =====")
-	fmt.Printf("Source:                 %s\n", config.SourceID)
+	fmt.Printf("Sources:                %d\n", len(config.SourceIDs))
+	for index, sourceID := range config.SourceIDs {
+		fmt.Printf(
+			"Source[%d]:              %s\n",
+			index,
+			sourceID,
+		)
+	}
 	fmt.Printf("SingletonLock:          %s\n", singleton.Path())
 	fmt.Printf("PostgreSQLRetryInitial: %s\n", config.PostgreSQLRetryInitial)
 	fmt.Printf("PostgreSQLRetryMax:     %s\n", config.PostgreSQLRetryMax)
@@ -502,6 +529,57 @@ func runWorker(
 	}
 }
 
+type sourceSessionState struct {
+	Config     workerConfig
+	NextRepair time.Time
+	Repair     repairCadence
+}
+
+func newSourceSessionStates(
+	config workerConfig,
+) (
+	[]sourceSessionState,
+	error,
+) {
+	if len(config.SourceIDs) == 0 {
+		return nil,
+			errors.New(
+				"FI ingest worker requires at least one enabled source",
+			)
+	}
+
+	states := make(
+		[]sourceSessionState,
+		0,
+		len(config.SourceIDs),
+	)
+
+	for _, sourceID := range config.SourceIDs {
+		if strings.TrimSpace(sourceID) == "" {
+			return nil,
+				errors.New(
+					"FI ingest worker source registry contains an empty source ID",
+				)
+		}
+
+		sourceConfig := config
+		sourceConfig.SourceID = sourceID
+		sourceConfig.SourceIDs = nil
+
+		states = append(
+			states,
+			sourceSessionState{
+				Config: sourceConfig,
+				Repair: newRepairCadence(
+					config.RepairInterval,
+				),
+			},
+		)
+	}
+
+	return states, nil
+}
+
 func runPostgreSQLSession(
 	ctx context.Context,
 	config workerConfig,
@@ -513,217 +591,279 @@ func runPostgreSQLSession(
 			"FI ingest worker PostgreSQL session connection is required",
 		)
 	}
+
 	if totalAttempts == nil {
 		return errors.New(
 			"FI ingest worker total-attempt counter is required",
 		)
 	}
 
-	db := postgresConnection{
-		connection: connection,
-	}
-
-	repair := newRepairCadence(config.RepairInterval)
-
-	fmt.Printf(
-		"POSTGRES SESSION repair_mode=%s repair_interval=%s clean_count=%d\n",
-		repair.Mode(),
-		repair.Interval(),
-		repair.CleanCount(),
+	states, err := newSourceSessionStates(
+		config,
 	)
-
-	startupPlan, err :=
-		recordingest.PlanRecordedGenerationsForIngest(
-			ctx,
-			connection,
-			config.RecordedRoot,
-			config.SourceID,
-		)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf(
-		"STARTUP RECONCILE discovered=%d accepted=%d pending=%d conflict=%d\n",
-		startupPlan.Discovered,
-		startupPlan.Accepted,
-		startupPlan.Pending,
-		startupPlan.Conflict,
-	)
-
-	if err := reconcileConflictError(startupPlan); err != nil {
-		return err
+	db := postgresConnection{
+		connection: connection,
 	}
 
-	if err := processPlan(
-		ctx,
-		config,
-		db,
-		startupPlan,
-		false,
-		totalAttempts,
-	); err != nil {
-		return err
-	}
-	if config.MaxAttempts != 0 &&
-		*totalAttempts >= config.MaxAttempts {
-		return nil
+	for index := range states {
+		state := &states[index]
+
+		fmt.Printf(
+			"POSTGRES SOURCE STARTUP source=%s repair_mode=%s repair_interval=%s clean_count=%d\n",
+			state.Config.SourceID,
+			state.Repair.Mode(),
+			state.Repair.Interval(),
+			state.Repair.CleanCount(),
+		)
+
+		startupPlan, err :=
+			recordingest.PlanRecordedGenerationsForIngest(
+				ctx,
+				connection,
+				state.Config.RecordedRoot,
+				state.Config.SourceID,
+			)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"STARTUP RECONCILE source=%s discovered=%d accepted=%d pending=%d conflict=%d\n",
+			state.Config.SourceID,
+			startupPlan.Discovered,
+			startupPlan.Accepted,
+			startupPlan.Pending,
+			startupPlan.Conflict,
+		)
+
+		if err := reconcileConflictError(
+			startupPlan,
+		); err != nil {
+			return err
+		}
+
+		if err := processPlan(
+			ctx,
+			state.Config,
+			db,
+			startupPlan,
+			false,
+			totalAttempts,
+		); err != nil {
+			return err
+		}
+
+		state.NextRepair =
+			time.Now().Add(
+				state.Repair.Interval(),
+			)
+
+		if config.MaxAttempts != 0 &&
+			*totalAttempts >= config.MaxAttempts {
+			return nil
+		}
 	}
 
 	fmt.Println()
-
-	nextRepair := time.Now().Add(repair.Interval())
 
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		now := time.Now()
-		if !now.Before(nextRepair) {
-			plan, err :=
-				recordingest.PlanRecordedGenerationsForIngest(
-					ctx,
-					connection,
-					config.RecordedRoot,
-					config.SourceID,
-				)
-			if err != nil {
-				return err
-			}
-
-			assessment, err :=
-				assessRepairPlan(
-					ctx,
-					config,
-					connection,
-					plan,
-				)
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf(
-				"REPAIR PLAN time=%s mode=%s interval=%s discovered=%d accepted=%d pending=%d conflict=%d ready_notified=%d known_rejected=%d unexpected_pending=%d\n",
-				now.Format(time.RFC3339),
-				repair.Mode(),
-				repair.Interval(),
-				plan.Discovered,
-				plan.Accepted,
-				plan.Pending,
-				plan.Conflict,
-				assessment.ReadyNotified,
-				assessment.KnownRejected,
-				assessment.UnexpectedPending,
-			)
-
-			if err := processPlan(
+		for index := range states {
+			if err := runSourcePass(
 				ctx,
-				config,
-				db,
-				plan,
-				false,
-				totalAttempts,
-			); err != nil {
-				return err
-			}
-
-			result := "Clean"
-			if !assessment.Clean() {
-				result = "Anomaly"
-			}
-
-			repair.Observe(assessment.Clean())
-
-			fmt.Printf(
-				"REPAIR CADENCE result=%s mode=%s interval=%s clean_count=%d\n",
-				result,
-				repair.Mode(),
-				repair.Interval(),
-				repair.CleanCount(),
-			)
-
-			nextRepair = time.Now().Add(repair.Interval())
-		} else {
-			plan, markerCount, err := readyPlan(
-				ctx,
-				config,
+				&states[index],
 				connection,
-			)
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf(
-				"READY PLAN time=%s markers=%d accepted=%d pending=%d conflict=%d\n",
-				now.Format(time.RFC3339),
-				markerCount,
-				plan.Accepted,
-				plan.Pending,
-				plan.Conflict,
-			)
-
-			if err := processPlan(
-				ctx,
-				config,
 				db,
-				plan,
-				true,
 				totalAttempts,
 			); err != nil {
 				return err
 			}
-		}
 
-		retryPlan, dueCount, err := dueRetryPlan(
-			ctx,
-			config,
-			connection,
-			now,
-		)
-		if err != nil {
-			return err
-		}
-
-		if dueCount != 0 {
-			fmt.Printf(
-				"RETRY PLAN time=%s due=%d accepted=%d pending=%d conflict=%d\n",
-				now.Format(time.RFC3339),
-				dueCount,
-				retryPlan.Accepted,
-				retryPlan.Pending,
-				retryPlan.Conflict,
-			)
-
-			if err := processPlan(
-				ctx,
-				config,
-				db,
-				retryPlan,
-				false,
-				totalAttempts,
-			); err != nil {
-				return err
+			if config.MaxAttempts != 0 &&
+				*totalAttempts >= config.MaxAttempts {
+				return nil
 			}
-		}
-
-		if config.MaxAttempts != 0 &&
-			*totalAttempts >= config.MaxAttempts {
-			return nil
 		}
 
 		if config.Once {
 			return nil
 		}
 
-		timer := time.NewTimer(config.PollInterval)
+		timer := time.NewTimer(
+			config.PollInterval,
+		)
+
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
+
 		case <-timer.C:
 		}
 	}
+}
+
+func runSourcePass(
+	ctx context.Context,
+	state *sourceSessionState,
+	connection *pgx.Conn,
+	db postgresConnection,
+	totalAttempts *uint64,
+) error {
+	if state == nil {
+		return errors.New(
+			"FI ingest worker source session state is required",
+		)
+	}
+
+	config := state.Config
+	now := time.Now()
+
+	if !now.Before(state.NextRepair) {
+		plan, err :=
+			recordingest.PlanRecordedGenerationsForIngest(
+				ctx,
+				connection,
+				config.RecordedRoot,
+				config.SourceID,
+			)
+		if err != nil {
+			return err
+		}
+
+		assessment, err :=
+			assessRepairPlan(
+				ctx,
+				config,
+				connection,
+				plan,
+			)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"REPAIR PLAN source=%s time=%s mode=%s interval=%s discovered=%d accepted=%d pending=%d conflict=%d ready_notified=%d known_rejected=%d unexpected_pending=%d\n",
+			config.SourceID,
+			now.Format(time.RFC3339),
+			state.Repair.Mode(),
+			state.Repair.Interval(),
+			plan.Discovered,
+			plan.Accepted,
+			plan.Pending,
+			plan.Conflict,
+			assessment.ReadyNotified,
+			assessment.KnownRejected,
+			assessment.UnexpectedPending,
+		)
+
+		if err := processPlan(
+			ctx,
+			config,
+			db,
+			plan,
+			false,
+			totalAttempts,
+		); err != nil {
+			return err
+		}
+
+		result := "Clean"
+
+		if !assessment.Clean() {
+			result = "Anomaly"
+		}
+
+		state.Repair.Observe(
+			assessment.Clean(),
+		)
+
+		fmt.Printf(
+			"REPAIR CADENCE source=%s result=%s mode=%s interval=%s clean_count=%d\n",
+			config.SourceID,
+			result,
+			state.Repair.Mode(),
+			state.Repair.Interval(),
+			state.Repair.CleanCount(),
+		)
+
+		state.NextRepair =
+			time.Now().Add(
+				state.Repair.Interval(),
+			)
+	} else {
+		plan, markerCount, err :=
+			readyPlan(
+				ctx,
+				config,
+				connection,
+			)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"READY PLAN source=%s time=%s markers=%d accepted=%d pending=%d conflict=%d\n",
+			config.SourceID,
+			now.Format(time.RFC3339),
+			markerCount,
+			plan.Accepted,
+			plan.Pending,
+			plan.Conflict,
+		)
+
+		if err := processPlan(
+			ctx,
+			config,
+			db,
+			plan,
+			true,
+			totalAttempts,
+		); err != nil {
+			return err
+		}
+	}
+
+	retryPlan, dueCount, err :=
+		dueRetryPlan(
+			ctx,
+			config,
+			connection,
+			now,
+		)
+	if err != nil {
+		return err
+	}
+
+	if dueCount == 0 {
+		return nil
+	}
+
+	fmt.Printf(
+		"RETRY PLAN source=%s time=%s due=%d accepted=%d pending=%d conflict=%d\n",
+		config.SourceID,
+		now.Format(time.RFC3339),
+		dueCount,
+		retryPlan.Accepted,
+		retryPlan.Pending,
+		retryPlan.Conflict,
+	)
+
+	return processPlan(
+		ctx,
+		config,
+		db,
+		retryPlan,
+		false,
+		totalAttempts,
+	)
 }
 
 func processPlan(
@@ -1220,7 +1360,7 @@ func usage() {
 
 	fmt.Fprintln(
 		os.Stderr,
-		"  fi-ingest-worker -source <source-id> [options]",
+		"  fi-ingest-worker [options]",
 	)
 
 	os.Exit(2)
