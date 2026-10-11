@@ -251,6 +251,71 @@ func TestRuntimePlanDerivedAddresses(
 	}
 }
 
+func TestRuntimeReceiverUsesPersistentBoundedListener(
+	t *testing.T,
+) {
+	config := loadTestConfig(t)
+
+	plan, err := buildRuntimePlan(
+		config,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	supervisor := runtimeTestSpecByRole(
+		t,
+		plan,
+		"receiver-supervisor",
+	)
+
+	supervisorContent := string(
+		supervisor.Content,
+	)
+
+	if strings.Contains(
+		supervisorContent,
+		"while :",
+	) {
+		t.Fatal(
+			"receiver runtime retained one-transaction restart loop",
+		)
+	}
+
+	if !strings.Contains(
+		supervisorContent,
+		`exec "$BINARY" \`,
+	) {
+		t.Fatal(
+			"receiver runtime does not exec persistent receiver",
+		)
+	}
+
+	if !strings.Contains(
+		supervisorContent,
+		`-max-concurrent-connections "$fi_receiver_max_concurrent_connections"`,
+	) {
+		t.Fatal(
+			"receiver runtime does not pass concurrency bound",
+		)
+	}
+
+	runtimeConfig := runtimeTestSpecByRole(
+		t,
+		plan,
+		"receiver-runtime-config",
+	)
+
+	if !strings.Contains(
+		string(runtimeConfig.Content),
+		`fi_receiver_max_concurrent_connections="8"`,
+	) {
+		t.Fatal(
+			"receiver runtime config lacks default concurrency bound",
+		)
+	}
+}
+
 func TestRuntimeStaticAssetsRemainExact(
 	t *testing.T,
 ) {

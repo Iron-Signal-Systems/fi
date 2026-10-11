@@ -90,6 +90,47 @@ func printTrustUsage() {
 	)
 }
 
+func printTransportResult(
+	result transportreceiver.Result,
+) {
+	fmt.Printf("Source:        %s\n", result.SourceID)
+
+	if result.Generation {
+		fmt.Printf("GenerationID:  %s\n", result.GenerationID)
+		fmt.Printf("Artifacts:     %d\n", result.GenerationArtifactCount)
+		fmt.Printf("Batches:       %d\n", result.GenerationBatchCount)
+		fmt.Printf("Records:       %d\n", result.GenerationRecordCount)
+		fmt.Printf("CanonicalBytes:%d\n", result.GenerationCanonicalBytes)
+		fmt.Printf("EncodedBytes:  %d\n", result.GenerationEncodedBytes)
+		fmt.Printf("GenerationData:%d\n", result.GenerationDataBytes)
+		fmt.Printf("RecordedState: %s\n", result.GenerationRecordedState)
+		fmt.Printf("GenerationACK: %s\n", result.GenerationAcknowledgement)
+		fmt.Printf("TransferSHA256:%s\n", result.GenerationTransferSHA256)
+
+		if result.GenerationReadyWarning != "" {
+			fmt.Fprintf(
+				os.Stderr,
+				"WARNING: FI generation ingest-ready publication: %s\n",
+				result.GenerationReadyWarning,
+			)
+		}
+	} else if result.Recovery {
+		fmt.Printf("RecoveryID:    %s\n", result.RecoveryID)
+		fmt.Printf("Members:       %d\n", result.RecoveryMembers)
+		fmt.Printf("CanonicalBytes:%d\n", result.RecoveryCanonicalBytes)
+		fmt.Printf("DataBytes:     %d\n", result.DataBytes)
+		fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
+	} else {
+		fmt.Printf("BatchID:       %s\n", result.BatchID)
+		fmt.Printf("DataBytes:     %d\n", result.DataBytes)
+		fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
+	}
+
+	fmt.Printf("Custody:       %s\n", result.CustodyDisposition)
+	fmt.Printf("TLS:           %s\n", result.TLSVersion)
+	fmt.Printf("CipherSuite:   %s\n", result.CipherSuite)
+}
+
 func runTransportCommand() {
 	flags := flag.NewFlagSet(
 		"fi-receiver",
@@ -100,7 +141,7 @@ func runTransportCommand() {
 	transportListen := flags.Bool(
 		"transport-listen",
 		false,
-		"accept one authenticated FI transport connection",
+		"run the persistent authenticated FI transport listener",
 	)
 
 	bindAddress := flags.String(
@@ -113,6 +154,12 @@ func runTransportCommand() {
 		"custody-root",
 		"",
 		"durable receiver custody root directory",
+	)
+
+	maxConcurrentConnections := flags.Uint64(
+		"max-concurrent-connections",
+		transportreceiver.DefaultMaxConcurrentConnections,
+		"maximum concurrent authenticated FI transport connections",
 	)
 
 	maxDataBytes := flags.Uint64(
@@ -297,6 +344,7 @@ func runTransportCommand() {
 		BindAddress:               *bindAddress,
 		CustodyRoot:               *custodyRoot,
 		LookupSource:              sourceRegistry.Lookup,
+		MaxConcurrentConnections:  *maxConcurrentConnections,
 		MaxDataBytes:              *maxDataBytes,
 		RecoveryMaxCanonicalBytes: *recoveryMaxCanonicalBytes,
 		RecoveryMaxEncodedBytes:   *recoveryMaxEncodedBytes,
@@ -342,52 +390,29 @@ func runTransportCommand() {
 		}
 	}
 
-	result, err := transportreceiver.ListenOnce(
+	err = transportreceiver.Listen(
 		ctx,
 		receiverConfig,
+		printTransportResult,
+		func(connectionErr error) {
+			fmt.Fprintf(
+				os.Stderr,
+				"WARNING: FI receiver connection rejected: %v\n",
+				connectionErr,
+			)
+		},
 	)
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "FI receiver stopped.")
+			fmt.Fprintln(
+				os.Stderr,
+				"FI receiver stopped.",
+			)
 			return
 		}
 
 		fail(err)
 	}
-
-	fmt.Printf("Source:        %s\n", result.SourceID)
-	if result.Generation {
-		fmt.Printf("GenerationID:  %s\n", result.GenerationID)
-		fmt.Printf("Artifacts:     %d\n", result.GenerationArtifactCount)
-		fmt.Printf("Batches:       %d\n", result.GenerationBatchCount)
-		fmt.Printf("Records:       %d\n", result.GenerationRecordCount)
-		fmt.Printf("CanonicalBytes:%d\n", result.GenerationCanonicalBytes)
-		fmt.Printf("EncodedBytes:  %d\n", result.GenerationEncodedBytes)
-		fmt.Printf("GenerationData:%d\n", result.GenerationDataBytes)
-		fmt.Printf("RecordedState: %s\n", result.GenerationRecordedState)
-		fmt.Printf("GenerationACK: %s\n", result.GenerationAcknowledgement)
-		fmt.Printf("TransferSHA256:%s\n", result.GenerationTransferSHA256)
-		if result.GenerationReadyWarning != "" {
-			fmt.Fprintf(
-				os.Stderr,
-				"WARNING: FI generation ingest-ready publication: %s\n",
-				result.GenerationReadyWarning,
-			)
-		}
-	} else if result.Recovery {
-		fmt.Printf("RecoveryID:    %s\n", result.RecoveryID)
-		fmt.Printf("Members:       %d\n", result.RecoveryMembers)
-		fmt.Printf("CanonicalBytes:%d\n", result.RecoveryCanonicalBytes)
-		fmt.Printf("DataBytes:     %d\n", result.DataBytes)
-		fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
-	} else {
-		fmt.Printf("BatchID:       %s\n", result.BatchID)
-		fmt.Printf("DataBytes:     %d\n", result.DataBytes)
-		fmt.Printf("FrameSHA256:   %s\n", result.FrameSHA256)
-	}
-	fmt.Printf("Custody:       %s\n", result.CustodyDisposition)
-	fmt.Printf("TLS:           %s\n", result.TLSVersion)
-	fmt.Printf("CipherSuite:   %s\n", result.CipherSuite)
 	fmt.Println("MutualTLS:     true")
 	fmt.Println("Authorization: AUTHORIZED")
 	fmt.Println("BatchSigning:  AUTHORIZED")

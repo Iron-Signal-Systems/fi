@@ -7,15 +7,16 @@
 package backendinstall
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh
-// SHA256: 9af734d2cac8bf8ba6f96dc152e47ed30eb0ed8e6a2f6863fb4c60e2317c672a
+// SHA256: 19d72ff0d2cf551920b75cb90d2f560416d5e2500a83403586bd27f1b925a6f2
 const runtimeAssetReceiverSupervisor = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: receiver-supervisor
 #
-# fi-receiver intentionally accepts one authenticated transport connection
-# per process. Restart only after a successful transaction. Any receiver
-# failure terminates the supervisor and leaves the service failed closed.
+# The receiver owns one persistent bounded listener. This wrapper validates
+# runtime configuration and then replaces itself with the receiver process.
+# Listener-level failure remains service-fatal; individual connection failures
+# are isolated inside fi-receiver.
 
 set -eu
 
@@ -34,12 +35,14 @@ fail()
 
 . "$CONFIG"
 
-
 [ -n "${fi_receiver_bind:-}" ] ||
     fail "fi_receiver_bind is required"
 
 [ -n "${fi_receiver_custody_root:-}" ] ||
     fail "fi_receiver_custody_root is required"
+
+[ -n "${fi_receiver_max_concurrent_connections:-}" ] ||
+    fail "fi_receiver_max_concurrent_connections is required"
 
 [ -n "${fi_receiver_max_data_bytes:-}" ] ||
     fail "fi_receiver_max_data_bytes is required"
@@ -65,49 +68,19 @@ fail()
 [ -x "$BINARY" ] ||
     fail "receiver binary is absent or not executable: $BINARY"
 
-
-child_pid=""
-
-stop_child()
-{
-    if [ -n "$child_pid" ]; then
-        kill -TERM "$child_pid" 2>/dev/null || :
-        wait "$child_pid" 2>/dev/null || :
-    fi
-
-    exit 0
-}
-
-trap stop_child HUP INT TERM
-
-while :
-do
-    "$BINARY" \
-        -transport-listen \
-        -bind "$fi_receiver_bind" \
-        -custody-root "$fi_receiver_custody_root" \
-        -max-data-bytes "$fi_receiver_max_data_bytes" \
-        -generation-enable \
-        -generation-custody-root "$fi_receiver_generation_custody_root" \
-        -generation-recorded-root "$fi_receiver_generation_recorded_root" \
-        -generation-ready-root "$fi_receiver_generation_ready_root" \
-        -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
-        -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
-        -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes" &
-
-    child_pid=$!
-
-    set +e
-    wait "$child_pid"
-    status=$?
-    set -e
-
-    child_pid=""
-
-    if [ "$status" -ne 0 ]; then
-        exit "$status"
-    fi
-done
+exec "$BINARY" \
+    -transport-listen \
+    -bind "$fi_receiver_bind" \
+    -custody-root "$fi_receiver_custody_root" \
+    -max-concurrent-connections "$fi_receiver_max_concurrent_connections" \
+    -max-data-bytes "$fi_receiver_max_data_bytes" \
+    -generation-enable \
+    -generation-custody-root "$fi_receiver_generation_custody_root" \
+    -generation-recorded-root "$fi_receiver_generation_recorded_root" \
+    -generation-ready-root "$fi_receiver_generation_ready_root" \
+    -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
+    -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
+    -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver.rc.d
@@ -218,7 +191,7 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver.rc.conf.template
-// SHA256: 9f3772891690391ea74b8b3d3a3232bdb60b7ec6bdcbab9f3a3fa60c3ee7d4cc
+// SHA256: 20617887620e31eb1cf01b97c78a005c2da9eb672e04669d54bc9ec55cc9a422
 const runtimeAssetReceiverRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: receiver-runtime-config
 
@@ -227,6 +200,7 @@ fi_receiver_enable="YES"
 fi_receiver_bind="@FI_RECEIVER_EXTERNAL_IP@:8443"
 
 fi_receiver_custody_root="/var/db/fi/custody/transport"
+fi_receiver_max_concurrent_connections="8"
 fi_receiver_max_data_bytes="67108864"
 
 fi_receiver_generation_custody_root="/var/db/fi/custody/generation"

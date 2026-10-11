@@ -3,9 +3,10 @@
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: receiver-supervisor
 #
-# fi-receiver intentionally accepts one authenticated transport connection
-# per process. Restart only after a successful transaction. Any receiver
-# failure terminates the supervisor and leaves the service failed closed.
+# The receiver owns one persistent bounded listener. This wrapper validates
+# runtime configuration and then replaces itself with the receiver process.
+# Listener-level failure remains service-fatal; individual connection failures
+# are isolated inside fi-receiver.
 
 set -eu
 
@@ -24,12 +25,14 @@ fail()
 
 . "$CONFIG"
 
-
 [ -n "${fi_receiver_bind:-}" ] ||
     fail "fi_receiver_bind is required"
 
 [ -n "${fi_receiver_custody_root:-}" ] ||
     fail "fi_receiver_custody_root is required"
+
+[ -n "${fi_receiver_max_concurrent_connections:-}" ] ||
+    fail "fi_receiver_max_concurrent_connections is required"
 
 [ -n "${fi_receiver_max_data_bytes:-}" ] ||
     fail "fi_receiver_max_data_bytes is required"
@@ -55,46 +58,16 @@ fail()
 [ -x "$BINARY" ] ||
     fail "receiver binary is absent or not executable: $BINARY"
 
-
-child_pid=""
-
-stop_child()
-{
-    if [ -n "$child_pid" ]; then
-        kill -TERM "$child_pid" 2>/dev/null || :
-        wait "$child_pid" 2>/dev/null || :
-    fi
-
-    exit 0
-}
-
-trap stop_child HUP INT TERM
-
-while :
-do
-    "$BINARY" \
-        -transport-listen \
-        -bind "$fi_receiver_bind" \
-        -custody-root "$fi_receiver_custody_root" \
-        -max-data-bytes "$fi_receiver_max_data_bytes" \
-        -generation-enable \
-        -generation-custody-root "$fi_receiver_generation_custody_root" \
-        -generation-recorded-root "$fi_receiver_generation_recorded_root" \
-        -generation-ready-root "$fi_receiver_generation_ready_root" \
-        -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
-        -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
-        -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes" &
-
-    child_pid=$!
-
-    set +e
-    wait "$child_pid"
-    status=$?
-    set -e
-
-    child_pid=""
-
-    if [ "$status" -ne 0 ]; then
-        exit "$status"
-    fi
-done
+exec "$BINARY" \
+    -transport-listen \
+    -bind "$fi_receiver_bind" \
+    -custody-root "$fi_receiver_custody_root" \
+    -max-concurrent-connections "$fi_receiver_max_concurrent_connections" \
+    -max-data-bytes "$fi_receiver_max_data_bytes" \
+    -generation-enable \
+    -generation-custody-root "$fi_receiver_generation_custody_root" \
+    -generation-recorded-root "$fi_receiver_generation_recorded_root" \
+    -generation-ready-root "$fi_receiver_generation_ready_root" \
+    -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
+    -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
+    -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes"
