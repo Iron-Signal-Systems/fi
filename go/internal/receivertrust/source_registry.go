@@ -44,6 +44,28 @@ func (value SourceRegistry) Authorizations() []transporttrust.SourceAuthorizatio
 	return result
 }
 
+// EnabledSourceIDs returns enabled FI source IDs in deterministic registry order.
+func (value SourceRegistry) EnabledSourceIDs() []string {
+	result := make(
+		[]string,
+		0,
+		len(value.authorizations),
+	)
+
+	for _, authorization := range value.authorizations {
+		if !authorization.Enabled {
+			continue
+		}
+
+		result = append(
+			result,
+			authorization.SourceID,
+		)
+	}
+
+	return result
+}
+
 // Len returns the number of source authorization entries in the snapshot.
 func (value SourceRegistry) Len() int {
 	return len(value.authorizations)
@@ -60,10 +82,39 @@ func (value SourceRegistry) Len() int {
 //   - pin the installed FI Transport and Batch Signing issuing CAs.
 //
 // Disabled source entries remain structurally valid registry entries.
+// LoadBatchSourceRegistry loads the common FI source registry for a
+// Batch-Signing consumer such as the ingest worker.
+func LoadBatchSourceRegistry(
+	registryPath string,
+	batchIssuer *x509.Certificate,
+) (SourceRegistry, error) {
+	return loadSourceRegistry(
+		registryPath,
+		nil,
+		batchIssuer,
+		false,
+	)
+}
+
+// LoadSourceRegistry loads the complete receiver authorization registry.
 func LoadSourceRegistry(
 	registryPath string,
 	transportIssuer *x509.Certificate,
 	batchIssuer *x509.Certificate,
+) (SourceRegistry, error) {
+	return loadSourceRegistry(
+		registryPath,
+		transportIssuer,
+		batchIssuer,
+		true,
+	)
+}
+
+func loadSourceRegistry(
+	registryPath string,
+	transportIssuer *x509.Certificate,
+	batchIssuer *x509.Certificate,
+	requireTransportIssuer bool,
 ) (SourceRegistry, error) {
 	if strings.TrimSpace(registryPath) == "" {
 		return SourceRegistry{}, errors.New(
@@ -71,14 +122,20 @@ func LoadSourceRegistry(
 		)
 	}
 
-	transportIssuerSHA256, err := certificateSHA256(
-		transportIssuer,
-	)
-	if err != nil {
-		return SourceRegistry{}, fmt.Errorf(
-			"transport issuing CA: %w",
-			err,
+	transportIssuerSHA256 := ""
+
+	if requireTransportIssuer {
+		value, err := certificateSHA256(
+			transportIssuer,
 		)
+		if err != nil {
+			return SourceRegistry{}, fmt.Errorf(
+				"transport issuing CA: %w",
+				err,
+			)
+		}
+
+		transportIssuerSHA256 = value
 	}
 
 	batchIssuerSHA256, err := certificateSHA256(
@@ -225,10 +282,11 @@ func LoadSourceRegistry(
 
 		seenBatchCertificates[batchCertificate] = name
 
-		if !strings.EqualFold(
-			authorization.Transport.IssuingCASHA256,
-			transportIssuerSHA256,
-		) {
+		if requireTransportIssuer &&
+			!strings.EqualFold(
+				authorization.Transport.IssuingCASHA256,
+				transportIssuerSHA256,
+			) {
 			return SourceRegistry{}, fmt.Errorf(
 				"source %q transport issuing CA SHA-256 does not match installed FI Transport Issuing CA",
 				sourceID,
