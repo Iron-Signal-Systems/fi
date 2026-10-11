@@ -79,7 +79,7 @@ func TestObjReaderRightsMutationEnabledBuild(t *testing.T) {
 	}{
 		{build: 14393, want: true},
 		{build: 17763, want: true},
-		{build: 20348, want: false},
+		{build: 20348, want: true},
 		{build: 26100, want: false},
 		{build: 99999, want: false},
 	}

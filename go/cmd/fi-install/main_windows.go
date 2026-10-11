@@ -125,6 +125,20 @@ func main() {
 		}
 	}
 
+	if doApply {
+		if err := install.FirstRunDevelopmentSigningTrust(
+			os.Stdin,
+			os.Stdout,
+		); err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"\nFI FIRST-RUN RELEASE TRUST BLOCKED: %v\n",
+				err,
+			)
+			os.Exit(1)
+		}
+	}
+
 	report := install.Discover()
 
 	environmentPrerequisites :=

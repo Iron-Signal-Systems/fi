@@ -43,13 +43,14 @@ type cryptVerifyMessagePara struct {
 }
 
 type ManifestSignatureState struct {
-	Error              string
-	Path               string
-	SignatureValid     bool
-	SignerCertSHA256   string
-	SignerChainTrusted bool
-	SignerSPKISHA256   string
-	SignerSubject      string
+	Error                string
+	Path                 string
+	SignatureValid       bool
+	SignerCertSHA256     string
+	signerCertificateDER []byte
+	SignerChainTrusted   bool
+	SignerSPKISHA256     string
+	SignerSubject        string
 }
 
 func verifyDetachedManifestSignature(
@@ -189,6 +190,7 @@ func verifyDetachedFileSignature(
 		[]byte(nil),
 		certificateDER...,
 	)
+	state.signerCertificateDER = append([]byte(nil), certificateCopy...)
 	certificateHash := sha256.Sum256(
 		certificateCopy,
 	)
