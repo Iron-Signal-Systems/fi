@@ -221,13 +221,21 @@ func findPrecedingUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID strin
 	err := tx.QueryRow(ctx, `
 SELECT urb.source_record_id, urb.ntfs_volume_id
 FROM fi.usn_read_boundary AS urb
-JOIN fi.source_record AS sr ON sr.source_record_id = urb.source_record_id
-JOIN fi.source_batch AS sb ON sb.source_batch_id = sr.source_batch_id
-JOIN fi.recorded_generation AS rg ON rg.recorded_generation_id = sb.recorded_generation_id
-WHERE rg.source_id = $1
-  AND sr.scope_id = $2
-  AND sr.source_record_id < $3
-ORDER BY sr.source_record_id DESC
+WHERE urb.source_record_id < $3
+  AND (
+      SELECT
+          rg.source_id = $1
+          AND sr.scope_id = $2
+      FROM fi.source_record AS sr
+      JOIN fi.source_batch AS sb
+          ON sb.source_batch_id = sr.source_batch_id
+      JOIN fi.recorded_generation AS rg
+          ON rg.recorded_generation_id =
+             sb.recorded_generation_id
+      WHERE sr.source_record_id =
+            urb.source_record_id
+  ) IS TRUE
+ORDER BY urb.source_record_id DESC
 LIMIT 1
 `, sourceID, scopeID, sourceRecordID).Scan(&boundaryRecordID, &volumeID)
 	if err != nil {
