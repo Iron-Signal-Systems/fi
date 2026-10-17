@@ -162,6 +162,16 @@ func ApplyJailSubstrate(config Config) error {
 		return err
 	}
 
+	model, _, err := detectHostBaseModel(
+		probe,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"detect host base model before jail template creation: %w",
+			err,
+		)
+	}
+
 	specs, err := jailSubstrateSpecs(
 		config,
 		release,
@@ -220,7 +230,8 @@ func ApplyJailSubstrate(config Config) error {
 
 	archivePath := ""
 
-	if templateState == jailDatasetAbsent {
+	if templateState == jailDatasetAbsent &&
+		model == hostBaseDistset {
 		artifactKey := architecture + "|" + release
 
 		artifact, ok := freeBSDBaseArtifacts[artifactKey]
@@ -243,6 +254,7 @@ func ApplyJailSubstrate(config Config) error {
 		config,
 		probe,
 		systemJailMutator{},
+		model,
 		release,
 		specs,
 		archivePath,
@@ -326,6 +338,7 @@ func applyJailSubstrate(
 	config Config,
 	probe hostProbe,
 	mutator systemJailMutator,
+	model hostBaseModel,
 	release string,
 	specs []jailDatasetSpec,
 	archivePath string,
@@ -361,13 +374,14 @@ func applyJailSubstrate(
 			return err
 		}
 
-	case jailDatasetAbsent:
-		if archivePath == "" {
-			return fmt.Errorf(
-				"approved FreeBSD base archive is unavailable for template creation",
-			)
+		if err := validateTemplateBaseModel(
+			template.Mountpoint,
+			model,
+		); err != nil {
+			return err
 		}
 
+	case jailDatasetAbsent:
 		writable := template
 		writable.Readonly = "off"
 
@@ -394,39 +408,86 @@ func applyJailSubstrate(
 			)
 		}
 
-		if err := mutator.ExtractBase(
-			archivePath,
-			writable.Mountpoint,
-		); err != nil {
+		switch model {
+		case hostBaseDistset:
+			if archivePath == "" {
+				return fmt.Errorf(
+					"approved FreeBSD base archive is unavailable for DISTSET template creation",
+				)
+			}
+
+			if err := mutator.ExtractBase(
+				archivePath,
+				writable.Mountpoint,
+			); err != nil {
+				return fmt.Errorf(
+					"extract FreeBSD base into jail template: %w",
+					err,
+				)
+			}
+
+			if err := validateTemplateAnchors(
+				writable.Mountpoint,
+			); err != nil {
+				return err
+			}
+
+			if err := mutator.UpdateTemplateDistset(
+				writable.Mountpoint,
+				release,
+			); err != nil {
+				return fmt.Errorf(
+					"update traditional FreeBSD jail template to current patch level: %w",
+					err,
+				)
+			}
+
+		case hostBasePkgbase:
+			if archivePath != "" {
+				return fmt.Errorf(
+					"PKGBASE template creation received unexpected distribution archive",
+				)
+			}
+
+			if err := mutator.PrepareTemplatePkgbaseBootstrap(
+				writable.Mountpoint,
+			); err != nil {
+				return fmt.Errorf(
+					"prepare PKGBASE jail template bootstrap directories: %w",
+					err,
+				)
+			}
+
+			if err := mutator.InstallTemplatePkgbase(
+				writable.Mountpoint,
+			); err != nil {
+				return fmt.Errorf(
+					"install FreeBSD PKGBASE jail template: %w",
+					err,
+				)
+			}
+
+		default:
 			return fmt.Errorf(
-				"extract FreeBSD base into jail template: %w",
-				err,
+				"unsupported jail template base model: %s",
+				model,
 			)
 		}
 
 		if err := validateTemplateAnchors(
 			writable.Mountpoint,
+		); err != nil {
+			return fmt.Errorf(
+				"validate jail template after base installation: %w",
+				err,
+			)
+		}
+
+		if err := validateTemplateBaseModel(
+			writable.Mountpoint,
+			model,
 		); err != nil {
 			return err
-		}
-
-		if err := mutator.UpdateTemplateDistset(
-			writable.Mountpoint,
-			release,
-		); err != nil {
-			return fmt.Errorf(
-				"update traditional FreeBSD jail template to current patch level: %w",
-				err,
-			)
-		}
-
-		if err := validateTemplateAnchors(
-			writable.Mountpoint,
-		); err != nil {
-			return fmt.Errorf(
-				"validate jail template after FreeBSD update: %w",
-				err,
-			)
 		}
 
 		if err := mutator.PrepareTemplateFilesystem(
@@ -1417,6 +1478,97 @@ func validateExactDirectory(
 	return true, nil
 }
 
+func prepareTemplatePkgbaseBootstrap(
+	root string,
+	uid int,
+	gid int,
+) error {
+	relativePaths := []string{
+		"var",
+		"var/cache",
+		"var/cache/pkg",
+		"var/db",
+		"var/db/pkg",
+	}
+
+	for _, relative := range relativePaths {
+		if err := prepareExactDirectory(
+			path.Join(
+				root,
+				relative,
+			),
+			uid,
+			gid,
+			0o755,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateTemplateBaseModel(
+	root string,
+	model hostBaseModel,
+) error {
+	packageDatabase := path.Join(
+		root,
+		"var/db/pkg/local.sqlite",
+	)
+
+	info, err := os.Lstat(
+		packageDatabase,
+	)
+
+	exists := err == nil
+
+	if err != nil &&
+		!os.IsNotExist(err) {
+		return fmt.Errorf(
+			"inspect jail template package database %s: %w",
+			packageDatabase,
+			err,
+		)
+	}
+
+	switch model {
+	case hostBaseDistset:
+		if exists {
+			return fmt.Errorf(
+				"DISTSET jail template unexpectedly contains pkg database: %s",
+				packageDatabase,
+			)
+		}
+
+		return nil
+
+	case hostBasePkgbase:
+		if !exists {
+			return fmt.Errorf(
+				"PKGBASE jail template package database is unavailable: %s",
+				packageDatabase,
+			)
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 ||
+			!info.Mode().IsRegular() {
+			return fmt.Errorf(
+				"PKGBASE jail template package database is not a regular file: %s",
+				packageDatabase,
+			)
+		}
+
+		return nil
+
+	default:
+		return fmt.Errorf(
+			"unsupported jail template base model: %s",
+			model,
+		)
+	}
+}
+
 func validateTemplateFilesystem(root string) error {
 	target := path.Join(
 		root,
@@ -1582,6 +1734,28 @@ func (mutator systemJailMutator) UpdateTemplateDistset(
 	)
 }
 
+func (mutator systemJailMutator) InstallTemplatePkgbase(
+	root string,
+) error {
+	commandPath, err := systemCommandPath(
+		"pkg",
+	)
+	if err != nil {
+		return err
+	}
+
+	return mutator.runChecked(
+		commandPath,
+		"--rootdir",
+		root,
+		"install",
+		"-y",
+		"-r",
+		"FreeBSD-base",
+		"FreeBSD-set-base-jail",
+	)
+}
+
 func (mutator systemJailMutator) PrepareTemplateFilesystem(
 	root string,
 ) error {
@@ -1593,6 +1767,16 @@ func (mutator systemJailMutator) PrepareTemplateFilesystem(
 		0,
 		0,
 		0o755,
+	)
+}
+
+func (mutator systemJailMutator) PrepareTemplatePkgbaseBootstrap(
+	root string,
+) error {
+	return prepareTemplatePkgbaseBootstrap(
+		root,
+		0,
+		0,
 	)
 }
 

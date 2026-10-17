@@ -244,6 +244,195 @@ func TestValidateTemplateFilesystemRejectsMissingRequiredDirectory(t *testing.T)
 	}
 }
 
+func TestPrepareTemplatePkgbaseBootstrapCreatesRequiredDirectories(t *testing.T) {
+	root := t.TempDir()
+
+	if err := prepareTemplatePkgbaseBootstrap(
+		root,
+		os.Getuid(),
+		os.Getgid(),
+	); err != nil {
+		t.Fatalf(
+			"prepareTemplatePkgbaseBootstrap() error = %v",
+			err,
+		)
+	}
+
+	required := []string{
+		"var",
+		"var/cache",
+		"var/cache/pkg",
+		"var/db",
+		"var/db/pkg",
+	}
+
+	for _, relative := range required {
+		info, err := os.Stat(
+			filepath.Join(
+				root,
+				relative,
+			),
+		)
+		if err != nil {
+			t.Fatalf(
+				"Stat(%q) error = %v",
+				relative,
+				err,
+			)
+		}
+
+		if !info.IsDir() ||
+			info.Mode().Perm() != 0o755 {
+			t.Fatalf(
+				"directory %q mode = %v",
+				relative,
+				info.Mode(),
+			)
+		}
+	}
+}
+
+func TestValidateTemplateBaseModel(t *testing.T) {
+	root := t.TempDir()
+
+	if err := validateTemplateBaseModel(
+		root,
+		hostBaseDistset,
+	); err != nil {
+		t.Fatalf(
+			"DISTSET validation error = %v",
+			err,
+		)
+	}
+
+	if err := validateTemplateBaseModel(
+		root,
+		hostBasePkgbase,
+	); err == nil {
+		t.Fatal(
+			"PKGBASE validation accepted missing package database",
+		)
+	}
+
+	databaseDirectory := filepath.Join(
+		root,
+		"var",
+		"db",
+		"pkg",
+	)
+
+	if err := os.MkdirAll(
+		databaseDirectory,
+		0o755,
+	); err != nil {
+		t.Fatalf(
+			"MkdirAll() error = %v",
+			err,
+		)
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(
+			databaseDirectory,
+			"local.sqlite",
+		),
+		[]byte("test"),
+		0o600,
+	); err != nil {
+		t.Fatalf(
+			"WriteFile() error = %v",
+			err,
+		)
+	}
+
+	if err := validateTemplateBaseModel(
+		root,
+		hostBasePkgbase,
+	); err != nil {
+		t.Fatalf(
+			"PKGBASE validation error = %v",
+			err,
+		)
+	}
+
+	if err := validateTemplateBaseModel(
+		root,
+		hostBaseDistset,
+	); err == nil {
+		t.Fatal(
+			"DISTSET validation accepted pkg database",
+		)
+	}
+}
+
+func TestSystemJailMutatorInstallsPkgbaseTemplate(t *testing.T) {
+	root := "/usr/local/jails/templates/15.1-RELEASE"
+
+	var executable string
+	var arguments []string
+
+	mutator := systemJailMutator{
+		execute: func(
+			command string,
+			args ...string,
+		) ([]byte, error) {
+			executable = command
+			arguments = append(
+				[]string(nil),
+				args...,
+			)
+
+			return nil, nil
+		},
+	}
+
+	if err := mutator.InstallTemplatePkgbase(
+		root,
+	); err != nil {
+		t.Fatalf(
+			"InstallTemplatePkgbase() error = %v",
+			err,
+		)
+	}
+
+	if executable != "/usr/local/sbin/pkg" {
+		t.Fatalf(
+			"executable = %q",
+			executable,
+		)
+	}
+
+	expected := []string{
+		"--rootdir",
+		root,
+		"install",
+		"-y",
+		"-r",
+		"FreeBSD-base",
+		"FreeBSD-set-base-jail",
+	}
+
+	if len(arguments) != len(expected) {
+		t.Fatalf(
+			"argument count = %d, want %d: %v",
+			len(arguments),
+			len(expected),
+			arguments,
+		)
+	}
+
+	for index := range expected {
+		if arguments[index] != expected[index] {
+			t.Fatalf(
+				"argument %d = %q, want %q",
+				index,
+				arguments[index],
+				expected[index],
+			)
+		}
+	}
+}
+
 func TestSystemJailMutatorUpdatesDistsetTemplate(t *testing.T) {
 	root := "/usr/local/jails/templates/15.1-RELEASE"
 

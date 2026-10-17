@@ -43,6 +43,7 @@ type HostUpdateReport struct {
 type hostUpdateChecker interface {
 	CheckDistsetBase() (bool, error)
 	CheckPackages() (bool, error)
+	CheckPkgbaseBase() (bool, error)
 }
 
 // -----------------------------------------------------------------------------
@@ -215,10 +216,27 @@ func checkHostUpdate(
 		}
 
 	case hostBasePkgbase:
-		available, err := checker.CheckPackages()
+		available, err := checker.CheckPkgbaseBase()
 		if err != nil {
 			return HostUpdateCheckReport{}, fmt.Errorf(
-				"check pkgbase host updates: %w",
+				"check pkgbase FreeBSD base updates: %w",
+				err,
+			)
+		}
+
+		if available {
+			report.Status = "BASE_UPDATE_REQUIRED"
+			report.OperatorCommands = []string{
+				"pkg upgrade -r FreeBSD-base",
+			}
+
+			return report, nil
+		}
+
+		available, err = checker.CheckPackages()
+		if err != nil {
+			return HostUpdateCheckReport{}, fmt.Errorf(
+				"check pkgbase installed package updates: %w",
 				err,
 			)
 		}
@@ -542,6 +560,52 @@ func (checker systemHostUpdateChecker) CheckDistsetBase() (bool, error) {
 			output,
 		)
 	}
+}
+
+func (checker systemHostUpdateChecker) CheckPkgbaseBase() (bool, error) {
+	output, exitCode, err := checker.run(
+		"pkg",
+		"update",
+		"-r",
+		"FreeBSD-base",
+	)
+	if err != nil {
+		return false, err
+	}
+
+	if exitCode != 0 {
+		return false, commandExitError(
+			"pkg update -r FreeBSD-base",
+			exitCode,
+			output,
+		)
+	}
+
+	output, exitCode, err = checker.run(
+		"pkg",
+		"version",
+		"-r",
+		"FreeBSD-base",
+		"-U",
+		"-q",
+		"-l",
+		"<",
+	)
+	if err != nil {
+		return false, err
+	}
+
+	if exitCode != 0 {
+		return false, commandExitError(
+			"pkg version -r FreeBSD-base -U -q -l <",
+			exitCode,
+			output,
+		)
+	}
+
+	return strings.TrimSpace(
+		string(output),
+	) != "", nil
 }
 
 func (checker systemHostUpdateChecker) CheckPackages() (bool, error) {

@@ -15,6 +15,8 @@ type hostUpdateTestChecker struct {
 	distsetCalls     int
 	packageAvailable bool
 	packageCalls     int
+	pkgbaseAvailable bool
+	pkgbaseCalls     int
 }
 
 type hostUpdateTestProbeResponse struct {
@@ -36,6 +38,11 @@ func (checker *hostUpdateTestChecker) CheckDistsetBase() (bool, error) {
 func (checker *hostUpdateTestChecker) CheckPackages() (bool, error) {
 	checker.packageCalls++
 	return checker.packageAvailable, nil
+}
+
+func (checker *hostUpdateTestChecker) CheckPkgbaseBase() (bool, error) {
+	checker.pkgbaseCalls++
+	return checker.pkgbaseAvailable, nil
 }
 
 func (probe hostUpdateTestProbe) EUID() int {
@@ -192,6 +199,58 @@ func TestCheckHostUpdateDistsetRequiresPackageUpgrade(t *testing.T) {
 	}
 }
 
+func TestCheckHostUpdatePkgbaseRequiresBaseUpgrade(t *testing.T) {
+	config := loadTestConfig(t)
+	probe := currentHostUpdateTestProbe(
+		config,
+		true,
+		true,
+	)
+	checker := &hostUpdateTestChecker{
+		pkgbaseAvailable: true,
+	}
+
+	report, err := checkHostUpdate(
+		config,
+		probe,
+		checker,
+	)
+	if err != nil {
+		t.Fatalf(
+			"checkHostUpdate() error = %v",
+			err,
+		)
+	}
+
+	if report.Current ||
+		report.Status != "BASE_UPDATE_REQUIRED" {
+		t.Fatalf(
+			"report = %+v",
+			report,
+		)
+	}
+
+	if len(report.OperatorCommands) != 1 ||
+		report.OperatorCommands[0] !=
+			"pkg upgrade -r FreeBSD-base" {
+		t.Fatalf(
+			"OperatorCommands = %v",
+			report.OperatorCommands,
+		)
+	}
+
+	if checker.distsetCalls != 0 ||
+		checker.pkgbaseCalls != 1 ||
+		checker.packageCalls != 0 {
+		t.Fatalf(
+			"checker calls = distset:%d pkgbase:%d package:%d",
+			checker.distsetCalls,
+			checker.pkgbaseCalls,
+			checker.packageCalls,
+		)
+	}
+}
+
 func TestCheckHostUpdatePkgbaseRequiresPackageUpgrade(t *testing.T) {
 	config := loadTestConfig(t)
 	probe := currentHostUpdateTestProbe(
@@ -223,10 +282,12 @@ func TestCheckHostUpdatePkgbaseRequiresPackageUpgrade(t *testing.T) {
 	}
 
 	if checker.distsetCalls != 0 ||
+		checker.pkgbaseCalls != 1 ||
 		checker.packageCalls != 1 {
 		t.Fatalf(
-			"checker calls = distset:%d package:%d",
+			"checker calls = distset:%d pkgbase:%d package:%d",
 			checker.distsetCalls,
+			checker.pkgbaseCalls,
 			checker.packageCalls,
 		)
 	}
@@ -296,7 +357,7 @@ func TestClassifyHostPackageInventoryDistset(t *testing.T) {
 
 func TestClassifyHostPackageInventoryPkgbase(t *testing.T) {
 	model, err := classifyHostPackageInventory(
-		"FreeBSD-runtime|base/runtime\nFreeBSD-zoneinfo|base/zoneinfo\npkg|ports-mgmt/pkg\n",
+		"FreeBSD-runtime|base/FreeBSD-runtime\nFreeBSD-zoneinfo|base/FreeBSD-zoneinfo\npkg|ports-mgmt/pkg\n",
 	)
 	if err != nil {
 		t.Fatalf(
@@ -444,6 +505,90 @@ func TestSystemHostUpdateCheckerDistsetUpdatesReady(t *testing.T) {
 	}
 }
 
+func TestSystemHostUpdateCheckerPkgbaseCurrent(t *testing.T) {
+	calls := make(
+		[]string,
+		0,
+	)
+
+	checker := systemHostUpdateChecker{
+		execute: func(
+			executable string,
+			args ...string,
+		) ([]byte, int, error) {
+			calls = append(
+				calls,
+				executable+" "+strings.Join(
+					args,
+					" ",
+				),
+			)
+
+			return nil, 0, nil
+		},
+	}
+
+	available, err := checker.CheckPkgbaseBase()
+	if err != nil {
+		t.Fatalf(
+			"CheckPkgbaseBase() error = %v",
+			err,
+		)
+	}
+
+	if available {
+		t.Fatal(
+			"CheckPkgbaseBase() reported updates",
+		)
+	}
+
+	expected := []string{
+		"/usr/local/sbin/pkg update -r FreeBSD-base",
+		"/usr/local/sbin/pkg version -r FreeBSD-base -U -q -l <",
+	}
+
+	if strings.Join(calls, "\n") !=
+		strings.Join(expected, "\n") {
+		t.Fatalf(
+			"calls = %v, want %v",
+			calls,
+			expected,
+		)
+	}
+}
+
+func TestSystemHostUpdateCheckerPkgbaseUpdatesReady(t *testing.T) {
+	checker := systemHostUpdateChecker{
+		execute: func(
+			executable string,
+			args ...string,
+		) ([]byte, int, error) {
+			if len(args) != 0 &&
+				args[0] == "version" {
+				return []byte(
+					"FreeBSD-runtime\n",
+				), 0, nil
+			}
+
+			return nil, 0, nil
+		},
+	}
+
+	available, err := checker.CheckPkgbaseBase()
+	if err != nil {
+		t.Fatalf(
+			"CheckPkgbaseBase() error = %v",
+			err,
+		)
+	}
+
+	if !available {
+		t.Fatal(
+			"CheckPkgbaseBase() did not report base updates",
+		)
+	}
+}
+
 func TestSystemHostUpdateCheckerPackagesCurrent(t *testing.T) {
 	calls := make(
 		[]string,
@@ -566,7 +711,7 @@ func currentHostUpdateTestProbe(
 
 		if pkgbase {
 			inventory =
-				"FreeBSD-runtime|base/runtime\npkg|ports-mgmt/pkg\n"
+				"FreeBSD-runtime|base/FreeBSD-runtime\npkg|ports-mgmt/pkg\n"
 		}
 
 		responses["pkg query -a %n|%o"] =
