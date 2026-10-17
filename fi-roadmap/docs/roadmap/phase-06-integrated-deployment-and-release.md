@@ -54,11 +54,11 @@ The authoritative operating description is:
 docs/WINDOWS-INSTALLER.md
 ```
 
-The current live migration/recovery acceptance record is:
-
-```text
-docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-09.md
-```
+Current dated installer acceptance records include Server 2019 migration and
+backend testing (October 9â€“12), and Server 2022 build `20348` signed-installer,
+receiver and PostgreSQL acceptance (October 17). See
+`docs/WINDOWS-INSTALLER.md`, `docs/acceptance/README.md`, and the dated
+acceptance records; they are bounded tests, not final Phase 6 signoff.
 
 ### Current build boundary
 
@@ -71,12 +71,12 @@ Windows Server 2022  build 20348
 Windows Server 2025  build 26100
 ```
 
-The current integrated installer mutation prerequisite is enabled only on Server
-2016 and Server 2019 because FIObjReader rights mutation acceptance remains
-fail-closed on Server 2022 and Server 2025.
-
-This is narrower than the broader Gate 1 Windows runtime characterization and
-acceptance set. Phase 6 must not conflate those two boundaries.
+At the current source checkpoint the exact-build FIObjReader mutation gate is
+enabled for builds `14393`, `17763`, `20348`, and `26100`. This preserves the
+separately characterized Server 2025 work. Server 2022 has a later dated
+October 17 full sender-activation and backend-ingest acceptance. Exact build
+enablement, prior lab acceptance, current signed-candidate acceptance and final
+product release authorization remain separate boundaries.
 
 ## Integrated Scope
 
@@ -239,14 +239,17 @@ Projection publication contract.
 Before the Windows source installer is treated as a completed product release
 boundary, Phase 6 still needs at least:
 
-- current installer mutation acceptance for Server 2022 and Server 2025 or an
-  explicit release support decision excluding them;
+- candidate-specific installer revalidation on each selected supported Windows
+  build, retaining prior Server 2022/2025 acceptance and documenting which later
+  audit/SACL and toolchain changes were actually exercised;
 - clean fresh-install acceptance from a release package;
 - update acceptance from a supported prior installed release;
 - rollback acceptance across representative interruption points;
-- receiver-available activation acceptance in addition to Receiver Pending;
+- receiver-available fresh-install and recovery acceptance across the release
+  matrix (the October 17 Server 2022 sender-only activation already passed);
 - repeatable signed release-package build/provenance;
-- final operator install/update/recovery instructions;
+- final review and acceptance of `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`
+  covering one-command configuration installation and failure behavior;
 - supported upgrade/rollback compatibility policy; and
 - release-level CI/acceptance automation appropriate to the supported Windows
   and backend platforms.

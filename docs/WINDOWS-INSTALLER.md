@@ -5,13 +5,12 @@
 `fi-install.exe` is the native FI Windows source installer and desired-state
 reconciler.
 
-This document describes the installer contract implemented on branch
-`windows-installer-multirelease-20261005` at accepted source commit:
-
-```text
-d2527b6827448b75a0b77b8b71fac68499477367
-windows: complete multirelease installer recovery and runtime migration
-```
+This is the living operator and implementation contract for the native installer
+on `windows-installer-multirelease-20261005`. The implementation baseline
+reviewed for this update is `9410c48813ab1dc1c0a3f4dea5176d87971f85d8`
+(Go 1.27.2 and `x/text` vulnerability-remediation checkpoint). Signed lab
+packages accepted before that security update are distinct artifacts and must
+not be represented as rebuilt or retested under the new toolchain.
 
 FI remains pre-alpha. This document records the behavior implemented and
 validated by the current source. It is not a general production-readiness or
@@ -70,18 +69,16 @@ The source contains exact Windows Server profiles for:
 |---|---:|---|---|
 | 2016 | 14393 | Enabled | Enabled |
 | 2019 | 17763 | Enabled | Enabled |
-| 2022 | 20348 | Enabled | Blocked by current FIObjReader rights-acceptance gate |
-| 2025 | 26100 | Enabled | Blocked by current FIObjReader rights-acceptance gate |
+| 2022 | 20348 | Enabled | Enabled; 2026-10-17 signed-installer sender reconciliation and PostgreSQL ingest PASS |
+| 2025 | 26100 | Enabled | Enabled; separately characterized Server 2025 runtime and previous native-installer acceptance; candidate-specific revalidation is separate |
 
-The distinction is deliberate.
-
-`installerMutationSupportedBuild` recognizes all four exact builds, but the
-environment prerequisite and desired-state plan also require the exact
-FIObjReader rights contract to be enabled. At this commit,
-`objReaderRightsMutationEnabledBuild` permits only builds `14393` and `17763`.
-Server 2022 and Server 2025 therefore remain fail-closed for the integrated
-installer mutation path even though their broader Gate 1 Windows behavior has
-been characterized and accepted separately.
+The distinction between *build enablement* and *candidate acceptance* is
+important. `installerMutationSupportedBuild` recognizes all four exact builds,
+and `objReaderRightsMutationEnabledBuild` currently accepts `14393`, `17763`,
+`20348`, and `26100`. Server 2025 shares the accepted FIObjReader direct-right
+contract through the Server 2022 policy path. This does not automatically make
+one signed package or a later change accepted on every supported build: the
+specific build, package, runtime topology, and test scope must still be recorded.
 
 An adjacent or future Windows build is not accepted merely because the release
 name matches.
@@ -460,6 +457,8 @@ GROUPS
 SCM
 ACL
 RUNTIME
+WINDOWS AUDIT
+WINDOWS SACL
 ```
 
 Approval tokens are exact and fail closed:
@@ -483,6 +482,49 @@ again and requires the current Approval 2 digest to equal both:
 - the digest explicitly approved by the operator.
 
 If not, no local mutation is performed.
+
+## Administrator-approved Windows Security prerequisites
+
+The native installer, **not the normal FI runtime**, owns effective Windows
+Security audit-policy and governed-root SACL prerequisite convergence. The
+administrator sees these actions in the sealed **Approval 2** local mutation
+plan and explicitly approves them. They are performed as part of the normal
+`fi-install.exe -config <path>` deployment; the operator does not run separate
+`auditpol`, SACL, or PowerShell setup scripts after onboarding.
+
+The fixed audit subcategory contract requires:
+
+| Advanced Audit Policy subcategory | Required |
+|---|---|
+| Audit Policy Change | Success |
+| File System | Success and Failure |
+| Handle Manipulation | Failure |
+| Detailed File Share | Success and Failure |
+
+The installer also verifies `SCENoApplyLegacyAuditPolicy=1` (advanced audit
+precedence), requires readable Windows Security log access, and adds only
+missing audit bits. It does not disable unrelated existing subcategory bits.
+It uses the explicit governed roots from the normalized FI configuration, and
+adds only missing Success/Failure audit ACEs for change-capable root activity
+and descendant-file reads. Existing unrelated audit entries remain; the
+installer must not edit a governed-object DACL. Unsupported overlapping roots,
+reparse points, stale object identities, unreadable SACLs, or conflicting
+security state fail closed.
+
+**Persistence and failure:** These approved Windows audit-policy and SACL
+prerequisite changes are deliberate host settings. SACL inheritance updates
+cannot safely be guaranteed byte-exact rollback via supported named-security
+APIs. If a later FI installation step fails, the approved host audit settings
+may remain in place; do not promise complete reversal of these settings.
+The installer re-discovers and re-plans outstanding prerequisites on the next
+run. A legacy pending SACL rollback journal is a fail-closed condition requiring
+operator investigation, not permission for automatic descriptor restoration.
+Before collector activation, the installer verifies the effective audit policy,
+Security channel readability, and governed-root SACL coverage.
+
+Group Policy can subsequently change effective audit policy. That is drift to
+detect and reconcile through authorized administration; a previously passing
+installation record is not proof of permanent future audit coverage.
 
 ## Receiver mTLS activation
 
@@ -595,9 +637,17 @@ The installer does not destroy transaction rollback material merely because the
 mutation operations returned success. Final authoritative discovery and a
 NO CHANGE plan are required first.
 
-Package, service, and runtime work additionally verifies broker readiness,
-service stability, and collector runtime readiness when the approved plan
-requires those gates.
+Package, service, and runtime work additionally verifies broker readiness and
+service stability where the plan requires them. A fresh collector startup and
+current-transaction Windows Security catch-up are required only when a package
+replacement, collector runtime mutation, or collector service creation will
+actually start/restart FICollector. A sender-only `FISender` reconciliation
+still requires service stability, but must not fabricate a fresh collector
+`ServiceStarted` record or restart an unrelated healthy collector.
+
+Windows audit policy and governed-root SACL changes are separately approved
+persistent host prerequisites, **not** covered by the ordinary FI-owned
+transaction rollback promise; see the Security prerequisites section above.
 
 ## Executable-name migration
 
@@ -715,17 +765,32 @@ FISender:                       Manual / Stopped / PID 0
 final result:                   PASS_WITH_RECEIVER_PENDING
 ```
 
-## Current accepted live migration result
+## Accepted installer records and limits
 
-The current branch acceptance record is documented separately in:
+The historical records must be read as dated, scope-limited results, not
+blanket claims that every subsequent signed build was retested:
 
-```text
-docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-09.md
-```
+- `docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-09.md` â€” Server 2019 canonical
+  executable migration, recovery, receiver-pending and idempotency.
+- `docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-10.md` â€” Server 2019 and
+  FreeBSD-backend integration/recovery acceptance.
+- `docs/acceptance/WINDOWS-SERVER-2019-M22K4N-2026-10-12.md` â€” Server 2019
+  M22K4N installer, recorded object history, relational ingest and reboot
+  acceptance, with original open findings retained.
+- `docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-17.md` â€” Server 2022 build 20348
+  M22K4Q signed installer, FISender-only Approval 2 reconciliation, all five
+  services running, receiver mTLS and PostgreSQL authoritative ingest.
+- `docs/WINDOWS-SERVER-VALIDATION.md` â€” earlier exact-build Server 2016, 2019,
+  2022, and 2025 Gate 1 and historical runtime acceptance.
 
-That record covers the Server 2019 executable-name migration, interrupted
-migration recovery, Approval 2 routing correction, receiver-pending convergence,
-legacy-binary retirement, and post-convergence idempotency.
+Earlier native Server 2025 work is not erased merely because the October 17
+Server 2022 package is the latest separately recorded integrated-ingest run.
+The specific October 17 audit/SACL readiness changes and the later Go 1.27.2
+security-toolchain update still require their own candidate-level release
+acceptance where applicable.
+
+For a routine admin workflow, use
+`docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`.
 
 ## Source references
 

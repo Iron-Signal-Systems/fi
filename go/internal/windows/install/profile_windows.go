@@ -55,8 +55,10 @@ func installerMutationSupportedBuild(
 // installer may apply the FIObjReader least-privilege rights contract.
 //
 // Builds 14393 and 17763 retain their accepted installer rights contract.
-// Build 20348 is enabled for controlled Server 2022 acceptance testing.
-// Build 26100 remains fail-closed pending independent acceptance.
+// Build 20348 is enabled for Server 2022, including its accepted installer run.
+// Build 26100 is enabled by the separately characterized Server 2025 contract,
+// sharing the exact FIObjReader rights gate with 20348. Candidate-specific
+// release acceptance remains separate from this exact-build policy gate.
 func objReaderRightsMutationEnabledBuild(
 	buildNumber uint32,
 ) bool {

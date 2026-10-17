@@ -13,7 +13,9 @@ See:
 
 ```text
 docs/WINDOWS-INSTALLER.md
-docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-09.md
+docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md
+docs/WINDOWS-INSTALLER-ACCEPTANCE-2026-10-17.md
+docs/acceptance/README.md
 ```
 
 Deployment tooling is not normal FI collector/runtime remediation authority.
@@ -47,6 +49,14 @@ FISender
 
 The normal source installer should be used from a reviewed signed release
 package. It applies by default after all required explicit approvals.
+Administrator-approved Windows audit/SACL prerequisites are installed natively
+as part of Approval 2; they do not require separate operator scripts and may
+persist after a later installation error. Do not confuse those host settings
+with automatic behavior of the non-remediating FI collector.
+
+For a new source with a reviewed FI 1.1 configuration file, the normal operator
+command is `fi-install.exe -config C:\path\fi.conf`; use `-plan-only` to review
+without mutations. See `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`.
 
 Planning-only mode is:
 

@@ -550,8 +550,14 @@ See:
 
 FI reads the local Windows Security log as an independent activity source.
 
-FI does not automatically enable Windows audit policy or add SACLs to governed
-roots. Those are administrator-controlled deployment settings.
+The normal FI collector and background services **do not** change Windows
+audit policy or governed-root SACLs. The separately authorized native
+`fi-install.exe` deployment workflow does plan and apply missing Windows
+audit-policy and governed-root SACL prerequisites after administrator Approval 2.
+Those approved host changes may persist after an unrelated installer failure;
+they are not ordinary collector remediation and not part of a blanket FI-owned
+transaction rollback guarantee. See
+`docs/WINDOWS-INSTALLER.md` and `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`.
 
 The Security Event Log collection/checkpoint path has been live validated across
 the current Windows Server acceptance set:
