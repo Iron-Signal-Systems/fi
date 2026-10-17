@@ -46,10 +46,23 @@ do
         fail "required ingest trust file is not readable: $trust_file"
 done
 
+fi_ingest_worker_workers="${fi_ingest_worker_workers:-1}"
+
+case "$fi_ingest_worker_workers" in
+    ""|*[!0-9]*)
+        fail "fi_ingest_worker_workers must be an integer"
+        ;;
+esac
+
+[ "$fi_ingest_worker_workers" -ge 1 ] &&
+[ "$fi_ingest_worker_workers" -le 32 ] ||
+    fail "fi_ingest_worker_workers must be between 1 and 32"
+
 export PGPASSFILE="$fi_ingest_worker_pgpass"
 
 set -- \
     -postgres "$fi_ingest_worker_postgres" \
+    -workers "$fi_ingest_worker_workers" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
     -generation-ready-root /var/db/fi/custody/ready \

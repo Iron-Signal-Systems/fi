@@ -26,6 +26,8 @@ import (
 )
 
 type workerConfig struct {
+	Workers                int
+	IngestSlots            chan struct{}
 	ConnectionString       string
 	CustodyRoot            string
 	LockFile               string
@@ -187,6 +189,8 @@ func main() {
 		"maximum generation attempts before exit; zero means unlimited",
 	)
 
+	workers := flags.Int("workers", 1, "maximum concurrent source generation ingests")
+
 	_ = flags.Parse(os.Args[1:])
 
 	if flags.NArg() != 0 {
@@ -302,6 +306,7 @@ func main() {
 	defer stop()
 
 	config := workerConfig{
+		Workers:                *workers,
 		ConnectionString:       *connectionString,
 		CustodyRoot:            *custodyRoot,
 		LockFile:               *lockFile,
@@ -350,6 +355,15 @@ func attemptGeneration(
 	recordingest.IngestResult,
 	error,
 ) {
+	if config.IngestSlots != nil {
+		select {
+		case config.IngestSlots <- struct{}{}:
+			defer func() { <-config.IngestSlots }()
+		case <-ctx.Done():
+			return recordingest.IngestResult{}, ctx.Err()
+		}
+	}
+
 	candidate := item.Candidate
 
 	attemptID, err :=
@@ -467,6 +481,25 @@ func runWorker(
 		runErr = errors.Join(runErr, singleton.Close())
 	}()
 
+	if config.Workers == 0 {
+		config.Workers = 1
+	}
+	if config.Workers < 1 || config.Workers > 32 {
+		return fmt.Errorf("FI ingest workers must be between 1 and 32")
+	}
+	if config.Workers > 1 && len(config.SourceIDs) > 1 {
+		return runConcurrentSourceSessions(
+			ctx, config, singleton.Path(), runWorkerSession,
+		)
+	}
+	return runWorkerSession(ctx, config, singleton.Path())
+}
+
+func runWorkerSession(
+	ctx context.Context,
+	config workerConfig,
+	lockPath string,
+) error {
 	backoff, err := newPostgreSQLBackoff(
 		config.PostgreSQLRetryInitial,
 		config.PostgreSQLRetryMax,
@@ -499,7 +532,7 @@ func runWorker(
 			sourceID,
 		)
 	}
-	fmt.Printf("SingletonLock:          %s\n", singleton.Path())
+	fmt.Printf("SingletonLock:          %s\n", lockPath)
 	fmt.Printf("PostgreSQLRetryInitial: %s\n", config.PostgreSQLRetryInitial)
 	fmt.Printf("PostgreSQLRetryMax:     %s\n", config.PostgreSQLRetryMax)
 	fmt.Printf("PollInterval:           %s\n", config.PollInterval)

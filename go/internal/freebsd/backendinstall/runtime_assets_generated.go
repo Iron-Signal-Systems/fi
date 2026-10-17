@@ -213,7 +213,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: 3fe1f6574a7ad69249d50a3a600161afbaafaca321a625ee0c8d84a9f913f632
+// SHA256: bd8b490f92a720f9ffddbe99ae35e2c54530e727e5d2d110cd6408dc1229a316
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -262,10 +262,23 @@ do
         fail "required ingest trust file is not readable: $trust_file"
 done
 
+fi_ingest_worker_workers="${fi_ingest_worker_workers:-1}"
+
+case "$fi_ingest_worker_workers" in
+    ""|*[!0-9]*)
+        fail "fi_ingest_worker_workers must be an integer"
+        ;;
+esac
+
+[ "$fi_ingest_worker_workers" -ge 1 ] &&
+[ "$fi_ingest_worker_workers" -le 32 ] ||
+    fail "fi_ingest_worker_workers must be between 1 and 32"
+
 export PGPASSFILE="$fi_ingest_worker_pgpass"
 
 set -- \
     -postgres "$fi_ingest_worker_postgres" \
+    -workers "$fi_ingest_worker_workers" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
     -generation-ready-root /var/db/fi/custody/ready \
@@ -434,7 +447,7 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: 3607da5e8beadc269a1511e02bb271493d0fb148f9d09d725e8b3bed95620311
+// SHA256: 1bf984b9a1e0f04ab91fb7106be605af960fa9492873abbaef503ae6c586ee5e
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
@@ -446,4 +459,5 @@ fi_ingest_worker_namespaces="NO"
 
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
+fi_ingest_worker_workers="2"
 `
