@@ -16,6 +16,14 @@ func TestRuntimePlanExactContract(
 ) {
 	config := loadTestConfig(t)
 
+	runtimeGID, err := parsePositiveDecimal(
+		"FI_RUNTIME_GID",
+		config.Value("FI_RUNTIME_GID"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	plan, err := buildRuntimePlan(
 		config,
 	)
@@ -41,6 +49,7 @@ func TestRuntimePlanExactContract(
 	}
 
 	expected := map[string]struct {
+		gid    uint64
 		mode   os.FileMode
 		target string
 	}{
@@ -59,7 +68,8 @@ func TestRuntimePlanExactContract(
 			),
 		},
 		"receiver-runtime-config": {
-			mode: 0o644,
+			gid:  runtimeGID,
+			mode: 0o640,
 			target: filepath.Join(
 				config.Value("FI_RECEIVER_ROOT"),
 				"etc/rc.conf.d/fi_receiver",
@@ -108,7 +118,7 @@ func TestRuntimePlanExactContract(
 
 		if spec.Mode != want.mode ||
 			spec.UID != 0 ||
-			spec.GID != 0 {
+			spec.GID != want.gid {
 			t.Fatalf(
 				"%s metadata = %d:%d %o",
 				spec.Role,

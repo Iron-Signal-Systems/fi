@@ -37,6 +37,14 @@ func buildRuntimePlan(
 		return runtimePlan{}, err
 	}
 
+	runtimeGID, err := parsePositiveDecimal(
+		"FI_RUNTIME_GID",
+		config.Value("FI_RUNTIME_GID"),
+	)
+	if err != nil {
+		return runtimePlan{}, err
+	}
+
 	receiverRoot := config.Value(
 		"FI_RECEIVER_ROOT",
 	)
@@ -110,6 +118,7 @@ func buildRuntimePlan(
 
 	definitions := []struct {
 		asset     string
+		gid       uint64
 		mode      os.FileMode
 		priorName string
 		role      string
@@ -137,7 +146,8 @@ func buildRuntimePlan(
 		},
 		{
 			asset:     runtimeAssetReceiverRCConfig,
-			mode:      0o644,
+			gid:       runtimeGID,
+			mode:      0o640,
 			priorName: "rc.conf.d.fi_receiver",
 			role:      "receiver-runtime-config",
 			target: filepath.Join(
@@ -220,7 +230,7 @@ func buildRuntimePlan(
 			files,
 			runtimeFileSpec{
 				Content:   rendered,
-				GID:       0,
+				GID:       definition.gid,
 				Mode:      definition.mode,
 				PriorName: definition.priorName,
 				Role:      definition.role,

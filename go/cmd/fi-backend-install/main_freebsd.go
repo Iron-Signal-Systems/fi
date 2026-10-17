@@ -18,6 +18,7 @@ import (
 
 type invocation struct {
 	applicationBinaryRelease string
+	approvedPriorBinaries    string
 	approvedPriorHostFiles   string
 	approvedPriorRuntime     string
 	command                  string
@@ -95,6 +96,19 @@ func parseInvocation(
 	}
 
 	switch args[0] {
+	case "update-binaries":
+		if len(args) != 4 {
+			return invocation{}, fmt.Errorf(
+				"usage: fi-backend-install update-binaries <configuration-file> <release-directory> <approved-prior-binaries-directory>",
+			)
+		}
+		return invocation{
+			command:                  args[0],
+			configPath:               args[1],
+			applicationBinaryRelease: args[2],
+			approvedPriorBinaries:    args[3],
+		}, nil
+
 	case "apply-binaries", "verify-binaries":
 		if len(args) != 3 {
 			return invocation{}, fmt.Errorf(
@@ -151,7 +165,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|initialize-sor-database|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|apply-binaries|verify-binaries|apply-runtime|verify-runtime|adopt-runtime|update-runtime] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|initialize-sor-database|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|apply-binaries|verify-binaries|update-binaries|apply-runtime|verify-runtime|adopt-runtime|update-runtime] [configuration-file]",
 			)
 		}
 
@@ -497,6 +511,17 @@ func main() {
 			os.Stdout,
 			"FI FreeBSD application binary apply complete.",
 		)
+
+	case "update-binaries":
+		if err := backendinstall.UpdateBinaries(
+			config,
+			request.applicationBinaryRelease,
+			request.approvedPriorBinaries,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "FI APPLICATION BINARY UPDATE BLOCKED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "FI FreeBSD application binary update complete.")
 
 	case "verify-binaries":
 		if err := backendinstall.VerifyBinaries(
