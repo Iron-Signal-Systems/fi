@@ -84,10 +84,6 @@ INSERT INTO fi.usn_object_observation (
 	}
 
 	for i, change := range value.Changes {
-		fileObjectID, err := ensureNTFSObject(ctx, tx, volumeID, change.FileIdentity)
-		if err != nil {
-			return err
-		}
 		parentObjectID, err := ensureNTFSObject(ctx, tx, volumeID, change.ParentIdentity)
 		if err != nil {
 			return err
@@ -134,7 +130,7 @@ INSERT INTO fi.usn_object_change (
  file_name_utf16le,file_ntfs_object_id,parent_ntfs_object_id
 ) VALUES ($1,$2,$3,$4,$5::text::numeric,$6,$7,$8,$9,$10,$11,$12,$13)
 `, sourceRecordID, ordinal, int(major), int(minor), change.USN, timestamp, int64(reasonRaw), int64(sourceInfo), int64(securityID), int64(attributes),
-			fileName, fileObjectID, parentObjectID)
+			fileName, objectID, parentObjectID)
 		if err != nil {
 			return fmt.Errorf("insert FI USN object change: %w", err)
 		}
