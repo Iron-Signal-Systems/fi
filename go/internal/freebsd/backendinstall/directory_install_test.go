@@ -22,9 +22,9 @@ func TestDirectorySpecsMatchAcceptedContract(t *testing.T) {
 		)
 	}
 
-	if len(hostSpecs) != 6 {
+	if len(hostSpecs) != 7 {
 		t.Fatalf(
-			"host directory count = %d, want 6",
+			"host directory count = %d, want 7",
 			len(hostSpecs),
 		)
 	}
@@ -43,6 +43,7 @@ func TestDirectorySpecsMatchAcceptedContract(t *testing.T) {
 		0o700,
 		0o750,
 		0o750,
+		0o700,
 	}
 
 	for index, mode := range expectedModes {
@@ -66,7 +67,7 @@ func TestDirectorySpecsMatchAcceptedContract(t *testing.T) {
 	}
 
 	if len(jailSpecs[0].Paths) != 8 ||
-		len(jailSpecs[1].Paths) != 7 ||
+		len(jailSpecs[1].Paths) != 8 ||
 		len(jailSpecs[2].Paths) != 3 {
 		t.Fatalf(
 			"unexpected jail directory path counts: %d %d %d",

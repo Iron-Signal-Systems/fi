@@ -48,6 +48,13 @@ func TestFIHierarchySpecsMatchAcceptedContract(t *testing.T) {
 			Mounted:    "yes",
 		},
 		{
+			Target:     "zroot/fi/ingest",
+			Role:       "ingest-state",
+			Mountpoint: "/var/db/fi/ingest",
+			Canmount:   "on",
+			Mounted:    "yes",
+		},
+		{
 			Target:     "zroot/fi/config",
 			Role:       "config-parent",
 			Mountpoint: "none",

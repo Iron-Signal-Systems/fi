@@ -18,10 +18,8 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
-	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 const maxIngestRecordedReceiptBytes = 256 << 10
@@ -32,6 +30,7 @@ type GenerationLoadConfig struct {
 	MaxEncodedBytes   uint64
 	MaxManifestBytes  uint64
 	RecordedRoot      string
+	SourceNamespaces  bool
 	SourceID          string
 }
 
@@ -65,12 +64,38 @@ func (generation *PreparedGeneration) Close() error {
 }
 
 func LoadRecordedGeneration(config GenerationLoadConfig, generationID string) (*PreparedGeneration, error) {
+	return loadRecordedGenerationWithTrust(
+		config,
+		generationID,
+		loadInstalledGenerationTrust,
+	)
+}
+
+func loadRecordedGenerationWithTrust(
+	config GenerationLoadConfig,
+	generationID string,
+	resolveTrust generationTrustResolver,
+) (*PreparedGeneration, error) {
 	if err := validateGenerationLoadConfig(config, generationID); err != nil {
 		return nil, err
 	}
+	if resolveTrust == nil {
+		return nil, errors.New("FI generation trust resolver is required")
+	}
 
 	receiptName := generationrecorder.RecordedReceiptObjectName(config.SourceID, generationID)
-	receiptPath := filepath.Join(config.RecordedRoot, receiptName)
+	receiptRoot := config.RecordedRoot
+	if config.SourceNamespaces {
+		sourceRoot, err := generationrecorder.RecordedSourceDirectory(
+			config.RecordedRoot,
+			config.SourceID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		receiptRoot = sourceRoot
+	}
+	receiptPath := filepath.Join(receiptRoot, receiptName)
 	receiptRaw, err := readImmutableReceipt(receiptPath)
 	if err != nil {
 		return nil, fmt.Errorf("read FI Phase 3 recorder receipt: %w", err)
@@ -87,26 +112,27 @@ func LoadRecordedGeneration(config GenerationLoadConfig, generationID string) (*
 	receiptDigest := sha256.Sum256(receiptRaw)
 	receiptSHA256 := hex.EncodeToString(receiptDigest[:])
 
-	root, err := receivertrust.LoadCertificate(receivertrust.RootCAPath)
+	trust, err := resolveTrust(config.SourceID)
 	if err != nil {
 		return nil, err
 	}
-	batchIssuer, err := receivertrust.LoadCertificate(receivertrust.BatchIssuerPath)
-	if err != nil {
-		return nil, err
+	if !strings.EqualFold(trust.Source.SourceID, config.SourceID) {
+		return nil, fmt.Errorf(
+			"FI source config identity %q does not match requested source %q",
+			trust.Source.SourceID,
+			config.SourceID,
+		)
 	}
-	batchCRL, err := receivertrust.LoadCRL(receivertrust.BatchCRLPath)
-	if err != nil {
-		return nil, err
+	if trust.Root == nil ||
+		trust.BatchIssuer == nil ||
+		trust.BatchCRL == nil {
+		return nil, errors.New(
+			"FI generation trust material is incomplete",
+		)
 	}
-	sourceConfigPath := filepath.Join(receivertrust.SourceRegistryPath, config.SourceID+".conf")
-	sourceConfig, err := transporttrust.LoadSourceConfig(sourceConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if !strings.EqualFold(sourceConfig.Authorization.SourceID, config.SourceID) {
-		return nil, fmt.Errorf("FI source config identity %q does not match requested source %q", sourceConfig.Authorization.SourceID, config.SourceID)
-	}
+	root := trust.Root
+	batchIssuer := trust.BatchIssuer
+	batchCRL := trust.BatchCRL
 
 	custodyName := transportgeneration.DurableCustodyObjectName(config.SourceID, generationID)
 	custodyPath := filepath.Join(config.CustodyRoot, custodyName)
@@ -165,7 +191,7 @@ func LoadRecordedGeneration(config GenerationLoadConfig, generationID string) (*
 				MaxCanonicalBytes: config.MaxCanonicalBytes,
 				MaxEncodedBytes:   config.MaxEncodedBytes,
 				Root:              root,
-				Source:            sourceConfig.Authorization,
+				Source:            trust.Source,
 			},
 		},
 		factory,

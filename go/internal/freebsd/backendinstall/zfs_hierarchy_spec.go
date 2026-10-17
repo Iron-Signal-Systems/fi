@@ -56,6 +56,13 @@ func fiHierarchySpecs(config Config) []fiDatasetSpec {
 			Mounted:    "yes",
 		},
 		{
+			Target:     root + "/ingest",
+			Role:       "ingest-state",
+			Mountpoint: "/var/db/fi/ingest",
+			Canmount:   "on",
+			Mounted:    "yes",
+		},
+		{
 			Target:     root + "/config",
 			Role:       "config-parent",
 			Mountpoint: "none",

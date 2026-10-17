@@ -153,7 +153,7 @@ const hostFileAssetReceiverFstab = `# FI-MANAGED: ironsignal-fi-freebsd-host-fil
 `
 
 // Source: tools/deployment/freebsd/fstab.d/fi-ingest.fstab.template
-// SHA256: 415b631538254838234ef513c772d6f48602585853549173aa49541776046236
+// SHA256: bdb37906bef422fac4a948462dd6573803e38197c31c866e53a4a5c25cc80d99
 const hostFileAssetIngestFstab = `# FI-MANAGED: ironsignal-fi-freebsd-host-file-v1
 # FI-ROLE: fstab-ingest
 # FI ingest host-controlled mounts.
@@ -164,6 +164,7 @@ const hostFileAssetIngestFstab = `# FI-MANAGED: ironsignal-fi-freebsd-host-file-
 @FI_CUSTODY_GENERATION_HOST@                  @FI_INGEST_ROOT@/var/db/fi/custody/generation                 nullfs  ro    0    0
 @FI_RECORDED_HOST@                            @FI_INGEST_ROOT@/var/db/fi/custody/recorded                   nullfs  ro    0    0
 @FI_READY_HOST@                               @FI_INGEST_ROOT@/var/db/fi/custody/ready                      nullfs  rw    0    0
+/var/db/fi/ingest                             @FI_INGEST_ROOT@/var/db/fi/ingest                            nullfs  rw    0    0
 @FI_INGEST_CONFIG_HOST@                       @FI_INGEST_ROOT@/usr/local/etc/fi                             nullfs  ro    0    0
 `
 

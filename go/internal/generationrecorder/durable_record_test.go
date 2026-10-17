@@ -150,9 +150,10 @@ func TestRecordedObjectNameSeparatesIdentities(t *testing.T) {
 }
 
 type durableRecorderFixture struct {
-	recordedRoot string
-	sealedPath   string
-	transfer     transportgeneration.TransferResult
+	sourceNamespaces bool
+	recordedRoot     string
+	sealedPath       string
+	transfer         transportgeneration.TransferResult
 }
 
 func assertRecordedRootEmpty(t *testing.T, root string) {
@@ -267,7 +268,8 @@ func recordDurableFixtureResult(
 		reader,
 		transfer,
 		DurableConfig{
-			RootDir: fixture.recordedRoot,
+			RootDir:          fixture.recordedRoot,
+			SourceNamespaces: fixture.sourceNamespaces,
 			Semantic: Config{
 				MaxManifestBytes: 1 << 20,
 			},

@@ -213,7 +213,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: b2288d4c78aec9a81f4349197e9026d5e289cb2c69e89a459a07293bec914015
+// SHA256: 3fe1f6574a7ad69249d50a3a600161afbaafaca321a625ee0c8d84a9f913f632
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -242,6 +242,11 @@ fail()
 [ -n "${fi_ingest_worker_pgpass:-}" ] ||
     fail "fi_ingest_worker_pgpass is required"
 
+case "${fi_ingest_worker_namespaces:-NO}" in
+    YES|NO) ;;
+    *) fail "fi_ingest_worker_namespaces must be YES or NO" ;;
+esac
+
 [ -x "$BINARY" ] ||
     fail "ingest worker binary is absent or not executable: $BINARY"
 
@@ -259,7 +264,7 @@ done
 
 export PGPASSFILE="$fi_ingest_worker_pgpass"
 
-exec "$BINARY" \
+set -- \
     -postgres "$fi_ingest_worker_postgres" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
@@ -267,6 +272,58 @@ exec "$BINARY" \
     -generation-max-canonical-bytes 68719476736 \
     -generation-max-encoded-bytes 68719476736 \
     -generation-max-manifest-bytes 1048576
+
+if [ "${fi_ingest_worker_namespaces:-NO}" = "YES" ]; then
+    state_root="/var/db/fi/ingest"
+
+    # Verify the persistent host-controlled nullfs mount.
+    # A jail-local directory must never substitute for durable state.
+    mount -p | awk '
+        $2 == "/var/db/fi/ingest" {
+            count++
+            if ($1 != "/var/db/fi/ingest" ||
+                $3 != "nullfs" ||
+                $4 !~ /(^|,)rw(,|$)/) {
+                bad = 1
+            }
+        }
+        END {
+            if (count != 1 || bad == 1) {
+                exit 1
+            }
+        }
+    ' || fail "persistent ingest-state nullfs mount is absent or invalid"
+
+    runtime_uid=$(id -u) ||
+        fail "unable to determine worker UID"
+
+    runtime_gid=$(id -g) ||
+        fail "unable to determine worker GID"
+
+    expected="${runtime_uid}:${runtime_gid}:0700"
+
+    for state_dir in \
+        "$state_root" \
+        "$state_root/quarantine" \
+        "$state_root/history"
+    do
+        [ -d "$state_dir" ] &&
+        [ ! -L "$state_dir" ] ||
+            fail "persistent ingest-state directory missing: $state_dir"
+
+        actual=$(stat -f '%u:%g:%#Lp' "$state_dir") ||
+            fail "unable to inspect ingest-state directory: $state_dir"
+
+        [ "$actual" = "$expected" ] ||
+            fail "ingest-state directory ownership or mode mismatch: $state_dir"
+    done
+
+    set -- "$@" \
+        -generation-source-namespaces \
+        -quarantine-state-root "$state_root/quarantine"
+fi
+
+exec "$BINARY" "$@"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.d
@@ -377,11 +434,15 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: 0e91bed0db6a901bfe68179469850eb2583f2a3bbbc038475da817cf4ae7309f
+// SHA256: 3607da5e8beadc269a1511e02bb271493d0fb148f9d09d725e8b3bed95620311
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
 fi_ingest_worker_enable="YES"
+
+# Namespaced ingest requires completed migration and operator approval.
+# The installer must not silently activate this mode.
+fi_ingest_worker_namespaces="NO"
 
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"

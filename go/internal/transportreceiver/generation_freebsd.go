@@ -381,7 +381,8 @@ func generationReceiveConfigFromListener(
 		},
 		ReadyRoot: config.GenerationReadyRoot,
 		Recorder: generationrecorder.DurableConfig{
-			RootDir: config.GenerationRecordedRoot,
+			RootDir:          config.GenerationRecordedRoot,
+			SourceNamespaces: config.GenerationSourceNamespaces,
 			Semantic: generationrecorder.Config{
 				MaxManifestBytes: config.GenerationMaxManifestBytes,
 			},
@@ -396,6 +397,7 @@ func validateGenerationListenerConfig(
 		config.GenerationCustodyRoot != "" ||
 			config.GenerationReadyRoot != "" ||
 			config.GenerationRecordedRoot != "" ||
+			config.GenerationSourceNamespaces ||
 			config.GenerationMaxCanonicalBytes != 0 ||
 			config.GenerationMaxEncodedBytes != 0 ||
 			config.GenerationMaxManifestBytes != 0

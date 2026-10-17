@@ -22,7 +22,6 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
 	"github.com/Iron-Signal-Systems/fi/go/internal/receivertrust"
 	"github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
-	"github.com/Iron-Signal-Systems/fi/go/internal/workerlock"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -30,6 +29,7 @@ type workerConfig struct {
 	ConnectionString       string
 	CustodyRoot            string
 	LockFile               string
+	DualLockTransition     bool
 	MaxAttempts            uint64
 	MaxCanonicalBytes      uint64
 	MaxEncodedBytes        uint64
@@ -38,9 +38,11 @@ type workerConfig struct {
 	PollInterval           time.Duration
 	PostgreSQLRetryInitial time.Duration
 	PostgreSQLRetryMax     time.Duration
+	QuarantineRoot         string
 	ReadyBatchSize         uint64
 	ReadyRoot              string
 	RecordedRoot           string
+	SourceNamespaces       bool
 	RepairInterval         time.Duration
 	RetryAfter             time.Duration
 	RetryBatchSize         uint64
@@ -49,6 +51,17 @@ type workerConfig struct {
 }
 
 func main() {
+	if len(os.Args) > 1 &&
+		os.Args[1] == "quarantine-release" {
+		if err := m1RunQuarantineReleaseCommand(
+			os.Args[2:],
+			os.Stdout,
+		); err != nil {
+			fail(err)
+		}
+		return
+	}
+
 	flags := flag.NewFlagSet(
 		"fi-ingest-worker",
 		flag.ExitOnError,
@@ -78,6 +91,12 @@ func main() {
 		"exclusive FI relational ingest worker lock file",
 	)
 
+	dualLockTransition := flags.Bool(
+		"lock-migration-dual",
+		false,
+		"transition only: hold legacy and keeper-owned singleton locks; fails closed if either is unavailable",
+	)
+
 	custodyRoot := flags.String(
 		"generation-custody-root",
 		"/var/db/fi/custody/generation",
@@ -94,6 +113,18 @@ func main() {
 		"generation-ready-root",
 		"/var/db/fi/custody/ready",
 		"non-authoritative FI generation ingest-ready root",
+	)
+
+	sourceNamespaces := flags.Bool(
+		"generation-source-namespaces",
+		false,
+		"enable authoritative per-source recorder namespaces; requires completed migration",
+	)
+
+	quarantineRoot := flags.String(
+		"quarantine-state-root",
+		"",
+		"pre-provisioned persistent worker-owned quarantine directory; required for namespaces",
 	)
 
 	readyBatchSize := flags.Uint64(
@@ -218,6 +249,25 @@ func main() {
 		)
 	}
 
+	// Reject incomplete namespace activation before reading
+	// the installed trust registry or opening PostgreSQL.
+	if *sourceNamespaces && *quarantineRoot == "" {
+		fail(errors.New(
+			"generation-source-namespaces requires quarantine-state-root",
+		))
+	}
+	if !*sourceNamespaces && *quarantineRoot != "" {
+		fail(errors.New(
+			"quarantine-state-root requires generation-source-namespaces",
+		))
+	}
+	if *dualLockTransition && *sourceNamespaces {
+		fail(errors.New("lock-migration-dual cannot be combined with namespaced ingest"))
+	}
+	if *dualLockTransition && *lockFile != m8LegacyLockPath {
+		fail(fmt.Errorf("lock-migration-dual requires legacy lock %q", m8LegacyLockPath))
+	}
+
 	batchIssuer, err := receivertrust.LoadCertificate(
 		receivertrust.BatchIssuerPath,
 	)
@@ -255,6 +305,7 @@ func main() {
 		ConnectionString:       *connectionString,
 		CustodyRoot:            *custodyRoot,
 		LockFile:               *lockFile,
+		DualLockTransition:     *dualLockTransition,
 		MaxAttempts:            *maxAttempts,
 		MaxCanonicalBytes:      *maxCanonicalBytes,
 		MaxEncodedBytes:        *maxEncodedBytes,
@@ -266,10 +317,22 @@ func main() {
 		ReadyBatchSize:         *readyBatchSize,
 		ReadyRoot:              *readyRoot,
 		RecordedRoot:           *recordedRoot,
+		SourceNamespaces:       *sourceNamespaces,
+		QuarantineRoot:         *quarantineRoot,
 		RepairInterval:         *repairInterval,
 		RetryAfter:             *retryAfter,
 		RetryBatchSize:         *retryBatchSize,
 		SourceIDs:              sourceIDs,
+	}
+
+	if err := m1ValidateMaintenancePathAgreement(config); err != nil {
+		fail(err)
+	}
+
+	// M1 namespaced activation is blocked until independent
+	// quarantine publication and release authority is installed.
+	if err := m1ValidateQuarantineAuthorityReady(config); err != nil {
+		fail(err)
 	}
 
 	if err := runWorker(ctx, config); err != nil &&
@@ -315,8 +378,9 @@ func attemptGeneration(
 				MaxEncodedBytes:   config.MaxEncodedBytes,
 				MaxManifestBytes:  config.MaxManifestBytes,
 
-				RecordedRoot: config.RecordedRoot,
-				SourceID:     candidate.SourceID,
+				RecordedRoot:     config.RecordedRoot,
+				SourceNamespaces: config.SourceNamespaces,
+				SourceID:         candidate.SourceID,
 			},
 			candidate.GenerationID,
 		)
@@ -385,7 +449,17 @@ func runWorker(
 	ctx context.Context,
 	config workerConfig,
 ) (runErr error) {
-	singleton, err := workerlock.Acquire(config.LockFile)
+	if config.SourceNamespaces {
+		if err := validateWorkerSourceNamespaces(config); err != nil {
+			return err
+		}
+	}
+
+	if err := m1ValidateQuarantineConfiguration(config); err != nil {
+		return err
+	}
+
+	singleton, err := m1AcquireWorkerSingleton(config)
 	if err != nil {
 		return err
 	}
@@ -399,6 +473,21 @@ func runWorker(
 	)
 	if err != nil {
 		return err
+	}
+
+	states, err := newSourceSessionStates(config)
+	if err != nil {
+		return err
+	}
+
+	if config.SourceNamespaces {
+		keeperClient, err := m1NewWorkerKeeperClient()
+		if err != nil {
+			return fmt.Errorf("resolve independent keeper authority: %w", err)
+		}
+		if err := m1RestoreSourceKeeperStates(ctx, states, keeperClient); err != nil {
+			return fmt.Errorf("restore keeper-owned source quarantine: %w", err)
+		}
 	}
 
 	fmt.Println("===== FI RELATIONAL INGEST WORKER =====")
@@ -484,6 +573,7 @@ func runWorker(
 				ctx,
 				config,
 				connection,
+				states,
 				&totalAttempts,
 			)
 
@@ -530,9 +620,12 @@ func runWorker(
 }
 
 type sourceSessionState struct {
-	Config     workerConfig
-	NextRepair time.Time
-	Repair     repairCadence
+	Config          workerConfig
+	NextRepair      time.Time
+	Quarantined     bool
+	QuarantineStore *m1QuarantineStore // Isolated pre-keeper test fixture only.
+	KeeperClient    m1WorkerKeeperClient
+	Repair          repairCadence
 }
 
 func newSourceSessionStates(
@@ -584,6 +677,7 @@ func runPostgreSQLSession(
 	ctx context.Context,
 	config workerConfig,
 	connection *pgx.Conn,
+	states []sourceSessionState,
 	totalAttempts *uint64,
 ) error {
 	if connection == nil {
@@ -598,11 +692,19 @@ func runPostgreSQLSession(
 		)
 	}
 
-	states, err := newSourceSessionStates(
-		config,
-	)
-	if err != nil {
-		return err
+	if len(states) != len(config.SourceIDs) ||
+		len(states) == 0 {
+		return errors.New(
+			"FI ingest session source state count mismatch",
+		)
+	}
+
+	for index, sourceID := range config.SourceIDs {
+		if states[index].Config.SourceID != sourceID {
+			return errors.New(
+				"FI ingest session source state identity mismatch",
+			)
+		}
 	}
 
 	db := postgresConnection{
@@ -612,6 +714,17 @@ func runPostgreSQLSession(
 	for index := range states {
 		state := &states[index]
 
+		if err := m1CheckKeeperState(ctx, state); err != nil {
+			return err
+		}
+		if state.Quarantined {
+			fmt.Printf(
+				"POSTGRES SOURCE QUARANTINED source=%s action=operator_review_required\n",
+				state.Config.SourceID,
+			)
+			continue
+		}
+
 		fmt.Printf(
 			"POSTGRES SOURCE STARTUP source=%s repair_mode=%s repair_interval=%s clean_count=%d\n",
 			state.Config.SourceID,
@@ -620,15 +733,16 @@ func runPostgreSQLSession(
 			state.Repair.CleanCount(),
 		)
 
-		startupPlan, err :=
-			recordingest.PlanRecordedGenerationsForIngest(
-				ctx,
-				connection,
-				state.Config.RecordedRoot,
-				state.Config.SourceID,
-			)
+		startupPlan, err := workerRecordedSourcePlan(
+			ctx,
+			connection,
+			state.Config,
+		)
 		if err != nil {
-			return err
+			if err := quarantineSourceConflict(state, err); err != nil {
+				return err
+			}
+			continue
 		}
 
 		fmt.Printf(
@@ -640,21 +754,24 @@ func runPostgreSQLSession(
 			startupPlan.Conflict,
 		)
 
-		if err := reconcileConflictError(
+		if err := runStartupSourcePlan(
+			state,
 			startupPlan,
+			func() error {
+				return processPlan(
+					ctx,
+					state.Config,
+					db,
+					startupPlan,
+					false,
+					totalAttempts,
+				)
+			},
 		); err != nil {
 			return err
 		}
-
-		if err := processPlan(
-			ctx,
-			state.Config,
-			db,
-			startupPlan,
-			false,
-			totalAttempts,
-		); err != nil {
-			return err
+		if state.Quarantined {
+			continue
 		}
 
 		state.NextRepair =
@@ -676,12 +793,20 @@ func runPostgreSQLSession(
 		}
 
 		for index := range states {
-			if err := runSourcePass(
-				ctx,
+			if err := m1CheckKeeperState(ctx, &states[index]); err != nil {
+				return err
+			}
+			if err := runScheduledSourcePass(
 				&states[index],
-				connection,
-				db,
-				totalAttempts,
+				func(state *sourceSessionState) error {
+					return runSourcePass(
+						ctx,
+						state,
+						connection,
+						db,
+						totalAttempts,
+					)
+				},
 			); err != nil {
 				return err
 			}
@@ -727,13 +852,11 @@ func runSourcePass(
 	now := time.Now()
 
 	if !now.Before(state.NextRepair) {
-		plan, err :=
-			recordingest.PlanRecordedGenerationsForIngest(
-				ctx,
-				connection,
-				config.RecordedRoot,
-				config.SourceID,
-			)
+		plan, err := workerRecordedSourcePlan(
+			ctx,
+			connection,
+			config,
+		)
 		if err != nil {
 			return err
 		}
@@ -1110,10 +1233,9 @@ func dueRetryPlan(
 			)
 	}
 
-	candidates, err := recordingest.DiscoverRecordedReceiptsByName(
-		config.RecordedRoot,
+	candidates, err := workerDiscoverReceiptNames(
+		config,
 		names,
-		config.SourceID,
 	)
 	if err != nil {
 		return recordingest.ReconcilePlan{}, uint64(len(generationIDs)), err
@@ -1206,10 +1328,9 @@ func readyPlan(
 		return recordingest.ReconcilePlan{}, 0, nil
 	}
 
-	candidates, err := recordingest.DiscoverRecordedReceiptsByName(
-		config.RecordedRoot,
+	candidates, err := workerDiscoverReceiptNames(
+		config,
 		names,
-		config.SourceID,
 	)
 	if err != nil {
 		return recordingest.ReconcilePlan{}, 0, err
@@ -1270,12 +1391,11 @@ func reconcileConflictError(
 	for _, item := range plan.Items {
 		if item.State ==
 			recordingest.ReconcileStateConflict {
-			return fmt.Errorf(
-				"FI relational reconcile conflict for source=%q generation=%q: %s",
-				item.Candidate.SourceID,
-				item.Candidate.GenerationID,
-				item.Detail,
-			)
+			return &sourceReconcileConflictError{
+				Detail:       item.Detail,
+				GenerationID: item.Candidate.GenerationID,
+				SourceID:     item.Candidate.SourceID,
+			}
 		}
 	}
 

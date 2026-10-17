@@ -27,8 +27,9 @@ var ErrRecordedGenerationConflict = errors.New(
 
 // DurableConfig defines the immutable backend recorder receipt boundary.
 type DurableConfig struct {
-	RootDir  string
-	Semantic Config
+	RootDir          string
+	Semantic         Config
+	SourceNamespaces bool
 }
 
 // RecordedDisposition describes how one semantically validated generation
@@ -199,9 +200,21 @@ func publishRecordedSemanticResult(
 			receiptDigest[:],
 		)
 
+	receiptRoot := config.RootDir
+	if config.SourceNamespaces {
+		var err error
+		receiptRoot, err = recordedSourcePublicationDirectory(
+			config.RootDir,
+			receipt.Descriptor.SourceID,
+		)
+		if err != nil {
+			return DurableResult{}, err
+		}
+	}
+
 	finalPath :=
 		filepath.Join(
-			config.RootDir,
+			receiptRoot,
 			recordedObjectName(
 				receipt.Descriptor.SourceID,
 				receipt.Descriptor.GenerationID,
@@ -210,7 +223,7 @@ func publishRecordedSemanticResult(
 
 	disposition, err :=
 		publishRecordedReceipt(
-			config.RootDir,
+			receiptRoot,
 			finalPath,
 			raw,
 		)

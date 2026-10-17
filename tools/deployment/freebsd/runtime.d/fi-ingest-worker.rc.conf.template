@@ -3,5 +3,9 @@
 
 fi_ingest_worker_enable="YES"
 
+# Namespaced ingest requires completed migration and operator approval.
+# The installer must not silently activate this mode.
+fi_ingest_worker_namespaces="NO"
+
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"

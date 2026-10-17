@@ -100,6 +100,12 @@ func ApplyDirectories(config Config) error {
 		return err
 	}
 
+	// Inspect both persistent ingest-state children before
+	// any directory-layer mutation.
+	if err := m1PrecheckInstalledIngestStateChildren(config); err != nil {
+		return err
+	}
+
 	mutator := systemDirectoryMutator{}
 
 	for _, spec := range hostSpecs {
@@ -110,6 +116,12 @@ func ApplyDirectories(config Config) error {
 		); err != nil {
 			return err
 		}
+	}
+
+	// The installer owns this provisioning step. The worker
+	// itself must never create or repair these directories.
+	if err := m1ApplyInstalledIngestStateChildren(config); err != nil {
+		return err
 	}
 
 	for _, spec := range jailSpecs {
@@ -736,6 +748,22 @@ func directorySpecs(
 		)
 	}
 
+	ingestDataset, ok := byTarget[root+"/ingest"]
+	if !ok {
+		return nil, nil, fmt.Errorf(
+			"missing FI ingest-state dataset specification",
+		)
+	}
+
+	hostSpecs = append(hostSpecs, hostDirectorySpec{
+		Dataset: ingestDataset,
+		GID:     gid,
+		Mode:    0o700,
+		Name:    "persistent ingest-state directory",
+		Path:    "/var/db/fi/ingest",
+		UID:     uid,
+	})
+
 	roots := jailRootSpecs(config)
 	if len(roots) != 3 {
 		return nil, nil, fmt.Errorf(
@@ -776,6 +804,7 @@ func directorySpecs(
 				directorySpec(ingestRoot, "var/db/fi/custody/generation", 0, 0, 0o755),
 				directorySpec(ingestRoot, "var/db/fi/custody/recorded", 0, 0, 0o755),
 				directorySpec(ingestRoot, "var/db/fi/custody/ready", 0, 0, 0o755),
+				directorySpec(ingestRoot, "var/db/fi/ingest", 0, 0, 0o755),
 				directorySpec(ingestRoot, "usr/local/etc/fi", 0, 0, 0o755),
 				directorySpec(ingestRoot, "var/run/fi", uid, gid, 0o700),
 			},
