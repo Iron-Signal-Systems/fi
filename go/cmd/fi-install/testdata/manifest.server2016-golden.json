@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "product": "FI Windows Source",
+  "release_id": "server2016-golden-20260927",
+  "platform": "windows",
+  "architecture": "amd64",
+  "files": [
+    {
+      "role": "FICollector",
+      "name": "fi.exe",
+      "sha256": "4D778B7A738B89A3920714C22D94D95EE881311D3CDB97BB7D5A3CC8C3369CDB"
+    },
+    {
+      "role": "FIUSNReader",
+      "name": "fi-usn.exe",
+      "sha256": "974B8302AA8E2EB4AAC49E24E1910BBD50E4BF64B6B7B9EAA7B9DD8D312C3BDB"
+    },
+    {
+      "role": "FIObjReader",
+      "name": "fi-obj.exe",
+      "sha256": "0369D0BB91CC9D4C4D069B21DDA51462F81D74540E0A5E31A876597D64E4216E"
+    },
+    {
+      "role": "FISender",
+      "name": "fi-sender.exe",
+      "sha256": "CD0C13F28263210A8C9200E7337162394ACDD61B46BC784CD0FE9DFC32B683FE"
+    }
+  ]
+}

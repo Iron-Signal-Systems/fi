@@ -98,7 +98,7 @@ func runGenerationQueue(ctx context.Context, config senderConfig) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if !errors.Is(err, transportsender.ErrRetryableTransport) {
+		if !retryableSenderTransportState(err) {
 			return fmt.Errorf("FI generation transport fail-stopped: %w", err)
 		}
 

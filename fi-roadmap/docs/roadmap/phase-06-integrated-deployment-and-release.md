@@ -12,12 +12,79 @@ The currently proposed backend direction is documented in
 The accepted Linux Phase 3 service remains part of FI's engineering history
 regardless of the final Phase 6 deployment platform.
 
+## Current Windows source installer status
+
+The native Go Windows source installer is now a substantial implemented Phase 6
+component rather than only a future release responsibility.
+
+Current implemented Windows installer capabilities include:
+
+- authoritative host/AD/PKI/configuration/service/package discovery;
+- explicit environment and deployment-input prerequisite evaluation;
+- exact Windows Server build profiles;
+- desired-state planning with `BLOCKED`, `QUESTION`, `NO CHANGE`, `CREATE`, and
+  `RECONCILE` outcomes;
+- apply-by-default and explicit `-plan-only` behavior;
+- interactive or validated configuration-file deployment input;
+- exact configuration approval;
+- shared Enterprise CA template-publication approval;
+- Approval 1 for AD/PKI mutations;
+- post-Approval-1 rediscovery and sealed Approval 2;
+- Approval 2 for local FI mutation;
+- per-host gMSA derivation and local installation;
+- source certificate enrollment;
+- transport trust and CRL installation;
+- FI release-trust policy validation/installation;
+- manifest, detached-signature, payload-hash, Authenticode, and signer-policy
+  validation;
+- five-service SCM reconciliation;
+- local rights, group, ACL, and CNG-key ACL reconciliation;
+- receiver mTLS activation;
+- Receiver Pending behavior with FISender Manual/Stopped;
+- executable-name migration from legacy runtime names to canonical names;
+- actual running-process-image verification;
+- transaction rollback ownership;
+- service/broker/collector readiness verification;
+- durable installer records; and
+- converged-state idempotency.
+
+The authoritative operating description is:
+
+```text
+docs/WINDOWS-INSTALLER.md
+```
+
+Current dated installer acceptance records include Server 2019 migration and
+backend testing (October 9â€“12), and Server 2022 build `20348` signed-installer,
+receiver and PostgreSQL acceptance (October 17). See
+`docs/WINDOWS-INSTALLER.md`, `docs/acceptance/README.md`, and the dated
+acceptance records; they are bounded tests, not final Phase 6 signoff.
+
+### Current build boundary
+
+The installer contains discovery profiles for:
+
+```text
+Windows Server 2016  build 14393
+Windows Server 2019  build 17763
+Windows Server 2022  build 20348
+Windows Server 2025  build 26100
+```
+
+At the current source checkpoint the exact-build FIObjReader mutation gate is
+enabled for builds `14393`, `17763`, `20348`, and `26100`. This preserves the
+separately characterized Server 2025 work. Server 2022 has a later dated
+October 17 full sender-activation and backend-ingest acceptance. Exact build
+enablement, prior lab acceptance, current signed-candidate acceptance and final
+product release authorization remain separate boundaries.
+
 ## Integrated Scope
 
 The release combines:
 
 - Windows File & Identity Intelligence;
 - governed-root configuration;
+- Windows source installation and upgrade/reconciliation;
 - gMSA identity requirements;
 - accepted Windows NTFS/ADS collection;
 - Secure Record Transport;
@@ -72,6 +139,9 @@ Phase 6 owns:
 - release packaging; and
 - release documentation.
 
+The current Windows source installer closes part of this responsibility set, but
+does not by itself close Gate 6.
+
 ## Integrated Authority Boundary
 
 The release must preserve:
@@ -98,6 +168,9 @@ co-located on the same backend appliance.
 The release must remain understandable and recoverable across representative:
 
 - Windows source restart;
+- Windows source installation interruption;
+- Windows source upgrade/reconciliation interruption;
+- receiver-unavailable installation / Receiver Pending;
 - backend host restart;
 - individual backend service/jail restart;
 - authoritative database restart;
@@ -121,6 +194,15 @@ The release must remain understandable and recoverable across representative:
 FI's immutable journal/history should still explain what happened, what FI did,
 what succeeded, what failed, what was rejected, what became incomplete, what
 recovered, and what changed.
+
+Installer-specific failures must additionally expose:
+
+- exact approved plan/boundary digests;
+- release/package identity;
+- applied mutation authorities;
+- rollback attempt/error state;
+- post-mutation convergence state; and
+- final convergence state.
 
 Projection-specific failures must additionally expose:
 
@@ -152,6 +234,26 @@ Filesystem/ZFS snapshots, where used, are storage/recovery mechanisms and do not
 replace PostgreSQL-consistent backup/recovery semantics or the Published FI
 Projection publication contract.
 
+## Remaining Windows installer release work
+
+Before the Windows source installer is treated as a completed product release
+boundary, Phase 6 still needs at least:
+
+- candidate-specific installer revalidation on each selected supported Windows
+  build, retaining prior Server 2022/2025 acceptance and documenting which later
+  audit/SACL and toolchain changes were actually exercised;
+- clean fresh-install acceptance from a release package;
+- update acceptance from a supported prior installed release;
+- rollback acceptance across representative interruption points;
+- receiver-available fresh-install and recovery acceptance across the release
+  matrix (the October 17 Server 2022 sender-only activation already passed);
+- repeatable signed release-package build/provenance;
+- final review and acceptance of `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`
+  covering one-command configuration installation and failure behavior;
+- supported upgrade/rollback compatibility policy; and
+- release-level CI/acceptance automation appropriate to the supported Windows
+  and backend platforms.
+
 ## Gate 6 — Integrated Release Acceptance
 
 Gate 6 proves a complete candidate can be freshly installed, baselined, operated,
@@ -162,6 +264,8 @@ historical integrity or explainability.
 Gate 6 additionally proves:
 
 - the supported backend topology is reproducibly installed;
+- the supported Windows source topology is reproducibly installed and
+  reconciled;
 - service/network authority boundaries match the documented deployment;
 - authoritative PostgreSQL can be restored without relying on the query database;
 - the query database can be destroyed and rebuilt from authoritative FI history;

@@ -17,8 +17,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 type senderTrustFixture struct {
@@ -127,8 +125,7 @@ func TestValidateSenderConfig(t *testing.T) {
 func TestValidateSourceTransportIdentity(t *testing.T) {
 	certificate := &x509.Certificate{
 		Subject: pkix.Name{
-			CommonName:         "iss-fs-01.iss.local",
-			OrganizationalUnit: []string{transporttrust.TransportOrganizationalUnit},
+			CommonName: "iss-fs-01.iss.local",
 		},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -141,14 +138,31 @@ func TestValidateSourceTransportIdentity(t *testing.T) {
 		t.Fatalf("validateSourceTransportIdentity() error = %v", err)
 	}
 
-	wrongRole := *certificate
-	wrongRole.Subject = certificate.Subject
-	wrongRole.Subject.OrganizationalUnit = []string{"wrong"}
+	wrongSource := *certificate
+	wrongSource.Subject = pkix.Name{CommonName: "other.iss.local"}
 	if err := validateSourceTransportIdentity(
-		&wrongRole,
+		&wrongSource,
 		"iss-fs-01.iss.local",
 	); err == nil {
-		t.Fatal("validateSourceTransportIdentity(wrong role) error = nil")
+		t.Fatal("validateSourceTransportIdentity(wrong source) error = nil")
+	}
+
+	missingSignature := *certificate
+	missingSignature.KeyUsage = x509.KeyUsageKeyEncipherment
+	if err := validateSourceTransportIdentity(
+		&missingSignature,
+		"iss-fs-01.iss.local",
+	); err == nil {
+		t.Fatal("validateSourceTransportIdentity(missing signature use) error = nil")
+	}
+
+	missingClientAuth := *certificate
+	missingClientAuth.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	if err := validateSourceTransportIdentity(
+		&missingClientAuth,
+		"iss-fs-01.iss.local",
+	); err == nil {
+		t.Fatal("validateSourceTransportIdentity(missing client auth) error = nil")
 	}
 }
 

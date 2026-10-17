@@ -22,6 +22,7 @@ const (
 	operationRead        uint16 = 2
 	operationContainment uint16 = 3
 	operationSACL        uint16 = 4
+	operationAuditPolicy uint16 = 5
 
 	requestHeaderSize  = 24
 	responseHeaderSize = 76
@@ -98,7 +99,7 @@ func readRequest(reader io.Reader) (request, error) {
 	rootLength := binary.LittleEndian.Uint32(header[8:12])
 	payload := binary.LittleEndian.Uint64(header[12:20])
 	auxiliary := binary.LittleEndian.Uint32(header[20:24])
-	if rootLength == 0 || rootLength > maxRootBytes {
+	if rootLength > maxRootBytes || (rootLength == 0 && operation != operationAuditPolicy) {
 		return request{}, errors.New("invalid FI USN governed-root length")
 	}
 
@@ -115,6 +116,10 @@ func readRequest(reader io.Reader) (request, error) {
 		}
 		if auxiliary != 0 {
 			return request{}, errors.New("FI USN read request reserved field is not zero")
+		}
+	case operationAuditPolicy:
+		if rootLength != 0 || payload != 0 || auxiliary != 0 {
+			return request{}, errors.New("FI audit-policy request must contain no root or parameters")
 		}
 	case operationContainment, operationSACL:
 		if payload >= 1<<48 {
@@ -142,7 +147,7 @@ func readRequest(reader io.Reader) (request, error) {
 
 func writeRequest(writer io.Writer, value request) error {
 	rootBytes := []byte(value.GovernedRoot)
-	if len(rootBytes) == 0 || len(rootBytes) > maxRootBytes || !utf8.Valid(rootBytes) {
+	if len(rootBytes) > maxRootBytes || (len(rootBytes) == 0 && value.Operation != operationAuditPolicy) || !utf8.Valid(rootBytes) {
 		return errors.New("invalid FI USN governed root")
 	}
 
@@ -161,6 +166,10 @@ func writeRequest(writer io.Writer, value request) error {
 			return errors.New("FI USN read request contains unexpected containment fields")
 		}
 		payload = uint64(value.StartUSN)
+	case operationAuditPolicy:
+		if value.GovernedRoot != "" || value.StartUSN != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
+			return errors.New("FI audit-policy request must contain no root or parameters")
+		}
 	case operationContainment, operationSACL:
 		if value.StartUSN != 0 {
 			return errors.New("FI privileged object request has unexpected start USN")

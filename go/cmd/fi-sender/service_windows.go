@@ -187,6 +187,18 @@ func (service *fiSenderService) Execute(
 				)
 			}
 
+			if persistErr := persistSenderRuntimeError(
+				err,
+			); persistErr != nil {
+				err = errors.Join(
+					err,
+					fmt.Errorf(
+						"persist FI sender terminal runtime error: %w",
+						persistErr,
+					),
+				)
+			}
+
 			return finish(err)
 
 		case request, ok := <-requests:

@@ -106,7 +106,7 @@ func runConfiguredPolicyHelper(t *testing.T) {
 		dir,
 		999,
 		CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("a", 64),
 		},
 	)
@@ -141,7 +141,7 @@ func runConfiguredPolicyHelper(t *testing.T) {
 		filepath.Join(dir, "wrong-directory"),
 		999,
 		CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("b", 64),
 		},
 	)

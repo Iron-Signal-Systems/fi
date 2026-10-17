@@ -260,7 +260,7 @@ func newRetirementFixture(t *testing.T) retirementFixture {
   "data_sha256": "` + dataSHA256 + `",
   "data_file": "batch-` + batchID + `.jsonl",
   "collector": {
-    "executable_path": "C:\\Program Files\\FI\\fi.exe",
+    "executable_path": "C:\\Program Files\\FI\\fi-collector.exe",
     "executable_sha256": "` + strings.Repeat("a", 64) + `"
   },
   "created_at": "2026-09-12T22:00:00.000000000Z",

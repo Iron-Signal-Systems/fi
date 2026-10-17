@@ -282,7 +282,7 @@ func newOutboundStageFixture(t *testing.T) outboundStageFixture {
 		spoolDir,
 		2,
 		spool.CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("a", 64),
 		},
 	)

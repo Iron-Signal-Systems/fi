@@ -43,6 +43,62 @@ release name is the same.
 
 ---
 
+## Native installer mutation profile
+
+Windows runtime characterization/Gate 1 acceptance and native installer mutation
+acceptance are related but distinct boundaries.
+
+The native installer currently recognizes exact discovery profiles for:
+
+```text
+Windows Server 2016    10.0.14393
+Windows Server 2019    10.0.17763
+Windows Server 2022    10.0.20348
+Windows Server 2025    10.0.26100
+```
+
+The integrated installer prerequisite also requires the exact-build
+FIObjReader direct-right mutation contract. At source checkpoint `9410c48`,
+this build gate is enabled for all four explicitly characterized builds.
+
+| Windows Server | Build | Installer desired-state mutation |
+|---|---:|---|
+| 2016 | 14393 | Enabled |
+| 2019 | 17763 | Enabled |
+| 2022 | 20348 | Enabled; signed-installer Approval 2 and end-to-end ingest accepted 2026-10-17 |
+| 2025 | 26100 | Enabled; independently characterized earlier Server 2025 runtime and installer work; validate each new candidate separately |
+
+Enabling the exact-build mutation gate does not assert universal production
+readiness. Prior Server 2025 acceptance remains valid within its tested scope;
+it does not automatically establish a fresh run of every later audit/SACL or
+security-toolchain change on Server 2025.
+
+See `docs/WINDOWS-INSTALLER.md`.
+
+---
+
+## Recent native installer acceptance
+
+The older Gate 1 and production-service results below are retained verbatim as
+historical results for the binaries and topology tested. Separately, the native
+five-service installer has progressed through Server 2019 and Server 2022
+acceptance, with previous Server 2025 installer work characterized independently.
+
+| Date | Build | Observed acceptance scope |
+|---|---|---|
+| 2026-10-09 | 17763 | Canonical executable-name migration, Approval 2 recovery routing, Receiver Pending and idempotency |
+| 2026-10-10 | 17763 | Signed installer and FreeBSD receiver/backend recovery proof |
+| 2026-10-12 | 17763 | M22K4N installed runtime, file history, backend ingest and reboot persistence; recorded warnings remain open |
+| 2026-10-17 | 20348 | M22K4Q signed installer, sender-only Approval 2, five running services, mutual TLS and four accepted generations / 1,033 committed records |
+
+Earlier Server 2025 build `26100` production-service, protected-object,
+restart and cold-reboot acceptance, and subsequent native installer work,
+remain recognized; do not rewrite them as missing just because the latest
+October 17 acceptance record covers Server 2022. The October 17 current-source
+candidate was not represented as a Server 2025 rerun.
+
+Source: `docs/WINDOWS-INSTALLER.md` and the dated acceptance records.
+
 ## Common split-privilege architecture
 
 The accepted Gate 1 USN boundary uses the two service identities below.
@@ -384,14 +440,14 @@ Production acceptance established:
 
 ---
 
-## Current four-service Windows source runtime lifecycle
+## Historical four-service Windows source runtime lifecycle
 
 The earlier release-specific production-pair results remain historical acceptance
 for the binaries and runtime topology tested at that time. They are not rewritten
 to imply that `FIObjReader` or the later SCM-owned `FISender` existed in those
 runs.
 
-The current complete Windows source runtime was accepted on 2026-09-27 on:
+The then-current four-service Windows source runtime was accepted on 2026-09-27 on:
 
 ```text
 Host:                 ISS-FS-01

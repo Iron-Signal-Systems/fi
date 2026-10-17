@@ -194,7 +194,7 @@ func writePublishedBatch(t *testing.T, dir string) (string, spool.Manifest) {
 		DataSHA256:      hex.EncodeToString(dataDigest[:]),
 		DataFile:        dataName,
 		Collector: spool.CollectorIdentity{
-			ExecutablePath:   `C:\Program Files\FI\fi.exe`,
+			ExecutablePath:   `C:\Program Files\FI\fi-collector.exe`,
 			ExecutableSHA256: strings.Repeat("a", 64),
 		},
 		CreatedAt:   "2026-09-12T18:00:00.000000000Z",

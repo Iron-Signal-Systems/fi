@@ -602,17 +602,6 @@ func validateGenerationCertificateRole(
 		)
 	}
 
-	if len(
-		certificate.Subject.OrganizationalUnit,
-	) != 1 ||
-		certificate.Subject.OrganizationalUnit[0] !=
-			transporttrust.BatchSigningOrganizationalUnit {
-		return fmt.Errorf(
-			"batch-signing certificate organizational unit must be exactly %q",
-			transporttrust.BatchSigningOrganizationalUnit,
-		)
-	}
-
 	if !strings.EqualFold(
 		certificate.Subject.CommonName,
 		descriptor.SourceID,
