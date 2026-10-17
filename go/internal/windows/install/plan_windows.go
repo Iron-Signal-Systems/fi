@@ -83,7 +83,7 @@ func BuildPlanWithInputs(
 		},
 		Approvals: []string{
 			"Approval 1: AD / KDS / gMSA / PKI changes",
-			"Approval 2: local FI configuration / binaries / privileges / ACLs / services",
+			"Approval 2: local FI configuration / Windows audit policy / binaries / privileges / ACLs / services",
 		},
 	}
 
@@ -130,6 +130,8 @@ func BuildPlanWithInputs(
 
 	planHostAndOS(&plan, report)
 	planConfiguration(&plan, &report, inputs)
+	planWindowsAudit(&plan, report)
+	planWindowsSACL(&plan, report)
 	supplementACLDiscoveryForPlan(&report)
 	planActiveDirectory(&plan, report, identities, identityErr)
 	planLocalGMSAs(&plan, report, identities, identityErr)
@@ -823,6 +825,17 @@ func planLocalGMSAs(
 					Action:    planActionNoChange,
 					Authority: "LOCAL ID",
 					Detail:    "AD gMSA exists and the native Netlogon local service-account store contains the identity",
+					Target:    identity.Account,
+				},
+			)
+
+		case "stale_registration":
+			plan.Actions = append(
+				plan.Actions,
+				PlanAction{
+					Action:    planActionReconcile,
+					Authority: "LOCAL ID",
+					Detail:    "native Netlogon registration resolves to a different SID than the current AD gMSA; after Approval 2, rebind this exact local identity before any other local mutation; refuse while FI services exist",
 					Target:    identity.Account,
 				},
 			)

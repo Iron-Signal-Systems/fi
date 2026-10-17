@@ -8,6 +8,7 @@ package install
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -198,17 +199,40 @@ func discoverGMSAs(report *Report) {
 
 		state := "not_installed"
 		status := checkInfo
+		localSIDValue := notKnown
+		adSIDValue := notKnown
 		if present {
 			state = "installed"
 			status = checkPass
+			adState, found := findADGMSA(report.AD.GMSAs, sam)
+			if !found || strings.TrimSpace(adState.SID) == "" {
+				state = notKnown
+				status = checkFail
+			} else {
+				adSIDValue = strings.ToUpper(strings.TrimSpace(adState.SID))
+				localSID, buffer, lookupErr := lookupAccountSID(account)
+				if lookupErr != nil {
+					state = notKnown
+					status = checkFail
+				} else {
+					localSIDValue = strings.ToUpper(localSID.String())
+					runtime.KeepAlive(buffer)
+					if localSIDValue != adSIDValue {
+						state = "stale_registration"
+						status = checkInfo
+					}
+				}
+			}
 		}
 
 		detail := fmt.Sprintf(
-			"account=%s sam=%s ad=present netlogon_present=%t state=%s",
+			"account=%s sam=%s ad=present netlogon_present=%t state=%s ad_sid=%s local_sid=%s",
 			account,
 			sam,
 			present,
 			state,
+			adSIDValue,
+			localSIDValue,
 		)
 
 		report.GMSAs = append(

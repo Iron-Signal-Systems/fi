@@ -60,6 +60,10 @@ func installerMutationSupportedBuild(
 func objReaderRightsMutationEnabledBuild(
 	buildNumber uint32,
 ) bool {
+	if buildNumber == 26100 {
+		return objReaderRightsMutationEnabledBuild(20348)
+	}
+
 	switch buildNumber {
 	case 14393, 17763, 20348:
 		return true

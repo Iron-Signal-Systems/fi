@@ -8,6 +8,7 @@ package usnbroker
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/auditpolicy"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnraw"
 	"golang.org/x/sys/windows"
 )
@@ -308,6 +310,22 @@ func handleConnection(
 	}
 
 	switch value.Operation {
+	case operationAuditPolicy:
+		// The Collector service SID is already authenticated above. The request
+		// contains no parameters; only four fixed policy flags can be returned.
+		observations, err := auditpolicy.QueryRequired()
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		if len(observations) != 4 {
+			return writeFailure(stream, errors.New("FI audit-policy contract must contain four subcategories"))
+		}
+		data := make([]byte, 4*len(observations))
+		for i, observation := range observations {
+			binary.LittleEndian.PutUint32(data[i*4:(i+1)*4], observation.Flags)
+		}
+		return writeResponse(stream, response{Data: data})
+
 	case operationQuery:
 		allowed, err := authority.allowsVolume(value.GovernedRoot)
 		if err != nil {

@@ -443,6 +443,14 @@ func executeApproval2ControllerWithBackend(
 				}
 		}
 
+		// Windows audit policy and SACL mutations are approved durable host
+		// prerequisites, not FI-owned reversible configuration. Report this
+		// clearly even when another Approval 2 step is the failing step.
+		if planHasMutationAuthority(currentPlan, "WINDOWS AUDIT") ||
+			planHasMutationAuthority(currentPlan, "WINDOWS SACL") {
+			cause = fmt.Errorf("%w; approved Windows audit/SACL prerequisites may remain active after rollback; rediscovery and renewed Approval 2 will reconcile them on retry", cause)
+		}
+
 		result.RollbackErrors =
 			rollbackApproval2ControllerSteps(
 				steps,
@@ -595,6 +603,11 @@ func executeApproval2ControllerWithBackend(
 				Target:    "FI transport trust",
 			},
 		)
+	}
+
+	if planHasMutationAuthority(currentPlan, "WINDOWS AUDIT") ||
+		planHasMutationAuthority(currentPlan, "WINDOWS SACL") {
+		fmt.Fprintln(writer, "APPROVED PERSISTENT WINDOWS SECURITY: audit policy and governed-root SACL changes remain on the host even if later FI installation steps fail; rerunning fi-install re-evaluates any remaining requirements.")
 	}
 
 	if approval2RemainingLocalRequired(
@@ -1032,6 +1045,16 @@ func validateApproval2ControllerMutationScope(
 				)
 			}
 
+		case "WINDOWS AUDIT", "WINDOWS SACL":
+			if action.Action != planActionReconcile {
+				return fmt.Errorf(
+					"Approval 2 %s supports RECONCILE only; action=%s target=%s",
+					action.Authority,
+					action.Action,
+					action.Target,
+				)
+			}
+
 		case "RELEASE TRUST", "PACKAGE", "SCM":
 			if action.Action != planActionCreate &&
 				action.Action != planActionReconcile {
@@ -1048,6 +1071,18 @@ func validateApproval2ControllerMutationScope(
 				"Approval 2 mutating authority %q is not implemented by the current controller; target=%s",
 				action.Authority,
 				action.Target,
+			)
+		}
+	}
+
+	// The delegated local transaction owns policy and SACL rollback, but its
+	// approved plan must have the complete, exact Windows Security contract.
+	if planHasMutationAuthority(plan, "WINDOWS AUDIT") ||
+		planHasMutationAuthority(plan, "WINDOWS SACL") {
+		if _, err := approvedWindowsSecurityPreStartRoots(plan); err != nil {
+			return fmt.Errorf(
+				"Approval 2 Windows Security mutation contract invalid: %w",
+				err,
 			)
 		}
 	}
@@ -1175,6 +1210,8 @@ func approval2RemainingLocalRequired(
 		"SCM",
 		"ACL",
 		"RUNTIME",
+		"WINDOWS AUDIT",
+		"WINDOWS SACL",
 	} {
 		if planHasMutationAuthority(
 			plan,

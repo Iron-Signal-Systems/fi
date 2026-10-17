@@ -24,6 +24,7 @@ var (
 
 type serviceWindowsSecurityCycleSummary struct {
 	Status                  configuredSecurityStatus
+	CoverageStatus          records.WindowsSecurityCoverageStatus
 	ReadWindows             int
 	SourceMatchingEvents    int
 	SelectedEvents          int
@@ -142,6 +143,7 @@ func runServiceWindowsSecurityLoop(
 			ObservedAt:                 serviceNow(),
 			SecurityInterval:           interval.String(),
 			Outcome:                    outcome,
+			SecurityCoverageStatus:     string(summary.CoverageStatus),
 			SecurityReadWindows:        summary.ReadWindows,
 			SecuritySourceMatches:      summary.SourceMatchingEvents,
 			SecuritySelectedEvents:     summary.SelectedEvents,
@@ -382,8 +384,13 @@ func summarizeServiceWindowsSecurity(
 	summary configuredSecuritySummary,
 	moreAvailable bool,
 ) serviceWindowsSecurityCycleSummary {
+	var coverageStatus records.WindowsSecurityCoverageStatus
+	if summary.Coverage != nil {
+		coverageStatus = summary.Coverage.Status
+	}
 	return serviceWindowsSecurityCycleSummary{
 		Status:                  summary.Status,
+		CoverageStatus:          coverageStatus,
 		ReadWindows:             summary.ReadWindows,
 		SourceMatchingEvents:    summary.SourceMatchingEvents,
 		SelectedEvents:          summary.SelectedEvents,

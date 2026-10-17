@@ -82,6 +82,7 @@ type HostState struct {
 }
 
 type Report struct {
+	WindowsAudit  WindowsAuditState
 	ACLs          []ACLState
 	AD            ActiveDirectoryState
 	AccountRights []AccountRightsState
@@ -2054,6 +2055,7 @@ func Discover() Report {
 	discoverHost(&report)
 	discoverDomainJoin(&report)
 	discoverConfig(&report)
+	discoverWindowsAudit(&report)
 	discoverTransportTrust(&report)
 	discoverServices(&report)
 	discoverActiveDirectory(&report)

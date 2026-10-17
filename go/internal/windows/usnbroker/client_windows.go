@@ -8,10 +8,12 @@ package usnbroker
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/auditpolicy"
 	"golang.org/x/sys/windows"
 )
 
@@ -99,6 +101,27 @@ func Read(ctx context.Context, governedRoot string, startUSN int64) (Journal, []
 		return Journal{}, nil, errors.New("FIUSNReader returned an invalid USN buffer length")
 	}
 	return result.Journal, result.Data, nil
+}
+
+// QueryAuditPolicies requests the fixed FI effective audit-policy observations.
+// No arbitrary GUID, root, mask or policy-mutation parameter is accepted.
+func QueryAuditPolicies(ctx context.Context) ([]uint32, error) {
+	result, err := roundTrip(ctx, request{Operation: operationAuditPolicy})
+	if err != nil {
+		return nil, err
+	}
+	if result.Journal != (Journal{}) {
+		return nil, errors.New("FIUSNReader audit-policy response contained a USN journal")
+	}
+	const policyCount = 4
+	if len(auditpolicy.Required()) != policyCount || len(result.Data) != policyCount*4 {
+		return nil, fmt.Errorf("FIUSNReader audit-policy response contract mismatch: %d bytes", len(result.Data))
+	}
+	flags := make([]uint32, policyCount)
+	for i := range flags {
+		flags[i] = binary.LittleEndian.Uint32(result.Data[i*4 : (i+1)*4])
+	}
+	return flags, nil
 }
 
 // ReadSACL asks FIUSNReader for the bounded raw SACL descriptor of one exact

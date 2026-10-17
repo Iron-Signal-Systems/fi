@@ -102,6 +102,17 @@ func main() {
 		*apply &&
 			!*planOnly
 
+	// Legacy Approval 2 SACL rollback artifacts require operator review.
+	// Never attempt unsafe automatic security descriptor restoration.
+	// Check before release-trust prompts, discovery, or any new mutation.
+	// Planning-only mode remains strictly read-only.
+	if doApply {
+		if err := install.RecoverPendingWindowsSACLTransactions(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nFI SACL LEGACY TRANSACTION BLOCKED: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	inputs := install.PlanInputs{
 		GovernedRoots:   append([]string(nil), governedRoots...),
 		PKIChoice:       strings.TrimSpace(*pkiChoice),
@@ -374,7 +385,9 @@ func main() {
 	}
 
 	if !doApply {
-		if report.HasFailures() {
+		if environmentPrerequisites.HasFailures() ||
+			environmentPrerequisites.HasApprovals() ||
+			!planOnlyDiscoveryFailuresCovered(report, plan) {
 			os.Exit(1)
 		}
 		return
@@ -442,6 +455,85 @@ func main() {
 	writeFinalState(false)
 }
 
+func planOnlyDiscoveryFailuresCovered(
+	report install.Report,
+	plan install.InstallPlan,
+) bool {
+	if plan.HasBlockers() || plan.HasQuestions() {
+		return false
+	}
+
+	for _, check := range report.Checks {
+		if check.Status != "FAIL" {
+			continue
+		}
+
+		var authority string
+		var target string
+
+		switch check.Name {
+		case "FICollector/FISender direct Event Log Readers membership":
+			if !strings.Contains(check.Detail, "direct_member=false expected=true") {
+				return false
+			}
+			authority = "GROUPS"
+			target = plan.Identities.CollectorSender.Account + " -> Event Log Readers"
+
+		case "FIUSNReader direct local Administrator membership":
+			if !strings.Contains(check.Detail, "direct_member=false expected=true") {
+				return false
+			}
+			authority = "GROUPS"
+			target = plan.Identities.USNReader.Account + " -> Administrators"
+
+		case "FICollector/FISender service-logon right":
+			if check.Detail != "SeServiceLogonRight is missing" {
+				return false
+			}
+			authority = "RIGHTS"
+			target = plan.Identities.CollectorSender.Account
+
+		case "FIUSNReader service-logon right":
+			if check.Detail != "SeServiceLogonRight is missing" {
+				return false
+			}
+			authority = "RIGHTS"
+			target = plan.Identities.USNReader.Account
+
+		case "FIObjReader release-specific rights contract":
+			if !strings.Contains(check.Detail, "missing Se") &&
+				!strings.Contains(check.Detail, "forbidden Se") {
+				return false
+			}
+			authority = "RIGHTS"
+			target = plan.Identities.ObjReader.Account
+
+		default:
+			return false
+		}
+
+		if strings.TrimSpace(target) == "" {
+			return false
+		}
+
+		planned := false
+
+		for _, action := range plan.Actions {
+			if action.Action == "RECONCILE" &&
+				action.Authority == authority &&
+				action.Target == target {
+				planned = true
+				break
+			}
+		}
+
+		if !planned {
+			return false
+		}
+	}
+
+	return true
+}
 func validateApplyPKIChoice(
 	choice string,
 ) error {

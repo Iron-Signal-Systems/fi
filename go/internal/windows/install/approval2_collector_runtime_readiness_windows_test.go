@@ -47,10 +47,11 @@ func TestInspectApproval2CollectorRuntimeReadinessAcceptsCurrentSecurityCycle(
 				ObservedAt: "2026-10-08T11:03:25.000000000Z",
 			},
 			{
-				Version:    approval2CollectorRuntimeVersion,
-				RecordKind: "WindowsSecurityCatchUp",
-				ObservedAt: "2026-10-08T11:03:26.000000000Z",
-				Outcome:    "Complete",
+				Version:                approval2CollectorRuntimeVersion,
+				RecordKind:             "WindowsSecurityCatchUp",
+				ObservedAt:             "2026-10-08T11:03:26.000000000Z",
+				Outcome:                "Complete",
+				SecurityCoverageStatus: "Ready",
 			},
 		}
 
@@ -67,6 +68,28 @@ func TestInspectApproval2CollectorRuntimeReadinessAcceptsCurrentSecurityCycle(
 		t.Fatal(
 			"current-transaction Collector runtime was not accepted as ready",
 		)
+	}
+}
+
+func TestInspectApproval2CollectorRuntimeReadinessRejectsPartialCatchUp(t *testing.T) {
+	t.Parallel()
+	notBefore := time.Date(2026, time.October, 8, 11, 3, 24, 0, time.UTC)
+	records := []approval2CollectorRuntimeRecord{
+		{
+			Version:    approval2CollectorRuntimeVersion,
+			RecordKind: "ServiceStarted",
+			ObservedAt: "2026-10-08T11:03:25.000000000Z",
+		},
+		{
+			Version:    approval2CollectorRuntimeVersion,
+			RecordKind: "WindowsSecurityCatchUp",
+			ObservedAt: "2026-10-08T11:03:26.000000000Z",
+			Outcome:    "Partial",
+		},
+	}
+	ready, err := inspectApproval2CollectorRuntimeReadiness(records, notBefore)
+	if ready || err == nil || !strings.Contains(err.Error(), "Partial") {
+		t.Fatalf("Partial catch-up unexpectedly accepted: ready=%t err=%v", ready, err)
 	}
 }
 
@@ -376,7 +399,8 @@ func TestWaitForFICollectorRuntimeReadinessFromRediscoveryUsesInstalledConfigAnd
 					Add(2 * time.Millisecond).
 					Format(time.RFC3339Nano),
 
-				Outcome: "Complete",
+				Outcome:                "Complete",
+				SecurityCoverageStatus: "Ready",
 			},
 		},
 	)

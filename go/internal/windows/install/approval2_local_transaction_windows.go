@@ -80,6 +80,9 @@ func applyServer2016Approval2RemainingLocal(
 				),
 			)
 		}
+		if planHasMutationAuthority(plan, "WINDOWS AUDIT") || planHasMutationAuthority(plan, "WINDOWS SACL") {
+			base = fmt.Errorf("%w; approved Windows audit/SACL prerequisites may remain applied and will be rediscovered on the next installer run (never assume byte-exact SACL rollback)", base)
+		}
 		return nil, nil, base
 	}
 
@@ -296,6 +299,39 @@ func applyServer2016Approval2RemainingLocal(
 		)
 	}
 
+	// Windows audit policy and governed-root SACLs are durable, explicitly
+	// approved HOST prerequisites. Windows inheritance changes cannot be
+	// byte-exactly undone through the supported named-security APIs; never
+	// pretend these mutations are part of FI's rollback closure. If another
+	// Approval 2 step fails later, retrying the same installer command will
+	// discover and reconcile only the remaining host security requirements.
+	if planHasMutationAuthority(plan, "WINDOWS AUDIT") {
+		if _, err := applyApproval2WindowsAudit(); err != nil {
+			return fail("WINDOWS AUDIT", err)
+		}
+		applied = append(applied, AppliedMutation{
+			Authority: "WINDOWS AUDIT", Target: "PERSISTENT host policy: advanced audit precedence and FI audit subcategories",
+		})
+	}
+
+	if planHasMutationAuthority(plan, "WINDOWS SACL") {
+		if err := applyApproval2WindowsSACL(plan); err != nil {
+			return fail("WINDOWS SACL", err)
+		}
+		applied = append(applied, AppliedMutation{
+			Authority: "WINDOWS SACL", Target: "PERSISTENT approved governed-root audit rules (not rolled back on installer failure)",
+		})
+	}
+
+	// Fresh installs must never activate FICollector without effective
+	// Windows event-generation policy, readable Security channel, and
+	// complete governed-root SACL prerequisites.
+	if report.WindowsAudit.Known {
+		if err := verifyWindowsSecurityPreStart(plan); err != nil {
+			return fail("WINDOWS SECURITY PRESTART", err)
+		}
+	}
+
 	if activateCreatedServices != nil {
 		if err := activateCreatedServices(); err != nil {
 			return fail(
@@ -359,15 +395,17 @@ func applyServer2016Approval2RemainingLocal(
 			)
 		}
 
-		if err := waitForFICollectorRuntimeReadinessFromRediscovery(
-			Discover,
-			transactionID,
-			approval2CollectorRuntimeReadinessTimeout,
-		); err != nil {
-			return fail(
-				"COLLECTOR READINESS",
-				err,
-			)
+		if approval2CollectorRuntimeReadinessRequired(plan) {
+			if err := waitForFICollectorRuntimeReadinessFromRediscovery(
+				Discover,
+				transactionID,
+				approval2CollectorRuntimeReadinessTimeout,
+			); err != nil {
+				return fail(
+					"COLLECTOR READINESS",
+					err,
+				)
+			}
 		}
 	}
 
@@ -378,7 +416,7 @@ func applyServer2016Approval2RemainingLocal(
 			continue
 		}
 		switch action.Authority {
-		case "LOCAL ID", "CONFIG", "RELEASE TRUST", "PACKAGE", "RIGHTS", "GROUPS", "SCM", "ACL", "RUNTIME":
+		case "LOCAL ID", "CONFIG", "RELEASE TRUST", "PACKAGE", "RIGHTS", "GROUPS", "SCM", "ACL", "RUNTIME", "WINDOWS AUDIT", "WINDOWS SACL":
 			continue
 		default:
 			return fail(
@@ -397,6 +435,31 @@ func applyServer2016Approval2RemainingLocal(
 	_ = report
 
 	return steps, applied, nil
+}
+
+// The collector emits a ServiceStarted record only when it actually starts.
+// A sender-only repair must not require a new collector startup event.
+func approval2CollectorRuntimeReadinessRequired(plan InstallPlan) bool {
+	// PACKAGE replacement stops and restores running FI services, including
+	// FICollector, regardless of which binary triggered the replacement.
+	if planHasMutationAuthority(plan, "PACKAGE") {
+		return true
+	}
+
+	if planTargetMutates(plan, "RUNTIME", "FICollector") {
+		return true
+	}
+
+	// Existing FICollector SCM configuration changes do not imply a restart.
+	for _, action := range plan.Actions {
+		if action.Authority == "SCM" &&
+			action.Target == "FICollector" &&
+			action.Action == planActionCreate {
+			return true
+		}
+	}
+
+	return false
 }
 
 func approval2BrokerReadinessRequired(

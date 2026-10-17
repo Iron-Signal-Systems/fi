@@ -27,11 +27,12 @@ const (
 )
 
 type approval2CollectorRuntimeRecord struct {
-	Version    string `json:"version"`
-	RecordKind string `json:"record_kind"`
-	ObservedAt string `json:"observed_at"`
-	Outcome    string `json:"outcome,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Version                string `json:"version"`
+	RecordKind             string `json:"record_kind"`
+	ObservedAt             string `json:"observed_at"`
+	Outcome                string `json:"outcome,omitempty"`
+	SecurityCoverageStatus string `json:"security_coverage_status,omitempty"`
+	Error                  string `json:"error,omitempty"`
 }
 
 func resolveApproval2CollectorRuntimeStateDir(
@@ -69,6 +70,7 @@ func inspectApproval2CollectorRuntimeReadiness(
 	notBefore time.Time,
 ) (bool, error) {
 	serviceStarted := false
+	serviceStartedAt := time.Time{}
 	securityReady := false
 
 	for _, record := range records {
@@ -105,11 +107,29 @@ func inspectApproval2CollectorRuntimeReadiness(
 		switch record.RecordKind {
 		case "ServiceStarted":
 			serviceStarted = true
+			serviceStartedAt = observedAt
+			// A subsequent service start invalidates any earlier ready cycle.
+			securityReady = false
 
 		case "WindowsSecurityCatchUp":
+			if !serviceStarted || !observedAt.After(serviceStartedAt) {
+				// An earlier cycle cannot establish this service's readiness.
+				continue
+			}
 			switch record.Outcome {
-			case "Complete", "Partial":
+			case "Complete":
+				if record.SecurityCoverageStatus != "Ready" {
+					return false, fmt.Errorf(
+						"FICollector Windows Security catch-up is Complete but effective WindowsSecurityCoverage=%q; installation requires Ready",
+						strings.TrimSpace(record.SecurityCoverageStatus),
+					)
+				}
 				securityReady = true
+
+			case "Partial":
+				return false, errors.New(
+					"FICollector Windows Security catch-up is Partial; installation readiness requires Complete",
+				)
 
 			case "Failed":
 				detail :=

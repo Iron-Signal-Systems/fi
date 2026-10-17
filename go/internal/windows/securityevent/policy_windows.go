@@ -90,7 +90,10 @@ func queryAuditPolicy(guid windowsGUID, textGUID string) (records.WindowsSecurit
 		1,
 		uintptr(unsafe.Pointer(&output)),
 	)
-	if r1 == 0 {
+	// AuditQuerySystemPolicy returns Windows BOOLEAN, which is one byte.
+	// syscall.Proc.Call returns uintptr; bits above the low byte are not part
+	// of the BOOLEAN result and must not be used to determine success.
+	if byte(r1) == 0 {
 		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
 			return records.WindowsSecurityAuditPolicyObservation{}, callErr
 		}

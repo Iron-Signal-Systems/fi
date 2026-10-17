@@ -130,11 +130,26 @@ func reconcileApproval2LocalIdentities(
 	report Report,
 	plan InstallPlan,
 ) (func() error, error) {
-	return reconcileApproval2LocalIdentitiesWithBackend(
+	rollback, err := reconcileApproval2LocalIdentitiesWithBackend(
 		report,
 		plan,
 		nativeApproval2LocalIdentityBackend{},
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify every approved AD SID after registration/rebinding and BEFORE
+	// the controller creates configuration, services, rights or ACLs.
+	for _, identity := range desiredFIIdentityList(plan.Identities) {
+		if _, err := authoritativeDesiredFIIdentitySID(identity); err != nil {
+			return nil, errors.Join(
+				fmt.Errorf("FI gMSA SID convergence before local installation: %w", err),
+				rollback(),
+			)
+		}
+	}
+	return rollback, nil
 }
 
 func reconcileApproval2LocalIdentitiesWithBackend(
@@ -160,6 +175,10 @@ func reconcileApproval2LocalIdentitiesWithBackend(
 		return func() error {
 			return nil
 		}, nil
+	}
+
+	if approval2HasStaleLocalRegistration(report, targets) {
+		return reconcileApproval2StaleLocalRegistrations(report, plan, targets, backend)
 	}
 
 	// Revalidate every approved local identity before the first mutation. The
@@ -456,9 +475,9 @@ func approval2LocalIdentityTargets(
 			)
 		}
 
-		if local.State != "not_installed" {
+		if local.State != "not_installed" && local.State != "stale_registration" {
 			return nil, fmt.Errorf(
-				"Approval 2 LOCAL ID mutation for %s requires reviewed state=not_installed; observed=%s",
+				"Approval 2 LOCAL ID mutation for %s requires reviewed state=not_installed or stale_registration; observed=%s",
 				identity.SAMAccountName,
 				local.State,
 			)

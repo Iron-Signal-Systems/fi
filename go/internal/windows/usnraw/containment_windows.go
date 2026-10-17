@@ -81,6 +81,14 @@ func CheckContainment(
 	)
 	if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
 		switch {
+		case containmentServer2019():
+			return containmentCheckServer2019(
+				rootHandle,
+				rootPath,
+				fileReferenceNumber,
+				sequenceNumber,
+			)
+
 		case containmentServer2022():
 			return containmentCheckServer2022(
 				rootHandle,
