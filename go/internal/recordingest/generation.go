@@ -156,6 +156,7 @@ func loadRecordedGenerationWithTrust(
 	}()
 
 	artifactNames := make([]string, 0, receipt.Descriptor.ArtifactCount)
+	dataInspections := make(map[string]spool.DataInspection)
 	factory := func(descriptor transportgeneration.Descriptor) (transportgeneration.CanonicalArtifactHandler, error) {
 		if descriptor != receipt.Descriptor {
 			return nil, errors.New("FI Phase 3 custody descriptor does not match recorder receipt")
@@ -169,11 +170,21 @@ func loadRecordedGenerationWithTrust(
 			if err != nil {
 				return err
 			}
-			_, copyErr := io.Copy(file, reader)
+			dataArtifact := strings.HasPrefix(name, "batch-") && strings.HasSuffix(name, ".jsonl")
+			var inspection spool.DataInspection
+			var consumeErr error
+			if dataArtifact {
+				inspection, consumeErr = inspectStagedBatch(reader, file)
+			} else {
+				_, consumeErr = io.Copy(file, reader)
+			}
 			syncErr := file.Sync()
 			closeErr := file.Close()
-			if err := errors.Join(copyErr, syncErr, closeErr); err != nil {
+			if err := errors.Join(consumeErr, syncErr, closeErr); err != nil {
 				return err
+			}
+			if dataArtifact {
+				dataInspections[name] = inspection
 			}
 			artifactNames = append(artifactNames, name)
 			return nil
@@ -209,7 +220,7 @@ func loadRecordedGenerationWithTrust(
 		return nil, errors.New("FI Phase 3 current custody transfer does not match immutable recorder receipt")
 	}
 
-	batches, dataBytes, recordCount, err := inspectStagedBatches(stageDir, artifactNames, config.MaxManifestBytes)
+	batches, dataBytes, recordCount, err := inspectStagedBatches(stageDir, artifactNames, config.MaxManifestBytes, dataInspections)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +239,13 @@ func loadRecordedGenerationWithTrust(
 	}, nil
 }
 
-func inspectStagedBatches(stageDir string, names []string, maxManifestBytes uint64) ([]PreparedBatch, uint64, uint64, error) {
+// inspectStagedBatch verifies the exact bytes written to staging
+// without reading the staged file a second time.
+func inspectStagedBatch(reader io.Reader, writer io.Writer) (spool.DataInspection, error) {
+	return spool.InspectData(io.TeeReader(reader, io.MultiWriter(writer)))
+}
+
+func inspectStagedBatches(stageDir string, names []string, maxManifestBytes uint64, dataInspections map[string]spool.DataInspection) ([]PreparedBatch, uint64, uint64, error) {
 	if len(names) == 0 || len(names)%2 != 0 {
 		return nil, 0, 0, errors.New("FI Phase 3 staged generation does not contain complete data/manifest pairs")
 	}
@@ -252,14 +269,9 @@ func inspectStagedBatches(stageDir string, names []string, maxManifestBytes uint
 		}
 
 		dataPath := filepath.Join(stageDir, dataName)
-		dataFile, err := os.Open(dataPath)
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		inspection, inspectErr := spool.InspectData(dataFile)
-		closeErr := dataFile.Close()
-		if err := errors.Join(inspectErr, closeErr); err != nil {
-			return nil, 0, 0, fmt.Errorf("inspect FI Phase 3 batch %q data: %w", batchID, err)
+		inspection, ok := dataInspections[dataName]
+		if !ok {
+			return nil, 0, 0, fmt.Errorf("missing FI Phase 3 streamed inspection for batch %q", batchID)
 		}
 
 		manifestPath := filepath.Join(stageDir, manifestName)
