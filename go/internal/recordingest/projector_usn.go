@@ -83,6 +83,7 @@ INSERT INTO fi.usn_object_observation (
 		return fmt.Errorf("insert FI USN object observation: %w", err)
 	}
 
+	var reasonBatch pgx.Batch
 	for i, change := range value.Changes {
 		parentObjectID, err := ensureNTFSObject(ctx, tx, volumeID, change.ParentIdentity)
 		if err != nil {
@@ -135,10 +136,17 @@ INSERT INTO fi.usn_object_change (
 			return fmt.Errorf("insert FI USN object change: %w", err)
 		}
 		for reasonIndex, reason := range change.ReasonNames {
-			if _, err := tx.Exec(ctx, `INSERT INTO fi.usn_object_change_reason (source_record_id,change_ordinal,reason_ordinal,reason_name) VALUES ($1,$2,$3,$4)`, sourceRecordID, ordinal, reasonIndex+1, reason); err != nil {
-				return fmt.Errorf("insert FI USN object change reason: %w", err)
+			reasonBatch.Queue(`INSERT INTO fi.usn_object_change_reason (source_record_id,change_ordinal,reason_ordinal,reason_name) VALUES ($1,$2,$3,$4)`, sourceRecordID, ordinal, reasonIndex+1, reason)
+			if reasonBatch.Len() == usnReasonBatchLimit {
+				if err := flushUSNReasonBatch(ctx, tx, &reasonBatch); err != nil {
+					return err
+				}
 			}
 		}
+	}
+
+	if err := flushUSNReasonBatch(ctx, tx, &reasonBatch); err != nil {
+		return err
 	}
 
 	if value.NTFS != nil {
@@ -164,6 +172,20 @@ INSERT INTO fi.usn_object_change (
 			return err
 		}
 	}
+	return nil
+}
+
+const usnReasonBatchLimit = 256
+
+func flushUSNReasonBatch(ctx context.Context, tx pgx.Tx, batch *pgx.Batch) error {
+	if batch.Len() == 0 {
+		return nil
+	}
+	results := tx.SendBatch(ctx, batch)
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("insert FI USN change reason batch: %w", err)
+	}
+	*batch = pgx.Batch{}
 	return nil
 }
 
