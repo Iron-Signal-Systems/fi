@@ -194,6 +194,13 @@ func finishConfiguredSecurityContinuous(
 	}
 	summary.Coverage = &coverage
 
+	// Resolve every drive-letter scope through Windows before consuming any
+	// Security EventRecordIDs. A failed mapping must not advance the checkpoint.
+	scopes, err = securityevent.ExpandGovernedScopes(scopes)
+	if err != nil {
+		return err
+	}
+
 	spoolDir, err := spool.DefaultDir()
 	if err != nil {
 		return err
