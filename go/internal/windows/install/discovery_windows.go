@@ -60,16 +60,18 @@ type Check struct {
 }
 
 type ConfigState struct {
-	GovernedRoots   []string
-	Presence        string
-	Path            string
-	ReceiverAddress string
-	ReceiverName    string
-	SourceID        string
-	SpoolDir        string
-	StageDir        string
-	StateDir        string
-	VersionID       string
+	GovernedRoots       []string
+	Presence            string
+	Path                string
+	ReceiverAddress     string
+	ReceiverName        string
+	SourceID            string
+	SpoolDir            string
+	StageDir            string
+	StateDir            string
+	VersionID           string
+	USNReadBufferMiB    int
+	USNReobserveWorkers int
 }
 
 type HostState struct {
@@ -297,16 +299,18 @@ func discoverConfig(report *Report) {
 	}
 
 	report.Config = ConfigState{
-		GovernedRoots:   append([]string(nil), value.GovernedRoots...),
-		Path:            path,
-		Presence:        presencePresent,
-		ReceiverAddress: value.Receiver.Address,
-		ReceiverName:    value.Receiver.Name,
-		SourceID:        value.Source.ID,
-		SpoolDir:        value.Storage.SpoolDir,
-		StageDir:        value.Storage.StageDir,
-		StateDir:        value.Storage.StateDir,
-		VersionID:       value.VersionID,
+		GovernedRoots:       append([]string(nil), value.GovernedRoots...),
+		Path:                path,
+		Presence:            presencePresent,
+		ReceiverAddress:     value.Receiver.Address,
+		ReceiverName:        value.Receiver.Name,
+		SourceID:            value.Source.ID,
+		SpoolDir:            value.Storage.SpoolDir,
+		StageDir:            value.Storage.StageDir,
+		StateDir:            value.Storage.StateDir,
+		USNReadBufferMiB:    value.Collector.USNReadBufferMiB,
+		USNReobserveWorkers: value.Collector.USNReobserveWorkers,
+		VersionID:           value.VersionID,
 	}
 
 	report.addCheck(

@@ -27,6 +27,8 @@ const (
 	connectDelay    = 50 * time.Millisecond
 )
 
+var fiBrokerRequestPermit = make(chan struct{}, 1)
+
 var ErrPrivilegeUnavailable = errors.New("FIObjReader required Windows privilege unavailable")
 
 // ObserveObject asks the local FIObjReader service for one bounded observation
@@ -155,6 +157,16 @@ func roundTrip(ctx context.Context, value request) (response, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return response{}, err
+	}
+
+	// FIUSNReader/FIObjReader serves one pipe connection at a time. Queue
+	// concurrent collector requests instead of exhausting pipe-busy retries.
+	// The permit is local to this broker client and does not grant authority.
+	select {
+	case fiBrokerRequestPermit <- struct{}{}:
+		defer func() { <-fiBrokerRequestPermit }()
+	case <-ctx.Done():
+		return response{}, ctx.Err()
 	}
 
 	handle, err := connect(ctx)

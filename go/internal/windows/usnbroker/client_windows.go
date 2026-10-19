@@ -27,6 +27,8 @@ const (
 	windowsErrorPrivilegeNotHeld = 1314
 )
 
+var fiBrokerRequestPermit = make(chan struct{}, 1)
+
 var ErrSACLPrivilegeUnavailable = errors.New("FIUSNReader SeSecurityPrivilege unavailable")
 
 // CheckContainment asks FIUSNReader to determine whether one exact NTFS object
@@ -86,10 +88,12 @@ func Query(ctx context.Context, governedRoot string) (Journal, error) {
 // Read asks the local FIUSNReader service for one bounded raw USN buffer. The
 // caller remains responsible for parsing the returned data.
 func Read(ctx context.Context, governedRoot string, startUSN int64) (Journal, []byte, error) {
+	size := currentReadBufferMiB()
 	result, err := roundTrip(ctx, request{
-		Operation:    operationRead,
-		GovernedRoot: governedRoot,
-		StartUSN:     startUSN,
+		Operation:     operationRead,
+		GovernedRoot:  governedRoot,
+		StartUSN:      startUSN,
+		ReadBufferMiB: size,
 	})
 	if err != nil {
 		return Journal{}, nil, err
@@ -97,7 +101,7 @@ func Read(ctx context.Context, governedRoot string, startUSN int64) (Journal, []
 	if err := validateJournal(result.Journal); err != nil {
 		return Journal{}, nil, err
 	}
-	if len(result.Data) < 8 || len(result.Data) > MaxUSNDataBytes {
+	if len(result.Data) < 8 || len(result.Data) > int(size)*1024*1024 {
 		return Journal{}, nil, errors.New("FIUSNReader returned an invalid USN buffer length")
 	}
 	return result.Journal, result.Data, nil
@@ -206,6 +210,16 @@ func roundTrip(ctx context.Context, value request) (response, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return response{}, err
+	}
+
+	// FIUSNReader/FIObjReader serves one pipe connection at a time. Queue
+	// concurrent collector requests instead of exhausting pipe-busy retries.
+	// The permit is local to this broker client and does not grant authority.
+	select {
+	case fiBrokerRequestPermit <- struct{}{}:
+		defer func() { <-fiBrokerRequestPermit }()
+	case <-ctx.Done():
+		return response{}, ctx.Err()
 	}
 
 	handle, err := connect(ctx)

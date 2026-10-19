@@ -19,6 +19,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/checkpoint"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnbroker"
 )
 
 type configuredRootAction string
@@ -79,6 +80,12 @@ func runConfiguredCollector() {
 func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error) {
 	value, configPath, err := config.LoadDefault()
 	if err != nil {
+		return configuredRunSummary{}, err
+	}
+	if err := usnbroker.ConfigureReadBufferMiB(uint32(value.Collector.USNReadBufferMiB)); err != nil {
+		return configuredRunSummary{}, err
+	}
+	if err := usn.ConfigureReobserveWorkers(value.Collector.USNReobserveWorkers); err != nil {
 		return configuredRunSummary{}, err
 	}
 	if err := applyConfiguredSpoolPolicy(value); err != nil {

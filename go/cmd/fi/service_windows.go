@@ -38,6 +38,7 @@ type serviceRuntimeRecord struct {
 	ObservedAt                 string `json:"observed_at"`
 	CollectionInterval         string `json:"collection_interval,omitempty"`
 	USNInterval                string `json:"usn_interval,omitempty"`
+	USNReadBufferMiB           int    `json:"usn_read_buffer_mib,omitempty"`
 	SecurityInterval           string `json:"security_interval,omitempty"`
 	SupportingRefreshInterval  string `json:"supporting_refresh_interval,omitempty"`
 	Outcome                    string `json:"outcome,omitempty"`
@@ -69,6 +70,7 @@ type fiWindowsService struct {
 	operationalSnapshot       serviceOperationalSnapshot
 	collectionInterval        time.Duration
 	usnInterval               time.Duration
+	usnReadBufferMiB          int
 	securityInterval          time.Duration
 	supportingRefreshInterval time.Duration
 }
@@ -116,6 +118,7 @@ func runWindowsService(
 			operationalSnapshot:       operationalSnapshot,
 			collectionInterval:        collectionInterval,
 			usnInterval:               usnInterval,
+			usnReadBufferMiB:          operationalSnapshot.USNReadBufferMiB,
 			securityInterval:          securityInterval,
 			supportingRefreshInterval: supportingRefreshInterval,
 		},

@@ -27,7 +27,7 @@ func TestRequestRoundTripQuery(t *testing.T) {
 
 func TestRequestRoundTripRead(t *testing.T) {
 	var buffer bytes.Buffer
-	want := request{Operation: operationRead, GovernedRoot: `D:\CountyShares`, StartUSN: 123456}
+	want := request{Operation: operationRead, GovernedRoot: `D:\CountyShares`, StartUSN: 123456, ReadBufferMiB: 1}
 	if err := writeRequest(&buffer, want); err != nil {
 		t.Fatal(err)
 	}

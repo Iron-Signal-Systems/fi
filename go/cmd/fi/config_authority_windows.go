@@ -16,6 +16,8 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnbroker"
 )
 
 type serviceOperationalSnapshot struct {
@@ -23,6 +25,8 @@ type serviceOperationalSnapshot struct {
 	GovernedRoots           []string
 	StateDir                string
 	USNInterval             time.Duration
+	USNReadBufferMiB        int
+	USNReobserveWorkers     int
 	VersionID               string
 	WindowsSecurityInterval time.Duration
 }
@@ -63,6 +67,12 @@ func resolveServiceConfiguration(
 			config.Version11,
 		)
 	}
+	if err := usnbroker.ConfigureReadBufferMiB(uint32(value.Collector.USNReadBufferMiB)); err != nil {
+		return serviceOperationalSnapshot{}, 0, 0, err
+	}
+	if err := usn.ConfigureReobserveWorkers(value.Collector.USNReobserveWorkers); err != nil {
+		return serviceOperationalSnapshot{}, 0, 0, err
+	}
 	if err := applyConfiguredSpoolPolicy(value); err != nil {
 		return serviceOperationalSnapshot{}, 0, 0, err
 	}
@@ -82,6 +92,8 @@ func resolveServiceConfiguration(
 		GovernedRoots:           append([]string(nil), value.GovernedRoots...),
 		StateDir:                value.Storage.StateDir,
 		USNInterval:             value.Collector.USNEvery,
+		USNReadBufferMiB:        value.Collector.USNReadBufferMiB,
+		USNReobserveWorkers:     value.Collector.USNReobserveWorkers,
 		VersionID:               value.VersionID,
 		WindowsSecurityInterval: value.Collector.WindowsSecurityEvery,
 	}

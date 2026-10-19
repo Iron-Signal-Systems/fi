@@ -350,7 +350,7 @@ func handleConnection(
 			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested volume is not configured for FI")
 		}
 
-		journal, data, err := usnraw.Read(value.GovernedRoot, value.StartUSN)
+		journal, data, err := usnraw.Read(value.GovernedRoot, value.StartUSN, int(value.ReadBufferMiB)*1024*1024)
 		if err != nil {
 			return writeFailure(stream, err)
 		}

@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	ProtocolVersion = 1
-	MaxUSNDataBytes = 1024 * 1024
+	ProtocolVersion                = 2
+	DefaultUSNReadBufferMiB uint32 = 1
+	MaxUSNReadBufferMiB     uint32 = 64
+	MaxUSNDataBytes                = int(MaxUSNReadBufferMiB) * 1024 * 1024
 
 	MaxSACLDescriptorBytes = 128 * 1024
 
@@ -72,6 +74,7 @@ type request struct {
 	Operation           uint16
 	GovernedRoot        string
 	StartUSN            int64
+	ReadBufferMiB       uint32
 	FileReferenceNumber uint64
 	SequenceNumber      uint16
 }
@@ -81,6 +84,13 @@ type response struct {
 	Data      []byte
 	ErrorCode uint32
 	Error     string
+}
+
+func validateReadBufferMiB(size uint32) error {
+	if size < 1 || size > MaxUSNReadBufferMiB {
+		return fmt.Errorf("FI USN read buffer must be between 1 and %d MiB", MaxUSNReadBufferMiB)
+	}
+	return nil
 }
 
 func readRequest(reader io.Reader) (request, error) {
@@ -114,9 +124,10 @@ func readRequest(reader io.Reader) (request, error) {
 		if value.StartUSN < 0 {
 			return request{}, errors.New("FI USN start USN must not be negative")
 		}
-		if auxiliary != 0 {
-			return request{}, errors.New("FI USN read request reserved field is not zero")
+		if err := validateReadBufferMiB(auxiliary); err != nil {
+			return request{}, err
 		}
+		value.ReadBufferMiB = auxiliary
 	case operationAuditPolicy:
 		if rootLength != 0 || payload != 0 || auxiliary != 0 {
 			return request{}, errors.New("FI audit-policy request must contain no root or parameters")
@@ -155,23 +166,27 @@ func writeRequest(writer io.Writer, value request) error {
 	var auxiliary uint32
 	switch value.Operation {
 	case operationQuery:
-		if value.StartUSN != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
+		if value.StartUSN != 0 || value.ReadBufferMiB != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
 			return errors.New("FI USN query request contains unexpected fields")
 		}
 	case operationRead:
 		if value.StartUSN < 0 {
 			return errors.New("FI USN start USN must not be negative")
 		}
+		if err := validateReadBufferMiB(value.ReadBufferMiB); err != nil {
+			return err
+		}
 		if value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
 			return errors.New("FI USN read request contains unexpected containment fields")
 		}
 		payload = uint64(value.StartUSN)
+		auxiliary = value.ReadBufferMiB
 	case operationAuditPolicy:
-		if value.GovernedRoot != "" || value.StartUSN != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
+		if value.GovernedRoot != "" || value.StartUSN != 0 || value.ReadBufferMiB != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
 			return errors.New("FI audit-policy request must contain no root or parameters")
 		}
 	case operationContainment, operationSACL:
-		if value.StartUSN != 0 {
+		if value.StartUSN != 0 || value.ReadBufferMiB != 0 {
 			return errors.New("FI privileged object request has unexpected start USN")
 		}
 		if value.FileReferenceNumber >= 1<<48 {
@@ -228,7 +243,7 @@ func readResponse(reader io.Reader) (response, error) {
 	}
 	dataLength := binary.LittleEndian.Uint32(header[68:72])
 	errorLength := binary.LittleEndian.Uint32(header[72:76])
-	if dataLength > MaxUSNDataBytes {
+	if dataLength > uint32(MaxUSNDataBytes) {
 		return response{}, errors.New("FI USN response exceeds data limit")
 	}
 	if errorLength > maxErrorBytes {

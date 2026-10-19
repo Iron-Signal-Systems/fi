@@ -26,6 +26,8 @@ type CollectorSettings struct {
 	CollectionEvery        time.Duration
 	SupportingRefreshEvery time.Duration
 	USNEvery               time.Duration
+	USNReadBufferMiB       int
+	USNReobserveWorkers    int
 	WindowsSecurityEvery   time.Duration
 }
 
@@ -114,6 +116,8 @@ func Parse(reader io.Reader) (Config, error) {
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
 
 	var value Config
+	value.Collector.USNReadBufferMiB = 1    // Bounded operational default.
+	value.Collector.USNReobserveWorkers = 8 // Default of this eight-worker candidate.
 	seenVersion := false
 	seenRoots := make(map[string]struct{})
 	seenSettings := make(map[string]struct{})
@@ -240,6 +244,18 @@ func assignSetting(value *Config, key string, rawValue string) error {
 			return err
 		}
 		value.Collector.USNEvery = duration
+	case "collector.usn_read_buffer_mib":
+		size, err := strconv.Atoi(rawValue)
+		if err != nil || size < 1 || size > 64 {
+			return fmt.Errorf("%s must be an integer between 1 and 64", key)
+		}
+		value.Collector.USNReadBufferMiB = size
+	case "collector.usn_reobserve_workers":
+		workers, err := strconv.Atoi(rawValue)
+		if err != nil || workers < 1 || workers > 16 {
+			return fmt.Errorf("%s must be an integer between 1 and 16", key)
+		}
+		value.Collector.USNReobserveWorkers = workers
 	case "collector.windows_security_every":
 		duration, err := parsePositiveDuration(key, rawValue)
 		if err != nil {

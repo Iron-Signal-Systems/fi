@@ -147,6 +147,13 @@ func approval2ExpectedSourceTarget(
 func approval2OperationalConfigValue(
 	proposal ConfigState,
 ) (config.Config, error) {
+	readSize := proposal.USNReadBufferMiB
+	if readSize == 0 {
+		readSize = 1
+	}
+	if readSize < 1 || readSize > 64 {
+		return config.Config{}, fmt.Errorf("Approval 2 USN read buffer must be between 1 and 64 MiB: %d", readSize)
+	}
 	for name, value := range map[string]string{
 		"configuration path": proposal.Path,
 		"receiver address":   proposal.ReceiverAddress,
@@ -185,6 +192,13 @@ func approval2OperationalConfigValue(
 		}
 	}
 
+	readWorkers := proposal.USNReobserveWorkers
+	if readWorkers == 0 {
+		readWorkers = 8
+	}
+	if readWorkers < 1 || readWorkers > 16 {
+		return config.Config{}, fmt.Errorf("Approval 2 USN re-observation workers must be between 1 and 16: %d", readWorkers)
+	}
 	value := config.Config{
 		VersionID: config.Version11,
 		GovernedRoots: append(
@@ -195,6 +209,8 @@ func approval2OperationalConfigValue(
 			CollectionEvery:        time.Minute,
 			SupportingRefreshEvery: 30 * time.Minute,
 			USNEvery:               10 * time.Minute,
+			USNReadBufferMiB:       readSize,
+			USNReobserveWorkers:    readWorkers,
 			WindowsSecurityEvery:   time.Minute,
 		},
 		Receiver: config.ReceiverSettings{
@@ -790,10 +806,12 @@ func renderApproval2OperationalConfig(
 
 	fmt.Fprintf(
 		&builder,
-		"\ncollector.collection_every = %s\ncollector.supporting_refresh_every = %s\ncollector.usn_every = %s\ncollector.windows_security_every = %s\n",
+		"\ncollector.collection_every = %s\ncollector.supporting_refresh_every = %s\ncollector.usn_every = %s\ncollector.usn_read_buffer_mib = %d\ncollector.usn_reobserve_workers = %d\ncollector.windows_security_every = %s\n",
 		value.Collector.CollectionEvery,
 		value.Collector.SupportingRefreshEvery,
 		value.Collector.USNEvery,
+		value.Collector.USNReadBufferMiB,
+		value.Collector.USNReobserveWorkers,
 		value.Collector.WindowsSecurityEvery,
 	)
 	fmt.Fprintf(

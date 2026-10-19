@@ -19,7 +19,8 @@ const (
 	fileReadData         = 0x00000001
 	fsctlQueryUSNJournal = 0x000900F4
 	fsctlReadUSNJournal  = 0x000900BB
-	readBufferSize       = 1024 * 1024
+	minReadBufferBytes   = 1024 * 1024
+	maxReadBufferBytes   = 64 * 1024 * 1024
 )
 
 var (
@@ -88,7 +89,10 @@ func Query(governedRoot string) (Journal, error) {
 // Read opens the raw NTFS volume containing governedRoot, queries the current
 // journal identifier, and returns one bounded raw USN buffer beginning at
 // startUSN. Parsing intentionally remains outside this privileged package.
-func Read(governedRoot string, startUSN int64) (Journal, []byte, error) {
+func Read(governedRoot string, startUSN int64, bufferBytes int) (Journal, []byte, error) {
+	if err := validateReadBufferBytes(bufferBytes); err != nil {
+		return Journal{}, nil, err
+	}
 	if startUSN < 0 {
 		return Journal{}, nil, errors.New("start USN must not be negative")
 	}
@@ -103,7 +107,7 @@ func Read(governedRoot string, startUSN int64) (Journal, []byte, error) {
 	if err != nil {
 		return Journal{}, nil, err
 	}
-	buffer, err := readJournalNative(handle, startUSN, journal.JournalID)
+	buffer, err := readJournalNative(handle, startUSN, journal.JournalID, bufferBytes)
 	if err != nil {
 		return Journal{}, nil, err
 	}
@@ -178,7 +182,14 @@ func queryJournalNative(handle syscall.Handle) (Journal, error) {
 	return journal, nil
 }
 
-func readJournalNative(handle syscall.Handle, startUSN int64, journalID uint64) ([]byte, error) {
+func validateReadBufferBytes(size int) error {
+	if size < minReadBufferBytes || size > maxReadBufferBytes || size%minReadBufferBytes != 0 {
+		return fmt.Errorf("USN read buffer must be 1-64 MiB in whole MiB steps")
+	}
+	return nil
+}
+
+func readJournalNative(handle syscall.Handle, startUSN int64, journalID uint64, bufferBytes int) ([]byte, error) {
 	request := readJournalDataV0{
 		StartUSN:          startUSN,
 		ReasonMask:        0xFFFFFFFF,
@@ -187,7 +198,7 @@ func readJournalNative(handle syscall.Handle, startUSN int64, journalID uint64) 
 		BytesToWaitFor:    0,
 		JournalID:         journalID,
 	}
-	buffer := make([]byte, readBufferSize)
+	buffer := make([]byte, bufferBytes)
 	var returned uint32
 	r1, _, callErr := procDeviceIoControl.Call(
 		uintptr(handle),

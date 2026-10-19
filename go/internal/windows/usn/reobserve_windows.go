@@ -136,80 +136,11 @@ func reobserveBatchWithDependencies(
 	observeBackup backupObjectObserver,
 	checkContainment containmentChecker,
 ) ReobservationBatch {
-	result := ReobservationBatch{
-		USNBatch:       batch,
-		Reobservations: make([]ChangeReobservation, 0),
-	}
-
-	candidates := distinctReobservationCandidates(batch.Records)
-	result.Reobservations = make([]ChangeReobservation, 0, len(candidates))
-	for _, candidate := range candidates {
-		if err := validateContext(ctx); err != nil {
-			result.Reobservations = append(result.Reobservations, ChangeReobservation{
-				FileIdentity: candidate.identity,
-				TriggerUSNs:  candidate.triggerUSNs,
-				Status:       ReobservationError,
-				ReasonCode:   "ContextCanceled",
-				Error:        err.Error(),
-			})
-			continue
-		}
-
-		observation, err := collect(
-			ctx,
-			batch.ScopeID,
-			governedRoot,
-			candidate.identity,
-		)
-		if err == nil {
-			result.Reobservations = append(
-				result.Reobservations,
-				observedReobservation(candidate, observation),
-			)
-			continue
-		}
-
-		if IsOpenFileByIDAccessDenied(err) {
-			backupObservation, backupErr := observeBackup(
-				ctx,
-				governedRoot,
-				candidate.identity,
-			)
-			if backupErr == nil {
-				result.Reobservations = append(
-					result.Reobservations,
-					observedReobservation(candidate, backupObservation),
-				)
-				continue
-			}
-
-			result.Reobservations = append(
-				result.Reobservations,
-				classifyBackupAuthorityFailure(
-					ctx,
-					governedRoot,
-					candidate,
-					err,
-					backupErr,
-					checkContainment,
-				),
-			)
-			continue
-		}
-
-		status, reason := classifyReobservationError(err)
-		result.Reobservations = append(result.Reobservations, ChangeReobservation{
-			FileIdentity: candidate.identity,
-			TriggerUSNs:  candidate.triggerUSNs,
-			Status:       status,
-			ReasonCode:   reason,
-			Error:        err.Error(),
-		})
-	}
-
-	return result
+	return reobserveBatchWithWorkers(
+		ctx, governedRoot, batch, collect, observeBackup, checkContainment,
+		currentReobserveWorkers(),
+	)
 }
-
 func classifyBackupAuthorityFailure(
 	ctx context.Context,
 	governedRoot string,

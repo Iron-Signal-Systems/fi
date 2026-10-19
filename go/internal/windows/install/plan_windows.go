@@ -32,14 +32,16 @@ type InstallPlan struct {
 }
 
 type PlanInputs struct {
-	GovernedRoots   []string
-	ReceiverPending bool
-	PKIChoice       string
-	ReceiverAddress string
-	ReceiverName    string
-	SpoolDir        string
-	StageDir        string
-	StateDir        string
+	GovernedRoots       []string
+	ReceiverPending     bool
+	PKIChoice           string
+	ReceiverAddress     string
+	ReceiverName        string
+	SpoolDir            string
+	StageDir            string
+	StateDir            string
+	USNReadBufferMiB    int
+	USNReobserveWorkers int
 }
 
 func (inputs PlanInputs) ConfigEmpty() bool {
@@ -48,7 +50,7 @@ func (inputs PlanInputs) ConfigEmpty() bool {
 		strings.TrimSpace(inputs.ReceiverName) == "" &&
 		strings.TrimSpace(inputs.SpoolDir) == "" &&
 		strings.TrimSpace(inputs.StageDir) == "" &&
-		strings.TrimSpace(inputs.StateDir) == ""
+		strings.TrimSpace(inputs.StateDir) == "" && inputs.USNReadBufferMiB == 0 && inputs.USNReobserveWorkers == 0
 }
 
 func (inputs PlanInputs) Empty() bool {
@@ -387,12 +389,14 @@ func planConfiguration(
 	}
 
 	proposal := ConfigState{
-		GovernedRoots: append([]string(nil), inputs.GovernedRoots...),
-		Path:          configPath,
-		Presence:      presenceAbsent,
-		SpoolDir:      strings.TrimSpace(inputs.SpoolDir),
-		StageDir:      strings.TrimSpace(inputs.StageDir),
-		StateDir:      strings.TrimSpace(inputs.StateDir),
+		GovernedRoots:       append([]string(nil), inputs.GovernedRoots...),
+		Path:                configPath,
+		Presence:            presenceAbsent,
+		SpoolDir:            strings.TrimSpace(inputs.SpoolDir),
+		StageDir:            strings.TrimSpace(inputs.StageDir),
+		StateDir:            strings.TrimSpace(inputs.StateDir),
+		USNReadBufferMiB:    inputs.USNReadBufferMiB,
+		USNReobserveWorkers: inputs.USNReobserveWorkers,
 	}
 
 	if proposal.StageDir == "" {
