@@ -257,6 +257,7 @@ func TestBootstrapSORPostgreSQLDatabaseWithExactOrder(
 			"migration:0001_relational.sql",
 			"migration:0002_source_families.sql",
 			"migration:0003_usn_relational_identity.sql",
+			"migration:0004_security_field_name_index.sql",
 			"execute:fi:schema-authority",
 			"publish-passfile",
 		}

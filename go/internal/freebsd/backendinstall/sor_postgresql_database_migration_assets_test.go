@@ -30,6 +30,10 @@ func TestSORPostgreSQLDatabaseMigrationAssets(
 				name:   "0003_usn_relational_identity.sql",
 				sha256: sorPostgreSQLDatabaseMigration0003SHA256,
 			},
+			{
+				name:   "0004_security_field_name_index.sql",
+				sha256: sorPostgreSQLDatabaseMigration0004SHA256,
+			},
 		}
 
 	assets :=

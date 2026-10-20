@@ -207,6 +207,10 @@ func TestSORPostgreSQLDatabasePolicyMigrationContract(
 			Name:   "0003_usn_relational_identity.sql",
 			SHA256: "906dccf64eaf13a0a008bc870801beefb2d372f71574d10fe40ae5f1ba5a174c",
 		},
+		{
+			Name:   "0004_security_field_name_index.sql",
+			SHA256: "9a2a54875828e82eed9dbbb36ddaa0b6886bdc43789f1a220f41bf40cd1460dc",
+		},
 	}
 
 	if len(policy.Migrations) != len(expected) {

@@ -383,6 +383,7 @@ func attemptGeneration(
 		return recordingest.IngestResult{}, err
 	}
 
+	prepareStarted := time.Now()
 	generation, err :=
 		recordingest.LoadRecordedGeneration(
 			recordingest.GenerationLoadConfig{
@@ -430,6 +431,9 @@ func attemptGeneration(
 			)
 	}
 
+	fmt.Printf("INGEST PREP source=%s generation=%s elapsed=%s\n",
+		candidate.SourceID, candidate.GenerationID,
+		time.Since(prepareStarted).Round(time.Millisecond))
 	result, ingestErr :=
 		recordingest.IngestPreparedGeneration(
 			ctx,

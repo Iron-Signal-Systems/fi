@@ -27,5 +27,10 @@ func sorPostgreSQLDatabaseMigrationAssets() []sorPostgreSQLDatabaseMigrationAsse
 			SHA256: sorPostgreSQLDatabaseMigration0003SHA256,
 			SQL:    sorPostgreSQLDatabaseMigration0003Asset,
 		},
+		{
+			Name:   "0004_security_field_name_index.sql",
+			SHA256: sorPostgreSQLDatabaseMigration0004SHA256,
+			SQL:    sorPostgreSQLDatabaseMigration0004Asset,
+		},
 	}
 }

@@ -150,7 +150,7 @@ func parseInvocation(
 			configPath:             args[1],
 		}, nil
 
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -165,7 +165,7 @@ func parseInvocation(
 	default:
 		if len(args) != 1 {
 			return invocation{}, fmt.Errorf(
-				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|initialize-sor-database|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|apply-binaries|verify-binaries|update-binaries|apply-runtime|verify-runtime|adopt-runtime|update-runtime] [configuration-file]",
+				"usage: fi-backend-install [validate|preflight|apply-zfs-root|apply-zfs-hierarchy|apply-jail-substrate|apply-jail-roots|apply-identities|apply-directories|apply-sor-package|apply-sor-postgresql|initialize-sor-postgresql|initialize-sor-database|upgrade-sor-database|upgrade-legacy-sor-database|verify-sor-postgresql|verify-sor-database|apply-devfs|verify-devfs|apply-host-files|update-host-files|verify-host-files|check-host-update|inspect-host-update|apply-network|verify-network|apply-pf|verify-pf|apply-lifecycle|verify-lifecycle|apply-binaries|verify-binaries|update-binaries|apply-runtime|verify-runtime|adopt-runtime|update-runtime] [configuration-file]",
 			)
 		}
 
@@ -391,6 +391,20 @@ func main() {
 			os.Stdout,
 			"FI System-of-Record PostgreSQL database initialization complete.",
 		)
+
+	case "upgrade-sor-database":
+		if err := backendinstall.UpgradeSORPostgreSQLDatabase(config); err != nil {
+			fmt.Fprintf(os.Stderr, "FI SOR DATABASE UPGRADE BLOCKED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "FI System-of-Record PostgreSQL database upgrade complete.")
+
+	case "upgrade-legacy-sor-database":
+		if err := backendinstall.UpgradeLegacySORPostgreSQLDatabase(config); err != nil {
+			fmt.Fprintf(os.Stderr, "FI LEGACY SOR DATABASE UPGRADE BLOCKED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "FI legacy System-of-Record index upgrade complete.")
 
 	case "verify-sor-postgresql":
 		if err := backendinstall.VerifySORPostgreSQL(

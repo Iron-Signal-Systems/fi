@@ -24,6 +24,7 @@ import (
 // ACK and never removes the durable FIGT custody object.
 type GenerationStartupResult struct {
 	AlreadyRecorded    uint64
+	DeferredDisabled   uint64
 	Discovered         uint64
 	ReadyPublished     uint64
 	ReadyWarning       string
@@ -138,6 +139,15 @@ func RecoverGenerationStartup(
 			}
 
 			objectConfig.Custody.Receive.Source = source
+
+			// A retired source may have immutable custody from its active
+			// enrollment period. Keep it intact, but do not process it
+			// under current signing authorization or generate new receipts
+			// and READY hints. Deferred objects require offline review.
+			if !source.Enabled {
+				result.DeferredDisabled++
+				continue
+			}
 		}
 
 		if err := validateGenerationReceiveConfig(

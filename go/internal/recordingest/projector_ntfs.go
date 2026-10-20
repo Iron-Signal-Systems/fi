@@ -8,10 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func ensureGovernedRoot(ctx context.Context, tx pgx.Tx, sourceID string, value records.GovernedRootIdentity) (int64, error) {
@@ -32,6 +34,11 @@ func ensureGovernedRoot(ctx context.Context, tx pgx.Tx, sourceID string, value r
 		return 0, err
 	}
 
+	cache, _ := ctx.Value(ntfsScopeIdentityCacheContextKey{}).(*ntfsScopeIdentityCache)
+	if cachedID, found, cacheErr := cache.lookupRoot(sourceID, volumeID, objectID, value, requested, resolved); found || cacheErr != nil {
+		return cachedID, cacheErr
+	}
+
 	var id int64
 	err = tx.QueryRow(ctx, `
 INSERT INTO fi.governed_root (
@@ -45,6 +52,7 @@ DO NOTHING
 RETURNING governed_root_id
 `, sourceID, value.ScopeID, value.MethodVersion, volumeID, objectID, requested, resolved).Scan(&id)
 	if err == nil {
+		cache.rememberRoot(sourceID, volumeID, objectID, value, requested, resolved, id)
 		return id, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -63,10 +71,15 @@ WHERE source_id=$1 AND scope_id=$2 AND ntfs_volume_id=$3 AND ntfs_object_id=$4
 	if existingMethod != value.MethodVersion {
 		return 0, errors.New("FI governed-root identity method conflicts with existing relational identity")
 	}
+	cache.rememberRoot(sourceID, volumeID, objectID, value, requested, resolved, id)
 	return id, nil
 }
 
 func ensureNTFSObject(ctx context.Context, tx pgx.Tx, volumeID int64, value records.NTFSObjectIdentity) (int64, error) {
+	cache, _ := ctx.Value(ntfsObjectCacheContextKey{}).(*ntfsObjectCache)
+	if cachedID, found, cacheErr := cache.lookup(volumeID, value); found || cacheErr != nil {
+		return cachedID, cacheErr
+	}
 	var id int64
 	err := tx.QueryRow(ctx, `
 INSERT INTO fi.ntfs_object (
@@ -78,6 +91,7 @@ DO NOTHING
 RETURNING ntfs_object_id
 `, volumeID, value.MethodVersion, value.FileReferenceNumber, value.SequenceNumber).Scan(&id)
 	if err == nil {
+		cache.remember(volumeID, value, id)
 		return id, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -97,10 +111,16 @@ WHERE ntfs_volume_id=$1
 	if existingMethod != value.MethodVersion {
 		return 0, errors.New("FI NTFS object identity method conflicts with existing relational identity")
 	}
+	cache.remember(volumeID, value, id)
 	return id, nil
 }
 
 func ensureNTFSVolume(ctx context.Context, tx pgx.Tx, sourceID string, value records.VolumeIdentity) (int64, error) {
+	cache, _ := ctx.Value(ntfsScopeIdentityCacheContextKey{}).(*ntfsScopeIdentityCache)
+	if cachedID, found, cacheErr := cache.lookupVolume(sourceID, value); found || cacheErr != nil {
+		return cachedID, cacheErr
+	}
+
 	var id int64
 	err := tx.QueryRow(ctx, `
 INSERT INTO fi.ntfs_volume (source_id, identity_method_version, volume_guid, volume_serial)
@@ -110,6 +130,7 @@ DO NOTHING
 RETURNING ntfs_volume_id
 `, sourceID, value.MethodVersion, value.VolumeGUID, value.VolumeSerial).Scan(&id)
 	if err == nil {
+		cache.rememberVolume(sourceID, value, id)
 		return id, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -127,6 +148,7 @@ WHERE source_id=$1 AND volume_guid=$2 AND volume_serial=$3::text::numeric
 	if existingMethod != value.MethodVersion {
 		return 0, errors.New("FI NTFS volume identity method conflicts with existing relational identity")
 	}
+	cache.rememberVolume(sourceID, value, id)
 	return id, nil
 }
 
@@ -145,6 +167,23 @@ func projectContentHashes(ctx context.Context, tx pgx.Tx, sourceRecordID int64, 
 		if sha256, err = decodeHex(value.SHA256, 32, true, "content_hashes.sha256"); err != nil {
 			return err
 		}
+	}
+	if state, ok := ctx.Value(contentHashCopyContextKey{}).(*contentHashCopyState); ok && state != nil {
+		var numeric any
+		if bytesHashed != nil {
+			decimal := fmt.Sprint(bytesHashed)
+			number, valid := new(big.Int).SetString(decimal, 10)
+			if !valid {
+				return fmt.Errorf("invalid FI bytes_hashed numeric value %q", decimal)
+			}
+			numeric = pgtype.Numeric{Int: number, Exp: 0, Valid: true}
+		}
+
+		return state.add(ctx, tx, []any{
+			sourceRecordID, string(value.State), numeric,
+			md5, sha1, sha256,
+			nullString(value.ReasonCode), nullString(value.Detail),
+		})
 	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO fi.content_hash_observation (
@@ -276,6 +315,9 @@ INSERT INTO fi.file_metadata_observation (
 }
 
 func projectNTFSObservation(ctx context.Context, tx pgx.Tx, sourceID string, sourceRecordID int64, value ntfs.Observation, hashes *records.ContentHashObservation) error {
+	stages := beginNTFSStage(ctx)
+	defer stages.finish()
+
 	if value.VolumeIdentity != value.GovernedRoot.VolumeIdentity {
 		return errors.New("FI NTFS observation volume identity does not match governed-root volume")
 	}
@@ -301,6 +343,7 @@ func projectNTFSObservation(ctx context.Context, tx pgx.Tx, sourceID string, sou
 		}
 		parentObjectID = id
 	}
+	stages.mark("identity")
 	requested, err := decodeBase64URL(value.PathBinding.RequestedPathUTF16LEBase64URL, true, "path_binding.requested_path")
 	if err != nil {
 		return err
@@ -327,36 +370,45 @@ INSERT INTO fi.file_observation (
 		return fmt.Errorf("insert FI file observation: %w", err)
 	}
 
+	stages.mark("file")
 	if err := projectFileMetadata(ctx, tx, sourceRecordID, value.Metadata); err != nil {
 		return err
 	}
+	stages.mark("metadata")
 	if hashes != nil {
 		if err := projectContentHashes(ctx, tx, sourceRecordID, *hashes); err != nil {
 			return err
 		}
 	}
+	stages.mark("hashes")
 	if value.ContentPrefix != nil {
 		if err := projectContentPrefix(ctx, tx, sourceRecordID, *value.ContentPrefix); err != nil {
 			return err
 		}
 	}
+	stages.mark("prefix")
 	if err := projectReparseObservation(ctx, tx, sourceRecordID, value.Reparse); err != nil {
 		return err
 	}
+	stages.mark("reparse")
 	if err := projectStreamInventory(ctx, tx, sourceRecordID, value.StreamInventory); err != nil {
 		return err
 	}
+	stages.mark("streams")
 	if err := projectSecurityObservation(ctx, tx, sourceRecordID, value.Security); err != nil {
 		return err
 	}
+	stages.mark("security")
 	if err := projectSACLObservation(ctx, tx, sourceRecordID, value.SACL); err != nil {
 		return err
 	}
+	stages.mark("sacl")
 	for i, warning := range value.Warnings {
 		if _, err := tx.Exec(ctx, `INSERT INTO fi.observation_warning (source_record_id,warning_ordinal,code,detail) VALUES ($1,$2,$3,$4)`, sourceRecordID, i+1, warning.Code, nullString(warning.Detail)); err != nil {
 			return fmt.Errorf("insert FI observation warning: %w", err)
 		}
 	}
+	stages.mark("warnings")
 	return nil
 }
 
@@ -429,15 +481,13 @@ INSERT INTO fi.sacl_observation (
 	if err != nil {
 		return fmt.Errorf("insert FI SACL observation: %w", err)
 	}
-	for _, ace := range value.ACL.ACEs {
-		if err := projectSecurityACE(ctx, tx, "fi.sacl_ace", sourceRecordID, ace); err != nil {
-			return err
-		}
+	if err := projectSecurityACEs(ctx, tx, "fi.sacl_ace", sourceRecordID, value.ACL.ACEs); err != nil {
+		return err
 	}
 	return nil
 }
 
-func projectSecurityACE(ctx context.Context, tx pgx.Tx, table string, sourceRecordID int64, value records.ACEObservation) error {
+func queueSecurityACE(batch *pgx.Batch, table string, sourceRecordID int64, value records.ACEObservation) error {
 	ordinal, err := parseUint(value.Index, 32, "ace.index")
 	if err != nil {
 		return err
@@ -469,10 +519,83 @@ func projectSecurityACE(ctx context.Context, tx pgx.Tx, table string, sourceReco
 	query := fmt.Sprintf(`INSERT INTO %s (
  source_record_id,ace_ordinal,ace_type,type_name,flags,ace_size,raw_ace,access_mask,object_flags,object_type_guid,inherited_object_type_guid,sid
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text::uuid,$11::text::uuid,$12)`, table)
-	_, err = tx.Exec(ctx, query, sourceRecordID, int(ordinal), int(aceType), value.TypeName, int(flags), int(size), raw, mask, objectFlags, nullString(value.ObjectTypeGUID), nullString(value.InheritedObjectTypeGUID), nullString(value.SID))
-	if err != nil {
-		return fmt.Errorf("insert FI security ACE: %w", err)
+	batch.Queue(query, sourceRecordID, int(ordinal), int(aceType), value.TypeName, int(flags), int(size), raw, mask, objectFlags, nullString(value.ObjectTypeGUID), nullString(value.InheritedObjectTypeGUID), nullString(value.SID))
+	return nil
+}
+
+const securityACEBatchLimit = 128
+
+func projectSecurityACEs(
+	ctx context.Context,
+	tx pgx.Tx,
+	table string,
+	sourceRecordID int64,
+	aces []records.ACEObservation,
+) error {
+	if table != "fi.security_ace" && table != "fi.sacl_ace" {
+		return fmt.Errorf("unsupported FI ACE table %q", table)
 	}
+
+	if state, ok := ctx.Value(aceCopyContextKey{}).(*aceCopyState); ok {
+		for _, ace := range aces {
+			if err := state.add(ctx, tx, table, sourceRecordID, ace); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	var batch pgx.Batch
+
+	for _, ace := range aces {
+		if err := queueSecurityACE(
+			&batch, table, sourceRecordID, ace,
+		); err != nil {
+			return err
+		}
+
+		if batch.Len() >= securityACEBatchLimit {
+			if err := flushSecurityACEBatch(
+				ctx, tx, &batch, table,
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	return flushSecurityACEBatch(ctx, tx, &batch, table)
+}
+
+func flushSecurityACEBatch(
+	ctx context.Context,
+	tx pgx.Tx,
+	batch *pgx.Batch,
+	table string,
+) error {
+	count := batch.Len()
+	if count == 0 {
+		return nil
+	}
+
+	results := tx.SendBatch(ctx, batch)
+
+	var insertErr error
+	for i := 0; i < count; i++ {
+		if _, err := results.Exec(); err != nil {
+			insertErr = fmt.Errorf(
+				"insert FI %s ACE %d: %w",
+				table, i+1, err,
+			)
+			break
+		}
+	}
+
+	closeErr := results.Close()
+	if insertErr != nil || closeErr != nil {
+		return errors.Join(insertErr, closeErr)
+	}
+
+	*batch = pgx.Batch{}
 	return nil
 }
 
@@ -505,10 +628,8 @@ INSERT INTO fi.security_observation (
 	if err != nil {
 		return fmt.Errorf("insert FI security observation: %w", err)
 	}
-	for _, ace := range value.DACL.ACEs {
-		if err := projectSecurityACE(ctx, tx, "fi.security_ace", sourceRecordID, ace); err != nil {
-			return err
-		}
+	if err := projectSecurityACEs(ctx, tx, "fi.security_ace", sourceRecordID, value.DACL.ACEs); err != nil {
+		return err
 	}
 	return nil
 }

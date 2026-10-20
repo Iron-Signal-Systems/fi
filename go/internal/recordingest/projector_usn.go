@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
@@ -59,19 +60,26 @@ INSERT INTO fi.usn_read_boundary (
 }
 
 func projectUSNObjectObservation(ctx context.Context, tx pgx.Tx, sourceID string, sourceRecordID int64, scopeID string, value usnObjectObservationPayload) error {
+	usnStarted := time.Now()
+	defer tallyUSN(ctx, "total", usnStarted)
 	if err := validateUSNObjectObservationPayload(scopeID, value); err != nil {
 		return err
 	}
 
+	stepStarted := time.Now()
 	boundaryRecordID, volumeID, err := findPrecedingUSNReadBoundary(ctx, tx, sourceID, scopeID, sourceRecordID)
+	tallyUSN(ctx, "boundary", stepStarted)
 	if err != nil {
 		return err
 	}
+	stepStarted = time.Now()
 	objectID, err := ensureNTFSObject(ctx, tx, volumeID, value.FileIdentity)
+	tallyUSN(ctx, "object", stepStarted)
 	if err != nil {
 		return err
 	}
 
+	stepStarted = time.Now()
 	_, err = tx.Exec(ctx, `
 INSERT INTO fi.usn_object_observation (
  source_record_id,scope_basis,scope_detail,status,reason_code,error_text,has_ntfs_observation,has_content_hashes,
@@ -79,10 +87,12 @@ INSERT INTO fi.usn_object_observation (
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 `, sourceRecordID, value.ScopeBasis, nullString(value.ScopeDetail), value.Status, nullString(value.ReasonCode), nullString(value.Error),
 		value.NTFS != nil, value.ContentHashes != nil, boundaryRecordID, objectID)
+	tallyUSN(ctx, "observation", stepStarted)
 	if err != nil {
 		return fmt.Errorf("insert FI USN object observation: %w", err)
 	}
 
+	stepStarted = time.Now()
 	var reasonBatch pgx.Batch
 	for i, change := range value.Changes {
 		parentObjectID, err := ensureNTFSObject(ctx, tx, volumeID, change.ParentIdentity)
@@ -125,6 +135,18 @@ INSERT INTO fi.usn_object_observation (
 			return err
 		}
 		ordinal := i + 1
+		if state, ok := ctx.Value(usnChangeCopyContextKey{}).(*usnChangeCopyState); ok && state != nil {
+			row := []any{
+				sourceRecordID, ordinal, int(major), int(minor),
+				change.USN, timestamp, int64(reasonRaw),
+				int64(sourceInfo), int64(securityID), int64(attributes),
+				fileName, objectID, parentObjectID,
+			}
+			if err := state.add(ctx, tx, row, change.ReasonNames); err != nil {
+				return fmt.Errorf("queue FI USN change COPY: %w", err)
+			}
+			continue
+		}
 		_, err = tx.Exec(ctx, `
 INSERT INTO fi.usn_object_change (
  source_record_id,change_ordinal,major_version,minor_version,usn,event_timestamp,reason_raw,source_info_raw,security_id,file_attributes_raw,
@@ -148,7 +170,9 @@ INSERT INTO fi.usn_object_change (
 	if err := flushUSNReasonBatch(ctx, tx, &reasonBatch); err != nil {
 		return err
 	}
+	tallyUSN(ctx, "changes", stepStarted)
 
+	stepStarted = time.Now()
 	if value.NTFS != nil {
 		nested := *value.NTFS
 		nested.ContentHashes = value.ContentHashes
@@ -168,10 +192,12 @@ INSERT INTO fi.usn_object_change (
 		if nestedVolumeID != volumeID {
 			return errors.New("FI USN nested NTFS observation volume does not match preceding read boundary")
 		}
-		if err := projectNTFSObservation(ctx, tx, sourceID, sourceRecordID, nested, value.ContentHashes); err != nil {
+		nestedCtx := context.WithValue(ctx, ntfsNestedStageContextKey{}, true)
+		if err := projectNTFSObservation(nestedCtx, tx, sourceID, sourceRecordID, nested, value.ContentHashes); err != nil {
 			return err
 		}
 	}
+	tallyUSN(ctx, "nested", stepStarted)
 	return nil
 }
 

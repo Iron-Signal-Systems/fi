@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -36,10 +37,25 @@ type IngestResult struct {
 	Outcome              string
 }
 
+type ingestStageProfile struct {
+	Read         time.Duration
+	BatchHash    time.Duration
+	Prepare      time.Duration
+	SourceSQL    time.Duration
+	Projection   time.Duration
+	SecurityBulk securityBulkTimingCounters
+}
+
 func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attemptID string, generation *PreparedGeneration) (IngestResult, error) {
 	if ctx == nil || connection == nil || generation == nil || attemptID == "" {
 		return IngestResult{}, errors.New("FI relational generation ingest input is incomplete")
 	}
+	started := time.Now()
+	var profile ingestStageProfile
+	usnTiming := &usnTimingCounters{}
+	ctx = context.WithValue(ctx, usnTimingContextKey{}, usnTiming)
+	ntfsStages := &ntfsStageTimingCounters{}
+	ctx = context.WithValue(ctx, ntfsStageTimingContextKey{}, ntfsStages)
 	descriptor := generation.Receipt.Descriptor
 	result := IngestResult{
 		AttemptID: attemptID, SourceID: descriptor.SourceID, GenerationID: descriptor.GenerationID,
@@ -51,6 +67,16 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	if err != nil {
 		return result, fmt.Errorf("begin FI relational generation transaction: %w", err)
 	}
+	identityCache := newNTFSObjectCache()
+	ctx = context.WithValue(ctx, ntfsObjectCacheContextKey{}, identityCache)
+	scopeCache := newNTFSScopeIdentityCache()
+	ctx = context.WithValue(ctx, ntfsScopeIdentityCacheContextKey{}, scopeCache)
+	aceCopy := newACECopyState()
+	ctx = context.WithValue(ctx, aceCopyContextKey{}, aceCopy)
+	usnCopy := newUSNChangeCopyState()
+	ctx = context.WithValue(ctx, usnChangeCopyContextKey{}, usnCopy)
+	hashCopy := newContentHashCopyState()
+	ctx = context.WithValue(ctx, contentHashCopyContextKey{}, hashCopy)
 	committed := false
 	defer func() {
 		if !committed {
@@ -92,7 +118,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 		if err != nil {
 			return result, failIngestAttempt(ctx, connection, tx, result, "AuthoritativeRecord", "SOURCE_BATCH_INSERT_FAILED", err)
 		}
-		seen, err := ingestSourceBatch(ctx, tx, descriptor.SourceID, sourceBatchID, batch)
+		seen, err := ingestSourceBatch(ctx, tx, descriptor.SourceID, sourceBatchID, batch, &profile)
 		result.RecordsSeen += seen
 		if err != nil {
 			return result, rejectIngestAttempt(ctx, connection, tx, result, err)
@@ -102,6 +128,27 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	if result.RecordsSeen != int64(generation.Receipt.RecordCount) {
 		return result, rejectIngestAttempt(ctx, connection, tx, result, fmt.Errorf("generation source-record count %d does not match recorder receipt %d", result.RecordsSeen, generation.Receipt.RecordCount))
 	}
+	usnFlushStarted := time.Now()
+	if err := usnCopy.flushAll(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
+	usnFinalFlush := time.Since(usnFlushStarted)
+	profile.Projection += usnFinalFlush
+
+	hashFlushStarted := time.Now()
+	if err := hashCopy.flush(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
+	hashFinalFlush := time.Since(hashFlushStarted)
+	profile.Projection += hashFinalFlush
+
+	aceFlushStarted := time.Now()
+	if err := aceCopy.flushAll(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
+	aceFinalFlush := time.Since(aceFlushStarted)
+	profile.Projection += aceFinalFlush
+
 	if err := verifyGenerationProjectionCoverage(ctx, tx, recordedGenerationID); err != nil {
 		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 	}
@@ -123,10 +170,111 @@ INSERT INTO fi.ingest_journal (
 		return result, fmt.Errorf("write FI accepted ingest journal event: %w", err)
 	}
 
+	commitStarted := time.Now()
 	if err := tx.Commit(ctx); err != nil {
 		return result, fmt.Errorf("commit FI relational generation: %w", err)
 	}
 	committed = true
+	commitElapsed := time.Since(commitStarted)
+	fmt.Printf(
+		"INGEST HASH COPY source=%s generation=%s rows=%d calls=%d copy=%s final_flush=%s\n",
+		result.SourceID, result.GenerationID,
+		hashCopy.copied, hashCopy.calls,
+		hashCopy.duration.Round(time.Millisecond),
+		hashFinalFlush.Round(time.Millisecond),
+	)
+
+	fmt.Printf(
+		"INGEST SECURITY BULK source=%s generation=%s batches=%d events=%d scopes=%d fields=%d prepare=%s source_copy=%s id_lookup=%s event_copy=%s child_prepare=%s scope_copy=%s field_copy=%s\n",
+		result.SourceID, result.GenerationID,
+		profile.SecurityBulk.Batches,
+		profile.SecurityBulk.Events,
+		profile.SecurityBulk.Scopes,
+		profile.SecurityBulk.Fields,
+		profile.SecurityBulk.Prepare.Round(time.Millisecond),
+		profile.SecurityBulk.SourceCopy.Round(time.Millisecond),
+		profile.SecurityBulk.IDLookup.Round(time.Millisecond),
+		profile.SecurityBulk.EventCopy.Round(time.Millisecond),
+		profile.SecurityBulk.ChildPrepare.Round(time.Millisecond),
+		profile.SecurityBulk.ScopeCopy.Round(time.Millisecond),
+		profile.SecurityBulk.FieldCopy.Round(time.Millisecond),
+	)
+	fmt.Printf(
+		"INGEST USN COPY source=%s generation=%s change_rows=%d reason_rows=%d change_calls=%d reason_calls=%d copy=%s final_flush=%s\n",
+		result.SourceID, result.GenerationID,
+		usnCopy.changeRows, usnCopy.reasonRows,
+		usnCopy.changeCalls, usnCopy.reasonCalls,
+		usnCopy.duration.Round(time.Millisecond),
+		usnFinalFlush.Round(time.Millisecond),
+	)
+	fmt.Printf(
+		"INGEST ACE COPY source=%s generation=%s dacl_rows=%d sacl_rows=%d calls=%d copy=%s final_flush=%s\n",
+		result.SourceID, result.GenerationID,
+		aceCopy.daclRows, aceCopy.saclRows, aceCopy.calls,
+		aceCopy.duration.Round(time.Millisecond),
+		aceFinalFlush.Round(time.Millisecond),
+	)
+	total := time.Since(started)
+	measured := profile.Read + profile.BatchHash + profile.Prepare +
+		profile.SourceSQL + profile.Projection + commitElapsed
+
+	fmt.Printf(
+		"INGEST PROFILE source=%s generation=%s records=%d total=%s read=%s batch_hash=%s prepare=%s source_sql=%s projection=%s commit=%s other=%s\n",
+		result.SourceID, result.GenerationID, result.RecordsSeen,
+		total.Round(time.Millisecond),
+		profile.Read.Round(time.Millisecond),
+		profile.BatchHash.Round(time.Millisecond),
+		profile.Prepare.Round(time.Millisecond),
+		profile.SourceSQL.Round(time.Millisecond),
+		profile.Projection.Round(time.Millisecond),
+		commitElapsed.Round(time.Millisecond),
+		(total - measured).Round(time.Millisecond),
+	)
+
+	accounted := usnTiming.Boundary + usnTiming.Object +
+		usnTiming.Observation + usnTiming.Changes + usnTiming.Nested
+
+	fmt.Printf(
+		"INGEST USN PROFILE source=%s generation=%s observations=%d total=%s boundary=%s object=%s observation_insert=%s changes=%s nested=%s other=%s\n",
+		result.SourceID, result.GenerationID, usnTiming.Observations,
+		usnTiming.Total.Round(time.Millisecond),
+		usnTiming.Boundary.Round(time.Millisecond),
+		usnTiming.Object.Round(time.Millisecond),
+		usnTiming.Observation.Round(time.Millisecond),
+		usnTiming.Changes.Round(time.Millisecond),
+		usnTiming.Nested.Round(time.Millisecond),
+		(usnTiming.Total - accounted).Round(time.Millisecond),
+	)
+	fmt.Printf(
+		"INGEST NTFS CACHE source=%s generation=%s hits=%d misses=%d entries=%d\n",
+		result.SourceID, result.GenerationID,
+		identityCache.hits, identityCache.misses, len(identityCache.objects),
+	)
+	fmt.Printf(
+		"INGEST NTFS STAGES source=%s generation=%s observations=%d total=%s identity=%s file=%s metadata=%s hashes=%s prefix=%s reparse=%s streams=%s security=%s sacl=%s warnings=%s other=%s\n",
+		result.SourceID, result.GenerationID,
+		ntfsStages.Observations,
+		ntfsStages.Total.Round(time.Millisecond),
+		ntfsStages.Identity.Round(time.Millisecond),
+		ntfsStages.File.Round(time.Millisecond),
+		ntfsStages.Metadata.Round(time.Millisecond),
+		ntfsStages.Hashes.Round(time.Millisecond),
+		ntfsStages.Prefix.Round(time.Millisecond),
+		ntfsStages.Reparse.Round(time.Millisecond),
+		ntfsStages.Streams.Round(time.Millisecond),
+		ntfsStages.Security.Round(time.Millisecond),
+		ntfsStages.SACL.Round(time.Millisecond),
+		ntfsStages.Warnings.Round(time.Millisecond),
+		(ntfsStages.Total - ntfsStages.accounted()).Round(time.Millisecond),
+	)
+
+	fmt.Printf(
+		"INGEST SCOPE CACHE source=%s generation=%s volume_hits=%d volume_misses=%d volume_entries=%d root_hits=%d root_misses=%d root_entries=%d\n",
+		result.SourceID, result.GenerationID,
+		scopeCache.volumeHits, scopeCache.volumeMisses, len(scopeCache.volumes),
+		scopeCache.rootHits, scopeCache.rootMisses, len(scopeCache.roots),
+	)
+
 	return result, nil
 }
 
@@ -234,7 +382,7 @@ RETURNING source_batch_id
 	return id, nil
 }
 
-func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBatchID int64, batch PreparedBatch) (int64, error) {
+func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBatchID int64, batch PreparedBatch, profile *ingestStageProfile) (int64, error) {
 	file, err := os.Open(batch.DataPath)
 	if err != nil {
 		return 0, fmt.Errorf("open FI staged source batch: %w", err)
@@ -245,8 +393,25 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	hasher := sha256.New()
 	var ordinal int64
 	var byteCount int64
+	var pendingSecurity []securityBulkRecord
+	var pendingSecurityBytes int64
+	flushSecurity := func() error {
+		if len(pendingSecurity) == 0 {
+			return nil
+		}
+		first := pendingSecurity[0].ordinal
+		last := pendingSecurity[len(pendingSecurity)-1].ordinal
+		if err := copySecurityBulk(ctx, tx, sourceBatchID, pendingSecurity, profile); err != nil {
+			return fmt.Errorf("%w: batch %s Security records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		pendingSecurity = nil
+		pendingSecurityBytes = 0
+		return nil
+	}
 	for {
+		readStarted := time.Now()
 		raw, readErr := reader.ReadBytes('\n')
+		profile.Read += time.Since(readStarted)
 		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
 			break
 		}
@@ -258,9 +423,13 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		}
 		ordinal++
 		byteCount += int64(len(raw))
+		hashStarted := time.Now()
 		_, _ = hasher.Write(raw)
+		profile.BatchHash += time.Since(hashStarted)
 
+		prepareStarted := time.Now()
 		prepared, err := PrepareSourceRecord(raw)
+		profile.Prepare += time.Since(prepareStarted)
 		if err != nil {
 			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
 		}
@@ -268,7 +437,34 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		if err != nil {
 			return ordinal, err
 		}
+		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
+			securityPrepareStarted := time.Now()
+			securityRecord, err := prepareSecurityBulkRecord(ordinal, prepared, digest)
+			profile.SecurityBulk.Prepare += time.Since(securityPrepareStarted)
+			if err != nil {
+				return ordinal, fmt.Errorf("%w: batch %s record %d (WindowsSecurityEvent): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
+			}
+			if len(pendingSecurity) >= securityBulkMaxRecords ||
+				(len(pendingSecurity) > 0 && pendingSecurityBytes+int64(prepared.RecordBytes) > securityBulkMaxBytes) {
+				if err := flushSecurity(); err != nil {
+					return ordinal, err
+				}
+			}
+			pendingSecurity = append(pendingSecurity, securityRecord)
+			pendingSecurityBytes += int64(prepared.RecordBytes)
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
+				}
+				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+			}
+			continue
+		}
+		if err := flushSecurity(); err != nil {
+			return ordinal, err
+		}
 		var sourceRecordID int64
+		sqlStarted := time.Now()
 		err = tx.QueryRow(ctx, `
 INSERT INTO fi.source_record (
  source_batch_id,record_ordinal,version,record_kind,scope_id,written_at,record_bytes,record_sha256,ingest_version
@@ -276,11 +472,15 @@ INSERT INTO fi.source_record (
 RETURNING source_record_id
 `, sourceBatchID, ordinal, prepared.Record.Version, prepared.Record.RecordKind, prepared.Record.ScopeID, prepared.WrittenAtUTC,
 			prepared.RecordBytes, digest, IngestVersion).Scan(&sourceRecordID)
+		profile.SourceSQL += time.Since(sqlStarted)
 		if err != nil {
 			return ordinal, fmt.Errorf("insert FI source record: %w", err)
 		}
-		if err := ProjectSourceRecord(ctx, tx, sourceID, sourceRecordID, prepared); err != nil {
-			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, err)
+		projectStarted := time.Now()
+		projectErr := ProjectSourceRecord(ctx, tx, sourceID, sourceRecordID, prepared)
+		profile.Projection += time.Since(projectStarted)
+		if projectErr != nil {
+			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, projectErr)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
@@ -288,6 +488,9 @@ RETURNING source_record_id
 			}
 			return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
 		}
+	}
+	if err := flushSecurity(); err != nil {
+		return ordinal, err
 	}
 
 	gotSHA := hex.EncodeToString(hasher.Sum(nil))

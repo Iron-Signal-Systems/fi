@@ -373,14 +373,21 @@ func runTransportCommand() {
 		}
 
 		fmt.Printf(
-			"GenerationStartup: discovered=%d new=%d already_recorded=%d ready_published=%d ready_warnings=%d removed_provisional=%d\n",
+			"GenerationStartup: discovered=%d new=%d already_recorded=%d deferred_disabled=%d ready_published=%d ready_warnings=%d removed_provisional=%d\n",
 			startup.Discovered,
 			startup.RecordedNew,
 			startup.AlreadyRecorded,
+			startup.DeferredDisabled,
 			startup.ReadyPublished,
 			startup.ReadyWarnings,
 			startup.RemovedProvisional,
 		)
+		if startup.DeferredDisabled != 0 {
+			fmt.Fprintf(os.Stderr,
+				"WARNING: FI receiver deferred %d historical custody object(s) for disabled sources; custody remains immutable and no new receipts or READY hints were published for them\n",
+				startup.DeferredDisabled,
+			)
+		}
 		if startup.ReadyWarning != "" {
 			fmt.Fprintf(
 				os.Stderr,

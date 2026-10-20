@@ -117,14 +117,61 @@ INSERT INTO fi.windows_security_event (
 		return fmt.Errorf("insert FI Windows Security event: %w", err)
 	}
 
-	for i, scope := range value.MatchedScopes {
-		if _, err := tx.Exec(ctx, `INSERT INTO fi.windows_security_event_scope (source_record_id,scope_ordinal,scope_id,governed_root) VALUES ($1,$2,$3,$4)`, sourceRecordID, i+1, scope.ScopeID, scope.GovernedRoot); err != nil {
-			return fmt.Errorf("insert FI Windows Security matched scope: %w", err)
+	if count := len(value.MatchedScopes); count > 0 {
+		ordinals := make([]int32, count)
+		scopeIDs := make([]string, count)
+		roots := make([]string, count)
+
+		for i, scope := range value.MatchedScopes {
+			ordinals[i] = int32(i + 1)
+			scopeIDs[i] = scope.ScopeID
+			roots[i] = scope.GovernedRoot
+		}
+
+		tag, err := tx.Exec(ctx, `
+INSERT INTO fi.windows_security_event_scope
+    (source_record_id, scope_ordinal, scope_id, governed_root)
+SELECT $1, s.ordinal, s.scope_id, s.governed_root
+FROM unnest(
+    $2::integer[],
+    $3::text[],
+    $4::text[]
+) AS s(ordinal, scope_id, governed_root)
+`, sourceRecordID, ordinals, scopeIDs, roots)
+		if err != nil {
+			return fmt.Errorf("insert FI Windows Security matched scopes: %w", err)
+		}
+		if tag.RowsAffected() != int64(count) {
+			return fmt.Errorf("FI Windows Security matched scope row count mismatch: expected %d, inserted %d", count, tag.RowsAffected())
 		}
 	}
-	for i, field := range value.Fields {
-		if _, err := tx.Exec(ctx, `INSERT INTO fi.windows_security_event_field (source_record_id,field_ordinal,name,value) VALUES ($1,$2,$3,$4)`, sourceRecordID, i+1, field.Name, field.Value); err != nil {
-			return fmt.Errorf("insert FI Windows Security field: %w", err)
+
+	if count := len(value.Fields); count > 0 {
+		ordinals := make([]int32, count)
+		names := make([]string, count)
+		values := make([]string, count)
+
+		for i, field := range value.Fields {
+			ordinals[i] = int32(i + 1)
+			names[i] = field.Name
+			values[i] = field.Value
+		}
+
+		tag, err := tx.Exec(ctx, `
+INSERT INTO fi.windows_security_event_field
+    (source_record_id, field_ordinal, name, value)
+SELECT $1, f.ordinal, f.name, f.value
+FROM unnest(
+    $2::integer[],
+    $3::text[],
+    $4::text[]
+) AS f(ordinal, name, value)
+`, sourceRecordID, ordinals, names, values)
+		if err != nil {
+			return fmt.Errorf("insert FI Windows Security fields: %w", err)
+		}
+		if tag.RowsAffected() != int64(count) {
+			return fmt.Errorf("FI Windows Security field row count mismatch: expected %d, inserted %d", count, tag.RowsAffected())
 		}
 	}
 	return nil
