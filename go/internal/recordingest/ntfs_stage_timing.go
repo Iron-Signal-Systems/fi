@@ -34,10 +34,6 @@ type ntfsStageRecorder struct {
 }
 
 func beginNTFSStage(ctx context.Context) ntfsStageRecorder {
-	if ctx.Value(ntfsNestedStageContextKey{}) != true {
-		return ntfsStageRecorder{}
-	}
-
 	counters, ok := ctx.Value(
 		ntfsStageTimingContextKey{},
 	).(*ntfsStageTimingCounters)
