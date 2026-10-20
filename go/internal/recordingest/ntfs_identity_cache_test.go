@@ -73,10 +73,7 @@ func TestNTFSCacheExistingIdentityAndConflict(t *testing.T) {
 		context.Background(), ntfsObjectCacheContextKey{}, cache,
 	)
 	tx := &ntfsCacheTestTx{
-		rows: []ntfsCacheTestRow{
-			{err: pgx.ErrNoRows},
-			{id: 42, method: "method-v1"},
-		},
+		rows: []ntfsCacheTestRow{{id: 42, method: "method-v1"}},
 	}
 
 	identity := ntfsCacheTestIdentity("method-v1")
@@ -88,19 +85,18 @@ func TestNTFSCacheExistingIdentityAndConflict(t *testing.T) {
 		}
 	}
 
-	if len(tx.queries) != 2 {
-		t.Fatalf("SQL calls=%d, want 2", len(tx.queries))
+	if len(tx.queries) != 1 {
+		t.Fatalf("SQL calls=%d, want 1", len(tx.queries))
 	}
-	if !strings.Contains(tx.queries[0], "INSERT INTO fi.ntfs_object") ||
-		!strings.Contains(tx.queries[1], "SELECT ntfs_object_id") {
-		t.Fatal("unexpected SQL sequence")
+	if !strings.Contains(tx.queries[0], "SELECT ntfs_object_id") {
+		t.Fatal("existing identity must use SELECT without INSERT")
 	}
 
 	conflicting := ntfsCacheTestIdentity("method-v2")
 	if _, err := ensureNTFSObject(ctx, tx, 10, conflicting); err == nil {
 		t.Fatal("cached identity accepted conflicting method version")
 	}
-	if len(tx.queries) != 2 {
+	if len(tx.queries) != 1 {
 		t.Fatal("conflicting cache hit unexpectedly queried PostgreSQL")
 	}
 }
@@ -111,7 +107,10 @@ func TestNTFSCacheNewIdentityAndVolumeIsolation(t *testing.T) {
 		context.Background(), ntfsObjectCacheContextKey{}, cache,
 	)
 	tx := &ntfsCacheTestTx{
-		rows: []ntfsCacheTestRow{{id: 51}, {id: 52}},
+		rows: []ntfsCacheTestRow{
+			{err: pgx.ErrNoRows}, {id: 51},
+			{err: pgx.ErrNoRows}, {id: 52},
+		},
 	}
 	identity := ntfsCacheTestIdentity("method-v1")
 
@@ -129,8 +128,14 @@ func TestNTFSCacheNewIdentityAndVolumeIsolation(t *testing.T) {
 		}
 	}
 
-	if len(tx.queries) != 2 || len(cache.objects) != 2 {
+	if len(tx.queries) != 4 || len(cache.objects) != 2 {
 		t.Fatalf("queries=%d entries=%d", len(tx.queries), len(cache.objects))
+	}
+	for i := 0; i < len(tx.queries); i += 2 {
+		if !strings.Contains(tx.queries[i], "SELECT ntfs_object_id") ||
+			!strings.Contains(tx.queries[i+1], "INSERT INTO fi.ntfs_object") {
+			t.Fatalf("new identity SQL sequence at %d is not SELECT then INSERT", i)
+		}
 	}
 }
 
@@ -143,6 +148,7 @@ func TestNTFSCacheDatabaseErrorNotCached(t *testing.T) {
 	tx := &ntfsCacheTestTx{
 		rows: []ntfsCacheTestRow{
 			{err: dbErr},
+			{err: pgx.ErrNoRows},
 			{id: 75},
 		},
 	}
@@ -159,8 +165,8 @@ func TestNTFSCacheDatabaseErrorNotCached(t *testing.T) {
 	if err != nil || id != 75 {
 		t.Fatalf("retry: id=%d err=%v", id, err)
 	}
-	if len(tx.queries) != 2 {
-		t.Fatalf("queries=%d, want 2", len(tx.queries))
+	if len(tx.queries) != 3 {
+		t.Fatalf("queries=%d, want 3", len(tx.queries))
 	}
 }
 
@@ -170,10 +176,7 @@ func TestNTFSCacheDatabaseMethodConflictNotCached(t *testing.T) {
 		context.Background(), ntfsObjectCacheContextKey{}, cache,
 	)
 	tx := &ntfsCacheTestTx{
-		rows: []ntfsCacheTestRow{
-			{err: pgx.ErrNoRows},
-			{id: 81, method: "different-method"},
-		},
+		rows: []ntfsCacheTestRow{{id: 81, method: "different-method"}},
 	}
 
 	if _, err := ensureNTFSObject(
@@ -199,10 +202,10 @@ func TestNTFSCacheSeparateGenerationContexts(t *testing.T) {
 	)
 
 	txA := &ntfsCacheTestTx{
-		rows: []ntfsCacheTestRow{{id: 91}},
+		rows: []ntfsCacheTestRow{{err: pgx.ErrNoRows}, {id: 91}},
 	}
 	txB := &ntfsCacheTestTx{
-		rows: []ntfsCacheTestRow{{id: 92}},
+		rows: []ntfsCacheTestRow{{err: pgx.ErrNoRows}, {id: 92}},
 	}
 
 	idA, errA := ensureNTFSObject(ctxA, txA, 10, identity)
@@ -212,8 +215,57 @@ func TestNTFSCacheSeparateGenerationContexts(t *testing.T) {
 		t.Fatalf("generation isolation: A=%d/%v B=%d/%v",
 			idA, errA, idB, errB)
 	}
-	if len(txA.queries) != 1 || len(txB.queries) != 1 {
+	if len(txA.queries) != 2 || len(txB.queries) != 2 {
 		t.Fatal("separate generations unexpectedly shared cache results")
+	}
+}
+
+func TestNTFSCacheConcurrentInsertion(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		method  string
+		wantErr bool
+	}{
+		{name: "same-method", method: "method-v1"},
+		{name: "conflicting-method", method: "other-method", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := newNTFSObjectCache()
+			ctx := context.WithValue(context.Background(), ntfsObjectCacheContextKey{}, cache)
+			tx := &ntfsCacheTestTx{rows: []ntfsCacheTestRow{
+				{err: pgx.ErrNoRows},
+				{err: pgx.ErrNoRows},
+				{id: 100, method: tc.method},
+			}}
+			id, err := ensureNTFSObject(ctx, tx, 10, ntfsCacheTestIdentity("method-v1"))
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "conflicts") || len(cache.objects) != 0 {
+					t.Fatalf("concurrent method conflict: id=%d err=%v cache=%d", id, err, len(cache.objects))
+				}
+			} else if err != nil || id != 100 || len(cache.objects) != 1 {
+				t.Fatalf("concurrent identity: id=%d err=%v cache=%d", id, err, len(cache.objects))
+			}
+			if len(tx.queries) != 3 ||
+				!strings.Contains(tx.queries[0], "SELECT ntfs_object_id") ||
+				!strings.Contains(tx.queries[1], "INSERT INTO fi.ntfs_object") ||
+				!strings.Contains(tx.queries[2], "SELECT ntfs_object_id") {
+				t.Fatalf("unexpected concurrent insertion SQL sequence: %v", tx.queries)
+			}
+		})
+	}
+}
+
+func TestNTFSCacheInsertErrorNotCached(t *testing.T) {
+	dbErr := errors.New("simulated identity insert failure")
+	cache := newNTFSObjectCache()
+	ctx := context.WithValue(context.Background(), ntfsObjectCacheContextKey{}, cache)
+	tx := &ntfsCacheTestTx{rows: []ntfsCacheTestRow{
+		{err: pgx.ErrNoRows},
+		{err: dbErr},
+	}}
+	_, err := ensureNTFSObject(ctx, tx, 10, ntfsCacheTestIdentity("method-v1"))
+	if !errors.Is(err, dbErr) || len(cache.objects) != 0 {
+		t.Fatalf("insert failure: err=%v cache=%d", err, len(cache.objects))
 	}
 }
 

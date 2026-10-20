@@ -80,8 +80,36 @@ func ensureNTFSObject(ctx context.Context, tx pgx.Tx, volumeID int64, value reco
 	if cachedID, found, cacheErr := cache.lookup(volumeID, value); found || cacheErr != nil {
 		return cachedID, cacheErr
 	}
+
+	// Existing identities dominate reobservation workloads. Avoid attempting
+	// an INSERT for each identity already present in the SOR.
 	var id int64
-	err := tx.QueryRow(ctx, `
+	var existingMethod string
+	lookup := func() error {
+		return tx.QueryRow(ctx, `
+SELECT ntfs_object_id, identity_method_version
+FROM fi.ntfs_object
+WHERE ntfs_volume_id=$1
+  AND file_reference_number=$2::text::numeric
+  AND sequence_number=$3::text::numeric
+`, volumeID, value.FileReferenceNumber, value.SequenceNumber).Scan(&id, &existingMethod)
+	}
+
+	err := lookup()
+	if err == nil {
+		if existingMethod != value.MethodVersion {
+			return 0, errors.New("FI NTFS object identity method conflicts with existing relational identity")
+		}
+		cache.remember(volumeID, value, id)
+		return id, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("lookup FI NTFS object identity: %w", err)
+	}
+
+	// Keep ON CONFLICT DO NOTHING: another transaction may insert this
+	// identity after the SELECT. A conflict requires a fresh method check.
+	err = tx.QueryRow(ctx, `
 INSERT INTO fi.ntfs_object (
     ntfs_volume_id, identity_method_version, file_reference_number, sequence_number
 )
@@ -98,14 +126,7 @@ RETURNING ntfs_object_id
 		return 0, fmt.Errorf("insert FI NTFS object identity: %w", err)
 	}
 
-	var existingMethod string
-	if err := tx.QueryRow(ctx, `
-SELECT ntfs_object_id, identity_method_version
-FROM fi.ntfs_object
-WHERE ntfs_volume_id=$1
-  AND file_reference_number=$2::text::numeric
-  AND sequence_number=$3::text::numeric
-`, volumeID, value.FileReferenceNumber, value.SequenceNumber).Scan(&id, &existingMethod); err != nil {
+	if err := lookup(); err != nil {
 		return 0, fmt.Errorf("reload FI NTFS object identity: %w", err)
 	}
 	if existingMethod != value.MethodVersion {
