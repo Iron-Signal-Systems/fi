@@ -15,6 +15,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -395,6 +396,54 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var byteCount int64
 	var pendingSecurity []securityBulkRecord
 	var pendingSecurityBytes int64
+	var pendingFiles []fileSourceBulkRecord
+	var pendingFileBytes int64
+	fileBulk := newFileObservationBulkState()
+	ctx = context.WithValue(ctx, fileObservationBulkContextKey{}, fileBulk)
+	flushFiles := func() error {
+		if len(pendingFiles) == 0 {
+			return nil
+		}
+		first := pendingFiles[0].ordinal
+		last := pendingFiles[len(pendingFiles)-1].ordinal
+		if err := copyFileSourceBulk(ctx, tx, sourceBatchID, pendingFiles, profile); err != nil {
+			return fmt.Errorf("%w: batch %s FileObservation source records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		projectStarted := time.Now()
+		defer func() { profile.Projection += time.Since(projectStarted) }()
+		for _, item := range pendingFiles {
+			if item.prepared.Record.RecordKind == "USNObjectObservation" {
+				projectCtx := context.WithValue(ctx, fileObservationBulkBytesContextKey{}, item.prepared.RecordBytes)
+				if err := ProjectSourceRecord(projectCtx, tx, sourceID, item.sourceRecordID, item.prepared); err != nil {
+					return fmt.Errorf("%w: batch %s record %d (USNObjectObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
+				}
+				continue
+			}
+			var value fileObservationPayload
+			if err := decodeStrictPayload(item.prepared.Record.Payload, &value); err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, projectionDecodeError("FileObservation", err))
+			}
+			value.NTFS.ContentHashes = &value.ContentHashes
+			if err := ntfs.ValidateObservation(value.NTFS); err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, projectionValidationError("FileObservation", err))
+			}
+			if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): governed-root scope does not match source envelope", ErrSourceRecordRejected, batch.BatchID, item.ordinal)
+			}
+			if err := fileBulk.add(ctx, tx, fileObservationBulkRecord{
+				sourceID: sourceID, sourceRecordID: item.sourceRecordID, ordinal: item.ordinal,
+				value: value.NTFS, hashes: &value.ContentHashes, bytes: int64(item.prepared.RecordBytes),
+			}); err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
+			}
+		}
+		if err := fileBulk.flush(ctx, tx); err != nil {
+			return fmt.Errorf("%w: batch %s FileObservation projection records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		pendingFiles = nil
+		pendingFileBytes = 0
+		return nil
+	}
 	flushSecurity := func() error {
 		if len(pendingSecurity) == 0 {
 			return nil
@@ -438,6 +487,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			return ordinal, err
 		}
 		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
+			if err := flushFiles(); err != nil {
+				return ordinal, err
+			}
 			securityPrepareStarted := time.Now()
 			securityRecord, err := prepareSecurityBulkRecord(ordinal, prepared, digest)
 			profile.SecurityBulk.Prepare += time.Since(securityPrepareStarted)
@@ -463,6 +515,28 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		if err := flushSecurity(); err != nil {
 			return ordinal, err
 		}
+		if prepared.Record.RecordKind == "FileObservation" || prepared.Record.RecordKind == "USNObjectObservation" {
+			if len(pendingFiles) >= fileSourceBulkMaxRecords ||
+				(len(pendingFiles) > 0 && pendingFileBytes+int64(prepared.RecordBytes) > fileSourceBulkMaxBytes) {
+				if err := flushFiles(); err != nil {
+					return ordinal, err
+				}
+			}
+			pendingFiles = append(pendingFiles, fileSourceBulkRecord{
+				ordinal: ordinal, prepared: prepared, digest: digest,
+			})
+			pendingFileBytes += int64(prepared.RecordBytes)
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
+				}
+				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+			}
+			continue
+		}
+		if err := flushFiles(); err != nil {
+			return ordinal, err
+		}
 		var sourceRecordID int64
 		sqlStarted := time.Now()
 		err = tx.QueryRow(ctx, `
@@ -477,7 +551,11 @@ RETURNING source_record_id
 			return ordinal, fmt.Errorf("insert FI source record: %w", err)
 		}
 		projectStarted := time.Now()
-		projectErr := ProjectSourceRecord(ctx, tx, sourceID, sourceRecordID, prepared)
+		projectCtx := ctx
+		if prepared.Record.RecordKind == "USNObjectObservation" {
+			projectCtx = context.WithValue(ctx, fileObservationBulkBytesContextKey{}, prepared.RecordBytes)
+		}
+		projectErr := ProjectSourceRecord(projectCtx, tx, sourceID, sourceRecordID, prepared)
 		profile.Projection += time.Since(projectStarted)
 		if projectErr != nil {
 			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, projectErr)
@@ -489,8 +567,17 @@ RETURNING source_record_id
 			return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
 		}
 	}
+	if err := flushFiles(); err != nil {
+		return ordinal, err
+	}
 	if err := flushSecurity(); err != nil {
 		return ordinal, err
+	}
+	fileFlushStarted := time.Now()
+	fileFlushErr := fileBulk.flush(ctx, tx)
+	profile.Projection += time.Since(fileFlushStarted)
+	if fileFlushErr != nil {
+		return ordinal, fmt.Errorf("%w: batch %s FileObservation final bulk projection: %v", ErrSourceRecordRejected, batch.BatchID, fileFlushErr)
 	}
 
 	gotSHA := hex.EncodeToString(hasher.Sum(nil))

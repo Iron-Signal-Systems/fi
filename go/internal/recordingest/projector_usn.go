@@ -193,7 +193,18 @@ INSERT INTO fi.usn_object_change (
 			return errors.New("FI USN nested NTFS observation volume does not match preceding read boundary")
 		}
 		nestedCtx := context.WithValue(ctx, ntfsNestedStageContextKey{}, true)
-		if err := projectNTFSObservation(nestedCtx, tx, sourceID, sourceRecordID, nested, value.ContentHashes); err != nil {
+		if state, ok := ctx.Value(fileObservationBulkContextKey{}).(*fileObservationBulkState); ok && state != nil {
+			recordBytes, _ := ctx.Value(fileObservationBulkBytesContextKey{}).(int)
+			if recordBytes <= 0 {
+				return errors.New("FI USN nested NTFS bulk source byte count is missing")
+			}
+			if err := state.add(nestedCtx, tx, fileObservationBulkRecord{
+				sourceID: sourceID, sourceRecordID: sourceRecordID, value: nested,
+				hashes: value.ContentHashes, bytes: int64(recordBytes),
+			}); err != nil {
+				return fmt.Errorf("queue FI USN nested NTFS observation: %w", err)
+			}
+		} else if err := projectNTFSObservation(nestedCtx, tx, sourceID, sourceRecordID, nested, value.ContentHashes); err != nil {
 			return err
 		}
 	}
