@@ -96,6 +96,13 @@ func copyFileObservationBulk(ctx context.Context, tx pgx.Tx, pending []fileObser
 
 	counters, _ := ctx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters)
 	batchStarted := time.Now()
+	prefetchStarted := time.Now()
+	if err := prefetchNTFSObjectIdentities(ctx, tx, pending); err != nil {
+		return err
+	}
+	if counters != nil {
+		counters.Identity += time.Since(prefetchStarted)
+	}
 	prepared := make([]fileObservationBulkPrepared, 0, len(pending))
 	for _, p := range pending {
 		started := time.Now()
@@ -113,18 +120,14 @@ func copyFileObservationBulk(ctx context.Context, tx pgx.Tx, pending []fileObser
 		return err
 	}
 
-	// Foreign keys now exist. The existing child projector functions retain
-	// their validation, COPY state, and original per-child error behavior.
-	var childTotal time.Duration
-	for _, p := range prepared {
-		childStarted := time.Now()
-		if err := projectFileObservationBulkChildren(ctx, tx, p.record); err != nil {
-			return fmt.Errorf("FI file observation child source record %d (ordinal %d): %w", p.record.sourceRecordID, p.record.ordinal, err)
-		}
-		childTotal += time.Since(childStarted)
+	// All file parents and metadata have been inserted. COPY the remaining
+	// child tables in foreign-key order, then reuse the existing bounded hash
+	// and ACE COPY states. The generation transaction remains authoritative.
+	if err := copyFileObservationBulkChildren(ctx, tx, prepared, counters); err != nil {
+		return err
 	}
 	if counters != nil {
-		counters.Total += time.Since(batchStarted) - childTotal
+		counters.Total += time.Since(batchStarted)
 	}
 	return nil
 }
