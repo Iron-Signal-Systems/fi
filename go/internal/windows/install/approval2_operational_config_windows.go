@@ -199,6 +199,20 @@ func approval2OperationalConfigValue(
 	if readWorkers < 1 || readWorkers > 16 {
 		return config.Config{}, fmt.Errorf("Approval 2 USN re-observation workers must be between 1 and 16: %d", readWorkers)
 	}
+	chunkObjects := proposal.USNProcessingChunkObjects
+	if chunkObjects == 0 {
+		chunkObjects = 256
+	}
+	if chunkObjects < 64 || chunkObjects > 2048 {
+		return config.Config{}, fmt.Errorf("Approval 2 processing chunk objects must be between 64 and 2048: %d", chunkObjects)
+	}
+	maxInflight := proposal.USNProcessingMaxInflight
+	if maxInflight == 0 {
+		maxInflight = 32
+	}
+	if maxInflight < 1 || maxInflight > 64 {
+		return config.Config{}, fmt.Errorf("Approval 2 max in-flight observations must be between 1 and 64: %d", maxInflight)
+	}
 	value := config.Config{
 		VersionID: config.Version11,
 		GovernedRoots: append(
@@ -206,12 +220,14 @@ func approval2OperationalConfigValue(
 			proposal.GovernedRoots...,
 		),
 		Collector: config.CollectorSettings{
-			CollectionEvery:        time.Minute,
-			SupportingRefreshEvery: 30 * time.Minute,
-			USNEvery:               10 * time.Minute,
-			USNReadBufferMiB:       readSize,
-			USNReobserveWorkers:    readWorkers,
-			WindowsSecurityEvery:   time.Minute,
+			CollectionEvery:           time.Minute,
+			SupportingRefreshEvery:    30 * time.Minute,
+			USNEvery:                  10 * time.Minute,
+			USNReadBufferMiB:          readSize,
+			USNReobserveWorkers:       readWorkers,
+			USNProcessingChunkObjects: chunkObjects,
+			USNProcessingMaxInflight:  maxInflight,
+			WindowsSecurityEvery:      time.Minute,
 		},
 		Receiver: config.ReceiverSettings{
 			Address: proposal.ReceiverAddress,
@@ -806,12 +822,19 @@ func renderApproval2OperationalConfig(
 
 	fmt.Fprintf(
 		&builder,
-		"\ncollector.collection_every = %s\ncollector.supporting_refresh_every = %s\ncollector.usn_every = %s\ncollector.usn_read_buffer_mib = %d\ncollector.usn_reobserve_workers = %d\ncollector.windows_security_every = %s\n",
+		"\ncollector.collection_every = %s\ncollector.supporting_refresh_every = %s\ncollector.usn_every = %s\n"+
+			"# USN read buffer in MiB. Minimum: 1; maximum: 64.\ncollector.usn_read_buffer_mib = %d\n"+
+			"# Re-observation workers. Minimum: 1; maximum: 16.\ncollector.usn_reobserve_workers = %d\n"+
+			"# Objects per temporary stage flush. Minimum: 64; maximum: 2048.\ncollector.usn_processing_chunk_objects = %d\n"+
+			"# Maximum simultaneous un-staged observations. Minimum: 1; maximum: 64.\ncollector.usn_processing_max_inflight = %d\n"+
+			"collector.windows_security_every = %s\n",
 		value.Collector.CollectionEvery,
 		value.Collector.SupportingRefreshEvery,
 		value.Collector.USNEvery,
 		value.Collector.USNReadBufferMiB,
 		value.Collector.USNReobserveWorkers,
+		value.Collector.USNProcessingChunkObjects,
+		value.Collector.USNProcessingMaxInflight,
 		value.Collector.WindowsSecurityEvery,
 	)
 	fmt.Fprintf(

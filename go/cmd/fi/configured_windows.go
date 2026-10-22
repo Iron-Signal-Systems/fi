@@ -88,6 +88,9 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 	if err := usn.ConfigureReobserveWorkers(value.Collector.USNReobserveWorkers); err != nil {
 		return configuredRunSummary{}, err
 	}
+	if err := usn.ConfigureProcessingBounds(value.Collector.USNProcessingChunkObjects, value.Collector.USNProcessingMaxInflight); err != nil {
+		return configuredRunSummary{}, err
+	}
 	if err := applyConfiguredSpoolPolicy(value); err != nil {
 		return configuredRunSummary{}, err
 	}
@@ -154,6 +157,9 @@ func writeConfiguredCollector(ctx context.Context) (configuredRunSummary, error)
 }
 
 func writeConfiguredRoot(ctx context.Context, governedRoot string) (configuredRootSummary, error) {
+	if err := guardLegacyUSNRoot(governedRoot); err != nil {
+		return configuredRootSummary{}, err
+	}
 	scopeID := configuredScopeID(governedRoot)
 	statePath, err := checkpoint.DefaultPath(scopeID)
 	if err != nil {

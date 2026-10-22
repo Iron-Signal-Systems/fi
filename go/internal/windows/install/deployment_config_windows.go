@@ -129,13 +129,15 @@ func LoadDeploymentConfigProposal(
 			[]string(nil),
 			parsed.GovernedRoots...,
 		),
-		ReceiverAddress:     strings.TrimSpace(parsed.Receiver.Address),
-		ReceiverName:        strings.TrimSpace(parsed.Receiver.Name),
-		SpoolDir:            strings.TrimSpace(parsed.Storage.SpoolDir),
-		StageDir:            strings.TrimSpace(parsed.Storage.StageDir),
-		StateDir:            strings.TrimSpace(parsed.Storage.StateDir),
-		USNReadBufferMiB:    parsed.Collector.USNReadBufferMiB,
-		USNReobserveWorkers: parsed.Collector.USNReobserveWorkers,
+		ReceiverAddress:           strings.TrimSpace(parsed.Receiver.Address),
+		ReceiverName:              strings.TrimSpace(parsed.Receiver.Name),
+		SpoolDir:                  strings.TrimSpace(parsed.Storage.SpoolDir),
+		StageDir:                  strings.TrimSpace(parsed.Storage.StageDir),
+		StateDir:                  strings.TrimSpace(parsed.Storage.StateDir),
+		USNReadBufferMiB:          parsed.Collector.USNReadBufferMiB,
+		USNReobserveWorkers:       parsed.Collector.USNReobserveWorkers,
+		USNProcessingChunkObjects: parsed.Collector.USNProcessingChunkObjects,
+		USNProcessingMaxInflight:  parsed.Collector.USNProcessingMaxInflight,
 	}
 
 	digest := sha256.Sum256(raw)
@@ -152,17 +154,19 @@ func LoadDeploymentConfigProposal(
 
 	canonical, err := approval2OperationalConfigValue(
 		ConfigState{
-			GovernedRoots:       append([]string(nil), inputs.GovernedRoots...),
-			Path:                proposal.InstallPath,
-			Presence:            presenceAbsent,
-			ReceiverAddress:     inputs.ReceiverAddress,
-			ReceiverName:        inputs.ReceiverName,
-			SourceID:            deploymentConfigExpectedSourceID(report),
-			SpoolDir:            inputs.SpoolDir,
-			StageDir:            inputs.StageDir,
-			StateDir:            inputs.StateDir,
-			USNReadBufferMiB:    inputs.USNReadBufferMiB,
-			USNReobserveWorkers: inputs.USNReobserveWorkers,
+			GovernedRoots:             append([]string(nil), inputs.GovernedRoots...),
+			Path:                      proposal.InstallPath,
+			Presence:                  presenceAbsent,
+			ReceiverAddress:           inputs.ReceiverAddress,
+			ReceiverName:              inputs.ReceiverName,
+			SourceID:                  deploymentConfigExpectedSourceID(report),
+			SpoolDir:                  inputs.SpoolDir,
+			StageDir:                  inputs.StageDir,
+			StateDir:                  inputs.StateDir,
+			USNReadBufferMiB:          inputs.USNReadBufferMiB,
+			USNReobserveWorkers:       inputs.USNReobserveWorkers,
+			USNProcessingChunkObjects: inputs.USNProcessingChunkObjects,
+			USNProcessingMaxInflight:  inputs.USNProcessingMaxInflight,
 		},
 	)
 	if err != nil {

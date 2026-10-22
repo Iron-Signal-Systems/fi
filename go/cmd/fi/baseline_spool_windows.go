@@ -56,6 +56,9 @@ func runBaselineSpoolRoot(governedRoot string) {
 }
 
 func writeBaselineSpoolRoot(ctx context.Context, scopeID string, governedRoot string) (baselineSpoolSummary, error) {
+	if err := guardLegacyUSNRoot(governedRoot); err != nil {
+		return baselineSpoolSummary{}, err
+	}
 	statePath, err := checkpoint.DefaultPath(scopeID)
 	if err != nil {
 		return baselineSpoolSummary{}, err

@@ -58,6 +58,9 @@ type serviceRuntimeRecord struct {
 	SecurityCheckpointRebased  bool   `json:"security_checkpoint_reinitialized,omitempty"`
 	SecurityContinuityGap      bool   `json:"security_continuity_gap,omitempty"`
 	SecurityMoreAvailable      bool   `json:"security_more_available,omitempty"`
+	LabScopeID                 string `json:"lab_scope_id,omitempty"`
+	LabCaptureNextUSN          string `json:"lab_capture_next_usn,omitempty"`
+	LabProcessingNextUSN       string `json:"lab_processing_next_usn,omitempty"`
 	Error                      string `json:"error,omitempty"`
 }
 
@@ -73,6 +76,8 @@ type fiWindowsService struct {
 	usnReadBufferMiB          int
 	securityInterval          time.Duration
 	supportingRefreshInterval time.Duration
+	labRoots                  []labPipelineRoot
+	labBootstrap              bool
 }
 
 func parseServiceInterval(name string, value string) (time.Duration, error) {
@@ -112,6 +117,30 @@ func runWindowsService(
 		return err
 	}
 
+	labOn, err := labPipelineRequested()
+	if err != nil {
+		return err
+	}
+	bootstrapOn, err := labBootstrapRequested()
+	if err != nil {
+		return err
+	}
+	if labOn && bootstrapOn {
+		return errors.New("lab bootstrap and lab capture modes are mutually exclusive")
+	}
+	var labRoots []labPipelineRoot
+	if labOn {
+		labRoots, err = prepareUSNPipelineLab(context.Background(), operationalSnapshot)
+		if err != nil {
+			return err
+		}
+	} else {
+		for _, r := range operationalSnapshot.GovernedRoots {
+			if err := guardLegacyUSNRoot(r); err != nil {
+				return err
+			}
+		}
+	}
 	return svc.Run(
 		windowsServiceName,
 		&fiWindowsService{
@@ -121,6 +150,8 @@ func runWindowsService(
 			usnReadBufferMiB:          operationalSnapshot.USNReadBufferMiB,
 			securityInterval:          securityInterval,
 			supportingRefreshInterval: supportingRefreshInterval,
+			labRoots:                  labRoots,
+			labBootstrap:              bootstrapOn,
 		},
 	)
 }
@@ -130,6 +161,9 @@ func (service *fiWindowsService) Execute(
 	requests <-chan svc.ChangeRequest,
 	statuses chan<- svc.Status,
 ) (bool, uint32) {
+	if service.labBootstrap {
+		return service.executeLabBootstrap(requests, statuses)
+	}
 	statuses <- svc.Status{State: svc.StartPending}
 
 	// Startup recovery must finish before any independently scheduled writer is
@@ -170,6 +204,9 @@ func (service *fiWindowsService) Execute(
 			service.supportingRefreshInterval,
 			func() error { return nil },
 			func(ctx context.Context) (configuredRunSummary, error) {
+				if service.labRoots != nil {
+					return writeLabRootCollectionSummary(service.operationalSnapshot), nil
+				}
 				return writeServiceRootCollector(
 					ctx,
 					service.operationalSnapshot,
@@ -181,6 +218,10 @@ func (service *fiWindowsService) Execute(
 	}()
 
 	go func() {
+		if service.labRoots != nil {
+			done <- runUSNPipelineLab(ctx, service.labRoots, appendRecord)
+			return
+		}
 		done <- runServiceUSNLoop(
 			ctx,
 			service.usnInterval,

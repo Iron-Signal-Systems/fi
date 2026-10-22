@@ -48,6 +48,7 @@ func main() {
 
 	runMode := flag.Bool("run", false, "run one configured FI collection cycle")
 	serviceMode := flag.Bool("service", false, "run FI under the Windows Service Control Manager")
+	labInitMode := flag.Bool("usn-pipeline-lab-init", false, "explicitly initialize independent USN queue from continuous configured checkpoint")
 	serviceCollectionEvery := flag.String("service-collection-every", "", "configured collection interval for -service, for example 1m")
 	serviceSupportingRefreshEvery := flag.String("service-supporting-refresh-every", "", "supporting-source refresh interval for -service, for example 30m")
 	supportingRefreshMode := flag.Bool("supporting-refresh", false, "run one bounded SMB/local/AD supporting-source refresh")
@@ -85,6 +86,7 @@ func main() {
 	modeCount := 0
 	for _, selected := range []bool{
 		*runMode,
+		*labInitMode,
 		*serviceMode,
 		*supportingRefreshMode,
 		*configMode,
@@ -130,6 +132,7 @@ func main() {
 	// diagnostics remain available while the service/runtime owns collection.
 	switch {
 	case *runMode,
+		*labInitMode,
 		*serviceMode,
 		*supportingRefreshMode,
 		*baselineSpoolRootMode,
@@ -155,6 +158,17 @@ func main() {
 	}
 
 	switch {
+	case *labInitMode:
+		if flag.NArg() != 1 {
+			printUsage()
+			os.Exit(2)
+		}
+		if err := runUSNPipelineLabInit(context.Background(), flag.Arg(0)); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+		return
+
 	case *runMode:
 		if flag.NArg() != 0 {
 			printUsage()
@@ -563,6 +577,7 @@ func printUsage() {
 	fmt.Println(`  fi-collector.exe -spool-verify       <manifest-path>`)
 	fmt.Println(`  fi-collector.exe -usn-checkpoint-init   <governed-root>`)
 	fmt.Println(`  fi-collector.exe -usn-checkpoint-status <governed-root>`)
+	fmt.Println(`  fi-collector.exe -usn-pipeline-lab-init <configured-governed-root>`)
 }
 
 func runWalk(governedRoot string) {

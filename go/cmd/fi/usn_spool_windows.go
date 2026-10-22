@@ -64,35 +64,39 @@ type usnScopeSelection struct {
 // spooledUSNReadBoundary records the exact bounded journal range and the
 // mechanical scope selection applied before FI writes object records.
 type spooledUSNReadBoundary struct {
-	ObservedAt                 string                 `json:"observed_at"`
-	CollectionMethod           string                 `json:"collection_method"`
-	VolumeIdentity             records.VolumeIdentity `json:"volume_identity"`
-	JournalID                  string                 `json:"journal_id"`
-	StartUSN                   string                 `json:"start_usn"`
-	NextUSN                    string                 `json:"next_usn"`
-	SourceRecordCount          int                    `json:"source_record_count"`
-	SourceDistinctObjectCount  int                    `json:"source_distinct_object_count"`
-	SelectedRecordCount        int                    `json:"selected_record_count"`
-	SelectedObjectCount        int                    `json:"selected_object_count"`
-	IgnoredVolumeRecordCount   int                    `json:"ignored_volume_record_count"`
-	IgnoredVolumeObjectCount   int                    `json:"ignored_volume_object_count"`
-	ScopeUnresolvedObjectCount int                    `json:"scope_unresolved_object_count"`
-	USNReadOperationID         string                 `json:"usn_read_operation_id"`
-	ReObservationOperationID   string                 `json:"reobservation_operation_id"`
+	SourceBatchSHA256          string                      `json:"source_batch_sha256,omitempty"`
+	CorrelationSHA256          string                      `json:"correlation_sha256,omitempty"`
+	RootIdentity               *records.NTFSObjectIdentity `json:"root_identity,omitempty"`
+	ObservedAt                 string                      `json:"observed_at"`
+	CollectionMethod           string                      `json:"collection_method"`
+	VolumeIdentity             records.VolumeIdentity      `json:"volume_identity"`
+	JournalID                  string                      `json:"journal_id"`
+	StartUSN                   string                      `json:"start_usn"`
+	NextUSN                    string                      `json:"next_usn"`
+	SourceRecordCount          int                         `json:"source_record_count"`
+	SourceDistinctObjectCount  int                         `json:"source_distinct_object_count"`
+	SelectedRecordCount        int                         `json:"selected_record_count"`
+	SelectedObjectCount        int                         `json:"selected_object_count"`
+	IgnoredVolumeRecordCount   int                         `json:"ignored_volume_record_count"`
+	IgnoredVolumeObjectCount   int                         `json:"ignored_volume_object_count"`
+	ScopeUnresolvedObjectCount int                         `json:"scope_unresolved_object_count"`
+	USNReadOperationID         string                      `json:"usn_read_operation_id"`
+	ReObservationOperationID   string                      `json:"reobservation_operation_id"`
 }
 
 // spooledUSNObjectObservation keeps the raw USN facts for one selected NTFS
 // object beside the fresh File-ID observation attempt.
 type spooledUSNObjectObservation struct {
-	FileIdentity  records.NTFSObjectIdentity      `json:"file_identity"`
-	Changes       []records.USNChangeObservation  `json:"changes"`
-	ScopeBasis    string                          `json:"scope_basis"`
-	ScopeDetail   string                          `json:"scope_detail,omitempty"`
-	Status        usn.ReobservationStatus         `json:"status"`
-	ReasonCode    string                          `json:"reason_code,omitempty"`
-	Error         string                          `json:"error,omitempty"`
-	NTFS          *ntfs.Observation               `json:"ntfs_observation,omitempty"`
-	ContentHashes *records.ContentHashObservation `json:"content_hashes,omitempty"`
+	SourceBatchSHA256 string                          `json:"source_batch_sha256,omitempty"`
+	FileIdentity      records.NTFSObjectIdentity      `json:"file_identity"`
+	Changes           []records.USNChangeObservation  `json:"changes"`
+	ScopeBasis        string                          `json:"scope_basis"`
+	ScopeDetail       string                          `json:"scope_detail,omitempty"`
+	Status            usn.ReobservationStatus         `json:"status"`
+	ReasonCode        string                          `json:"reason_code,omitempty"`
+	Error             string                          `json:"error,omitempty"`
+	NTFS              *ntfs.Observation               `json:"ntfs_observation,omitempty"`
+	ContentHashes     *records.ContentHashObservation `json:"content_hashes,omitempty"`
 }
 
 type usnSpoolNextSummary struct {
@@ -143,6 +147,9 @@ func writeUSNSpoolNext(
 	returnSummary usnSpoolNextSummary,
 	returnErr error,
 ) {
+	if err := guardLegacyUSNRoot(governedRoot); err != nil {
+		return usnSpoolNextSummary{}, err
+	}
 	statePath, err := checkpoint.DefaultPath(scopeID)
 	if err != nil {
 		return usnSpoolNextSummary{}, err
@@ -163,15 +170,22 @@ func writeUSNSpoolNext(
 		return summary, fmt.Errorf("%w: %s", ErrUSNContinuityGap, assessment.ReasonCode)
 	}
 
-	result, err := usn.ReadAndReobserveJournaled(
+	result, err := usn.ReadAndReobserveJournaledStaged(
 		ctx,
 		scopeID,
 		governedRoot,
 		assessment.Checkpoint.NextUSN,
+		statePath,
+		usn.CurrentProcessingChunkObjects(),
+		usn.CurrentProcessingMaxInflight(),
 	)
 	if err != nil {
 		return summary, err
 	}
+	if result.Stage == nil {
+		return summary, errors.New("USN observation stage missing")
+	}
+	defer result.Stage.Close()
 	batch := result.Result.USNBatch
 	if err := validateUSNNextBatch(assessment, batch); err != nil {
 		return summary, err
@@ -274,11 +288,22 @@ func writeUSNSpoolNext(
 		return summary, err
 	}
 
+	observedSIDs := newObservedSIDSet()
 	for _, selection := range selected {
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		reobservation := selection.Reobservation
+		reobservation, readErr := result.Stage.Read(selection.Reobservation.FileIdentity)
+		if readErr != nil {
+			return summary, readErr
+		}
+		if reobservation.Status != selection.Reobservation.Status ||
+			reobservation.ReasonCode != selection.Reobservation.ReasonCode {
+			return summary, errors.New("staged USN observation status mismatch")
+		}
+		if reobservation.Status == usn.ReobservationObserved && reobservation.Observation != nil {
+			addNTFSObservationSIDs(observedSIDs, *reobservation.Observation)
+		}
 
 		switch reobservation.Status {
 		case usn.ReobservationOutsideGovernedRoot:
@@ -336,7 +361,7 @@ func writeUSNSpoolNext(
 	// boundary may FI update the host-level relevant-SID state. If this state
 	// update fails, the USN checkpoint does not advance, so the bounded source
 	// range remains replayable rather than silently losing a newly relevant SID.
-	sidUpdate, err := mergeUSNObservedSIDsIntoSupportingState(selected)
+	sidUpdate, err := mergeUSNObservedSIDSet(observedSIDs)
 	summary.SupportingSIDStatePath = sidUpdate.Path
 	summary.SupportingSIDCountBefore = sidUpdate.CountBefore
 	summary.SupportingSIDCountAfter = sidUpdate.CountAfter
@@ -519,6 +544,10 @@ func mergeUSNObservedSIDsIntoSupportingState(
 		}
 		addNTFSObservationSIDs(observedSIDs, *reobservation.Observation)
 	}
+	return mergeUSNObservedSIDSet(observedSIDs)
+}
+
+func mergeUSNObservedSIDSet(observedSIDs *observedSIDSet) (supportingSIDStateMergeResult, error) {
 	if len(observedSIDs.values) == 0 {
 		return supportingSIDStateMergeResult{}, nil
 	}

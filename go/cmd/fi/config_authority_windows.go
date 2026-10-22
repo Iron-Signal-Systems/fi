@@ -73,6 +73,9 @@ func resolveServiceConfiguration(
 	if err := usn.ConfigureReobserveWorkers(value.Collector.USNReobserveWorkers); err != nil {
 		return serviceOperationalSnapshot{}, 0, 0, err
 	}
+	if err := usn.ConfigureProcessingBounds(value.Collector.USNProcessingChunkObjects, value.Collector.USNProcessingMaxInflight); err != nil {
+		return serviceOperationalSnapshot{}, 0, 0, err
+	}
 	if err := applyConfiguredSpoolPolicy(value); err != nil {
 		return serviceOperationalSnapshot{}, 0, 0, err
 	}

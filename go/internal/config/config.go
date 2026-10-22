@@ -23,12 +23,14 @@ const (
 )
 
 type CollectorSettings struct {
-	CollectionEvery        time.Duration
-	SupportingRefreshEvery time.Duration
-	USNEvery               time.Duration
-	USNReadBufferMiB       int
-	USNReobserveWorkers    int
-	WindowsSecurityEvery   time.Duration
+	CollectionEvery           time.Duration
+	SupportingRefreshEvery    time.Duration
+	USNEvery                  time.Duration
+	USNReadBufferMiB          int
+	USNReobserveWorkers       int
+	USNProcessingChunkObjects int
+	USNProcessingMaxInflight  int
+	WindowsSecurityEvery      time.Duration
 }
 
 type Config struct {
@@ -118,6 +120,8 @@ func Parse(reader io.Reader) (Config, error) {
 	var value Config
 	value.Collector.USNReadBufferMiB = 1    // Bounded operational default.
 	value.Collector.USNReobserveWorkers = 8 // Default of this eight-worker candidate.
+	value.Collector.USNProcessingChunkObjects = 256
+	value.Collector.USNProcessingMaxInflight = 32
 	seenVersion := false
 	seenRoots := make(map[string]struct{})
 	seenSettings := make(map[string]struct{})
@@ -256,6 +260,18 @@ func assignSetting(value *Config, key string, rawValue string) error {
 			return fmt.Errorf("%s must be an integer between 1 and 16", key)
 		}
 		value.Collector.USNReobserveWorkers = workers
+	case "collector.usn_processing_chunk_objects":
+		count, err := strconv.Atoi(rawValue)
+		if err != nil || count < 64 || count > 2048 {
+			return fmt.Errorf("%s must be an integer between 64 and 2048", key)
+		}
+		value.Collector.USNProcessingChunkObjects = count
+	case "collector.usn_processing_max_inflight":
+		count, err := strconv.Atoi(rawValue)
+		if err != nil || count < 1 || count > 64 {
+			return fmt.Errorf("%s must be an integer between 1 and 64", key)
+		}
+		value.Collector.USNProcessingMaxInflight = count
 	case "collector.windows_security_every":
 		duration, err := parsePositiveDuration(key, rawValue)
 		if err != nil {

@@ -9,8 +9,11 @@ package usn
 import (
 	"context"
 	"errors"
+	"path/filepath"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/objbroker"
 	fioperation "github.com/Iron-Signal-Systems/fi/go/internal/windows/operation"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/resourcejournal"
 )
@@ -40,6 +43,7 @@ type JournaledReobservationResult struct {
 	USNReadOperation       records.OperationRecord `json:"usn_read_operation"`
 	ReObservationOperation records.OperationRecord `json:"reobservation_operation"`
 	Result                 ReobservationBatch      `json:"result"`
+	Stage                  *StagedReobservations   `json:"-"`
 }
 
 // ReadAndReobserveJournaled reads one USN batch, journals the USNRead lifecycle,
@@ -65,6 +69,23 @@ func ReadAndReobserveJournaled(
 	scopeID string,
 	governedRoot string,
 	startUSN string,
+) (JournaledReobservationResult, error) {
+	return readAndReobserveJournaled(ctx, scopeID, governedRoot, startUSN, false, "", 0, 0)
+}
+
+// ReadAndReobserveJournaledStaged keeps the existing operation lifecycle and
+// original USN batch, but stages full NTFS observations outside the Go heap.
+// The caller owns result.Stage and must close it after verified spool/SID work.
+func ReadAndReobserveJournaledStaged(
+	ctx context.Context, scopeID, governedRoot, startUSN, statePath string,
+	chunkObjects, maxInflight int,
+) (JournaledReobservationResult, error) {
+	return readAndReobserveJournaled(ctx, scopeID, governedRoot, startUSN, true, filepath.Dir(statePath), chunkObjects, maxInflight)
+}
+
+func readAndReobserveJournaled(
+	ctx context.Context, scopeID, governedRoot, startUSN string,
+	staged bool, stageDir string, chunkObjects, maxInflight int,
 ) (JournaledReobservationResult, error) {
 	operationJournalPath, err := fioperation.DefaultJournalPath(scopeID)
 	if err != nil {
@@ -153,8 +174,33 @@ func ReadAndReobserveJournaled(
 		)
 	}
 
-	result := ReobserveBatch(ctx, governedRoot, batch)
+	var result ReobservationBatch
+	var stage *StagedReobservations
+	var stageErr error
+	if staged {
+		result, stage, stageErr = stageReobservationBatch(
+			ctx, governedRoot, batch, stageDir,
+			currentReobserveWorkers(), chunkObjects, maxInflight,
+			ntfs.CollectFileReference, objbroker.ObserveObject, CheckObjectContainment,
+		)
+	} else {
+		result = ReobserveBatch(ctx, governedRoot, batch)
+	}
 	reobserveResourceErr := reobserveResources.Finish()
+	if stageErr != nil {
+		return JournaledReobservationResult{}, errors.Join(
+			stageErr, reobserveResourceErr,
+			finishFailedOperation(operationJournalPath, reobserveStarted, "USNObservationStagingFailed"),
+		)
+	}
+	// The caller must close stage; otherwise errors after staging would leak
+	// a temporary file until process exit.
+	cleanupStage := true
+	defer func() {
+		if cleanupStage && stage != nil {
+			_ = stage.Close()
+		}
+	}()
 
 	outcome, reason := reobservationOperationOutcome(ctx, result)
 	reobserveRecord, err := reobserveStarted.Finish(outcome, reason)
@@ -168,12 +214,14 @@ func ReadAndReobserveJournaled(
 		return JournaledReobservationResult{}, reobserveResourceErr
 	}
 
+	cleanupStage = false
 	return JournaledReobservationResult{
 		OperationJournalPath:   operationJournalPath,
 		ResourceJournalPath:    resourceJournalPath,
 		USNReadOperation:       readRecord,
 		ReObservationOperation: reobserveRecord,
 		Result:                 result,
+		Stage:                  stage,
 	}, nil
 }
 
@@ -202,4 +250,91 @@ func reobservationOperationOutcome(
 		}
 	}
 	return records.OperationComplete, ""
+}
+
+// ReobserveCapturedJournaledStaged replays a durable, previously read USN batch
+// into the existing bounded NTFS observation stage. Unlike the synchronous
+// reader it DOES NOT call FSCTL_READ_USN_JOURNAL, check a live source position,
+// advance any checkpoint, or fabricate a new USNRead operation. NTFS state is
+// observed NOW, and may differ from the historical event time.
+//
+// This is an inactive M3 adapter. The caller must correlate the original batch,
+// publish every required source event to verified FI custody, and advance only
+// the independent processing cursor after that publication is proved.
+func ReobserveCapturedJournaledStaged(
+	ctx context.Context,
+	scopeID, governedRoot string,
+	batch records.USNReadBatch,
+	statePath string,
+	chunkObjects, maxInflight int,
+) (JournaledReobservationResult, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return JournaledReobservationResult{}, errors.New("cached USN observation requires a live context")
+	}
+	if batch.ScopeID != scopeID {
+		return JournaledReobservationResult{}, errors.New("cached USN batch scope mismatch")
+	}
+	if err := records.ValidateUSNReadBatch(batch); err != nil {
+		return JournaledReobservationResult{}, err
+	}
+	operationPath, err := fioperation.DefaultJournalPath(scopeID)
+	if err != nil {
+		return JournaledReobservationResult{}, err
+	}
+	resourcePath, err := resourcejournal.DefaultPath(scopeID)
+	if err != nil {
+		return JournaledReobservationResult{}, err
+	}
+	if shouldRecoverInterrupted(ctx) {
+		if _, err := fioperation.RecoverInterrupted(operationPath, scopeID); err != nil {
+			return JournaledReobservationResult{}, err
+		}
+	}
+	started, err := fioperation.Start(scopeID, records.OperationReObservation)
+	if err != nil {
+		return JournaledReobservationResult{}, err
+	}
+	if err := fioperation.AppendStarted(operationPath, started); err != nil {
+		return JournaledReobservationResult{}, err
+	}
+	resources, err := resourcejournal.Start(resourcePath, started.OperationID, started.ScopeID, started.Kind)
+	if err != nil {
+		return JournaledReobservationResult{}, errors.Join(err,
+			finishFailedOperation(operationPath, started, "ResourceJournalStartFailed"))
+	}
+	result, stage, stageErr := stageReobservationBatch(
+		ctx, governedRoot, batch, filepath.Dir(statePath),
+		currentReobserveWorkers(), chunkObjects, maxInflight,
+		ntfs.CollectFileReference, objbroker.ObserveObject, CheckObjectContainment,
+	)
+	resourcesErr := resources.Finish()
+	if stageErr != nil {
+		return JournaledReobservationResult{}, errors.Join(stageErr, resourcesErr,
+			finishFailedOperation(operationPath, started, "CachedUSNObservationStagingFailed"))
+	}
+	keepStage := false
+	defer func() {
+		if !keepStage && stage != nil {
+			_ = stage.Close()
+		}
+	}()
+	outcome, reason := reobservationOperationOutcome(ctx, result)
+	completed, err := started.Finish(outcome, reason)
+	if err != nil {
+		return JournaledReobservationResult{}, errors.Join(err, resourcesErr)
+	}
+	if err := fioperation.AppendFinished(operationPath, completed); err != nil {
+		return JournaledReobservationResult{}, errors.Join(err, resourcesErr)
+	}
+	if resourcesErr != nil {
+		return JournaledReobservationResult{}, resourcesErr
+	}
+	keepStage = true
+	return JournaledReobservationResult{
+		OperationJournalPath:   operationPath,
+		ResourceJournalPath:    resourcePath,
+		ReObservationOperation: completed,
+		Result:                 result,
+		Stage:                  stage,
+	}, nil
 }
