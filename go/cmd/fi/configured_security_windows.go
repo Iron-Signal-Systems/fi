@@ -89,7 +89,7 @@ func prepareConfiguredSecurity() (configuredSecurityPrepared, error) {
 		RecoveredOperations: []records.OperationRecord{},
 		Operations:          []records.OperationRecord{},
 		Semantics: "FI anchors the local Windows Security channel before configured root processing, then reads through a fixed post-root target. " +
-			"Continuous catch-up is divided into bounded EventRecordID windows; each window is durably spooled and verified before its checkpoint boundary advances. " +
+			"Continuous catch-up reads bounded EventRecordID windows and coalesces up to 64 consecutive empty query windows. A durable coverage batch precedes checkpoint advancement for each group; non-empty windows are published individually. " +
 			"Major Security catch-up and reconciliation operations use the append-only FI operation journal. Missing historical Security events remain explicitly incomplete and are never reconstructed from current state.",
 	}
 	journalPath, recovered, err := recoverConfiguredOperations(configuredSecurityScopeID)
@@ -194,6 +194,13 @@ func finishConfiguredSecurityContinuous(
 	}
 	summary.Coverage = &coverage
 
+	// No new EventRecordID interval exists. Preserve the current checkpoint
+	// and coverage assessment without publishing a synthetic empty batch.
+	if start == through {
+		summary.FinalCheckpoint = &prepared.Checkpoint
+		return nil
+	}
+
 	spoolDir, err := spool.DefaultDir()
 	if err != nil {
 		return err
@@ -205,9 +212,8 @@ func finishConfiguredSecurityContinuous(
 
 	current := prepared.Checkpoint
 	windowStart := start
-	firstWindow := true
-	for firstWindow || windowStart < through {
-		firstWindow = false
+	emptyWindows := 0
+	for windowStart < through {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -238,6 +244,28 @@ func finishConfiguredSecurityContinuous(
 			return err
 		}
 		summary.SourceMatchingEvents += len(events)
+		summary.ReadWindows++
+
+		// Filtering is bounded by the source's maximum EventRecordID span.
+		// A query match outside FI's governed scopes is not an FI record and
+		// must not force an otherwise coverage-only batch publication.
+		selected, ignored := selectServiceWindowsSecurityEvents(events, scopes)
+		summary.IgnoredEvents += ignored
+
+		// Empty windows are read and continuity-checked, but the checkpoint
+		// remains at its last durably published boundary. On interruption,
+		// any deferred windows will be read again from that checkpoint.
+		if len(selected) == 0 {
+			emptyWindows++
+		}
+		if !shouldPublishServiceSecurityWindow(
+			emptyWindows,
+			len(selected) != 0,
+			windowEnd == through,
+		) {
+			windowStart = windowEnd
+			continue
+		}
 
 		writer, err := spool.NewWriter(
 			spoolDir,
@@ -257,12 +285,7 @@ func finishConfiguredSecurityContinuous(
 			coverage,
 		)
 		if windowErr == nil {
-			for _, event := range events {
-				value, keep := securityevent.SelectEvent(event, scopes)
-				if !keep {
-					summary.IgnoredEvents++
-					continue
-				}
+			for _, value := range selected {
 				if value.ScopeBasis == records.WindowsSecurityScopeUnresolvedFileDeleteIncluded {
 					summary.UnresolvedFileDeletes++
 				}
@@ -305,7 +328,7 @@ func finishConfiguredSecurityContinuous(
 		current = advanced
 		summary.CheckpointAdvanced = true
 		summary.FinalCheckpoint = &current
-		summary.ReadWindows++
+		emptyWindows = 0
 
 		if windowEnd == through {
 			break

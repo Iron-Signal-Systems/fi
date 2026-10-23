@@ -83,8 +83,8 @@ func TestRunServiceWindowsSecurityLoopStartsImmediatelyAndDrainsBacklog(t *testi
 
 	source := &fakeServiceWindowsSecuritySource{
 		summaries: []serviceWindowsSecurityCycleSummary{
-			{Status: configuredSecurityComplete, MoreAvailable: true},
-			{Status: configuredSecurityComplete, MoreAvailable: true},
+			{Status: configuredSecurityComplete, MoreAvailable: true, CheckpointAdvanced: true},
+			{Status: configuredSecurityComplete, MoreAvailable: true, CheckpointAdvanced: true},
 			{Status: configuredSecurityComplete, MoreAvailable: false},
 		},
 	}
@@ -96,7 +96,7 @@ func TestRunServiceWindowsSecurityLoopStartsImmediatelyAndDrainsBacklog(t *testi
 	go func() {
 		done <- runServiceWindowsSecurityLoop(
 			ctx,
-			time.Hour,
+			20*time.Millisecond,
 			source,
 			func(record serviceRuntimeRecord) error {
 				records <- record

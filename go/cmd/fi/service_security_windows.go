@@ -76,8 +76,8 @@ func currentServiceWindowsSecurityInterval() string {
 	return serviceWindowsSecurityInterval
 }
 
-// runServiceWindowsSecurityLoop starts immediately, never overlaps itself, and
-// drains backlog without an interval sleep while MoreAvailable remains true.
+// runServiceWindowsSecurityLoop starts immediately, never overlaps itself,
+// and bounds continuous catch-up retries to avoid a busy Security-log loop.
 // Once caught up it returns to the configured steady-state cadence.
 func runServiceWindowsSecurityLoop(
 	ctx context.Context,
@@ -99,8 +99,8 @@ func runServiceWindowsSecurityLoop(
 		)
 	}
 
-	waitForInterval := func() bool {
-		timer := time.NewTimer(interval)
+	waitFor := func(delay time.Duration) bool {
+		timer := time.NewTimer(delay)
 		defer timer.Stop()
 
 		select {
@@ -172,17 +172,21 @@ func runServiceWindowsSecurityLoop(
 			// collection. Preserve the exact error durably, return to normal
 			// cadence, and retry. Failure to preserve that runtime record remains
 			// fatal because FI would otherwise lose observability of the fault.
-			if !waitForInterval() {
+			if !waitFor(interval) {
 				return nil
 			}
 			continue
 		}
 
-		if summary.MoreAvailable {
-			continue
-		}
-
-		if !waitForInterval() {
+		// A verified recovery checkpoint also leaves a retained backlog to
+		// drain. It must use the bounded catch-up cadence, not the normal
+		// one-minute steady-state cadence.
+		delay := nextServiceWindowsSecurityDelay(
+			interval,
+			summary.MoreAvailable,
+			summary.CheckpointAdvanced || summary.CheckpointReinitialized,
+		)
+		if !waitFor(delay) {
 			return nil
 		}
 	}
@@ -204,7 +208,7 @@ func writeServiceWindowsSecurity(
 	}
 	summary := prepared.Summary
 	summary.Semantics = "FI service mode owns Windows Security in an independent sequential worker. " +
-		"Each continuous EventRecordID window is durably spooled and verified before checkpoint advancement. " +
+		"Consecutive empty EventRecordID query windows are bounded and durably represented by one coverage batch before checkpoint advancement; non-empty windows are published individually. " +
 		"A proven Security-log continuity gap is preserved as incomplete; recovery records current Security coverage and establishes a fresh post-coverage boundary without rescanning every file in each governed root."
 
 	target, err := securityevent.QueryLogState()
@@ -313,9 +317,10 @@ func reconcileServiceWindowsSecurityGap(
 				return err
 			}
 
-			// Choose the new boundary only after current-state coverage has been
-			// durably recorded. This prevents a long reconciliation from rebasing
-			// to an already-expired pre-reconciliation EventRecordID.
+			// Recheck the Security log after durable coverage publication. The
+			// original gap observation remains immutable. If the oldest retained
+			// record moved during coverage assessment, publish the expanded gap
+			// before advancing the checkpoint over those additional lost IDs.
 			freshTarget, err := securityevent.QueryLogState()
 			if err != nil {
 				return err
@@ -323,10 +328,48 @@ func reconcileServiceWindowsSecurityGap(
 			summary.TargetLogState = &freshTarget
 			summary.TargetEventRecordID = freshTarget.NewestEventRecordID
 
-			reinitialized, err := securityevent.InitializeCheckpoint(
-				summary.StatePath,
+			freshAssessment, err := securityevent.AssessCheckpoint(
+				assessment.Checkpoint,
 				freshTarget,
 			)
+			if err != nil {
+				return err
+			}
+			if freshAssessment.Status != securityevent.ContinuityGap {
+				return errors.New("Windows Security recovery gap changed unexpectedly")
+			}
+			if freshAssessment.ReasonCode != assessment.ReasonCode ||
+				freshAssessment.LogState.OldestEventRecordID != assessment.LogState.OldestEventRecordID {
+				updatedGap, err := newWindowsSecurityContinuityGapObservation(freshAssessment)
+				if err != nil {
+					return err
+				}
+				updatedGapSpool, err := writeWindowsSecurityContinuityGap(updatedGap)
+				if err != nil {
+					return err
+				}
+				summary.ContinuityGap = &updatedGap
+				summary.ContinuityGapSpool = &updatedGapSpool
+			}
+
+			checkpointTarget, replayRetained, err := serviceWindowsSecurityRecoveryCheckpoint(freshAssessment)
+			if err != nil {
+				return err
+			}
+			var reinitialized securityevent.Checkpoint
+			if replayRetained {
+				// The gap covers the unavailable prefix. Resume reading at the
+				// oldest still-retained EventRecordID, not at the live head.
+				reinitialized, err = securityevent.AdvanceCheckpoint(
+					summary.StatePath,
+					assessment.Checkpoint.LastEventRecordID,
+					checkpointTarget,
+				)
+			} else {
+				// A reset/clear cannot use a retained-history boundary.
+				// The explicit reset gap has already been published.
+				reinitialized, err = securityevent.InitializeCheckpoint(summary.StatePath, freshTarget)
+			}
 			if err != nil {
 				return err
 			}
@@ -335,14 +378,23 @@ func reconcileServiceWindowsSecurityGap(
 				return err
 			}
 			if persisted.LastEventRecordID != reinitialized.LastEventRecordID ||
-				persisted.LastEventRecordID != freshTarget.NewestEventRecordID {
+				persisted.LastEventRecordID != checkpointTarget {
 				return errors.New(
-					"persisted Windows Security service checkpoint does not match fresh reconciliation boundary",
+					"persisted Windows Security service checkpoint does not match verified recovery boundary",
 				)
 			}
 
 			summary.CheckpointReinitialized = true
 			summary.FinalCheckpoint = &persisted
+			if replayRetained {
+				// Resume the still-retained EventRecordID range before leaving the
+				// reconciliation cycle. Deferring it to the next scheduled cycle
+				// allows the rolling Security log to overtake oldest-1 again.
+				replay := configuredSecurityPrepared{Checkpoint: persisted}
+				if err := finishConfiguredSecurityContinuous(ctx, &summary, replay, freshTarget, scopes); err != nil {
+					return fmt.Errorf("read retained Windows Security history after recovery: %w", err)
+				}
+			}
 			return nil
 		},
 	)
