@@ -64,7 +64,7 @@ func UpgradeLegacySORPostgreSQLDatabase(config Config) error {
 	if err := validateSORPostgreSQLDatabaseMigrations(policy, assets); err != nil {
 		return fmt.Errorf("validate FI legacy SOR migration assets: %w", err)
 	}
-	if len(assets) != 4 ||
+	if len(assets) != 5 ||
 		assets[3].Name != "0004_security_field_name_index.sql" ||
 		assets[3].SHA256 != sorPostgreSQLDatabaseMigration0004SHA256 ||
 		!strings.Contains(assets[3].SQL,

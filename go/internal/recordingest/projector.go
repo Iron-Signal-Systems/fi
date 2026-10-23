@@ -32,33 +32,37 @@ type supportingSourceCollectionErrorPayload struct {
 }
 
 type usnObjectObservationPayload struct {
-	FileIdentity  records.NTFSObjectIdentity      `json:"file_identity"`
-	Changes       []records.USNChangeObservation  `json:"changes"`
-	ScopeBasis    string                          `json:"scope_basis"`
-	ScopeDetail   string                          `json:"scope_detail,omitempty"`
-	Status        string                          `json:"status"`
-	ReasonCode    string                          `json:"reason_code,omitempty"`
-	Error         string                          `json:"error,omitempty"`
-	NTFS          *ntfs.Observation               `json:"ntfs_observation,omitempty"`
-	ContentHashes *records.ContentHashObservation `json:"content_hashes,omitempty"`
+	SourceBatchSHA256 string                          `json:"source_batch_sha256,omitempty"`
+	FileIdentity      records.NTFSObjectIdentity      `json:"file_identity"`
+	Changes           []records.USNChangeObservation  `json:"changes"`
+	ScopeBasis        string                          `json:"scope_basis"`
+	ScopeDetail       string                          `json:"scope_detail,omitempty"`
+	Status            string                          `json:"status"`
+	ReasonCode        string                          `json:"reason_code,omitempty"`
+	Error             string                          `json:"error,omitempty"`
+	NTFS              *ntfs.Observation               `json:"ntfs_observation,omitempty"`
+	ContentHashes     *records.ContentHashObservation `json:"content_hashes,omitempty"`
 }
 
 type usnReadBoundaryPayload struct {
-	ObservedAt                 string                 `json:"observed_at"`
-	CollectionMethod           string                 `json:"collection_method"`
-	VolumeIdentity             records.VolumeIdentity `json:"volume_identity"`
-	JournalID                  string                 `json:"journal_id"`
-	StartUSN                   string                 `json:"start_usn"`
-	NextUSN                    string                 `json:"next_usn"`
-	SourceRecordCount          int                    `json:"source_record_count"`
-	SourceDistinctObjectCount  int                    `json:"source_distinct_object_count"`
-	SelectedRecordCount        int                    `json:"selected_record_count"`
-	SelectedObjectCount        int                    `json:"selected_object_count"`
-	IgnoredVolumeRecordCount   int                    `json:"ignored_volume_record_count"`
-	IgnoredVolumeObjectCount   int                    `json:"ignored_volume_object_count"`
-	ScopeUnresolvedObjectCount int                    `json:"scope_unresolved_object_count"`
-	USNReadOperationID         string                 `json:"usn_read_operation_id"`
-	ReObservationOperationID   string                 `json:"reobservation_operation_id"`
+	SourceBatchSHA256          string                      `json:"source_batch_sha256,omitempty"`
+	CorrelationSHA256          string                      `json:"correlation_sha256,omitempty"`
+	RootIdentity               *records.NTFSObjectIdentity `json:"root_identity,omitempty"`
+	ObservedAt                 string                      `json:"observed_at"`
+	CollectionMethod           string                      `json:"collection_method"`
+	VolumeIdentity             records.VolumeIdentity      `json:"volume_identity"`
+	JournalID                  string                      `json:"journal_id"`
+	StartUSN                   string                      `json:"start_usn"`
+	NextUSN                    string                      `json:"next_usn"`
+	SourceRecordCount          int                         `json:"source_record_count"`
+	SourceDistinctObjectCount  int                         `json:"source_distinct_object_count"`
+	SelectedRecordCount        int                         `json:"selected_record_count"`
+	SelectedObjectCount        int                         `json:"selected_object_count"`
+	IgnoredVolumeRecordCount   int                         `json:"ignored_volume_record_count"`
+	IgnoredVolumeObjectCount   int                         `json:"ignored_volume_object_count"`
+	ScopeUnresolvedObjectCount int                         `json:"scope_unresolved_object_count"`
+	USNReadOperationID         string                      `json:"usn_read_operation_id"`
+	ReObservationOperationID   string                      `json:"reobservation_operation_id"`
 }
 
 // ProjectSourceRecord strictly decodes one already-validated source envelope

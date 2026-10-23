@@ -58,6 +58,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	ntfsStages := &ntfsStageTimingCounters{}
 	ctx = context.WithValue(ctx, ntfsStageTimingContextKey{}, ntfsStages)
 	descriptor := generation.Receipt.Descriptor
+	ctx = context.WithValue(ctx, usnCaptureContextKey{}, newUSNCaptureState(descriptor.SourceID, descriptor.GenerationID))
 	result := IngestResult{
 		AttemptID: attemptID, SourceID: descriptor.SourceID, GenerationID: descriptor.GenerationID,
 		TransferSHA256: generation.Receipt.TransferSHA256, ReceiptSHA256: generation.ReceiptSHA256,
@@ -150,6 +151,9 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	aceFinalFlush := time.Since(aceFlushStarted)
 	profile.Projection += aceFinalFlush
 
+	if err := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState).verify(); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
 	if err := verifyGenerationProjectionCoverage(ctx, tx, recordedGenerationID); err != nil {
 		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 	}

@@ -150,7 +150,7 @@ func parseInvocation(
 			configPath:             args[1],
 		}, nil
 
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -398,6 +398,13 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stdout, "FI System-of-Record PostgreSQL database upgrade complete.")
+
+	case "upgrade-m61-usn":
+		if err := backendinstall.UpgradeM61USNCaptureBinding(config); err != nil {
+			fmt.Fprintf(os.Stderr, "FI M6.1 SOR UPGRADE BLOCKED: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "FI M6.1 SOR USN binding upgrade complete.")
 
 	case "upgrade-legacy-sor-database":
 		if err := backendinstall.UpgradeLegacySORPostgreSQLDatabase(config); err != nil {

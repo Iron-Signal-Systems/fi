@@ -32,5 +32,10 @@ func sorPostgreSQLDatabaseMigrationAssets() []sorPostgreSQLDatabaseMigrationAsse
 			SHA256: sorPostgreSQLDatabaseMigration0004SHA256,
 			SQL:    sorPostgreSQLDatabaseMigration0004Asset,
 		},
+		{
+			Name:   "0005_usn_capture_binding.sql",
+			SHA256: sorPostgreSQLDatabaseMigration0005SHA256,
+			SQL:    sorPostgreSQLDatabaseMigration0005Asset,
+		},
 	}
 }

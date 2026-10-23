@@ -326,6 +326,7 @@ func TestSystemSORPostgreSQLDatabaseBootstrapperExactLifecycle(
 			"MIGRATION fi fi_owner 0002_source_families.sql",
 			"MIGRATION fi fi_owner 0003_usn_relational_identity.sql",
 			"MIGRATION fi fi_owner 0004_security_field_name_index.sql",
+			"MIGRATION fi fi_owner 0005_usn_capture_binding.sql",
 			"SQL fi schema-authority",
 			"PUBLISH PASSFILE",
 			"/etc/rc.d/jail onestop fi-sor-db",

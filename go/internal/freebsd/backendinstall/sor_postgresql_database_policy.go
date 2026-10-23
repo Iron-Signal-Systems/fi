@@ -29,6 +29,8 @@ const (
 	sorPostgreSQLDatabaseMigration0003SHA256 = "906dccf64eaf13a0a008bc870801beefb2d372f71574d10fe40ae5f1ba5a174c"
 
 	sorPostgreSQLDatabaseMigration0004SHA256 = "9a2a54875828e82eed9dbbb36ddaa0b6886bdc43789f1a220f41bf40cd1460dc"
+
+	sorPostgreSQLDatabaseMigration0005SHA256 = "687f45c9229e7c3cfd9edca51b565e17b8c3f3b9ca3d674a44787b632d438fab"
 )
 
 type sorPostgreSQLDatabaseMigrationPolicy struct {
@@ -201,6 +203,10 @@ func buildSORPostgreSQLDatabasePolicy(
 			{
 				Name:   "0004_security_field_name_index.sql",
 				SHA256: sorPostgreSQLDatabaseMigration0004SHA256,
+			},
+			{
+				Name:   "0005_usn_capture_binding.sql",
+				SHA256: sorPostgreSQLDatabaseMigration0005SHA256,
 			},
 		},
 

@@ -79,7 +79,7 @@ func UpgradeSORPostgreSQLDatabase(config Config) error {
 	if err := validateSORPostgreSQLDatabaseMigrations(policy, assets); err != nil {
 		return fmt.Errorf("validate FI SOR migration assets: %w", err)
 	}
-	if len(assets) != 4 || assets[3].Name != "0004_security_field_name_index.sql" ||
+	if len(assets) != 5 || assets[3].Name != "0004_security_field_name_index.sql" ||
 		!strings.Contains(assets[3].SQL, "DROP INDEX CONCURRENTLY fi.windows_security_event_field_name_idx;") {
 		return fmt.Errorf("FI SOR index upgrade asset contract mismatch")
 	}

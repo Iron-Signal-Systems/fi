@@ -28,8 +28,9 @@ func projectUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID string, sou
 	if value.SourceRecordCount < 0 || value.SourceDistinctObjectCount < 0 || value.SelectedRecordCount < 0 || value.SelectedObjectCount < 0 || value.IgnoredVolumeRecordCount < 0 || value.IgnoredVolumeObjectCount < 0 || value.ScopeUnresolvedObjectCount < 0 {
 		return errors.New("FI USN read boundary counts must not be negative")
 	}
-	if value.USNReadOperationID == "" || value.ReObservationOperationID == "" {
-		return errors.New("FI USN read boundary operation IDs are required")
+	sourceBound, err := validateUSNBoundaryContract(value)
+	if err != nil {
+		return err
 	}
 	observedAt, err := parseRFC3339(value.ObservedAt, "usn_read_boundary.observed_at")
 	if err != nil {
@@ -44,17 +45,39 @@ func projectUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID string, sou
 			return err
 		}
 	}
+	var captureHash, correlationHash, rootID any
+	if sourceBound {
+		state, ok := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		if !ok || state == nil || state.sourceID != sourceID {
+			return errors.New("FI USN capture generation state is required")
+		}
+		captureHash, _ = decodeHex(value.SourceBatchSHA256, 32, true, "usn_read_boundary.source_batch_sha256")
+		correlationHash, _ = decodeHex(value.CorrelationSHA256, 32, true, "usn_read_boundary.correlation_sha256")
+		rootID, err = ensureNTFSObject(ctx, tx, volumeID, *value.RootIdentity)
+		if err != nil {
+			return err
+		}
+	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO fi.usn_read_boundary (
  source_record_id,observed_at,collection_method,ntfs_volume_id,journal_id,start_usn,next_usn,source_record_count,source_distinct_object_count,
  selected_record_count,selected_object_count,ignored_volume_record_count,ignored_volume_object_count,scope_unresolved_object_count,
- usn_read_operation_id,reobservation_operation_id
-) VALUES ($1,$2,$3,$4,$5::text::numeric,$6::text::numeric,$7::text::numeric,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+ usn_read_operation_id,reobservation_operation_id,source_batch_sha256,correlation_sha256,root_ntfs_object_id
+) VALUES ($1,$2,$3,$4,$5::text::numeric,$6::text::numeric,$7::text::numeric,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 `, sourceRecordID, observedAt, value.CollectionMethod, volumeID, value.JournalID, value.StartUSN, value.NextUSN, value.SourceRecordCount,
 		value.SourceDistinctObjectCount, value.SelectedRecordCount, value.SelectedObjectCount, value.IgnoredVolumeRecordCount, value.IgnoredVolumeObjectCount,
-		value.ScopeUnresolvedObjectCount, value.USNReadOperationID, value.ReObservationOperationID)
+		value.ScopeUnresolvedObjectCount, nullString(value.USNReadOperationID), value.ReObservationOperationID, captureHash, correlationHash, rootID)
 	if err != nil {
 		return fmt.Errorf("insert FI USN read boundary: %w", err)
+	}
+	if sourceBound {
+		state := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		if err := state.remember(sourceID, scopeID, value.SourceBatchSHA256, usnCaptureBoundary{
+			recordID: sourceRecordID, volumeID: volumeID, root: *value.RootIdentity,
+			expectedObjects: value.SourceDistinctObjectCount, expectedChanges: value.SourceRecordCount,
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -67,7 +90,19 @@ func projectUSNObjectObservation(ctx context.Context, tx pgx.Tx, sourceID string
 	}
 
 	stepStarted := time.Now()
-	boundaryRecordID, volumeID, err := findPrecedingUSNReadBoundary(ctx, tx, sourceID, scopeID, sourceRecordID)
+	var boundaryRecordID, volumeID int64
+	var capture *usnCaptureBoundary
+	var captureState *usnCaptureState
+	var err error
+	if value.SourceBatchSHA256 != "" {
+		captureState, _ = ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		capture, err = captureState.resolve(sourceID, scopeID, value.SourceBatchSHA256, sourceRecordID)
+		if err == nil {
+			boundaryRecordID, volumeID = capture.recordID, capture.volumeID
+		}
+	} else {
+		boundaryRecordID, volumeID, err = findPrecedingUSNReadBoundary(ctx, tx, sourceID, scopeID, sourceRecordID)
+	}
 	tallyUSN(ctx, "boundary", stepStarted)
 	if err != nil {
 		return err
@@ -80,13 +115,17 @@ func projectUSNObjectObservation(ctx context.Context, tx pgx.Tx, sourceID string
 	}
 
 	stepStarted = time.Now()
+	var captureHash any
+	if capture != nil {
+		captureHash, _ = decodeHex(value.SourceBatchSHA256, 32, true, "usn_object_observation.source_batch_sha256")
+	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO fi.usn_object_observation (
  source_record_id,scope_basis,scope_detail,status,reason_code,error_text,has_ntfs_observation,has_content_hashes,
- usn_read_boundary_source_record_id,ntfs_object_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ usn_read_boundary_source_record_id,ntfs_object_id,source_batch_sha256
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 `, sourceRecordID, value.ScopeBasis, nullString(value.ScopeDetail), value.Status, nullString(value.ReasonCode), nullString(value.Error),
-		value.NTFS != nil, value.ContentHashes != nil, boundaryRecordID, objectID)
+		value.NTFS != nil, value.ContentHashes != nil, boundaryRecordID, objectID, captureHash)
 	tallyUSN(ctx, "observation", stepStarted)
 	if err != nil {
 		return fmt.Errorf("insert FI USN object observation: %w", err)
@@ -179,6 +218,9 @@ INSERT INTO fi.usn_object_change (
 		if nested.ObjectIdentity != value.FileIdentity {
 			return errors.New("FI USN nested NTFS observation identity does not match USN object identity")
 		}
+		if capture != nil && nested.GovernedRoot.ObjectIdentity != capture.root {
+			return errors.New("FI source-bound USN nested governed-root identity differs from capture root")
+		}
 		if nested.GovernedRoot.ScopeID != scopeID {
 			return errors.New("FI USN nested NTFS governed-root scope does not match source envelope")
 		}
@@ -209,6 +251,11 @@ INSERT INTO fi.usn_object_change (
 		}
 	}
 	tallyUSN(ctx, "nested", stepStarted)
+	if capture != nil {
+		if err := captureState.completeObject(capture, len(value.Changes)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -277,6 +324,7 @@ func findPrecedingUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID strin
 SELECT urb.source_record_id, urb.ntfs_volume_id
 FROM fi.usn_read_boundary AS urb
 WHERE urb.source_record_id < $3
+  AND urb.source_batch_sha256 IS NULL
   AND (
       SELECT
           rg.source_id = $1
