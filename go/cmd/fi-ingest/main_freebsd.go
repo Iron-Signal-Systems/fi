@@ -79,7 +79,7 @@ func main() {
 
 	result, err := recordingest.IngestPreparedGeneration(ctx, connection, attemptID, generation)
 	if err != nil {
-		fail(err)
+		fail(errors.Join(err, generation.Close()))
 	}
 
 	fmt.Printf("AttemptID:            %s\n", result.AttemptID)

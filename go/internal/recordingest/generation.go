@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ import (
 )
 
 const maxIngestRecordedReceiptBytes = 256 << 10
+
+const generationStageLeaseName = ".fi-stage-owner.lock"
 
 type GenerationLoadConfig struct {
 	CustodyRoot       string
@@ -52,6 +55,56 @@ type PreparedGeneration struct {
 	ReceiptRawBytes []byte
 	ReceiptSHA256   string
 	stagedDirectory string
+	stageLease      *os.File
+}
+
+// removeGenerationStageDirectory keeps the lease marker until every staged
+// artifact has been removed. A failed artifact deletion therefore leaves
+// enough ownership information for a later, locked reclamation attempt.
+func removeGenerationStageDirectory(directory string) error {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read FI staging directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == generationStageLeaseName {
+			continue
+		}
+
+		path := filepath.Join(directory, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove FI staged artifact %q: %w", path, err)
+		}
+	}
+
+	marker := filepath.Join(directory, generationStageLeaseName)
+	if err := os.Remove(marker); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove FI staging marker: %w", err)
+	}
+
+	if err := os.Remove(directory); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
+		// All staged artifacts are gone. Restore a marker for later
+		// reclamation, not as a live lease. It has a new inode and
+		// does not inherit the previous file lock.
+		restored, restoreErr := os.OpenFile(
+			marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600,
+		)
+		if restoreErr == nil {
+			restoreErr = restored.Close()
+		}
+		return errors.Join(
+			fmt.Errorf("remove FI staging directory: %w", err),
+			restoreErr,
+		)
+	}
+
+	return nil
 }
 
 func (generation *PreparedGeneration) Close() error {
@@ -60,7 +113,14 @@ func (generation *PreparedGeneration) Close() error {
 	}
 	path := generation.stagedDirectory
 	generation.stagedDirectory = ""
-	return os.RemoveAll(path)
+	// Retain the lease until the owned staging directory has been removed.
+	// A concurrent reclaimer must never delete a live ingester's files.
+	removeErr := removeGenerationStageDirectory(path)
+	if generation.stageLease != nil {
+		removeErr = errors.Join(removeErr, generation.stageLease.Close())
+		generation.stageLease = nil
+	}
+	return removeErr
 }
 
 func LoadRecordedGeneration(config GenerationLoadConfig, generationID string) (*PreparedGeneration, error) {
@@ -148,10 +208,18 @@ func loadRecordedGenerationWithTrust(
 	if err != nil {
 		return nil, fmt.Errorf("create FI Phase 3 ingest staging directory: %w", err)
 	}
+	stageLease, err := newGenerationStageLease(stageDir)
+	if err != nil {
+		_ = os.RemoveAll(stageDir)
+		return nil, fmt.Errorf("own FI ingest staging directory: %w", err)
+	}
 	keepStage := false
 	defer func() {
 		if !keepStage {
-			_ = os.RemoveAll(stageDir)
+			_ = removeGenerationStageDirectory(stageDir)
+			if stageLease != nil {
+				_ = stageLease.Close()
+			}
 		}
 	}()
 
@@ -178,7 +246,12 @@ func loadRecordedGenerationWithTrust(
 			} else {
 				_, consumeErr = io.Copy(file, reader)
 			}
-			syncErr := file.Sync()
+			// FreeBSD copies are disposable and recoverable from signed custody.
+			// Other platforms retain the existing per-file sync behavior.
+			var syncErr error
+			if runtime.GOOS != "freebsd" {
+				syncErr = file.Sync()
+			}
 			closeErr := file.Close()
 			if err := errors.Join(consumeErr, syncErr, closeErr); err != nil {
 				return err
@@ -236,6 +309,7 @@ func loadRecordedGenerationWithTrust(
 		ReceiptRawBytes: append([]byte(nil), receiptRaw...),
 		ReceiptSHA256:   receiptSHA256,
 		stagedDirectory: stageDir,
+		stageLease:      stageLease,
 	}, nil
 }
 

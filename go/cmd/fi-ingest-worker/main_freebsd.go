@@ -491,6 +491,52 @@ func runWorker(
 	if config.Workers < 1 || config.Workers > 32 {
 		return fmt.Errorf("FI ingest workers must be between 1 and 32")
 	}
+	// Each generation carries a private lease. Reclaim only old, unlocked,
+	// explicitly marked staging directories; never touch legacy/unmarked data.
+	removed, cleanupErr := recordingest.ReclaimAbandonedGenerationStages(os.TempDir(), 24*time.Hour)
+	if cleanupErr != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: FI staging reclamation: %v\n", cleanupErr)
+	}
+	if removed > 0 {
+		fmt.Printf("FI STAGING RECLAIMED directories=%d\n", removed)
+	}
+	// Reclaim expired, unlocked FI staging directories while the worker
+	// remains active. One supervisor handles all configured sources.
+	stageCleanupCtx, stopStageCleanup := context.WithCancel(ctx)
+	stageCleanupDone := make(chan struct{})
+
+	go func() {
+		defer close(stageCleanupDone)
+
+		stageCleanupTicker := time.NewTicker(time.Hour)
+		defer stageCleanupTicker.Stop()
+
+		for {
+			select {
+			case <-stageCleanupCtx.Done():
+				return
+
+			case <-stageCleanupTicker.C:
+				removed, err := recordingest.ReclaimAbandonedGenerationStages(
+					os.TempDir(), 24*time.Hour,
+				)
+				if err != nil {
+					fmt.Fprintf(os.Stderr,
+						"WARNING: FI staging cleanup: %v\n", err)
+				}
+				if removed > 0 {
+					fmt.Printf(
+						"FI STAGING RECLAIMED directories=%d\n", removed)
+				}
+			}
+		}
+	}()
+
+	defer func() {
+		stopStageCleanup()
+		<-stageCleanupDone
+	}()
+
 	if config.Workers > 1 && len(config.SourceIDs) > 1 {
 		return runConcurrentSourceSessions(
 			ctx, config, singleton.Path(), runWorkerSession,
