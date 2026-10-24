@@ -39,12 +39,15 @@ type IngestResult struct {
 }
 
 type ingestStageProfile struct {
-	Read         time.Duration
-	BatchHash    time.Duration
-	Prepare      time.Duration
-	SourceSQL    time.Duration
-	Projection   time.Duration
-	SecurityBulk securityBulkTimingCounters
+	Read           time.Duration
+	BatchHash      time.Duration
+	Prepare        time.Duration
+	SourceSQL      time.Duration
+	Projection     time.Duration
+	BatchBulk      sourceBatchBulkProfile
+	CoverageBulk   securityCoverageBulkProfile
+	SecurityBulk   securityBulkTimingCounters
+	coverageBuffer *securityCoverageBulkState
 }
 
 func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attemptID string, generation *PreparedGeneration) (IngestResult, error) {
@@ -53,6 +56,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	}
 	started := time.Now()
 	var profile ingestStageProfile
+	profile.coverageBuffer = newSecurityCoverageBulkState(&profile)
 	usnTiming := &usnTimingCounters{}
 	ctx = context.WithValue(ctx, usnTimingContextKey{}, usnTiming)
 	ntfsStages := &ntfsStageTimingCounters{}
@@ -115,16 +119,24 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	}
 	result.RecordedGenerationID = recordedGenerationID
 
-	for _, batch := range generation.Batches {
-		sourceBatchID, err := insertSourceBatch(ctx, tx, recordedGenerationID, batch)
-		if err != nil {
-			return result, failIngestAttempt(ctx, connection, tx, result, "AuthoritativeRecord", "SOURCE_BATCH_INSERT_FAILED", err)
-		}
-		seen, err := ingestSourceBatch(ctx, tx, descriptor.SourceID, sourceBatchID, batch, &profile)
+	// Insert the complete immutable batch manifest set first. All database-
+	// generated batch identities are mapped back to the original receipt order.
+	// Source-record ingestion then proceeds in precisely that original order.
+	sourceBatchIDs, err := copySourceBatches(ctx, tx, recordedGenerationID, generation.Batches, &profile.BatchBulk)
+	if err != nil {
+		return result, failIngestAttempt(ctx, connection, tx, result, "AuthoritativeRecord", "SOURCE_BATCH_INSERT_FAILED", err)
+	}
+	for i, batch := range generation.Batches {
+		seen, err := ingestSourceBatch(ctx, tx, descriptor.SourceID, sourceBatchIDs[i], batch, &profile)
 		result.RecordsSeen += seen
 		if err != nil {
 			return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 		}
+	}
+	// The last batch may end in coverage records. Make them relationally
+	// complete before counting projections or committing the generation.
+	if err := profile.coverageBuffer.flush(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 	}
 
 	if result.RecordsSeen != int64(generation.Receipt.RecordCount) {
@@ -190,6 +202,24 @@ INSERT INTO fi.ingest_journal (
 	)
 
 	fmt.Printf(
+		"INGEST SOURCE BATCH COPY source=%s generation=%s rows=%d calls=%d prepare=%s copy=%s id_lookup=%s\n",
+		result.SourceID, result.GenerationID,
+		profile.BatchBulk.Rows, profile.BatchBulk.Copies,
+		profile.BatchBulk.Prepare.Round(time.Millisecond),
+		profile.BatchBulk.Copy.Round(time.Millisecond),
+		profile.BatchBulk.Lookup.Round(time.Millisecond),
+	)
+
+	fmt.Printf(
+		"INGEST SECURITY COVERAGE COPY source=%s generation=%s records=%d policies=%d roots=%d chunks=%d prepare=%s copy=%s\n",
+		result.SourceID, result.GenerationID,
+		profile.CoverageBulk.Records, profile.CoverageBulk.Policies,
+		profile.CoverageBulk.Roots, profile.CoverageBulk.Chunks,
+		profile.CoverageBulk.Prepare.Round(time.Millisecond),
+		profile.CoverageBulk.Copy.Round(time.Millisecond),
+	)
+
+	fmt.Printf(
 		"INGEST SECURITY BULK source=%s generation=%s batches=%d events=%d scopes=%d fields=%d prepare=%s source_copy=%s id_lookup=%s event_copy=%s child_prepare=%s scope_copy=%s field_copy=%s\n",
 		result.SourceID, result.GenerationID,
 		profile.SecurityBulk.Batches,
@@ -221,7 +251,8 @@ INSERT INTO fi.ingest_journal (
 	)
 	total := time.Since(started)
 	measured := profile.Read + profile.BatchHash + profile.Prepare +
-		profile.SourceSQL + profile.Projection + commitElapsed
+		profile.SourceSQL + profile.Projection + commitElapsed +
+		profile.BatchBulk.Prepare + profile.BatchBulk.Copy + profile.BatchBulk.Lookup
 
 	fmt.Printf(
 		"INGEST PROFILE source=%s generation=%s records=%d total=%s read=%s batch_hash=%s prepare=%s source_sql=%s projection=%s commit=%s other=%s\n",
@@ -349,45 +380,10 @@ RETURNING recorded_generation_id
 	return id, nil
 }
 
-func insertSourceBatch(ctx context.Context, tx pgx.Tx, recordedGenerationID int64, batch PreparedBatch) (int64, error) {
-	manifest := batch.Manifest
-	dataSHA, err := decodeHex(manifest.DataSHA256, 32, true, "source_batch.data_sha256")
-	if err != nil {
-		return 0, err
-	}
-	collectorSHA, err := decodeHex(manifest.Collector.ExecutableSHA256, 32, true, "source_batch.collector_sha256")
-	if err != nil {
-		return 0, err
-	}
-	manifestSHA, err := decodeHex(batch.ManifestSHA256, 32, true, "source_batch.manifest_sha256")
-	if err != nil {
-		return 0, err
-	}
-	createdAt, err := parseRFC3339(manifest.CreatedAt, "source_batch.created_at")
-	if err != nil {
-		return 0, err
-	}
-	completedAt, err := parseRFC3339(manifest.CompletedAt, "source_batch.completed_at")
-	if err != nil {
-		return 0, err
-	}
-	var id int64
-	err = tx.QueryRow(ctx, `
-INSERT INTO fi.source_batch (
- recorded_generation_id,manifest_artifact_name,data_artifact_name,manifest_version,batch_id,target_batch_size,record_count,data_bytes,data_sha256,
- data_file,collector_executable_path,collector_executable_sha256,created_at,completed_at,manifest_bytes,manifest_sha256
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-RETURNING source_batch_id
-`, recordedGenerationID, batch.ManifestArtifactName, batch.DataArtifactName, manifest.Version, manifest.BatchID, manifest.TargetBatchSize,
-		int64(manifest.RecordCount), manifest.DataBytes, dataSHA, manifest.DataFile, manifest.Collector.ExecutablePath, collectorSHA, createdAt, completedAt,
-		batch.ManifestBytes, manifestSHA).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("insert FI source batch: %w", err)
-	}
-	return id, nil
-}
-
 func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBatchID int64, batch PreparedBatch, profile *ingestStageProfile) (int64, error) {
+	if profile.coverageBuffer == nil {
+		profile.coverageBuffer = newSecurityCoverageBulkState(profile)
+	}
 	file, err := os.Open(batch.DataPath)
 	if err != nil {
 		return 0, fmt.Errorf("open FI staged source batch: %w", err)
@@ -490,6 +486,13 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		if err != nil {
 			return ordinal, err
 		}
+		// Coverage records can span source batches. Flush before the next
+		// distinct kind to preserve relational projection order.
+		if prepared.Record.RecordKind != "WindowsSecurityCoverage" {
+			if err := profile.coverageBuffer.flush(ctx, tx); err != nil {
+				return ordinal, fmt.Errorf("%w: batch %s Security coverage COPY: %v", ErrSourceRecordRejected, batch.BatchID, err)
+			}
+		}
 		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
 			if err := flushFiles(); err != nil {
 				return ordinal, err
@@ -554,13 +557,18 @@ RETURNING source_record_id
 		if err != nil {
 			return ordinal, fmt.Errorf("insert FI source record: %w", err)
 		}
-		projectStarted := time.Now()
-		projectCtx := ctx
-		if prepared.Record.RecordKind == "USNObjectObservation" {
-			projectCtx = context.WithValue(ctx, fileObservationBulkBytesContextKey{}, prepared.RecordBytes)
+		var projectErr error
+		if prepared.Record.RecordKind == "WindowsSecurityCoverage" {
+			projectErr = profile.coverageBuffer.add(ctx, tx, sourceRecordID, prepared)
+		} else {
+			projectStarted := time.Now()
+			projectCtx := ctx
+			if prepared.Record.RecordKind == "USNObjectObservation" {
+				projectCtx = context.WithValue(ctx, fileObservationBulkBytesContextKey{}, prepared.RecordBytes)
+			}
+			projectErr = ProjectSourceRecord(projectCtx, tx, sourceID, sourceRecordID, prepared)
+			profile.Projection += time.Since(projectStarted)
 		}
-		projectErr := ProjectSourceRecord(projectCtx, tx, sourceID, sourceRecordID, prepared)
-		profile.Projection += time.Since(projectStarted)
 		if projectErr != nil {
 			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, projectErr)
 		}
