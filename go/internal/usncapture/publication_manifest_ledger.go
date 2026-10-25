@@ -171,6 +171,37 @@ func (s *Store) RecordSourceManifestLedger(seg Segment, corr Correlation, spoolD
 		return SourceManifestLedger{}, fmt.Errorf("%w: source publication is present in ambiguous custody locations", ErrConflict)
 	}
 	loc := locations[0]
+	return s.recordSourceManifestLedger(seg, corr, loc)
+}
+
+// RecordActiveSourceManifestLedger records a known active-spool publication
+// without rescanning unrelated spool and raw-generation contents. The caller
+// MUST hold spool.AcquirePublishBoundary from before the final source-manifest
+// verification until after this call and the processed-cursor commit.
+//
+// This method independently validates the entire source-bound publication.
+// A durable ledger is an inventory, not proof of sender transport or receiver
+// acknowledgement, and cannot authorize re-publication or cursor advancement.
+func (s *Store) RecordActiveSourceManifestLedger(
+	seg Segment, corr Correlation, spoolDir string, manifests []string,
+) (SourceManifestLedger, error) {
+	physical, err := spool.PhysicalSpoolDir(spoolDir)
+	if err != nil {
+		return SourceManifestLedger{}, err
+	}
+	loc := PublicationCustodyLocation{
+		Kind:          PublicationCustodyActive,
+		Directory:     physical,
+		ManifestPaths: manifests,
+	}
+	return s.recordSourceManifestLedger(seg, corr, loc)
+}
+
+// recordSourceManifestLedger verifies and atomically records one known
+// custody location. It never advances the processing cursor.
+func (s *Store) recordSourceManifestLedger(
+	seg Segment, corr Correlation, loc PublicationCustodyLocation,
+) (SourceManifestLedger, error) {
 	proof, err := VerifySpoolPublication(seg, corr, loc.Directory, loc.ManifestPaths)
 	if err != nil {
 		return SourceManifestLedger{}, err

@@ -135,3 +135,69 @@ func TestM5BSourceLedgerCapacityIsSharedWithCaptureQueue(t *testing.T) {
 		t.Fatalf("over-budget ledger written: %v %v", found, err)
 	}
 }
+
+// The Windows collector holds the publish boundary while recording the
+// source-manifest ledger and committing the processing cursor. This test
+// establishes the required ordering and its restart-persistent inventory.
+func TestM5BActiveLedgerBeforeVerifiedProcessingCommit(t *testing.T) {
+	s, seg, corr, dir, manifests := sampleSpoolPublication(t, false, false)
+	if err := s.BeginSpoolPublication(seg, corr); err != nil {
+		t.Fatal(err)
+	}
+
+	guard, err := spool.AcquirePublishBoundary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+
+	ledger, err := s.RecordActiveSourceManifestLedger(seg, corr, dir, manifests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ledger.CustodyKind != PublicationCustodyActive ||
+		ledger.SourceBatchSHA256 != seg.SHA256 ||
+		len(ledger.Manifests) != len(manifests) {
+		t.Fatalf("incorrect active source inventory: %+v", ledger)
+	}
+	if s.ProcessingCursor().NextUSN != "100" {
+		t.Fatal("recording a ledger advanced the processing cursor")
+	}
+	if err := s.CommitVerifiedSpool(seg, corr, dir, manifests); err != nil {
+		t.Fatal(err)
+	}
+	if s.ProcessingCursor().NextUSN != "200" {
+		t.Fatal("verified publication did not advance processing")
+	}
+	reopened, err := Open(s.dir, DefaultMaxPendingBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, found, err := reopened.ReadSourceManifestLedger(seg, corr)
+	if err != nil || !found || !reflect.DeepEqual(ledger, loaded) {
+		t.Fatalf("durable source inventory not retained: found=%v err=%v", found, err)
+	}
+}
+
+func TestM5BActiveLedgerRejectsDuplicateManifest(t *testing.T) {
+	s, seg, corr, dir, manifests := sampleSpoolPublication(t, false, false)
+	if err := s.BeginSpoolPublication(seg, corr); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := spool.AcquirePublishBoundary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+
+	duplicate := append(append([]string(nil), manifests...), manifests[0])
+	if _, err := s.RecordActiveSourceManifestLedger(seg, corr, dir, duplicate); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate source manifest accepted: %v", err)
+	}
+	if s.ProcessingCursor().NextUSN != "100" {
+		t.Fatal("invalid inventory advanced the processing cursor")
+	}
+	if _, found, err := s.ReadSourceManifestLedger(seg, corr); err != nil || found {
+		t.Fatalf("invalid inventory persisted: found=%v err=%v", found, err)
+	}
+}

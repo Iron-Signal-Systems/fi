@@ -165,6 +165,13 @@ func (s *Store) RecoverPendingSpoolPublication(
 	if err != nil {
 		return false, err
 	}
+	// The active publication is already verified and the sender publish lock
+	// remains held. Preserve its exact source-manifest inventory before SID
+	// reconciliation or processed-cursor advancement. An inventory alone
+	// never authorizes replay, sender retirement, or receiver acknowledgement.
+	if _, err := s.RecordActiveSourceManifestLedger(seg, corr, dir, paths); err != nil {
+		return false, fmt.Errorf("record recovered FI source-manifest inventory: %w", err)
+	}
 	if err := beforeCommit(paths); err != nil {
 		return false, err
 	}

@@ -63,6 +63,19 @@ func VerifyFrozenSourceCanonical(
 	frozenDir string,
 	expected CanonicalGenerationFacts,
 ) (FrozenSourceCanonicalProof, error) {
+	return verifyFrozenSourceCanonicalAt(
+		ledger, frozenDir, expected, false,
+	)
+}
+
+// verifyFrozenSourceCanonicalAt retains the complete manifest and canonical
+// verification. Only the explicitly selected physical namespace changes.
+func verifyFrozenSourceCanonicalAt(
+	ledger SourceManifestLedger,
+	frozenDir string,
+	expected CanonicalGenerationFacts,
+	retired bool,
+) (FrozenSourceCanonicalProof, error) {
 	if ledger.Version != sourceManifestLedgerVersion ||
 		ledger.SHA256 == "" || ledger.SHA256 != hashLedger(ledger) ||
 		ledger.SpoolProof == "" || len(ledger.Manifests) == 0 {
@@ -70,14 +83,14 @@ func VerifyFrozenSourceCanonical(
 	}
 	if !filepath.IsAbs(frozenDir) || expected.GenerationID == "" ||
 		strings.ContainsAny(expected.GenerationID, "/\\\x00\r\n") ||
-		filepath.Base(filepath.Clean(frozenDir)) != "generation-"+expected.GenerationID {
+		filepath.Base(filepath.Clean(frozenDir)) != committedGenerationDirectoryName(expected.GenerationID, retired) {
 		return FrozenSourceCanonicalProof{}, fmt.Errorf("%w: raw generation path/identity mismatch", ErrConflict)
 	}
 	if ledger.CustodyKind != PublicationCustodyActive && ledger.CustodyKind != PublicationCustodyFrozenRaw {
 		return FrozenSourceCanonicalProof{}, fmt.Errorf("%w: invalid source ledger custody", ErrCorrupt)
 	}
 	if ledger.CustodyKind == PublicationCustodyFrozenRaw &&
-		ledger.GenerationID != filepath.Base(filepath.Clean(frozenDir)) {
+		ledger.GenerationID != committedGenerationDirectoryName(expected.GenerationID, false) {
 		return FrozenSourceCanonicalProof{}, fmt.Errorf("%w: source ledger belongs to another raw generation", ErrConflict)
 	}
 	if len(expected.CanonicalSHA256) != 64 || expected.ArtifactCount == 0 ||

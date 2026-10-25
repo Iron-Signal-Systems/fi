@@ -30,6 +30,7 @@ type GenerationSealConfig struct {
 	SourceID                string
 	SpoolDir                string
 	StageRoot               string
+	StateDir                string
 }
 
 type RawGeneration struct {
@@ -597,6 +598,12 @@ func removeRawGenerationDirectory(raw RawGeneration) error {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("FI raw generation path is not a real directory")
+	}
+	// This is the one raw-removal boundary for normal sealing and restart
+	// reconciliation. Until a durable source-to-sealed handoff is enforced,
+	// never delete the only frozen copy of a captured USN publication.
+	if err := guardRawGenerationRetirement(raw.GenerationDir); err != nil {
+		return fmt.Errorf("FI raw generation custody guard: %w", err)
 	}
 	return os.RemoveAll(raw.GenerationDir)
 }

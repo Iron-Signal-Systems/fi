@@ -42,6 +42,7 @@ type senderConfig struct {
 	RootCertificateSHA256         string
 	SourceID                      string
 	SpoolDir                      string
+	StateDir                      string
 	StageDir                      string
 	Timeout                       time.Duration
 	TransportCRLPath              string

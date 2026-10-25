@@ -40,6 +40,11 @@ func TestInterruptedSpoolPublisherRecoversExactSourceWithoutRewriting(t *testing
 	if reopened.ProcessingCursor().NextUSN != "200" {
 		t.Fatal("verified restart did not commit")
 	}
+	ledger, found, err := reopened.ReadSourceManifestLedger(seg, corr)
+	if err != nil || !found || ledger.SourceBatchSHA256 != seg.SHA256 ||
+		ledger.CustodyKind != PublicationCustodyActive || len(ledger.Manifests) < 2 {
+		t.Fatalf("recovered source ledger missing or invalid: found=%v err=%v", found, err)
+	}
 	if err := reopened.BeginSpoolPublication(seg, corr); !errors.Is(err, ErrConflict) {
 		t.Fatalf("replayed consumed range: %v", err)
 	}
@@ -79,9 +84,41 @@ func TestPublicationRecoveryPreservesSIDReconciliationFailure(t *testing.T) {
 	if store.ProcessingCursor().NextUSN != "100" {
 		t.Fatal("SID failure advanced processing")
 	}
+	ledger, found, err := store.ReadSourceManifestLedger(seg, corr)
+	if err != nil || !found || ledger.SourceBatchSHA256 != seg.SHA256 {
+		t.Fatalf("source ledger not preserved on SID failure: found=%v err=%v", found, err)
+	}
 	restored, err = store.RecoverPendingSpoolPublication(seg, corr, dir, func([]string) error { return nil })
 	if err != nil || !restored {
 		t.Fatalf("verified retry failed: %v", err)
+	}
+}
+
+// A complete active-spool publication is not enough to advance processing
+// when FI cannot preserve the corresponding source-bound inventory.
+func TestPublicationRecoveryLedgerCapacityFailsClosed(t *testing.T) {
+	store, seg, corr, dir, _ := sampleSpoolPublication(t, false, false)
+	if err := store.BeginSpoolPublication(seg, corr); err != nil {
+		t.Fatal(err)
+	}
+	used, err := store.pendingBytesLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.maxBytes = used + 1
+	called := false
+	restored, err := store.RecoverPendingSpoolPublication(seg, corr, dir, func([]string) error {
+		called = true
+		return nil
+	})
+	if restored || !errors.Is(err, ErrCapacity) || called {
+		t.Fatalf("ledger capacity failure ignored: restored=%v called=%v err=%v", restored, called, err)
+	}
+	if store.ProcessingCursor().NextUSN != "100" {
+		t.Fatal("ledger failure advanced processing")
+	}
+	if _, found, err := store.ReadSourceManifestLedger(seg, corr); err != nil || found {
+		t.Fatalf("invalid ledger retained: found=%v err=%v", found, err)
 	}
 }
 

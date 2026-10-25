@@ -204,6 +204,13 @@ func processCapturedUSNOnce(
 	if _, err := usncapture.VerifySpoolPublication(seg, correlation, dir, manifests); err != nil {
 		return false, err
 	}
+	// Persist the exact verified source-manifest inventory while holding the
+	// sender publication boundary. A sender rollover cannot relocate these
+	// active manifests between verification, inventory and cursor commit.
+	// This inventory is not a receiver acknowledgement or replay permission.
+	if _, err := store.RecordActiveSourceManifestLedger(seg, correlation, dir, manifests); err != nil {
+		return false, fmt.Errorf("record FI source manifest ledger: %w", err)
+	}
 	// Only custody-verified NTFS results can add observed identity state.
 	if _, err := mergeUSNObservedSIDSet(observedSIDs); err != nil {
 		return false, err

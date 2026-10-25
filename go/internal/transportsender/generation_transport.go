@@ -110,7 +110,7 @@ func BuildRawTransportGeneration(
 			)
 		}
 
-		if err := removeRawGenerationDirectory(raw); err != nil {
+		if err := removeRawGenerationWithCustody(ctx, raw, config.StateDir, finalDir, config.SourceID); err != nil {
 			return TransportGeneration{}, fmt.Errorf(
 				"retire reconciled frozen FI generation: %w",
 				err,
@@ -153,7 +153,7 @@ func BuildRawTransportGeneration(
 		return TransportGeneration{}, err
 	}
 
-	if err := removeRawGenerationDirectory(raw); err != nil {
+	if err := removeRawGenerationWithCustody(ctx, raw, config.StateDir, published.DirectoryPath, config.SourceID); err != nil {
 		return TransportGeneration{}, fmt.Errorf(
 			"retire frozen FI generation after durable semantic-free build: %w",
 			err,
@@ -268,12 +268,44 @@ func NextTransportGeneration(
 // is then atomically promoted into the active queue. Already-promoted objects
 // are also reconciled against any matching raw directory left by an interrupted
 // earlier transition.
+// RecoverTransportGenerationBuilds keeps the historical fail-closed entrypoint.
+// Without configured custody state, no captured USN source can be retired.
 func RecoverTransportGenerationBuilds(
 	rawRoot string,
 	stageRoot string,
 	sourceID string,
 	maxEncodedBytes uint64,
 ) error {
+	return recoverTransportGenerationBuilds(context.Background(), rawRoot, stageRoot, sourceID, maxEncodedBytes, "")
+}
+
+// RecoverTransportGenerationBuildsWithCustody checks committed source custody
+// before each attempted USN raw-generation retirement on sender restart.
+func RecoverTransportGenerationBuildsWithCustody(
+	ctx context.Context,
+	rawRoot string,
+	stageRoot string,
+	sourceID string,
+	maxEncodedBytes uint64,
+	stateDir string,
+) error {
+	return recoverTransportGenerationBuilds(ctx, rawRoot, stageRoot, sourceID, maxEncodedBytes, stateDir)
+}
+
+func recoverTransportGenerationBuilds(
+	ctx context.Context,
+	rawRoot string,
+	stageRoot string,
+	sourceID string,
+	maxEncodedBytes uint64,
+	stateDir string,
+) error {
+	if ctx == nil {
+		return errors.New("FI generation recovery context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validateRawGenerationRoot(rawRoot); err != nil {
 		return err
 	}
@@ -293,6 +325,26 @@ func RecoverTransportGenerationBuilds(
 	buildRoot, err := ensureTransportGenerationBuildRoot(stageRoot)
 	if err != nil {
 		return err
+	}
+
+	// A raw USN tombstone represents an interrupted custody transition.
+	// Inspect it before private sealed generations can be promoted. Until
+	// committed-ledger restart reconciliation is integrated, fail closed.
+	// A stored source-custody receipt must never be silently orphaned.
+	// Check it before considering any private generation for promotion.
+	if err := inspectSourceCustodyReceiptNamespaces(
+		ctx, rawRoot, stageRoot, sourceID,
+	); err != nil {
+		return fmt.Errorf("inspect FI source custody namespaces: %w", err)
+	}
+
+	// Recover previously authorized USN custody transitions before the
+	// legacy generation builder examines its remaining private builds.
+	// This never reclaims the original raw-source tombstone.
+	if _, err := recoverCommittedRawUSNPromotions(
+		ctx, rawRoot, stageRoot, stateDir, sourceID, maxEncodedBytes,
+	); err != nil {
+		return fmt.Errorf("recover committed FI USN source custody: %w", err)
 	}
 
 	entries, err := os.ReadDir(buildRoot)
@@ -373,7 +425,7 @@ func RecoverTransportGenerationBuilds(
 				return err
 			}
 
-			if err := removeRawGenerationDirectory(raw); err != nil {
+			if err := removeRawGenerationWithCustody(ctx, raw, stateDir, builtDir, sourceID); err != nil {
 				return fmt.Errorf(
 					"retire frozen FI generation during transport-build recovery: %w",
 					err,
@@ -437,7 +489,7 @@ func RecoverTransportGenerationBuilds(
 			return err
 		}
 
-		if err := removeRawGenerationDirectory(raw); err != nil {
+		if err := removeRawGenerationWithCustody(ctx, raw, stateDir, finalDir, sourceID); err != nil {
 			return fmt.Errorf(
 				"retire reconciled frozen FI generation: %w",
 				err,

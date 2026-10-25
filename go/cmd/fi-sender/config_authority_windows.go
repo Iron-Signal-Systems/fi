@@ -50,6 +50,7 @@ func parseSenderConfig() (senderConfig, error) {
 		RootCertificateSHA256:         trust.RootCertificateSHA256,
 		SourceID:                      operational.Source.ID,
 		SpoolDir:                      operational.Storage.SpoolDir,
+		StateDir:                      operational.Storage.StateDir,
 		StageDir:                      operational.Storage.StageDir,
 		Timeout:                       operational.Receiver.Timeout,
 		TransportCRLPath:              trust.TransportCRLPath,

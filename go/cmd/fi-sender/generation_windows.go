@@ -42,11 +42,13 @@ func runGenerationQueue(ctx context.Context, config senderConfig) error {
 		return fmt.Errorf("open FI raw-generation queue: %w", err)
 	}
 
-	if err := transportsender.RecoverTransportGenerationBuilds(
+	if err := transportsender.RecoverTransportGenerationBuildsWithCustody(
+		ctx,
 		rawRoot,
 		stageRoot,
 		config.SourceID,
 		config.GenerationMaxEncodedBytes,
+		config.StateDir,
 	); err != nil {
 		return fmt.Errorf("recover FI transport-generation build state: %w", err)
 	}
@@ -190,6 +192,7 @@ func runGenerationBuilder(
 				SourceID:                config.SourceID,
 				SpoolDir:                config.SpoolDir,
 				StageRoot:               stageRoot,
+				StateDir:                config.StateDir,
 			},
 			raw,
 		)

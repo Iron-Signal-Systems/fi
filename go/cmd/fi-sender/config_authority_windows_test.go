@@ -322,3 +322,17 @@ func TestWriteAuthorizedOverrideWarning(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSenderConfigIncludesCustodyStateDir confirms that the sender uses
+// the configured collector custody root rather than guessing a lab path.
+func TestParseSenderConfigIncludesCustodyStateDir(t *testing.T) {
+	prepareSenderAuthorityTestConfig(t, false, false, false, false, false)
+
+	value, err := parseSenderConfigWithArgs(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.StateDir != `C:\ProgramData\FI\state` {
+		t.Fatalf("sender custody state dir = %q", value.StateDir)
+	}
+}
