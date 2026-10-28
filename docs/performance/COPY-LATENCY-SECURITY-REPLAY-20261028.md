@@ -72,9 +72,11 @@ go test ./internal/recordingest \
 The initial file/metadata/hash replay has now completed in the
 isolated M1 fixture at 1,024 and 4,096 records; see
 [file replay results](COPY-LATENCY-FILE-REPLAY-20261028.md).
-Repeatability, live-scale index pressure, equivalent-hardware
-comparison, and full-end-to-end collector/receiver throughput remain
-pending. Development SoR telemetry activation is a separate observability
+Three additional sequential 4,096-event security replays passed after a
+fixture-only timestamp correction. The slow first run was not reproduced;
+its cause is still unknown. Live-scale index pressure, PostgreSQL wait
+correlation, equivalent-hardware comparison, and full-end-to-end
+collector/receiver throughput remain pending. Development SoR telemetry activation is a separate observability
 checkpoint, not representative heavy-workload performance acceptance. See
 [development SoR activation evidence](INGEST-COPY-TELEMETRY-DEV-SOR-ACCEPTANCE-20261028.md).
 Do not treat these initial isolated runs as sufficient for a merge or
@@ -137,8 +139,69 @@ on this second 4,096-event run. No single security-field table or code
 change can be assigned as the cause. Cache state, concurrent activity,
 storage behavior and PostgreSQL waits are hypotheses only.
 
-**Next diagnostic:** run several unchanged 4,096-event repetitions
-with per-run elapsed, COPY distributions and fixture cleanup results,
-then correlate observed slow periods with PostgreSQL activity and
-system resource measurements. Maintain exact workload and fixture
-constraints; do not tune or modify ingestion based on these two runs.
+## Fixed-width timestamp fixture correction and sequential repetitions — October 28, 2026
+
+An attempted three-run sequence stopped before ingestion on its first run:
+
+```text
+invalid security fixture 0: InvalidTimestamp: observed_at
+--- FAIL: TestCopyLatencySecurityGenerationReplay (0.04s)
+```
+
+The test constructed `ObservedAt`, `TimeCreated`, and `WrittenAt`
+with `time.Now().UTC().Format(time.RFC3339Nano)`. That Go format
+elides trailing fractional-second zeros, while FI's canonical validator
+requires exactly nine fractional digits followed by `Z`. This
+timestamp-format mismatch intermittently invalidated the synthetic
+fixture before COPY was reached; it does not indicate a PostgreSQL
+failure. The test-only line now uses
+`time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")`.
+No production validator or ingest behavior was modified.
+
+The interrupted attempt generated no ingestion performance result.
+Its failure log and the following accepted runs are preserved on
+`fi-dev` under `/home/jwood/fi-security-repeat-A34eom`
+(`run-1.log` and `run-fixed-{1,2,3}.log`).
+
+Three sequential executions used the same isolated M1 PostgreSQL
+fixture, the same source, 4,096 Windows Security 4663 observations,
+4,096 scopes, and 61,440 field rows. Each produced four field COPY
+calls. The table also retains the two earlier measured runs:
+
+| Metric | Initial 4,096 | First repeat | Fixed run 1 | Fixed run 2 | Fixed run 3 |
+|---|---:|---:|---:|---:|---:|
+| Accepted events | 4,096 | 4,096 | 4,096 | 4,096 | 4,096 |
+| Accepted field rows | 61,440 | 61,440 | 61,440 | 61,440 | 61,440 |
+| Ingest duration | 11.066s | 2.710s | 2.520s | 2.510s | 1.926s |
+| Throughput (events/s) | 370.1 | 1,511.5 | 1,625.7 | 1,631.7 | 2,126.7 |
+| Source COPY | 776ms | 152ms | 130ms | 173ms | 143ms |
+| Event COPY | 2.016s | 279ms | 337ms | 258ms | 149ms |
+| Scope COPY | 1.094s | 217ms | 145ms | 133ms | 112ms |
+| Field COPY | 6.730s | 1.662s | 1.495s | 1.557s | 1.127s |
+| Projection | 9.864s | 2.180s | 1.996s | 1.967s | 1.407s |
+| Field COPY calls | 4 | 4 | 4 | 4 | 4 |
+| Field calls >=1s | 4 | 0 | 0 | 0 | 0 |
+| Field COPY min/max | not recorded | 318/516ms | 307/435ms | 267/475ms | 266/299ms |
+| Relational verification | PASS | PASS | PASS | PASS | PASS |
+| Isolated fixture cleanup | PASS | PASS | PASS | PASS | PASS |
+
+The four later executions provide 16 observed field COPY calls,
+none >=1s; their highest reported per-call latency was 516ms.
+The isolated synthetic workload did **not** reproduce the initial
+slowdown. The three corrected runs also completed with sequential
+cleanup verification and without any production ingestion changes.
+
+**Interpretation:** initial 11.066-second ingestion remains an unexplained
+outlier. These observations alone do not establish warm caches,
+database checkpoint activity, competing I/O, indexes, or any other
+specific cause. The isolated diagnostic does not reproduce shared
+development SoR index/data scale or a representative mixed ingest load.
+
+**Next diagnostic:** preserve the isolated repeatability evidence, then
+correlate COPY call latency with PostgreSQL waits and system CPU,
+memory and storage metrics during a representative, safely bounded
+development-scale workload. Do not tune batch sizes, indexes,
+concurrency, WAL, or ZFS on the strength of these isolated results.
+
+The verified test-only source correction must also be committed to the
+working branch before this checkpoint is considered complete.
