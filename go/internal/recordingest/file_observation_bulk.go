@@ -144,7 +144,9 @@ func copyFileBulkRelationalRows(ctx context.Context, tx pgx.Tx, prepared []fileO
 	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "file_observation"}, fileColumns,
 		pgx.CopyFromSlice(len(prepared), func(i int) ([]any, error) { return prepared[i].parent, nil }))
 	if counters != nil {
-		counters.File += time.Since(fileStarted)
+		elapsed := time.Since(fileStarted)
+		counters.File += elapsed
+		counters.FileCopyLatency.observe(elapsed)
 	}
 	if err != nil {
 		return fmt.Errorf("FI file observation COPY: %w", err)
@@ -160,7 +162,9 @@ func copyFileBulkRelationalRows(ctx context.Context, tx pgx.Tx, prepared []fileO
 	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "file_metadata_observation"}, metadataColumns,
 		pgx.CopyFromSlice(len(prepared), func(i int) ([]any, error) { return prepared[i].metadata, nil }))
 	if counters != nil {
-		counters.Metadata += time.Since(metadataStarted)
+		elapsed := time.Since(metadataStarted)
+		counters.Metadata += elapsed
+		counters.MetadataCopyLatency.observe(elapsed)
 	}
 	if err != nil {
 		return fmt.Errorf("FI file metadata COPY: %w", err)

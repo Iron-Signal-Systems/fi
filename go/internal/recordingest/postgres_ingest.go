@@ -201,6 +201,25 @@ INSERT INTO fi.ingest_journal (
 		hashFinalFlush.Round(time.Millisecond),
 	)
 
+	// One bounded telemetry record per committed generation. These timings
+	// are individual pgx.CopyFrom call durations, not SQL-only or disk-only time.
+	// Keep the existing aggregate log fields unchanged for baseline comparisons.
+	fmt.Printf(
+		"INGEST COPY LATENCY FILE source=%s generation=%s hash={%s} file={%s} metadata={%s}\n",
+		result.SourceID, result.GenerationID,
+		hashCopy.latency.String(),
+		ntfsStages.FileCopyLatency.String(),
+		ntfsStages.MetadataCopyLatency.String(),
+	)
+	fmt.Printf(
+		"INGEST COPY LATENCY SECURITY source=%s generation=%s source_copy={%s} event={%s} scopes={%s} fields={%s}\n",
+		result.SourceID, result.GenerationID,
+		profile.SecurityBulk.SourceLatency.String(),
+		profile.SecurityBulk.EventLatency.String(),
+		profile.SecurityBulk.ScopeLatency.String(),
+		profile.SecurityBulk.FieldLatency.String(),
+	)
+
 	fmt.Printf(
 		"INGEST SOURCE BATCH COPY source=%s generation=%s rows=%d calls=%d prepare=%s copy=%s id_lookup=%s\n",
 		result.SourceID, result.GenerationID,

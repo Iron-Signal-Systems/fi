@@ -1,0 +1,108 @@
+# FI ingestion COPY call latency — October 28, 2026
+
+## Purpose
+
+Record the variability of individual PostgreSQL COPY operations without
+changing ingestion order, transaction boundaries, schema, memory limits,
+index definitions, or existing aggregate timing field names.
+
+This document records the October 28 baseline for the FreeBSD FI ingest
+worker processing recovered generations from `iss-fs-22a.iss.local`.
+The production worker continues running its previously deployed binary.
+Changes in this branch are **not deployed** and are not accepted until the
+full regression and equivalent-workload tests pass.
+
+## Existing baseline (measured, not extrapolated)
+
+Five successive completed generations at 09:23:30 UTC:
+
+- Source records: 197,831.
+- Summed relational ingest profile time: 268.184 seconds.
+- Aggregate generation-local rate: approximately 738 records/second.
+- Summed `INGEST HASH COPY copy`: 37.908 seconds.
+- Summed `INGEST PROFILE projection`: 215.707 seconds.
+- Hash COPY rows: 67,935.
+- PostgreSQL recovery backlog and other source traffic were present.
+- The measurements use generation-local durations. They are **not**
+  receiver custody publication rates or end-to-end collector-to-query rates.
+
+An earlier recovered generation showed 6,453 hash rows in 84.782
+seconds of COPY calls and 18,292 total source records in 182.610 seconds
+of worker-attempt time. Subsequent hash operations had lower per-generation
+COPY times. The source of this variation has not been established.
+
+The observed SQL wait `DataFileRead` indicates I/O wait at sample time;
+it does not identify index, heap, foreign-key, or underlying ZFS latency
+as the sole cause.
+
+## Telemetry contract
+
+Two new per-generation log lines are written **only after successful
+database commit**:
+
+- `INGEST COPY LATENCY FILE` includes hash, file parent, metadata.
+- `INGEST COPY LATENCY SECURITY` includes source records, security events,
+  scopes, and fields.
+
+Each table reports a constant-space distribution of individual
+`pgx.Tx.CopyFrom` call durations:
+
+- `calls`: number of COPY calls that returned, including errors in an
+  attempt that subsequently fails (failed attempts do not emit these
+  successful-generation log lines).
+- `min`, `max`: minimum and maximum elapsed call durations, rounded to
+  milliseconds on output. With zero calls, both are zero.
+- `ge_1s`, `ge_5s`: count of calls with elapsed time greater than
+  or equal to one second and five seconds.
+
+Existing `INGEST HASH COPY`, `INGEST PROFILE`, `INGEST NTFS STAGES`,
+and `INGEST SECURITY BULK` log lines remain unchanged.
+
+The COPY call timer includes client encoding, network or jail transport,
+PostgreSQL execution, indexes, constraint checks, and waits. It is **not**
+a standalone disk measurement. New distributions overlap the existing
+aggregate stage timers and must not be added to them.
+
+All counters are generation-local, bounded, and constant-space. They do
+not collect filenames, paths, hashes, event payloads, or sensitive values.
+No new imports/dependencies are required beyond the Go standard library.
+
+## Acceptance sequence
+
+Run from the development jail's `/home/jwood/src/fi/go` directory with
+the new branch checked out and a cleanly understood working tree:
+
+```sh
+gofmt -l internal/recordingest/copy_call_latency.go \
+  internal/recordingest/copy_call_latency_test.go \
+  internal/recordingest/content_hash_copy_latency_test.go \
+  internal/recordingest/content_hash_copy.go \
+  internal/recordingest/security_bulk.go \
+  internal/recordingest/ntfs_stage_timing.go \
+  internal/recordingest/file_observation_bulk.go \
+  internal/recordingest/postgres_ingest.go
+
+go test ./internal/recordingest
+go test ./...
+go vet ./internal/recordingest
+```
+
+Integration tests gated by PostgreSQL DSN environment variables must be
+run with an isolated test database before considering this accepted.
+Do not point destructive test fixtures at the live recovery database.
+
+Compare equivalent source-record type mixes and row counts. Check:
+
+1. Existing rows and accepted generation counts remain unchanged.
+2. Rollback on COPY error remains unchanged.
+3. Per-call counts agree with successful COPY calls.
+4. The `min`/`max` values bound each observed call and slow buckets
+   count 1s and 5s inclusive.
+5. `INGEST PROFILE` and pre-existing SQL/copy timers have the same
+   measurement boundaries as before.
+6. CI and FreeBSD build/acceptance gates succeed before merge/deployment.
+
+## Out of scope
+
+No tuning of PostgreSQL shared buffers, autovacuum, WAL, ZFS, hash indexes,
+batch-size limits, concurrency, or transaction durability in this change.

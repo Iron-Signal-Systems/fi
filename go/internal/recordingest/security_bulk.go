@@ -35,6 +35,12 @@ type securityBulkTimingCounters struct {
 	ChildPrepare time.Duration
 	ScopeCopy    time.Duration
 	FieldCopy    time.Duration
+
+	// Per-COPY distributions supplement (not replace) existing aggregate timers.
+	SourceLatency copyCallLatency
+	EventLatency  copyCallLatency
+	ScopeLatency  copyCallLatency
+	FieldLatency  copyCallLatency
 }
 
 type securityBulkRecord struct {
@@ -99,7 +105,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 			p := pending[i]
 			return []any{sourceBatchID, p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
 		}))
-	profile.SecurityBulk.SourceCopy += time.Since(sourceCopyStarted)
+	elapsedSourceCopy := time.Since(sourceCopyStarted)
+	profile.SecurityBulk.SourceCopy += elapsedSourceCopy
+	profile.SecurityBulk.SourceLatency.observe(elapsedSourceCopy)
 	if err != nil {
 		return fmt.Errorf("FI Security bulk source COPY: %w", err)
 	}
@@ -159,7 +167,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 				nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
 			}, nil
 		}))
-	profile.SecurityBulk.EventCopy += time.Since(eventCopyStarted)
+	elapsedEventCopy := time.Since(eventCopyStarted)
+	profile.SecurityBulk.EventCopy += elapsedEventCopy
+	profile.SecurityBulk.EventLatency.observe(elapsedEventCopy)
 	if err != nil {
 		return fmt.Errorf("FI Security bulk event COPY: %w", err)
 	}
@@ -188,7 +198,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		scopeCopyStarted := time.Now()
 		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"}, []string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"},
 			pgx.CopyFromSlice(len(scopes), func(i int) ([]any, error) { return scopes[i], nil }))
-		profile.SecurityBulk.ScopeCopy += time.Since(scopeCopyStarted)
+		elapsedScopeCopy := time.Since(scopeCopyStarted)
+	profile.SecurityBulk.ScopeCopy += elapsedScopeCopy
+	profile.SecurityBulk.ScopeLatency.observe(elapsedScopeCopy)
 		if err != nil {
 			return fmt.Errorf("FI Security bulk scopes COPY: %w", err)
 		}
@@ -200,7 +212,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		fieldCopyStarted := time.Now()
 		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_field"}, []string{"source_record_id", "field_ordinal", "name", "value"},
 			pgx.CopyFromSlice(len(fields), func(i int) ([]any, error) { return fields[i], nil }))
-		profile.SecurityBulk.FieldCopy += time.Since(fieldCopyStarted)
+		elapsedFieldCopy := time.Since(fieldCopyStarted)
+	profile.SecurityBulk.FieldCopy += elapsedFieldCopy
+	profile.SecurityBulk.FieldLatency.observe(elapsedFieldCopy)
 		if err != nil {
 			return fmt.Errorf("FI Security bulk fields COPY: %w", err)
 		}
