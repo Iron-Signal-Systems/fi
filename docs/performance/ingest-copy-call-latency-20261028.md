@@ -140,11 +140,16 @@ application binaries were modified during isolated test acceptance.
 
 ### Outstanding performance acceptance
 
-The new per-COPY latency distribution must still be measured
-against representative file-heavy and security-heavy workloads.
+The isolated security-event and file/hash generation replays have
+now produced initial per-COPY timing observations; both 1,024- and
+4,096-record runs passed projection verification and fixture cleanup.
+See [security replay](COPY-LATENCY-SECURITY-REPLAY-20261028.md)
+and [file replay](COPY-LATENCY-FILE-REPLAY-20261028.md).
 
-This change adds observability; no ingestion throughput
-improvement is claimed.
+Repeatability, equivalent data/index scale, PostgreSQL wait correlation,
+and source-mix-matched workload comparisons remain open. These are
+single-run observations and do not establish performance scaling or
+throughput improvement.
 
 Development SoR worker activation passed as an observability checkpoint.
 Representative heavy-load performance acceptance remains open. See

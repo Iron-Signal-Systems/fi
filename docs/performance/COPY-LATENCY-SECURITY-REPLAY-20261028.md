@@ -69,11 +69,13 @@ go test ./internal/recordingest \
 
 ## Not yet covered
 
-File-observation/metadata/hash-heavy replay, live-scale index pressure,
-equivalent-hardware baseline comparison, and measurement of full-end-to-end
-collector/receiver throughput remain pending. Development SoR telemetry activation is a separate observability
-checkpoint, not completion of representative heavy-workload performance
-acceptance. See
+The initial file/metadata/hash replay has now completed in the
+isolated M1 fixture at 1,024 and 4,096 records; see
+[file replay results](COPY-LATENCY-FILE-REPLAY-20261028.md).
+Repeatability, live-scale index pressure, equivalent-hardware
+comparison, and full-end-to-end collector/receiver throughput remain
+pending. Development SoR telemetry activation is a separate observability
+checkpoint, not representative heavy-workload performance acceptance. See
 [development SoR activation evidence](INGEST-COPY-TELEMETRY-DEV-SOR-ACCEPTANCE-20261028.md).
 Do not treat the isolated single runs as sufficient for a merge or
 broader rollout.
