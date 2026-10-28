@@ -154,7 +154,7 @@ security-field COPY totals were 6.730s, 1.662s, 1.495s, 1.557s and
 1.127s. None of the 16 field COPY calls in the four later runs exceeded
 one second. See the [security replay record](COPY-LATENCY-SECURITY-REPLAY-20261028.md)
 for per-call ranges, the pre-ingestion fixture failure, its bounded
-fix and source-commit requirement.
+fix and completed test-source checkpoint (`62c0af0`).
 
 Repeatability of the isolated security workload has now been observed,
 but the initial slow run remains unexplained. Equivalent data/index
