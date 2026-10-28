@@ -199,8 +199,8 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"}, []string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"},
 			pgx.CopyFromSlice(len(scopes), func(i int) ([]any, error) { return scopes[i], nil }))
 		elapsedScopeCopy := time.Since(scopeCopyStarted)
-	profile.SecurityBulk.ScopeCopy += elapsedScopeCopy
-	profile.SecurityBulk.ScopeLatency.observe(elapsedScopeCopy)
+		profile.SecurityBulk.ScopeCopy += elapsedScopeCopy
+		profile.SecurityBulk.ScopeLatency.observe(elapsedScopeCopy)
 		if err != nil {
 			return fmt.Errorf("FI Security bulk scopes COPY: %w", err)
 		}
@@ -213,8 +213,8 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_field"}, []string{"source_record_id", "field_ordinal", "name", "value"},
 			pgx.CopyFromSlice(len(fields), func(i int) ([]any, error) { return fields[i], nil }))
 		elapsedFieldCopy := time.Since(fieldCopyStarted)
-	profile.SecurityBulk.FieldCopy += elapsedFieldCopy
-	profile.SecurityBulk.FieldLatency.observe(elapsedFieldCopy)
+		profile.SecurityBulk.FieldCopy += elapsedFieldCopy
+		profile.SecurityBulk.FieldLatency.observe(elapsedFieldCopy)
 		if err != nil {
 			return fmt.Errorf("FI Security bulk fields COPY: %w", err)
 		}
