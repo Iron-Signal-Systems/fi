@@ -8,9 +8,11 @@ index definitions, or existing aggregate timing field names.
 
 This document records the October 28 baseline for the FreeBSD FI ingest
 worker processing recovered generations from `iss-fs-22a.iss.local`.
-The production worker continues running its previously deployed binary.
-Changes in this branch are **not deployed** and are not accepted until the
-full regression and equivalent-workload tests pass.
+All FI hosts and sources in this test are development systems. The
+telemetry-enabled worker was activated in the shared development SoR
+ingest jail on October 28 after isolated regression and replay checks.
+The previous worker binary was retained for rollback. Activation confirms
+observability, not representative heavy-workload performance acceptance.
 
 ## Existing baseline (measured, not extrapolated)
 
@@ -133,8 +135,8 @@ hash states, generated source identities, numeric and digest
 preservation, foreign-key enforcement, duplicate rejection,
 security-event projection, and transaction rollback.
 
-No production database, running ingest worker, or deployed
-application binaries were modified during acceptance.
+No shared development SoR database, running ingest worker, or deployed
+application binaries were modified during isolated test acceptance.
 
 ### Outstanding performance acceptance
 
@@ -144,4 +146,6 @@ against representative file-heavy and security-heavy workloads.
 This change adds observability; no ingestion throughput
 improvement is claimed.
 
-Deployment remains pending performance acceptance.
+Development SoR worker activation passed as an observability checkpoint.
+Representative heavy-load performance acceptance remains open. See
+[development SoR activation evidence](INGEST-COPY-TELEMETRY-DEV-SOR-ACCEPTANCE-20261028.md).

@@ -30,7 +30,8 @@ under ordinary `go test ./...`.
   generation, and journal rows from the isolated fixture. The test confirms
   that its generation no longer exists after cleanup.
 - Failures in cleanup are test failures; the fixture remains isolated.
-- No production source material, deployed worker, or live PostgreSQL is used.
+- No shared development SoR source material, deployed worker, or live SoR
+  PostgreSQL is used.
 - Do not run this test against a database different from the verified M1
   fixture. Do not run other M1 integration fixtures concurrently.
 
@@ -70,8 +71,12 @@ go test ./internal/recordingest \
 
 File-observation/metadata/hash-heavy replay, live-scale index pressure,
 equivalent-hardware baseline comparison, and measurement of full-end-to-end
-collector/receiver throughput remain pending. Do not merge or deploy before
-completing planned performance acceptance.
+collector/receiver throughput remain pending. Development SoR telemetry activation is a separate observability
+checkpoint, not completion of representative heavy-workload performance
+acceptance. See
+[development SoR activation evidence](INGEST-COPY-TELEMETRY-DEV-SOR-ACCEPTANCE-20261028.md).
+Do not treat the isolated single runs as sufficient for a merge or
+broader rollout.
 
 ## Measured results — October 28, 2026
 
