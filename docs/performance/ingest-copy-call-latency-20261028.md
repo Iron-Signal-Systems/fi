@@ -106,3 +106,42 @@ Compare equivalent source-record type mixes and row counts. Check:
 
 No tuning of PostgreSQL shared buffers, autovacuum, WAL, ZFS, hash indexes,
 batch-size limits, concurrency, or transaction durability in this change.
+
+## Development validation — October 28, 2026
+
+Environment: FreeBSD fi-dev jail.
+Branch: work/ingest-copy-call-latency-20261028.
+
+### Completed acceptance
+
+| Check | Result |
+|---|---|
+| Five focused telemetry unit tests | PASS |
+| Complete recordingest package regression | PASS |
+| Full Go regression: go test ./... -count=1 | PASS |
+| Full static analysis: go vet ./... | PASS |
+| Three PostgreSQL integration test configurations compiled | PASS |
+| Content hash COPY PostgreSQL integration | PASS |
+| File observation bulk PostgreSQL integration | PASS |
+| Security bulk PostgreSQL integration | PASS |
+
+Integration tests ran against a temporary Unix-socket-only
+PostgreSQL cluster with three separate test databases.
+
+Verified behaviors included bounded hash COPY, valid and invalid
+hash states, generated source identities, numeric and digest
+preservation, foreign-key enforcement, duplicate rejection,
+security-event projection, and transaction rollback.
+
+No production database, running ingest worker, or deployed
+application binaries were modified during acceptance.
+
+### Outstanding performance acceptance
+
+The new per-COPY latency distribution must still be measured
+against representative file-heavy and security-heavy workloads.
+
+This change adds observability; no ingestion throughput
+improvement is claimed.
+
+Deployment remains pending performance acceptance.
