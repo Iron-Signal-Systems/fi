@@ -203,5 +203,11 @@ memory and storage metrics during a representative, safely bounded
 development-scale workload. Do not tune batch sizes, indexes,
 concurrency, WAL, or ZFS on the strength of these isolated results.
 
-The verified test-only source correction must also be committed to the
-working branch before this checkpoint is considered complete.
+**Checkpoint complete:** the canonical timestamp test-only correction
+passed three sequential replays, fixture cleanup and tagged `go vet` on
+`fi-dev`, then was committed and pushed to this working branch as
+`62c0af0de269900eac693a6a43dcdd4e6cadef9a` on October 28, 2026.
+The three unrelated untracked working-tree files were not staged.
+No production ingestion code or shared SoR dataset was modified by
+this test correction. Development-scale latency causality and representative
+heavy-workload acceptance remain open.
