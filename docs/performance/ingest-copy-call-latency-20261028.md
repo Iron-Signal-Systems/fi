@@ -146,10 +146,21 @@ now produced initial per-COPY timing observations; both 1,024- and
 See [security replay](COPY-LATENCY-SECURITY-REPLAY-20261028.md)
 and [file replay](COPY-LATENCY-FILE-REPLAY-20261028.md).
 
-Repeatability, equivalent data/index scale, PostgreSQL wait correlation,
-and source-mix-matched workload comparisons remain open. These are
-single-run observations and do not establish performance scaling or
-throughput improvement.
+Three additional sequential 4,096-event security replays passed with
+relational verification and cleanup after correcting an intermittent
+synthetic timestamp-format validation defect. The five observed 4,096-event
+ingest times were 11.066s, 2.710s, 2.520s, 2.510s and 1.926s. Their
+security-field COPY totals were 6.730s, 1.662s, 1.495s, 1.557s and
+1.127s. None of the 16 field COPY calls in the four later runs exceeded
+one second. See the [security replay record](COPY-LATENCY-SECURITY-REPLAY-20261028.md)
+for per-call ranges, the pre-ingestion fixture failure, its bounded
+fix and source-commit requirement.
+
+Repeatability of the isolated security workload has now been observed,
+but the initial slow run remains unexplained. Equivalent data/index
+scale, PostgreSQL wait correlation, storage correlation, and mixed
+source workloads remain open. These results do not establish general
+performance scaling or throughput improvement.
 
 Development SoR worker activation passed as an observability checkpoint.
 Representative heavy-load performance acceptance remains open. See
