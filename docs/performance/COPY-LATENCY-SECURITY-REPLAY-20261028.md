@@ -77,7 +77,7 @@ comparison, and full-end-to-end collector/receiver throughput remain
 pending. Development SoR telemetry activation is a separate observability
 checkpoint, not representative heavy-workload performance acceptance. See
 [development SoR activation evidence](INGEST-COPY-TELEMETRY-DEV-SOR-ACCEPTANCE-20261028.md).
-Do not treat the isolated single runs as sufficient for a merge or
+Do not treat these initial isolated runs as sufficient for a merge or
 broader rollout.
 
 ## Measured results — October 28, 2026
@@ -106,3 +106,39 @@ No COPY call exceeded five seconds.
 These are single-run observations, not established scaling
 characteristics. Repeatability, PostgreSQL waits, and storage
 measurements remain outstanding. No root cause is assigned.
+
+## Repeat 4,096-event run — 2026-10-28 22:19 UTC
+
+Same tagged test, M1 fixture and 4,096-event / 61,440-field
+configuration as the initial 4,096-event run; no ingestion code,
+PostgreSQL configuration, batch size or schema change was made.
+The replay again passed row verification and isolated fixture cleanup.
+
+| Metric | Initial 4,096-event run | Repeat 4,096-event run |
+|---|---:|---:|
+| Ingest duration | 11.066s | 2.710s |
+| Records/second | 370.1 | 1,511.5 |
+| Source COPY | 776ms | 152ms |
+| Event COPY | 2.016s | 279ms |
+| Scope COPY | 1.094s | 217ms |
+| Field COPY | 6.730s | 1.662s |
+| Projection | 9.864s | 2.180s |
+| Transaction commit | 22ms | 14ms |
+| Field COPY calls | 4 | 4 |
+| Field calls >=1s | 4 | 0 |
+| Field COPY min/max | not recorded here | 318ms / 516ms |
+| Relational verification | PASS | PASS |
+| Isolated cleanup | PASS | PASS |
+
+The repeat was approximately 4.08 times faster in overall ingest
+duration, with improvement across source, event, scope and field
+COPY calls. The earlier latency spike was therefore **not reproduced**
+on this second 4,096-event run. No single security-field table or code
+change can be assigned as the cause. Cache state, concurrent activity,
+storage behavior and PostgreSQL waits are hypotheses only.
+
+**Next diagnostic:** run several unchanged 4,096-event repetitions
+with per-run elapsed, COPY distributions and fixture cleanup results,
+then correlate observed slow periods with PostgreSQL activity and
+system resource measurements. Maintain exact workload and fixture
+constraints; do not tune or modify ingestion based on these two runs.
