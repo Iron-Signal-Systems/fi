@@ -91,7 +91,7 @@ func TestCopyLatencySecurityGenerationReplay(t *testing.T) {
 	// Generate valid Windows Security 4663 observations, each with one matched
 	// scope and 15 indexed event-field children. Exactly one signed generation
 	// is used per test run; field cardinality is fixed for valid comparisons.
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
 	input := make([]spool.Record, 0, count)
 	for i := 0; i < count; i++ {
 		fields := make([]records.WindowsSecurityEventField, 0, securityReplayFields)
