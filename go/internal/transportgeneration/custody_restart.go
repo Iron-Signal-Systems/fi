@@ -5,6 +5,7 @@
 package transportgeneration
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -277,10 +278,26 @@ func ReadDiscoveredDurableCustodyArtifacts(
 	discovered DiscoveredCustody,
 	config CustodyConfig,
 	factory CanonicalArtifactHandlerFactory,
-) (
-	CustodyResult,
-	error,
-) {
+) (CustodyResult, error) {
+	return ReadDiscoveredDurableCustodyArtifactsContext(
+		context.Background(), discovered, config, factory,
+	)
+}
+
+// ReadDiscoveredDurableCustodyArtifactsContext applies the original full FIGT
+// and semantic validation while permitting shutdown during large file reads.
+func ReadDiscoveredDurableCustodyArtifactsContext(
+	ctx context.Context,
+	discovered DiscoveredCustody,
+	config CustodyConfig,
+	factory CanonicalArtifactHandlerFactory,
+) (CustodyResult, error) {
+	if ctx == nil {
+		return CustodyResult{}, errors.New("FI generation custody recovery requires context")
+	}
+	if err := ctx.Err(); err != nil {
+		return CustodyResult{}, err
+	}
 	if factory == nil {
 		return CustodyResult{}, errors.New(
 			"FI generation discovered custody artifact handler factory is required",
@@ -374,7 +391,7 @@ func ReadDiscoveredDurableCustodyArtifacts(
 	}
 
 	transfer, readErr := readValidatedTransfer(
-		file,
+		&outerCustodyContextReader{ctx: ctx, reader: file},
 		offer,
 		config.Receive,
 		handler,
