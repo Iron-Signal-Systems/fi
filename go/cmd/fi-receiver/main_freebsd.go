@@ -379,6 +379,10 @@ func runTransportCommand() {
 			},
 		)
 		if err != nil {
+			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+				fmt.Fprintln(os.Stderr, "FI receiver startup recovery cancelled by shutdown.")
+				return
+			}
 			fail(fmt.Errorf(
 				"recover FI generation startup state: %w",
 				err,
