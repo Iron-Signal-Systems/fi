@@ -165,3 +165,46 @@ performance scaling or throughput improvement.
 Development SoR worker activation passed as an observability checkpoint.
 Representative heavy-load performance acceptance remains open. See
 [development SoR activation evidence](INGEST-COPY-TELEMETRY-DEV-SOR-ACCEPTANCE-20261028.md).
+
+
+## Development SoR read-only footprint and I/O baseline (prepared, not yet run)
+
+After the five accepted 4,096-event security replays, the live development
+worker was observed running in the `fi-ingest` jail and accepted one
+11-record `iss-fs-22b.iss.local` security-coverage generation. That
+generation had zero instrumented hash, file, metadata or security-field
+COPY calls. The current and two rotated `daemon.log` windows had no
+matching nonzero instrumented COPY calls. No representative new COPY
+event is available for direct wait correlation in that observation window.
+
+The next diagnostic is now packaged at
+[`scripts/ingest_copy_sor_readonly_baseline.sql`](../../scripts/ingest_copy_sor_readonly_baseline.sql).
+It is **not** ingestion or tuning code and is **not yet runtime-validated**
+against the development SoR. Run it from an existing shell on
+`fi-backend-b`, where PostgreSQL 18 is in the `fi-sor-db` jail:
+
+```sh
+# After obtaining an up-to-date copy of the script on fi-backend-b:
+sudo jexec -U postgres fi-sor-db /usr/local/bin/psql \
+    -X -q -w -U postgres -h /tmp -p 5432 \
+    -v ON_ERROR_STOP=1 -P pager=off -d fi \
+    -f /path/to/ingest_copy_sor_readonly_baseline.sql
+```
+
+Use a known local path for the SQL file; the repository checkout on
+`fi-dev` is not assumed to be available inside the database jail.
+The script uses a read-only transaction, 5-second per-statement timeout,
+1-second lock timeout, no scans/counts of FI evidence records, and
+only catalog/statistics queries. It prints PostgreSQL identity, settings,
+largest tables/indexes, index readiness, cumulative database and relation
+I/O counters, WAL/checkpointer state, and the current wait events
+(without query text). No schema, worker, custody, or PostgreSQL
+configuration changes are authorized by this diagnostic.
+
+All PostgreSQL activity counters are cumulative since their indicated
+stats-reset epochs; a single post-load snapshot is **not** evidence of
+which earlier COPY call caused a spike. Meaningful root-cause correlation
+requires a representative heavy ingest operation while measuring waits,
+checkpoint/WAL and host I/O. The existing M6.2 and M6.5B performance
+acceptance remains valid; no performance change is justified here
+without stronger evidence.
