@@ -5,6 +5,7 @@
 package generationrecorder
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -24,17 +25,35 @@ func RecordDiscoveredCustodyDurably(
 	discovered transportgeneration.DiscoveredCustody,
 	custodyConfig transportgeneration.CustodyConfig,
 	recorderConfig DurableConfig,
-) (
-	DurableResult,
-	error,
-) {
+) (DurableResult, error) {
+	return RecordDiscoveredCustodyDurablyContext(
+		context.Background(), discovered, custodyConfig, recorderConfig,
+	)
+}
+
+// RecordDiscoveredCustodyDurablyContext performs the original semantic
+// validation for a custody object without an existing recorded receipt.
+// The streaming read is cancelable, including during initial receiver recovery.
+func RecordDiscoveredCustodyDurablyContext(
+	ctx context.Context,
+	discovered transportgeneration.DiscoveredCustody,
+	custodyConfig transportgeneration.CustodyConfig,
+	recorderConfig DurableConfig,
+) (DurableResult, error) {
+	if ctx == nil {
+		return DurableResult{}, errors.New("FI generation semantic recovery requires context")
+	}
+	if err := ctx.Err(); err != nil {
+		return DurableResult{}, err
+	}
 	if err := validateDurableConfig(recorderConfig); err != nil {
 		return DurableResult{}, err
 	}
 
 	var state *validator
 
-	custody, err := transportgeneration.ReadDiscoveredDurableCustodyArtifacts(
+	custody, err := transportgeneration.ReadDiscoveredDurableCustodyArtifactsContext(
+		ctx,
 		discovered,
 		custodyConfig,
 		func(
