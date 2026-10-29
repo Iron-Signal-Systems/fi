@@ -206,12 +206,40 @@ func m1MakeSignedTrust(
 	}, leafKey, leaf
 }
 
+// m1WriteSignedGeneration preserves the one-record correctness fixture.
+// The variable-record helper below is used only by isolated performance tests.
 func m1WriteSignedGeneration(
 	t *testing.T,
 	root string,
 	sourceID string,
 ) m1SignedSource {
 	t.Helper()
+	payload := json.RawMessage(
+		`{"source":"M1-Isolated-Ingest","error":"synthetic controlled test record"}`,
+	)
+	record := spool.Record{
+		Version:    spool.RecordVersion,
+		RecordKind: "SupportingSourceCollectionError",
+		ScopeID:    "m1-" + sourceID,
+		WrittenAt:  time.Now().UTC().Format(time.RFC3339Nano),
+		Payload:    payload,
+	}
+	return m1WriteSignedGenerationRecords(t, root, sourceID, []spool.Record{record})
+}
+
+// m1WriteSignedGenerationRecords runs the same authenticated signing,
+// receiver, custody and recorded-generation workflow for bounded test input.
+// Never supply production evidence or a production custody root here.
+func m1WriteSignedGenerationRecords(
+	t *testing.T,
+	root string,
+	sourceID string,
+	input []spool.Record,
+) m1SignedSource {
+	t.Helper()
+	if len(input) == 0 || len(input) > 4096 {
+		t.Fatal("isolated signed generation requires 1..4096 records")
+	}
 
 	trust, signer, certificate := m1MakeSignedTrust(
 		t, sourceID,
@@ -227,26 +255,19 @@ func m1WriteSignedGeneration(
 		}
 	}
 
-	payload := json.RawMessage(
-		`{"source":"M1-Isolated-Ingest","error":"synthetic controlled test record"}`,
-	)
-
-	record := spool.Record{
-		Version:    spool.RecordVersion,
-		RecordKind: "SupportingSourceCollectionError",
-		ScopeID:    "m1-" + sourceID,
-		WrittenAt:  time.Now().UTC().Format(time.RFC3339Nano),
-		Payload:    payload,
-	}
-
-	raw, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw = append(raw, '\n')
-
-	if _, err := PrepareSourceRecord(raw); err != nil {
-		t.Fatalf("FI record envelope invalid: %v", err)
+	// Validate each exact LF-terminated record before sealing the batch.
+	// A single batch preserves source order, and the manifest count must match.
+	var raw []byte
+	for i, record := range input {
+		line, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("marshal isolated record %d: %v", i, err)
+		}
+		line = append(line, '\n')
+		if _, err := PrepareSourceRecord(line); err != nil {
+			t.Fatalf("invalid isolated record %d: %v", i, err)
+		}
+		raw = append(raw, line...)
 	}
 
 	nonce := make([]byte, 8)
@@ -275,7 +296,7 @@ func m1WriteSignedGeneration(
 		Version:         spool.ManifestVersion,
 		BatchID:         batchID,
 		TargetBatchSize: 262144,
-		RecordCount:     1,
+		RecordCount:     len(input),
 		DataBytes:       int64(len(raw)),
 		DataSHA256:      hex.EncodeToString(digest[:]),
 		DataFile:        dataName,

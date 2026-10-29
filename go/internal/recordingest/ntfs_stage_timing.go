@@ -25,6 +25,10 @@ type ntfsStageTimingCounters struct {
 	Security     time.Duration
 	SACL         time.Duration
 	Warnings     time.Duration
+
+	// File and metadata COPY calls have their own latency distributions.
+	FileCopyLatency     copyCallLatency
+	MetadataCopyLatency copyCallLatency
 }
 
 type ntfsStageRecorder struct {

@@ -25,6 +25,7 @@ type contentHashCopyState struct {
 	copied   int64
 	calls    int64
 	duration time.Duration
+	latency  copyCallLatency
 }
 
 func newContentHashCopyState() *contentHashCopyState {
@@ -95,7 +96,10 @@ func (s *contentHashCopyState) copyRows(
 		pgx.CopyFromRows(rows),
 	)
 
-	s.duration += time.Since(started)
+	// Capture call latency without recording row values or allocating per row.
+	elapsed := time.Since(started)
+	s.duration += elapsed
+	s.latency.observe(elapsed)
 
 	if err != nil {
 		return fmt.Errorf("COPY FI content hash observations: %w", err)
