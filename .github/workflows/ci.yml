@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.3'
 
       - name: Test
         run: go test ./...
@@ -41,7 +41,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.3'
 
       - name: Test
         run: go test ./...
@@ -59,7 +59,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       - name: Compile FreeBSD transport and receiver tests
         env:
           GOOS: freebsd
