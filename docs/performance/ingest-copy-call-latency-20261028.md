@@ -208,3 +208,107 @@ requires a representative heavy ingest operation while measuring waits,
 checkpoint/WAL and host I/O. The existing M6.2 and M6.5B performance
 acceptance remains valid; no performance change is justified here
 without stronger evidence.
+
+
+## Measured 138 GB SoR catalog and cumulative I/O snapshot — October 29, 2026
+
+**Source:** read-only PostgreSQL 18.6 `psql` here-document completed
+from the existing `root@fi-backend-b` shell using
+`jexec -U postgres fi-sor-db /usr/local/bin/psql -X -w -h /tmp -p 5432 -U postgres -d fi`.
+The operator executed the inline diagnostic from the conversation;
+the standalone SQL script above was **not** copied or executed. The
+inline transaction issued `BEGIN READ ONLY`, 10-second statement timeout,
+2-second lock timeout, catalog/statistics SELECTs and `COMMIT`. Output
+ended with `DIAGNOSTIC COMPLETE`. No source ingestion, worker restart,
+SQL data mutation or configuration modification was part of this step.
+
+Database size: **138 GB** reported by `pg_size_pretty(pg_database_size('fi'))`.
+
+### Largest relation samples (catalog-estimated rows; rounded display sizes)
+
+| FI relation | Estimated rows | Table | Indexes | Total |
+|---|---:|---:|---:|---:|
+| `windows_security_event_field` | 218,792,912 | 18 GB | 6,994 MB | 25 GB |
+| `file_observation` | 22,367,392 | 20 GB | 2,070 MB | 22 GB |
+| `source_record` | 36,545,308 | 8,213 MB | 5,775 MB | 14 GB |
+| `windows_security_event` | 14,861,748 | 10 GB | 2,643 MB | 13 GB |
+| `security_ace` | 74,520,904 | 9,265 MB | 2,725 MB | 12 GB |
+| `usn_object_change` | 27,540,820 | 4,261 MB | 4,561 MB | 8,822 MB |
+| `content_hash_observation` | 22,297,272 | 2,592 MB | 2,185 MB | 4,777 MB |
+
+The counts come from `pg_class.reltuples`, not authoritative row
+counts, and are not directly interchangeable with committed
+source-record totals from `fi.recorded_generation`.
+
+The largest observed index was
+`windows_security_event_field_pkey` at **6,994 MB**. Other large
+indexes included `source_record_scope_time_idx` (2,335 MB),
+`security_ace_pkey` (2,256 MB),
+`source_record_kind_time_idx` (1,469 MB), and
+`windows_security_event_record_idx` (1,288 MB). The field table's
+total reported index footprint equaled the reported primary-key
+index size; the 15-index listing did not show the previously removed
+field-name index. This agrees with the established M6.2 schema
+migration, but the inline query did not enumerate *every* field index
+to independently verify that invariant. Index `idx_scan` counters
+measure usage over the statistics history and do not by themselves
+prove an index is safe to remove.
+
+### Cumulative PostgreSQL evidence
+
+| Measurement | Observed |
+|---|---:|
+| `pg_stat_database` shared-buffer hit rate | 98.10% |
+| `pg_stat_database` blocks read / hit | 189,440,772 / 9,769,243,485 |
+| `pg_stat_database` read / write time | 26,691,426.288ms / 6,644,086.713ms |
+| `pg_stat_wal` records | 2,249,083,021 |
+| `pg_stat_wal` full-page images | 92,453,859 |
+| `pg_stat_wal` reported bytes | 817 GB |
+| `pg_stat_wal` buffer-full events | 13,655,022 |
+| `pg_stat_checkpointer` timed / requested / done | 3,247 / 1,062 / 3,283 |
+| `pg_stat_checkpointer` buffers written | 3,464,888 |
+| `pg_stat_checkpointer` write / sync time | 312,353,354ms / 161,569ms |
+| `pg_stat_io` client-backend normal reads | 138,189,033 |
+| `pg_stat_io` client-backend normal read time | 19,480,425.287ms |
+| `pg_stat_io` client-backend normal writes | 47,349,979 |
+| `pg_stat_io` client-backend normal evictions | 151,477,661 |
+| `pg_stat_io` autovacuum-worker vacuum reads | 10,697,199 |
+| `pg_stat_io` autovacuum-worker vacuum read time | 6,508,085.899ms |
+| Active non-idle database backends/waits at snapshot | 0 |
+
+`pg_stat_wal` and `pg_stat_checkpointer` displayed
+`stats_reset=2026-10-16 16:36:26.414104+00`; the displayed
+`pg_stat_database.stats_reset` field was blank. The inline query
+did not request `pg_stat_io.stats_reset`, therefore its reset epoch
+is not established here. These are **cumulative counters, not
+interval deltas**. In particular, 817 GB of historical WAL and
+13.7 million WAL-buffer-full events do not prove that an earlier
+specific COPY call blocked on WAL. A 98.10% cumulative buffer-hit
+ratio is compatible with costly misses; it does not localize
+read pressure to a specific table or index.
+
+`pg_stat_io` evictions describe PostgreSQL buffer replacement;
+they must not be treated as proven ZFS ARC evictions or physical
+device I/O latency. The zero-wait snapshot was taken after the
+heavy ingestion window and cannot rule out earlier waits.
+
+### Diagnostic decision
+
+This database is materially larger than the dedicated 4,096-event
+fixture: approximately 219 million security event-field tuples and
+a nearly 7 GB primary-key index alone. Large index footprint,
+historic buffer I/O, WAL-buffer activity and checkpoint writes are
+**credible candidate contributors**, not an established root cause.
+
+The earlier 11.066-second isolated replay (versus 1.926–2.710s
+subsequent repeats) also shows intermittent latency can occur
+without altering the software. No ingestion, index, PostgreSQL
+memory/WAL, ZFS, or worker-concurrency tuning is accepted from
+this cumulative snapshot alone.
+
+**Further root-cause acceptance requires a real nonzero heavy COPY
+episode with synchronized per-call worker timing, PostgreSQL
+wait/statistics deltas, and FreeBSD storage observations.** The
+completed recovery backlog must not be recreated merely to obtain
+another sample. Until such correlated evidence exists, the accepted
+ingest and telemetry implementation remains unchanged.
