@@ -45,3 +45,28 @@ jobs:
 
       - name: Test
         run: go test ./...
+  freebsd-cross-compile:
+    name: FreeBSD Receiver Compile
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: go
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+      - name: Compile FreeBSD transport and receiver tests
+        env:
+          GOOS: freebsd
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          go test -c -o /tmp/fi-transportgeneration-freebsd.test ./internal/transportgeneration
+          go test -c -o /tmp/fi-generationrecorder-freebsd.test ./internal/generationrecorder
+          go test -c -o /tmp/fi-transportreceiver-freebsd.test ./internal/transportreceiver
+          go build ./cmd/fi-receiver
