@@ -126,3 +126,36 @@ results are documented in
 The development SoR worker is to remain running. No additional
 database tuning, schema changes, receiver changes, or restart is
 required by this acceptance record.
+
+## Subsequent read-only worker observation — October 29, 2026, 01:01 UTC
+
+From `fi-dev`, SSH to `jwood@192.168.1.218` and `jexec fi-ingest`
+verified `fi_ingest_worker` running as supervisor PID 33048 and
+`/usr/local/sbin/fi-ingest-worker` running as PID 33312 with two
+configured workers. Both source READY plans repeatedly showed zero
+pending markers during the sampled period, except for a transient
+`iss-fs-22b.iss.local` pending marker at 01:00:22 UTC.
+
+At 01:00:23 UTC, `iss-fs-22b.iss.local` generation
+`20261029T010017.987461900Z-c8cb310b235007d0` reported accepted
+with 11 of 11 records committed and `INGEST FINISH elapsed=421ms`.
+`INGEST PROFILE total=409ms`, `source_sql=4ms`, `projection=3ms`,
+`commit=1ms`, and `other=399ms`. Source batch COPY recorded 11
+rows in one call (1ms), and security coverage COPY recorded 11
+coverage observations, 44 policies and 11 roots (3ms).
+
+The successful generation had no hash, file, metadata, Windows Security
+event/scope/field, USN, or ACE COPY calls. It therefore establishes
+that the worker and the new telemetry are active, **not** that heavy
+COPY paths are performing well against the existing large SoR.
+The selected `INGEST.*(error|failed|fatal|quarantine)` search returned
+no matches in the current `daemon.log`; its scope was limited, and
+no claim of complete error-free operation or delivery completeness is made.
+
+**Next observation:** inspect the relevant current and rotated
+`daemon.log` files for completed generations with nonzero COPY calls.
+Only if representative activity is present should COPY latency be
+correlated with PostgreSQL and FreeBSD/ZFS resource telemetry. Leave
+worker deployment, receiver/custody, PostgreSQL and the completed
+recovery backlog unchanged. The persistent issue being investigated is
+intermittent heavy-load latency, not worker uptime.
