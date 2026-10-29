@@ -8,12 +8,15 @@ package transportreceiver
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
@@ -101,10 +104,28 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 		t.Fatal(err)
 	}
 
-	second, err := RecoverGenerationStartup(
+	// Prove the restart does NOT decompress and parse the collector
+	// manifest again: this intentionally tiny semantic bound would reject
+	// the old full-replay recovery path, but a valid receipt-bound outer
+	// transfer must still recover successfully.
+	config.GenerationMaxManifestBytes = 1
+	var progressCalls int
+	second, err := RecoverGenerationStartupWithContext(
+		context.Background(),
 		config,
 		fixture.config.Custody.Receive.CurrentTime,
+		func(progress GenerationStartupResult) {
+			progressCalls++
+			if progress.Discovered != 1 ||
+				progress.AlreadyRecorded != 1 ||
+				progress.RecordedNew != 0 {
+				t.Errorf("unexpected receipt-first recovery progress: %#v", progress)
+			}
+		},
 	)
+	if progressCalls != 1 {
+		t.Fatalf("receipt-first recovery progress calls = %d, want 1", progressCalls)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +150,100 @@ func TestRecoverGenerationStartupRecordsDiscoveredCustodyAndReplaysIdempotently(
 			"already-recorded startup republished %d ready entries",
 			len(readyEntries),
 		)
+	}
+}
+
+
+// TestRecoverGenerationStartupRejectsCorruptRecordedReceipt ensures that a
+// present but conflicting receipt is never treated like a missing receipt.
+func TestRecoverGenerationStartupRejectsCorruptRecordedReceipt(t *testing.T) {
+	fixture := newGenerationTransactionFixture(t, false)
+	config := listenerGenerationConfigFromFixture(t, fixture)
+	writeStartupGenerationCustody(t, fixture)
+	if _, err := RecoverGenerationStartup(config, fixture.config.Custody.Receive.CurrentTime); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(
+		fixture.config.Recorder.RootDir,
+		generationrecorder.RecordedReceiptObjectName(
+			fixture.transfer.Descriptor.SourceID,
+			fixture.transfer.Descriptor.GenerationID,
+		),
+	)
+	original, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(receiptPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed := append([]byte(nil), original...)
+	changed[0] ^= 1
+	if err := os.WriteFile(receiptPath, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(receiptPath, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	result, err := RecoverGenerationStartup(config, fixture.config.Custody.Receive.CurrentTime)
+	if err == nil {
+		t.Fatal("corrupt recorded receipt did not block receiver startup")
+	}
+	if result.AlreadyRecorded != 0 || result.RecordedNew != 0 {
+		t.Fatalf("corrupt receipt was incorrectly recorded: %#v", result)
+	}
+}
+
+// TestRecoverGenerationStartupRejectsMutatedOuterTransfer ensures the stored
+// FIGT SHA-256 is checked, even when an apparently valid receipt is present.
+func TestRecoverGenerationStartupRejectsMutatedOuterTransfer(t *testing.T) {
+	fixture := newGenerationTransactionFixture(t, false)
+	config := listenerGenerationConfigFromFixture(t, fixture)
+	custody := writeStartupGenerationCustody(t, fixture)
+	if _, err := RecoverGenerationStartup(config, fixture.config.Custody.Receive.CurrentTime); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(custody.CustodyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(custody.CustodyPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(custody.CustodyPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt([]byte{0xaa}, info.Size()-1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(custody.CustodyPath, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	result, err := RecoverGenerationStartup(config, fixture.config.Custody.Receive.CurrentTime)
+	if err == nil {
+		t.Fatal("mutated compressed transfer did not block receiver startup")
+	}
+	if result.AlreadyRecorded != 0 || result.RecordedNew != 0 {
+		t.Fatalf("corrupt transfer was incorrectly recorded: %#v", result)
+	}
+}
+
+func TestRecoverGenerationStartupCancellation(t *testing.T) {
+	fixture := newGenerationTransactionFixture(t, false)
+	config := listenerGenerationConfigFromFixture(t, fixture)
+	writeStartupGenerationCustody(t, fixture)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := RecoverGenerationStartupWithContext(
+		ctx, config, fixture.config.Custody.Receive.CurrentTime, nil,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("startup cancellation = %v, want context.Canceled", err)
 	}
 }
 
