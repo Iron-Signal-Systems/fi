@@ -54,7 +54,7 @@ func VerifyPreviouslyRecordedCustody(
 
 	root := recorderConfig.RootDir
 	if recorderConfig.SourceNamespaces {
-		root, err = RecordedSourceDirectory(root, descriptor.SourceID)
+		root, err = recordedSourcePublicationDirectory(root, descriptor.SourceID)
 		if err != nil {
 			return DurableResult{}, false, err
 		}
