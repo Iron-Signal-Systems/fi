@@ -361,9 +361,22 @@ func runTransportCommand() {
 	)
 
 	if generationOptions.Enabled {
-		startup, err := transportreceiver.RecoverGenerationStartup(
+		startup, err := transportreceiver.RecoverGenerationStartupWithContext(
+			ctx,
 			receiverConfig,
 			time.Now(),
+			func(progress transportreceiver.GenerationStartupResult) {
+				processed := progress.AlreadyRecorded +
+					progress.RecordedNew + progress.DeferredDisabled
+				fmt.Printf(
+					"GenerationStartupProgress: processed=%d total=%d recorded_fast=%d recorded_new=%d deferred_disabled=%d\n",
+					processed,
+					progress.Discovered,
+					progress.AlreadyRecorded,
+					progress.RecordedNew,
+					progress.DeferredDisabled,
+				)
+			},
 		)
 		if err != nil {
 			fail(fmt.Errorf(
