@@ -152,10 +152,43 @@ The selected `INGEST.*(error|failed|fatal|quarantine)` search returned
 no matches in the current `daemon.log`; its scope was limited, and
 no claim of complete error-free operation or delivery completeness is made.
 
-**Next observation:** inspect the relevant current and rotated
-`daemon.log` files for completed generations with nonzero COPY calls.
-Only if representative activity is present should COPY latency be
-correlated with PostgreSQL and FreeBSD/ZFS resource telemetry. Leave
-worker deployment, receiver/custody, PostgreSQL and the completed
-recovery backlog unchanged. The persistent issue being investigated is
+**Next observation:** no recent nonzero instrumented COPY calls were
+found in the checked current and two rotated `daemon.log` windows.
+Do not repeatedly query idle-worker logs or recreate the completed
+recovery backlog. The persistent issue being investigated is
 intermittent heavy-load latency, not worker uptime.
+
+## Read-only 138 GB SoR footprint confirmation — October 29, 2026
+
+Directly on the established `root@fi-backend-b` session,
+`jexec -U postgres fi-sor-db` connected to PostgreSQL **18.6**
+(database `fi`, user `postgres`). The operator completed a read-only
+SQL transaction with bounded statement and lock timeouts. No worker,
+database configuration, source custody, or records were changed.
+
+The SoR is **138 GB**. The estimated `windows_security_event_field`
+relation holds **218,792,912 rows**, occupies approximately **25 GB**
+including indexes, and has a **6,994 MB** primary-key index.
+The `file_observation` relation occupies **22 GB**; `source_record`
+is **14 GB**. These are catalog estimates and rounded sizes, not
+new authoritative per-source committed record counts.
+
+Cumulative PostgreSQL statistics reported **98.10%** database
+shared-buffer hits, **817 GB** WAL generated,
+**13,655,022** WAL buffer-full events,
+**1,062** requested checkpoints, and
+**151,477,661** client-backend normal-context buffer evictions.
+WAL/checkpointer statistics showed reset time
+`2026-10-16 16:36:26.414104+00`.
+No active non-idle query/wait was present at the instant queried.
+These totals are cumulative and **do not identify the cause of a
+particular prior COPY latency spike**. Index/cache, WAL, and checkpoint
+pressure remain candidate explanations only.
+
+See [detailed captured measurements and diagnostic decision](ingest-copy-call-latency-20261028.md#measured-138-gb-sor-catalog-and-cumulative-io-snapshot--october-29-2026).
+
+**Boundary remains unchanged:** no new heavy workload was ingested,
+no schema or durability control relaxed, no worker restarted,
+and no configuration tuning is authorized on this evidence alone.
+Future causal attribution requires naturally occurring nonzero COPY
+activity correlated with PostgreSQL wait and FreeBSD storage metrics.
