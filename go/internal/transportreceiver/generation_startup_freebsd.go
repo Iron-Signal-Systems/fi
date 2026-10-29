@@ -7,6 +7,7 @@
 package transportreceiver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -33,10 +34,9 @@ type GenerationStartupResult struct {
 	RemovedProvisional uint64
 }
 
-// RecoverGenerationStartup validates generation runtime configuration, recovers
-// the durable generation custody directory, and drives every discovered FIGT
-// object through current transport trust plus collector semantic recording
-// before the listener is allowed to accept another connection.
+// RecoverGenerationStartup retains the historical API used by existing callers.
+// The service uses RecoverGenerationStartupWithContext so SIGTERM can cancel
+// both the outer byte stream and the slower missing-receipt semantic recovery.
 //
 // A failure leaves the receiver unopened. Previously durable custody is retained
 // for operator inspection/retry. No success acknowledgement can be emitted from
@@ -44,10 +44,33 @@ type GenerationStartupResult struct {
 func RecoverGenerationStartup(
 	config Config,
 	currentTime time.Time,
-) (
-	GenerationStartupResult,
-	error,
-) {
+) (GenerationStartupResult, error) {
+	return RecoverGenerationStartupWithContext(
+		context.Background(), config, currentTime, nil,
+	)
+}
+
+// RecoverGenerationStartupWithContext first checks each existing immutable
+// recorded receipt against its exact FIGT transfer and current signing trust.
+// An exact receipt match requires only bounded streaming of compressed bytes:
+// never decompression or semantic replay. Absent receipts continue through the
+// original full semantic recording path. Corrupt or conflicting receipts fail
+// closed. Recovery remains a prerequisite to listener startup.
+// Progress is reported every 128 objects and on completion.
+func RecoverGenerationStartupWithContext(
+	ctx context.Context,
+	config Config,
+	currentTime time.Time,
+	onProgress func(GenerationStartupResult),
+) (GenerationStartupResult, error) {
+	if ctx == nil {
+		return GenerationStartupResult{}, errors.New(
+			"FI receiver startup recovery context is required",
+		)
+	}
+	if err := ctx.Err(); err != nil {
+		return GenerationStartupResult{}, err
+	}
 	if currentTime.IsZero() {
 		return GenerationStartupResult{}, errors.New(
 			"FI generation startup current time is required",
@@ -103,6 +126,9 @@ func RecoverGenerationStartup(
 	}
 
 	for _, discovered := range recovery.Objects {
+		if err := ctx.Err(); err != nil {
+			return result, fmt.Errorf("cancel FI generation startup recovery: %w", err)
+		}
 		objectConfig := transactionConfig
 
 		if config.LookupSource != nil {
@@ -146,6 +172,12 @@ func RecoverGenerationStartup(
 			// and READY hints. Deferred objects require offline review.
 			if !source.Enabled {
 				result.DeferredDisabled++
+				if onProgress != nil {
+					done := result.AlreadyRecorded + result.RecordedNew + result.DeferredDisabled
+					if done%128 == 0 || done == result.Discovered {
+						onProgress(result)
+					}
+				}
 				continue
 			}
 		}
@@ -159,18 +191,31 @@ func RecoverGenerationStartup(
 			)
 		}
 
-		recorded, err :=
-			generationrecorder.RecordDiscoveredCustodyDurably(
-				discovered,
-				objectConfig.Custody,
-				objectConfig.Recorder,
-			)
+		// Read the already-published receipt before entering the original
+		// decompression and semantic gate. Presence alone is not proof:
+		// the complete outer FIGT SHA-256, signed metadata, current source
+		// authorization and receipt fields must all match.
+		recorded, found, err := generationrecorder.VerifyPreviouslyRecordedCustody(
+			ctx, discovered, objectConfig.Custody, objectConfig.Recorder,
+		)
 		if err != nil {
 			return result, fmt.Errorf(
-				"record restart-discovered FI generation custody %q: %w",
-				discovered.Path,
-				err,
+				"verify previously recorded FI generation custody %q: %w",
+				discovered.Path, err,
 			)
+		}
+		if !found {
+			// No receipt yet: preserve exact original full verification and
+			// durable receipt publication. This path also accepts cancellation.
+			recorded, err = generationrecorder.RecordDiscoveredCustodyDurablyContext(
+				ctx, discovered, objectConfig.Custody, objectConfig.Recorder,
+			)
+			if err != nil {
+				return result, fmt.Errorf(
+					"record restart-discovered FI generation custody %q: %w",
+					discovered.Path, err,
+				)
+			}
 		}
 
 		switch recorded.Disposition {
@@ -198,6 +243,12 @@ func RecoverGenerationStartup(
 				"unsupported FI generation startup recorder disposition %q",
 				recorded.Disposition,
 			)
+		}
+		if onProgress != nil {
+			done := result.AlreadyRecorded + result.RecordedNew + result.DeferredDisabled
+			if done%128 == 0 || done == result.Discovered {
+				onProgress(result)
+			}
 		}
 	}
 
