@@ -95,6 +95,15 @@ checks are not substitutes for the exact content hash.
 - [ ] Measure CPU, RSS, disk read throughput, elapsed startup and load.
 - [ ] Keep current receipt/custody history; no deletion, renaming, or reset.
 
+## Toolchain security gate
+
+The 2026-10-29 security scan detected `GO-2026-6809` in
+`crypto/x509` under Go 1.27.2, reachable through FI certificate
+verification. The scan reports it fixed in Go 1.27.3. The branch's
+CI and security workflows therefore require **Go 1.27.3**.
+Compile and deploy receiver binaries with Go 1.27.3 or newer in
+the patched 1.27 release line; do not use Go 1.27.2 for this recovery.
+
 ## Deployment and rollback
 
 Prefer a disposable test environment or FreeBSD `fi-dev` jail for validation.
