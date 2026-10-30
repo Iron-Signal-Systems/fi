@@ -9,6 +9,7 @@ package recordingest
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,26 @@ func TestNTFSIdentityPrefetchPostgreSQL(t *testing.T) {
 		if wanted != actual || actual == existing {
 			t.Fatalf("new %s has wrong id=%d want=%d", frn, wanted, actual)
 		}
+	}
+
+	// Simulate a saturated generation cache without populating 262K
+	// database rows. The already-committed identity must still be resolved
+	// by the bounded set-oriented path, not dropped after cache saturation.
+	saturated := newNTFSObjectCache()
+	for i := 0; i < ntfsObjectCacheMaxEntries; i++ {
+		identity := object(strconv.Itoa(200000+i), "v1")
+		saturated.remember(volume, identity, int64(500000+i))
+	}
+	if err := prefetchNTFSObjectBatch(ctx, tx, saturated, []*ntfsIdentityPrefetchRequest{
+		makeRequest("1001", "v1", object("1001", "v1")),
+	}); err != nil {
+		t.Fatalf("prefetch after cache saturation: %v", err)
+	}
+	recovered, found, cacheErr := saturated.lookup(volume, object("1001", "v1"))
+	if cacheErr != nil || !found || recovered != existing ||
+		len(saturated.objects) != ntfsObjectCacheMaxEntries || saturated.evictions != 1 {
+		t.Fatalf("saturated prefetch identity=%d want=%d found=%t err=%v entries=%d evictions=%d",
+			recovered, existing, found, cacheErr, len(saturated.objects), saturated.evictions)
 	}
 
 	if err := prefetchNTFSObjectBatch(ctx, tx, newNTFSObjectCache(), []*ntfsIdentityPrefetchRequest{
