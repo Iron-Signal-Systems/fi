@@ -301,9 +301,9 @@ INSERT INTO fi.ingest_journal (
 		(usnTiming.Total - accounted).Round(time.Millisecond),
 	)
 	fmt.Printf(
-		"INGEST NTFS CACHE source=%s generation=%s hits=%d misses=%d entries=%d\n",
+		"INGEST NTFS CACHE source=%s generation=%s hits=%d misses=%d entries=%d evictions=%d\n",
 		result.SourceID, result.GenerationID,
-		identityCache.hits, identityCache.misses, len(identityCache.objects),
+		identityCache.hits, identityCache.misses, len(identityCache.objects), identityCache.evictions,
 	)
 	fmt.Printf(
 		"INGEST NTFS STAGES source=%s generation=%s observations=%d total=%s identity=%s file=%s metadata=%s hashes=%s prefix=%s reparse=%s streams=%s security=%s sacl=%s warnings=%s other=%s\n",
