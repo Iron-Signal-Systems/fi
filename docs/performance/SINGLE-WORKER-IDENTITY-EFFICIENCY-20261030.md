@@ -58,7 +58,7 @@ equivalent-workload replay.
   per-identity query loop.
 - Preserve the original single-generation transaction, batch order,
   foreign-key parent ordering, and rejection/rollback semantics.
-- Do **not** increase worker concurrency as part of this correction.
+- The existing \`INGEST NTFS CACHE\` generation summary now includes \`evictions\`\n  alongside hits, misses, and retained entry count so the first accepted replay\n  can prove the replacement path was exercised.\n- Do **not** increase worker concurrency as part of this correction.
 
 ## Acceptance gates
 
