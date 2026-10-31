@@ -34,6 +34,8 @@ type workerConfig struct {
 	LockFile               string
 	DualLockTransition     bool
 	MaxAttempts            uint64
+	MaxGenerationRecords   uint64
+	MaxGenerationDataBytes uint64
 	MaxCanonicalBytes      uint64
 	MaxEncodedBytes        uint64
 	MaxManifestBytes       uint64
@@ -190,6 +192,15 @@ func main() {
 		"maximum generation attempts before exit; zero means unlimited",
 	)
 
+	maxGenerationRecords := flags.Uint64(
+		"max-generation-records", 0,
+		"maximum receipt record count for one generation; zero disables the limit",
+	)
+	maxGenerationDataBytes := flags.Uint64(
+		"max-generation-data-bytes", 0,
+		"maximum receipt data bytes for one generation; zero disables the limit",
+	)
+
 	workers := flags.Int("workers", 1, "maximum concurrent source generation ingests")
 	// The flag selects a fixed profile for an entire generation. It does not
 	// activate the adaptive controller or modify the default service setting.
@@ -321,6 +332,8 @@ func main() {
 		LockFile:               *lockFile,
 		DualLockTransition:     *dualLockTransition,
 		MaxAttempts:            *maxAttempts,
+		MaxGenerationRecords:   *maxGenerationRecords,
+		MaxGenerationDataBytes: *maxGenerationDataBytes,
 		MaxCanonicalBytes:      *maxCanonicalBytes,
 		MaxEncodedBytes:        *maxEncodedBytes,
 		MaxManifestBytes:       *maxManifestBytes,
@@ -382,6 +395,9 @@ func attemptGeneration(
 	}
 
 	candidate := item.Candidate
+	if err := fiCheckGenerationAdmission(config, candidate); err != nil {
+		return recordingest.IngestResult{}, err
+	}
 
 	attemptID, err :=
 		recordingest.NewAttemptID()
@@ -1200,6 +1216,9 @@ func processPlan(
 		}
 
 		candidate := item.Candidate
+		if err := fiCheckGenerationAdmission(config, candidate); err != nil {
+			return errors.Join(err, flushReady())
+		}
 
 		fmt.Printf(
 			"INGEST START source=%s generation=%s records=%d bytes=%d time=%s\n",
