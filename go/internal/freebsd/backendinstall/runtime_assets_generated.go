@@ -213,7 +213,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: bd8b490f92a720f9ffddbe99ae35e2c54530e727e5d2d110cd6408dc1229a316
+// SHA256: 6194b01b0e283b4c5f27b87c6d47b0dd6c9141644607fd07b4f7365bb53a1157
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -274,6 +274,28 @@ esac
 [ "$fi_ingest_worker_workers" -le 32 ] ||
     fail "fi_ingest_worker_workers must be between 1 and 32"
 
+
+# Optional operator bounds. Zero preserves the installed default.
+fi_ingest_worker_max_generation_records="${fi_ingest_worker_max_generation_records-0}"
+fi_ingest_worker_max_generation_data_bytes="${fi_ingest_worker_max_generation_data_bytes-0}"
+fi_ingest_worker_max_attempts="${fi_ingest_worker_max_attempts-0}"
+
+for bound in \
+    "$fi_ingest_worker_max_generation_records" \
+    "$fi_ingest_worker_max_generation_data_bytes" \
+    "$fi_ingest_worker_max_attempts"
+do
+    case "$bound" in
+        0) ;;
+        [1-9]*)
+            case "$bound" in
+                *[!0-9]*) fail "ingest bound must contain decimal digits only" ;;
+            esac
+            ;;
+        *) fail "ingest bound must be zero or a positive decimal integer" ;;
+    esac
+done
+
 export PGPASSFILE="$fi_ingest_worker_pgpass"
 
 set -- \
@@ -284,7 +306,10 @@ set -- \
     -generation-ready-root /var/db/fi/custody/ready \
     -generation-max-canonical-bytes 68719476736 \
     -generation-max-encoded-bytes 68719476736 \
-    -generation-max-manifest-bytes 1048576
+    -generation-max-manifest-bytes 1048576 \
+    -max-generation-records "$fi_ingest_worker_max_generation_records" \
+    -max-generation-data-bytes "$fi_ingest_worker_max_generation_data_bytes" \
+    -max-attempts "$fi_ingest_worker_max_attempts"
 
 if [ "${fi_ingest_worker_namespaces:-NO}" = "YES" ]; then
     state_root="/var/db/fi/ingest"
@@ -447,7 +472,7 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: 1bf984b9a1e0f04ab91fb7106be605af960fa9492873abbaef503ae6c586ee5e
+// SHA256: 6d57cd9bc19a0faaafae86d53098a49a84fc1d09630403b46a50d3b75b80bd99
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
@@ -460,4 +485,10 @@ fi_ingest_worker_namespaces="NO"
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
+
+# Zero disables operator acceptance bounds.
+# Configure explicit values before bounded ingestion testing.
+fi_ingest_worker_max_generation_records="0"
+fi_ingest_worker_max_generation_data_bytes="0"
+fi_ingest_worker_max_attempts="0"
 `

@@ -10,3 +10,9 @@ fi_ingest_worker_namespaces="NO"
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
+
+# Zero disables operator acceptance bounds.
+# Configure explicit values before bounded ingestion testing.
+fi_ingest_worker_max_generation_records="0"
+fi_ingest_worker_max_generation_data_bytes="0"
+fi_ingest_worker_max_attempts="0"

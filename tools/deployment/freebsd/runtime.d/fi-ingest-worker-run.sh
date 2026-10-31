@@ -58,6 +58,28 @@ esac
 [ "$fi_ingest_worker_workers" -le 32 ] ||
     fail "fi_ingest_worker_workers must be between 1 and 32"
 
+
+# Optional operator bounds. Zero preserves the installed default.
+fi_ingest_worker_max_generation_records="${fi_ingest_worker_max_generation_records-0}"
+fi_ingest_worker_max_generation_data_bytes="${fi_ingest_worker_max_generation_data_bytes-0}"
+fi_ingest_worker_max_attempts="${fi_ingest_worker_max_attempts-0}"
+
+for bound in \
+    "$fi_ingest_worker_max_generation_records" \
+    "$fi_ingest_worker_max_generation_data_bytes" \
+    "$fi_ingest_worker_max_attempts"
+do
+    case "$bound" in
+        0) ;;
+        [1-9]*)
+            case "$bound" in
+                *[!0-9]*) fail "ingest bound must contain decimal digits only" ;;
+            esac
+            ;;
+        *) fail "ingest bound must be zero or a positive decimal integer" ;;
+    esac
+done
+
 export PGPASSFILE="$fi_ingest_worker_pgpass"
 
 set -- \
@@ -68,7 +90,10 @@ set -- \
     -generation-ready-root /var/db/fi/custody/ready \
     -generation-max-canonical-bytes 68719476736 \
     -generation-max-encoded-bytes 68719476736 \
-    -generation-max-manifest-bytes 1048576
+    -generation-max-manifest-bytes 1048576 \
+    -max-generation-records "$fi_ingest_worker_max_generation_records" \
+    -max-generation-data-bytes "$fi_ingest_worker_max_generation_data_bytes" \
+    -max-attempts "$fi_ingest_worker_max_attempts"
 
 if [ "${fi_ingest_worker_namespaces:-NO}" = "YES" ]; then
     state_root="/var/db/fi/ingest"
