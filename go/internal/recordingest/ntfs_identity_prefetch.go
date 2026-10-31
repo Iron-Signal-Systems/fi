@@ -76,11 +76,9 @@ func prefetchNTFSObjectIdentities(ctx context.Context, tx pgx.Tx, pending []file
 				}
 				continue
 			}
-			// Cache is intentionally bounded. Once full, rely on the original
-			// ensureNTFSObject() path instead of prefetching uncached values.
-			if len(cache.objects) >= ntfsObjectCacheMaxEntries {
-				continue
-			}
+			// Prefetch every uncached identity. The bounded FIFO cache evicts
+			// older entries when full; saturation must never force this path
+			// back into one SQL round trip per source-record identity.
 			frn, err := canonicalNTFSIdentityNumber(object.FileReferenceNumber)
 			if err != nil {
 				return fmt.Errorf("FI NTFS identity prefetch source record %d FRN: %w", p.sourceRecordID, err)

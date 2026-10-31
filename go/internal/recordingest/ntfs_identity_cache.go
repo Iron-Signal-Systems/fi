@@ -23,8 +23,13 @@ type ntfsObjectCacheEntry struct {
 
 type ntfsObjectCache struct {
 	objects map[ntfsObjectCacheKey]ntfsObjectCacheEntry
-	hits    uint64
-	misses  uint64
+	// Oldest-first insertion order. Once full, reuse slots as a bounded FIFO.
+	// Eviction affects performance only; PostgreSQL remains the identity authority.
+	order        []ntfsObjectCacheKey
+	nextEviction int
+	hits         uint64
+	misses       uint64
+	evictions    uint64
 }
 
 func newNTFSObjectCache() *ntfsObjectCache {
@@ -69,7 +74,7 @@ func (cache *ntfsObjectCache) remember(
 	value records.NTFSObjectIdentity,
 	id int64,
 ) {
-	if cache == nil || len(cache.objects) >= ntfsObjectCacheMaxEntries {
+	if cache == nil {
 		return
 	}
 
@@ -77,6 +82,22 @@ func (cache *ntfsObjectCache) remember(
 		volumeID:            volumeID,
 		fileReferenceNumber: value.FileReferenceNumber,
 		sequenceNumber:      value.SequenceNumber,
+	}
+
+	// Updating an existing identity must not consume an eviction slot.
+	if _, found := cache.objects[key]; !found {
+		if len(cache.objects) < ntfsObjectCacheMaxEntries {
+			cache.order = append(cache.order, key)
+		} else {
+			oldest := cache.order[cache.nextEviction]
+			delete(cache.objects, oldest)
+			cache.order[cache.nextEviction] = key
+			cache.nextEviction++
+			if cache.nextEviction == ntfsObjectCacheMaxEntries {
+				cache.nextEviction = 0
+			}
+			cache.evictions++
+		}
 	}
 
 	cache.objects[key] = ntfsObjectCacheEntry{

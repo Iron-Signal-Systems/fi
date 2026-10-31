@@ -73,6 +73,10 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	if err != nil {
 		return result, fmt.Errorf("begin FI relational generation transaction: %w", err)
 	}
+	// Record every pgx.CopyFrom call by relation without changing the
+	// authoritative transaction or any relational insert ordering.
+	copyMetrics := newIngestCopyMetrics()
+	tx = &profiledIngestTx{Tx: tx, metrics: copyMetrics}
 	identityCache := newNTFSObjectCache()
 	ctx = context.WithValue(ctx, ntfsObjectCacheContextKey{}, identityCache)
 	scopeCache := newNTFSScopeIdentityCache()
@@ -83,10 +87,30 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	ctx = context.WithValue(ctx, usnChangeCopyContextKey{}, usnCopy)
 	hashCopy := newContentHashCopyState()
 	ctx = context.WithValue(ctx, contentHashCopyContextKey{}, hashCopy)
+	// A read-only heartbeat reports immutable snapshots during this transaction.
+	progress := newIngestProgress(os.Stdout, result.SourceID, result.GenerationID,
+		len(generation.Batches), int64(generation.Receipt.RecordCount), time.Now(),
+		&profile, ntfsStages, hashCopy, usnCopy, aceCopy)
+	ctx = context.WithValue(ctx, ingestProgressContextKey{}, progress)
+	progress.copyMetrics = copyMetrics
+	progress.start()
 	committed := false
+	defer func() {
+		outcome := "not_confirmed"
+		if committed {
+			outcome = "accepted"
+		}
+		copyMetrics.report(os.Stdout, result.SourceID, result.GenerationID, outcome)
+	}()
 	defer func() {
 		if !committed {
 			_ = tx.Rollback(context.Background())
+		}
+	}()
+	defer func() {
+		progress.stop()
+		if !committed {
+			progress.emit("uncommitted", time.Now())
 		}
 	}()
 
@@ -123,6 +147,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	// generated batch identities are mapped back to the original receipt order.
 	// Source-record ingestion then proceeds in precisely that original order.
 	sourceBatchIDs, err := copySourceBatches(ctx, tx, recordedGenerationID, generation.Batches, &profile.BatchBulk)
+	progress.publish(0)
 	if err != nil {
 		return result, failIngestAttempt(ctx, connection, tx, result, "AuthoritativeRecord", "SOURCE_BATCH_INSERT_FAILED", err)
 	}
@@ -132,6 +157,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 		if err != nil {
 			return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 		}
+		progress.completeBatch(seen)
 	}
 	// The last batch may end in coverage records. Make them relationally
 	// complete before counting projections or committing the generation.
@@ -192,6 +218,7 @@ INSERT INTO fi.ingest_journal (
 		return result, fmt.Errorf("commit FI relational generation: %w", err)
 	}
 	committed = true
+	progress.stop() // No heartbeat after successful publication.
 	commitElapsed := time.Since(commitStarted)
 	fmt.Printf(
 		"INGEST HASH COPY source=%s generation=%s rows=%d calls=%d copy=%s final_flush=%s\n",
@@ -301,9 +328,9 @@ INSERT INTO fi.ingest_journal (
 		(usnTiming.Total - accounted).Round(time.Millisecond),
 	)
 	fmt.Printf(
-		"INGEST NTFS CACHE source=%s generation=%s hits=%d misses=%d entries=%d\n",
+		"INGEST NTFS CACHE source=%s generation=%s hits=%d misses=%d entries=%d evictions=%d\n",
 		result.SourceID, result.GenerationID,
-		identityCache.hits, identityCache.misses, len(identityCache.objects),
+		identityCache.hits, identityCache.misses, len(identityCache.objects), identityCache.evictions,
 	)
 	fmt.Printf(
 		"INGEST NTFS STAGES source=%s generation=%s observations=%d total=%s identity=%s file=%s metadata=%s hashes=%s prefix=%s reparse=%s streams=%s security=%s sacl=%s warnings=%s other=%s\n",
@@ -412,6 +439,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	reader := bufio.NewReader(file)
 	hasher := sha256.New()
 	var ordinal int64
+	progress, _ := ctx.Value(ingestProgressContextKey{}).(*ingestProgress)
+	if progress != nil {
+		// Publish the final partial-batch count even on rejection.
+		defer func() { progress.publish(ordinal) }()
+	}
 	var byteCount int64
 	var pendingSecurity []securityBulkRecord
 	var pendingSecurityBytes int64
@@ -490,6 +522,10 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			return ordinal, fmt.Errorf("%w: batch %s record %d is missing final LF", ErrSourceRecordRejected, batch.BatchID, ordinal+1)
 		}
 		ordinal++
+		// Only snapshot at bounded record checkpoints, never log per record.
+		if progress != nil && ordinal%ingestProgressRecordCheckpoint == 0 {
+			progress.publish(ordinal)
+		}
 		byteCount += int64(len(raw))
 		hashStarted := time.Now()
 		_, _ = hasher.Write(raw)

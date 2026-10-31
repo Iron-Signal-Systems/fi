@@ -15,6 +15,7 @@ import (
 // The caller owns this value for one generation; no global mutable state.
 type copyCallLatency struct {
 	Calls              int64
+	Total              time.Duration // Cumulative completed CopyFrom call time.
 	Min                time.Duration
 	Max                time.Duration
 	AtLeastOneSecond   int64
@@ -35,6 +36,7 @@ func (c *copyCallLatency) observe(elapsed time.Duration) {
 		c.Max = elapsed
 	}
 	c.Calls++
+	c.Total += elapsed
 	if elapsed >= time.Second {
 		c.AtLeastOneSecond++
 	}

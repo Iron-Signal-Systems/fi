@@ -272,14 +272,46 @@ func TestNTFSCacheInsertErrorNotCached(t *testing.T) {
 func TestNTFSCacheBounded(t *testing.T) {
 	cache := newNTFSObjectCache()
 
-	for i := 0; i < ntfsObjectCacheMaxEntries+1; i++ {
+	// Exceed the old 262,144-entry ceiling by more than one prefetch batch.
+	// The cache must stay bounded without freezing out every subsequent key.
+	const extra = 1025
+	for i := 0; i < ntfsObjectCacheMaxEntries+extra; i++ {
 		value := ntfsCacheTestIdentity("method-v1")
 		value.FileReferenceNumber = fmt.Sprintf("%d", i+1)
 		cache.remember(10, value, int64(i+1))
 	}
 
-	if len(cache.objects) != ntfsObjectCacheMaxEntries {
-		t.Fatalf("entries=%d, limit=%d",
-			len(cache.objects), ntfsObjectCacheMaxEntries)
+	if len(cache.objects) != ntfsObjectCacheMaxEntries ||
+		len(cache.order) != ntfsObjectCacheMaxEntries {
+		t.Fatalf("entries=%d fifo=%d limit=%d",
+			len(cache.objects), len(cache.order), ntfsObjectCacheMaxEntries)
+	}
+	if cache.evictions != extra {
+		t.Fatalf("evictions=%d, want %d", cache.evictions, extra)
+	}
+
+	oldest := ntfsCacheTestIdentity("method-v1")
+	oldest.FileReferenceNumber = "1"
+	if _, found, err := cache.lookup(10, oldest); err != nil || found {
+		t.Fatalf("oldest identity must be evicted: found=%t err=%v", found, err)
+	}
+
+	newest := ntfsCacheTestIdentity("method-v1")
+	newest.FileReferenceNumber = fmt.Sprintf("%d", ntfsObjectCacheMaxEntries+extra)
+	got, found, err := cache.lookup(10, newest)
+	if err != nil || !found || got != ntfsObjectCacheMaxEntries+extra {
+		t.Fatalf("newest identity missing: id=%d found=%t err=%v", got, found, err)
+	}
+
+	// Remembering an existing identity cannot evict an unrelated one.
+	cache.remember(10, newest, got)
+	if cache.evictions != extra {
+		t.Fatalf("existing identity triggered eviction: %d", cache.evictions)
+	}
+
+	// A different method for a cached identity must still fail closed.
+	newest.MethodVersion = "method-v2"
+	if _, found, err := cache.lookup(10, newest); !found || err == nil {
+		t.Fatalf("cached method conflict not detected: found=%t err=%v", found, err)
 	}
 }

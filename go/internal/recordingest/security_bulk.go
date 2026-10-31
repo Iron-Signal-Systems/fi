@@ -184,13 +184,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		fieldCount += len(p.value.Fields)
 	}
 	scopes := make([][]any, 0, scopeCount)
-	fields := make([][]any, 0, fieldCount)
 	for _, p := range pending {
 		for i, s := range p.value.MatchedScopes {
 			scopes = append(scopes, []any{p.sourceRecordID, i + 1, s.ScopeID, s.GovernedRoot})
-		}
-		for i, f := range p.value.Fields {
-			fields = append(fields, []any{p.sourceRecordID, i + 1, f.Name, f.Value})
 		}
 	}
 	profile.SecurityBulk.ChildPrepare += time.Since(childPrepareStarted)
@@ -208,24 +204,35 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 			return fmt.Errorf("FI Security bulk scopes count: got %d expected %d", copied, len(scopes))
 		}
 	}
-	if len(fields) > 0 {
+	// Feed fields directly from the already validated event payloads. Do not
+	// materialize another [][]any array proportional to event-field expansion.
+	cursor := newSecurityFieldCopyCursor(pending)
+	var writtenFields int64
+	for cursor.hasNext() {
+		chunk := &securityFieldCopyChunk{
+			cursor: cursor, maxRows: securityFieldCopyMaxRows, maxBytes: securityFieldCopyMaxBytes,
+		}
 		fieldCopyStarted := time.Now()
-		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_field"}, []string{"source_record_id", "field_ordinal", "name", "value"},
-			pgx.CopyFromSlice(len(fields), func(i int) ([]any, error) { return fields[i], nil }))
+		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_field"},
+			[]string{"source_record_id", "field_ordinal", "name", "value"}, chunk)
 		elapsedFieldCopy := time.Since(fieldCopyStarted)
 		profile.SecurityBulk.FieldCopy += elapsedFieldCopy
 		profile.SecurityBulk.FieldLatency.observe(elapsedFieldCopy)
 		if err != nil {
-			return fmt.Errorf("FI Security bulk fields COPY: %w", err)
+			return fmt.Errorf("FI Security bulk fields streaming COPY: %w", err)
 		}
-		if copied != int64(len(fields)) {
-			return fmt.Errorf("FI Security bulk fields count: got %d expected %d", copied, len(fields))
+		if chunk.rows == 0 || copied != int64(chunk.rows) {
+			return fmt.Errorf("FI Security bulk fields streaming COPY count: got %d expected %d", copied, chunk.rows)
 		}
+		writtenFields += copied
+	}
+	if writtenFields != int64(fieldCount) {
+		return fmt.Errorf("FI Security bulk fields total: got %d expected %d", writtenFields, fieldCount)
 	}
 	profile.SecurityBulk.Batches++
 	profile.SecurityBulk.Events += int64(len(pending))
 	profile.SecurityBulk.Scopes += int64(len(scopes))
-	profile.SecurityBulk.Fields += int64(len(fields))
+	profile.SecurityBulk.Fields += writtenFields
 	profile.Projection += time.Since(projectionStarted)
 	return nil
 }
