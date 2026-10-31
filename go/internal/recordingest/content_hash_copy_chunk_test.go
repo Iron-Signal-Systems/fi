@@ -48,8 +48,8 @@ func contentHashChunkTestRow(detail string) []any {
 }
 
 func TestFIContentHashCopyChunkRowBound(t *testing.T) {
-	if contentHashCopyMaxRows != 4096 || contentHashCopyMaxBytes != 8<<20 {
-		t.Fatal("unexpected candidate row/byte cap")
+	if contentHashCopyMaxRows != 1024 || contentHashCopyMaxBytes != 2<<20 {
+		t.Fatal("unexpected accepted hash COPY row/byte cap")
 	}
 	writer := newContentHashCopyState()
 	tx := &contentHashChunkCaptureTx{}
@@ -61,10 +61,10 @@ func TestFIContentHashCopyChunkRowBound(t *testing.T) {
 	if err := writer.flush(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
-	if len(tx.calls) != 2 || tx.calls[0] != 4096 || tx.calls[1] != 1 {
-		t.Fatalf("COPY chunk calls=%v, want [4096 1]", tx.calls)
+	if len(tx.calls) != 2 || tx.calls[0] != 1024 || tx.calls[1] != 1 {
+		t.Fatalf("COPY chunk calls=%v, want [1024 1]", tx.calls)
 	}
-	if writer.copied != 4097 || writer.calls != 2 {
+	if writer.copied != 1025 || writer.calls != 2 {
 		t.Fatalf("rows=%d calls=%d", writer.copied, writer.calls)
 	}
 }
