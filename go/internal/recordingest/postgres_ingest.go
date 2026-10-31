@@ -55,6 +55,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 		return IngestResult{}, errors.New("FI relational generation ingest input is incomplete")
 	}
 	started := time.Now()
+	selectedSecurityBulk := securityBulkLimitsFromContext(ctx)
 	var profile ingestStageProfile
 	profile.coverageBuffer = newSecurityCoverageBulkState(&profile)
 	usnTiming := &usnTimingCounters{}
@@ -266,7 +267,7 @@ INSERT INTO fi.ingest_journal (
 	)
 
 	fmt.Printf(
-		"INGEST SECURITY BULK source=%s generation=%s batches=%d events=%d scopes=%d fields=%d prepare=%s source_copy=%s id_lookup=%s event_copy=%s child_prepare=%s scope_copy=%s field_copy=%s\n",
+		"INGEST SECURITY BULK source=%s generation=%s batches=%d events=%d scopes=%d fields=%d prepare=%s source_copy=%s id_lookup=%s event_copy=%s child_prepare=%s scope_copy=%s field_copy=%s profile=%s max_events=%d max_bytes=%d\n",
 		result.SourceID, result.GenerationID,
 		profile.SecurityBulk.Batches,
 		profile.SecurityBulk.Events,
@@ -279,6 +280,7 @@ INSERT INTO fi.ingest_journal (
 		profile.SecurityBulk.ChildPrepare.Round(time.Millisecond),
 		profile.SecurityBulk.ScopeCopy.Round(time.Millisecond),
 		profile.SecurityBulk.FieldCopy.Round(time.Millisecond),
+		selectedSecurityBulk.Name, selectedSecurityBulk.MaxRecords, selectedSecurityBulk.MaxBytes,
 	)
 	fmt.Printf(
 		"INGEST USN COPY source=%s generation=%s change_rows=%d reason_rows=%d change_calls=%d reason_calls=%d copy=%s final_flush=%s\n",
@@ -447,6 +449,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var byteCount int64
 	var pendingSecurity []securityBulkRecord
 	var pendingSecurityBytes int64
+	securityLimits := securityBulkLimitsFromContext(ctx)
 	var pendingFiles []fileSourceBulkRecord
 	var pendingFileBytes int64
 	fileBulk := newFileObservationBulkState()
@@ -558,8 +561,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			if err != nil {
 				return ordinal, fmt.Errorf("%w: batch %s record %d (WindowsSecurityEvent): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
 			}
-			if len(pendingSecurity) >= securityBulkMaxRecords ||
-				(len(pendingSecurity) > 0 && pendingSecurityBytes+int64(prepared.RecordBytes) > securityBulkMaxBytes) {
+			if securityLimits.shouldFlushBefore(
+				len(pendingSecurity), pendingSecurityBytes, int64(prepared.RecordBytes),
+			) {
 				if err := flushSecurity(); err != nil {
 					return ordinal, err
 				}

@@ -25,7 +25,7 @@ const (
 	securityReplaySource  = "iss-fs-22.iss.local"
 	securityReplayFields  = 15
 	securityReplayDefault = 1024
-	securityReplayMaximum = 4096
+	securityReplayMaximum = 16384
 )
 
 // TestCopyLatencySecurityGenerationReplay measures the actual signed-custody,
@@ -49,12 +49,20 @@ func TestCopyLatencySecurityGenerationReplay(t *testing.T) {
 	if value := os.Getenv("FI_COPY_LATENCY_SECURITY_RECORDS"); value != "" {
 		count, err = strconv.Atoi(value)
 		if err != nil || count < 1 || count > securityReplayMaximum {
-			t.Fatal("FI_COPY_LATENCY_SECURITY_RECORDS must be 1..4096")
+			t.Fatal("FI_COPY_LATENCY_SECURITY_RECORDS must be 1..16384")
 		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	// Only this explicitly tagged isolated replay can select a nondefault
+	// profile. The FI worker has no runtime profile override in this phase.
+	if name := os.Getenv("FI_COPY_LATENCY_SECURITY_PROFILE"); name != "" {
+		ctx, err = withFixedSecurityBulkProfile(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	connect := func(user string) string {
 		return fmt.Sprintf(
 			"host=%s port=55418 user=%s dbname=fi sslmode=disable connect_timeout=3",

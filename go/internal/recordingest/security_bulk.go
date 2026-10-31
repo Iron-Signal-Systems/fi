@@ -93,8 +93,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	if len(pending) == 0 {
 		return nil
 	}
-	if len(pending) > securityBulkMaxRecords {
-		return errors.New("FI Security bulk chunk exceeds record limit")
+	limits := securityBulkLimitsFromContext(ctx)
+	if len(pending) > limits.MaxRecords {
+		return fmt.Errorf("FI Security bulk chunk exceeds %s record limit (%d)", limits.Name, limits.MaxRecords)
 	}
 
 	sqlStarted := time.Now()

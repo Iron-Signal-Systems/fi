@@ -237,8 +237,8 @@ func m1WriteSignedGenerationRecords(
 	input []spool.Record,
 ) m1SignedSource {
 	t.Helper()
-	if len(input) == 0 || len(input) > 4096 {
-		t.Fatal("isolated signed generation requires 1..4096 records")
+	if len(input) == 0 || len(input) > 16384 {
+		t.Fatal("isolated signed generation requires 1..16384 records")
 	}
 
 	trust, signer, certificate := m1MakeSignedTrust(
