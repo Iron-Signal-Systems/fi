@@ -434,6 +434,10 @@ func attemptGeneration(
 	fmt.Printf("INGEST PREP source=%s generation=%s elapsed=%s\n",
 		candidate.SourceID, candidate.GenerationID,
 		time.Since(prepareStarted).Round(time.Millisecond))
+	// These RUSAGE_SELF counters are process-wide, not per-source capacity.
+	// Capture only around the actual relational operation; the post-commit
+	// evidence guard below prevents rejected attempts from producing samples.
+	resourcesBefore, resourcesBeforeErr := fiCaptureProcessResources()
 	result, ingestErr :=
 		recordingest.IngestPreparedGeneration(
 			ctx,
@@ -441,6 +445,11 @@ func attemptGeneration(
 			attemptID,
 			generation,
 		)
+
+	resourcesAfter, resourcesAfterErr := fiCaptureProcessResources()
+	fiReportProcessResources(candidate.SourceID, candidate.GenerationID,
+		ingestErr == nil && result.Outcome == "Accepted" && result.SecurityMetrics != nil,
+		resourcesBefore, resourcesBeforeErr, resourcesAfter, resourcesAfterErr)
 
 	closeErr := generation.Close()
 	if closeErr != nil {
