@@ -27,6 +27,7 @@ import (
 
 type workerConfig struct {
 	Workers                int
+	SecurityProfile        string
 	IngestSlots            chan struct{}
 	ConnectionString       string
 	CustodyRoot            string
@@ -190,11 +191,18 @@ func main() {
 	)
 
 	workers := flags.Int("workers", 1, "maximum concurrent source generation ingests")
+	// The flag selects a fixed profile for an entire generation. It does not
+	// activate the adaptive controller or modify the default service setting.
+	securityProfile := flags.String("security-profile", "P1", "fixed Windows Security ingest profile: P1, P2, P3, P4, or P5")
 
 	_ = flags.Parse(os.Args[1:])
 
 	if flags.NArg() != 0 {
 		usage()
+	}
+	// Reject unknown names before opening PostgreSQL or consulting trust state.
+	if _, err := fiFixedSecurityProfileContext(context.Background(), *securityProfile); err != nil {
+		fail(err)
 	}
 
 	if *pollInterval <= 0 {
@@ -307,6 +315,7 @@ func main() {
 
 	config := workerConfig{
 		Workers:                *workers,
+		SecurityProfile:        *securityProfile,
 		ConnectionString:       *connectionString,
 		CustodyRoot:            *custodyRoot,
 		LockFile:               *lockFile,
@@ -362,6 +371,14 @@ func attemptGeneration(
 		case <-ctx.Done():
 			return recordingest.IngestResult{}, ctx.Err()
 		}
+	}
+
+	// Snapshot the operator-selected limits before any attempt journal write.
+	// Existing zero-value worker test configurations continue to mean P1.
+	var err error
+	ctx, err = fiFixedSecurityProfileContext(ctx, config.SecurityProfile)
+	if err != nil {
+		return recordingest.IngestResult{}, err
 	}
 
 	candidate := item.Candidate
@@ -604,6 +621,7 @@ func runWorkerSession(
 	fmt.Printf("RetryAfter:             %s\n", config.RetryAfter)
 	fmt.Printf("RetryBatchSize:         %d\n", config.RetryBatchSize)
 	fmt.Printf("RetryState:             durable ingest journal\n")
+	fmt.Printf("SecurityFixedProfile:   %s (adaptive=disabled)\n", fiSecurityProfileOrDefault(config.SecurityProfile))
 	fmt.Printf("Started:                %s\n", time.Now().Format(time.RFC3339))
 	fmt.Println()
 
