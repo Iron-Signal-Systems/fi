@@ -213,7 +213,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: 6194b01b0e283b4c5f27b87c6d47b0dd6c9141644607fd07b4f7365bb53a1157
+// SHA256: 67a4bebd9c61b24215b93dc4e748c7e68def7a720338fbe7749214990adaeebd
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -275,6 +275,16 @@ esac
     fail "fi_ingest_worker_workers must be between 1 and 32"
 
 
+
+# Explicit security ingestion profile, fixed for each generation.
+# Existing configurations without this setting retain P1.
+fi_ingest_worker_security_profile="${fi_ingest_worker_security_profile-P1}"
+
+case "$fi_ingest_worker_security_profile" in
+    P1|P2|P3|P4|P5) ;;
+    *) fail "fi_ingest_worker_security_profile must be P1, P2, P3, P4, or P5" ;;
+esac
+
 # Optional operator bounds. Zero preserves the installed default.
 fi_ingest_worker_max_generation_records="${fi_ingest_worker_max_generation_records-0}"
 fi_ingest_worker_max_generation_data_bytes="${fi_ingest_worker_max_generation_data_bytes-0}"
@@ -301,6 +311,7 @@ export PGPASSFILE="$fi_ingest_worker_pgpass"
 set -- \
     -postgres "$fi_ingest_worker_postgres" \
     -workers "$fi_ingest_worker_workers" \
+    -security-profile "$fi_ingest_worker_security_profile" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
     -generation-ready-root /var/db/fi/custody/ready \
@@ -472,7 +483,7 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: 6d57cd9bc19a0faaafae86d53098a49a84fc1d09630403b46a50d3b75b80bd99
+// SHA256: 408116c93be9342e72cd984798cc828c6eca709dcbf82d0fdf0ff9ec60b44169
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
@@ -485,6 +496,9 @@ fi_ingest_worker_namespaces="NO"
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
+
+# P3: tested Windows Security COPY profile, 4096 records / 16 MiB.
+fi_ingest_worker_security_profile="P3"
 
 # Zero disables operator acceptance bounds.
 # Configure explicit values before bounded ingestion testing.

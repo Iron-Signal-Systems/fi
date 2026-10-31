@@ -59,6 +59,16 @@ esac
     fail "fi_ingest_worker_workers must be between 1 and 32"
 
 
+
+# Explicit security ingestion profile, fixed for each generation.
+# Existing configurations without this setting retain P1.
+fi_ingest_worker_security_profile="${fi_ingest_worker_security_profile-P1}"
+
+case "$fi_ingest_worker_security_profile" in
+    P1|P2|P3|P4|P5) ;;
+    *) fail "fi_ingest_worker_security_profile must be P1, P2, P3, P4, or P5" ;;
+esac
+
 # Optional operator bounds. Zero preserves the installed default.
 fi_ingest_worker_max_generation_records="${fi_ingest_worker_max_generation_records-0}"
 fi_ingest_worker_max_generation_data_bytes="${fi_ingest_worker_max_generation_data_bytes-0}"
@@ -85,6 +95,7 @@ export PGPASSFILE="$fi_ingest_worker_pgpass"
 set -- \
     -postgres "$fi_ingest_worker_postgres" \
     -workers "$fi_ingest_worker_workers" \
+    -security-profile "$fi_ingest_worker_security_profile" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
     -generation-ready-root /var/db/fi/custody/ready \

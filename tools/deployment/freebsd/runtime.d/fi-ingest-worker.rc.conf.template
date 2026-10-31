@@ -11,6 +11,9 @@ fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
 
+# P3: tested Windows Security COPY profile, 4096 records / 16 MiB.
+fi_ingest_worker_security_profile="P3"
+
 # Zero disables operator acceptance bounds.
 # Configure explicit values before bounded ingestion testing.
 fi_ingest_worker_max_generation_records="0"
