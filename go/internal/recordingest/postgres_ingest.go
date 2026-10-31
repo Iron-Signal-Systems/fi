@@ -36,6 +36,7 @@ type IngestResult struct {
 	RecordsCommitted     int64
 	RecordedGenerationID int64
 	Outcome              string
+	SecurityMetrics      *CommittedSecurityIngestMetrics
 }
 
 type ingestStageProfile struct {
@@ -221,6 +222,10 @@ INSERT INTO fi.ingest_journal (
 	committed = true
 	progress.stop() // No heartbeat after successful publication.
 	commitElapsed := time.Since(commitStarted)
+	// Only a confirmed COMMIT may publish a generation performance sample.
+	// Failures and AlreadyAccepted outcomes must not train an adaptive policy.
+	result.SecurityMetrics = committedSecurityIngestMetrics(result, &profile,
+		selectedSecurityBulk, time.Since(started))
 	fmt.Printf(
 		"INGEST HASH COPY source=%s generation=%s rows=%d calls=%d copy=%s final_flush=%s\n",
 		result.SourceID, result.GenerationID,
@@ -450,6 +455,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var pendingSecurity []securityBulkRecord
 	var pendingSecurityBytes int64
 	securityLimits := securityBulkLimitsFromContext(ctx)
+	// This run counter is local to ONE signed source batch, even when the
+	// pending Security COPY buffer flushes several times within that batch.
+	var contiguousSecurity int
 	var pendingFiles []fileSourceBulkRecord
 	var pendingFileBytes int64
 	fileBulk := newFileObservationBulkState()
@@ -507,6 +515,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		if err := copySecurityBulk(ctx, tx, sourceBatchID, pendingSecurity, profile); err != nil {
 			return fmt.Errorf("%w: batch %s Security records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
 		}
+		profile.SecurityBulk.SourceBytes += pendingSecurityBytes
 		pendingSecurity = nil
 		pendingSecurityBytes = 0
 		return nil
@@ -552,6 +561,10 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			}
 		}
 		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
+			contiguousSecurity++
+			if contiguousSecurity > profile.SecurityBulk.MaxContiguousSecurity {
+				profile.SecurityBulk.MaxContiguousSecurity = contiguousSecurity
+			}
 			if err := flushFiles(); err != nil {
 				return ordinal, err
 			}
@@ -578,6 +591,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			}
 			continue
 		}
+		contiguousSecurity = 0
 		if err := flushSecurity(); err != nil {
 			return ordinal, err
 		}

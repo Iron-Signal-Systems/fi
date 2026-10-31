@@ -18,7 +18,7 @@ import (
 const (
 	securityAdaptiveRequiredWins      = 2
 	securityAdaptiveCooldown          = 3
-	securityAdaptiveMinGain           = 1.10
+	securityAdaptiveMinGain           = 1.05
 	securityAdaptiveWorkloadTolerance = 0.15
 	securityAdaptiveMaxCPU            = 0.85
 	securityAdaptiveMaxRSSFraction    = 0.75
@@ -73,17 +73,18 @@ const (
 // Concurrent sources must use separate instances; caller serializes Observe.
 // All decisions apply to the NEXT generation, never the current transaction.
 type securityAdaptiveController struct {
-	ceiling         int
-	current         int
-	phase           securityAdaptivePhase
-	cooldown        int
-	baselineSamples int
-	trials          int
-	wins            int
-	candidate       securityAdaptiveSample
-	baseline        securityAdaptiveSample
-	lastGeneration  string
-	sourceID        string
+	ceiling          int
+	current          int // best proven operating profile
+	candidateProfile int // next bounded profile to explore; can skip unproven intermediate profiles
+	phase            securityAdaptivePhase
+	cooldown         int
+	baselineSamples  int
+	trials           int
+	wins             int
+	candidate        securityAdaptiveSample
+	baseline         securityAdaptiveSample
+	lastGeneration   string
+	sourceID         string
 }
 
 func newSecurityAdaptiveController(maxProfile string) (*securityAdaptiveController, error) {
@@ -91,7 +92,7 @@ func newSecurityAdaptiveController(maxProfile string) (*securityAdaptiveControll
 	if err != nil {
 		return nil, err
 	}
-	return &securityAdaptiveController{ceiling: ceiling, current: 1}, nil
+	return &securityAdaptiveController{ceiling: ceiling, current: 1, candidateProfile: 2}, nil
 }
 
 func securityAdaptiveProfileNumber(name string) (int, error) {
@@ -108,7 +109,7 @@ func (c *securityAdaptiveController) profileName() string {
 	}
 	number := c.current
 	if c.phase == securityAdaptiveCandidate {
-		number++
+		number = c.candidateProfile
 	}
 	if number < 1 || number > c.ceiling {
 		return "P1"
@@ -168,6 +169,7 @@ func (s securityAdaptiveSample) valid() bool {
 
 func (c *securityAdaptiveController) reset(reason, previous string) securityAdaptiveDecision {
 	c.current = 1
+	c.candidateProfile = 2
 	c.phase = securityAdaptiveBaseline
 	c.cooldown = securityAdaptiveCooldown
 	c.baselineSamples = 0
@@ -182,7 +184,9 @@ func (c *securityAdaptiveController) reset(reason, previous string) securityAdap
 // confirmed. It cannot change any limits inside the completed generation.
 // Unknown resources or a rejection cause a conservative P1 reset. A pair is
 // candidate-then-baseline on comparable workloads; TWO winning pairs with at
-// least 10% committed generation rate improvement are required to promote.
+// least 5% committed generation rate improvement are required to promote.
+// A losing candidate is not made the baseline: the next higher profile is
+// probed against the best proven operating profile after a bounded cooldown.
 func (c *securityAdaptiveController) observe(s securityAdaptiveSample) (securityAdaptiveDecision, error) {
 	if c == nil {
 		return securityAdaptiveDecision{}, errors.New("FI adaptive security: nil controller")
@@ -225,10 +229,15 @@ func (c *securityAdaptiveController) observe(s securityAdaptiveSample) (security
 	}
 	switch c.phase {
 	case securityAdaptiveBaseline:
-		if c.current >= c.ceiling {
-			return securityAdaptiveDecision{Previous: previous, Next: previous, Reason: "profile_ceiling"}, nil
+		if c.candidateProfile > c.ceiling {
+			return securityAdaptiveDecision{Previous: previous, Next: previous, Reason: "exploration_exhausted"}, nil
 		}
-		next, _ := securityBulkFixedProfile(fmt.Sprintf("P%d", c.current+1))
+		// The best proven profile never changes merely because a larger
+		// candidate is being explored. An invalid probe state fails closed.
+		if c.candidateProfile <= c.current {
+			return c.reset("invalid_probe_state", previous), nil
+		}
+		next, _ := securityBulkFixedProfile(fmt.Sprintf("P%d", c.candidateProfile))
 		if s.MaxContiguousSecurity <= next.MaxRecords/2 {
 			c.baselineSamples = 0
 			return securityAdaptiveDecision{Previous: previous, Next: previous, Reason: "source_batch_too_small"}, nil
@@ -274,12 +283,15 @@ func (c *securityAdaptiveController) observe(s securityAdaptiveSample) (security
 		}
 		decision := securityAdaptiveDecision{Previous: previous, Trials: c.trials, Wins: c.wins}
 		if c.wins == securityAdaptiveRequiredWins {
-			c.current++
+			c.current = c.candidateProfile
 			decision.Reason = "promoted_two_comparable_pairs"
 		} else {
 			c.cooldown = securityAdaptiveCooldown
 			decision.Reason = "candidate_not_proven"
 		}
+		// Even a losing P2 must not prevent us from measuring P3.
+		// Only winning candidates become authoritative operating profiles.
+		c.candidateProfile++
 		c.phase = securityAdaptiveBaseline
 		c.baselineSamples = 0
 		c.trials = 0

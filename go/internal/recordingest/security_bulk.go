@@ -23,10 +23,12 @@ const (
 )
 
 type securityBulkTimingCounters struct {
-	Batches int64
-	Events  int64
-	Scopes  int64
-	Fields  int64
+	Batches               int64
+	Events                int64
+	Scopes                int64
+	Fields                int64
+	SourceBytes           int64
+	MaxContiguousSecurity int
 
 	Prepare      time.Duration
 	SourceCopy   time.Duration

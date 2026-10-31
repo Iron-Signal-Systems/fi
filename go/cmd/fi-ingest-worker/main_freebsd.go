@@ -1271,6 +1271,19 @@ func processPlan(
 			time.Since(start).Round(time.Millisecond),
 		)
 
+		// Read-only evidence exists exclusively after confirmed relational
+		// COMMIT. This log does not feed a controller or change any profile.
+		if evidence := result.SecurityMetrics; evidence != nil {
+			fmt.Printf(
+				"INGEST SECURITY COMMITTED source=%s generation=%s profile=%s records=%d security_events=%d fields=%d source_bytes=%d max_contiguous=%d duration=%s committed_records_per_sec=%.1f\n",
+				result.SourceID, result.GenerationID, evidence.Profile,
+				result.RecordsCommitted, evidence.Events, evidence.Fields,
+				evidence.SourceBytes, evidence.MaxContiguousSecurity,
+				evidence.Duration.Round(time.Millisecond),
+				float64(result.RecordsCommitted)/evidence.Duration.Seconds(),
+			)
+		}
+
 		if retireReady {
 			retireNames = append(
 				retireNames,
