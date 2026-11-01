@@ -122,15 +122,26 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 				switch n{
 				case 0:kind="USNReadBoundary";payload=backlogUSNBoundary(false,1)
 				case 1:kind="USNObjectObservation";payload=backlogUSNObject(1000,false,false)
-				case 2:kind="USNContinuityGap";payload=backlogUSNGap()
+				case 2:
+					if scenario=="split" {
+						kind="USNReadBoundary"
+						payload=backlogUSNBoundary(true,1)
+					}else{
+						kind="USNContinuityGap";payload=backlogUSNGap()
+					}
 				}
 			}else{
 				switch n{
 				case 0:
-					kind="USNReadBoundary"
-					expected:=1
-					if scenario=="incomplete" {expected=2}
-					payload=backlogUSNBoundary(true,expected)
+					if scenario=="split" {
+						kind="USNObjectObservation"
+						payload=backlogUSNObject(1001,true,false)
+					}else{
+						kind="USNReadBoundary"
+						expected:=1
+						if scenario=="incomplete" {expected=2}
+						payload=backlogUSNBoundary(true,expected)
+					}
 				case 1:kind="USNObjectObservation";payload=backlogUSNObject(1001,true,false)
 				case 2:
 					kind="USNObjectObservation"
@@ -259,5 +270,26 @@ SELECT (SELECT count(*) FROM fi_recovery_projection.recorded_generation WHERE so
 SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')
 `,incomplete.ReceiptSHA256).Scan(&incompleteMarkers);err!=nil{t.Fatal(err)}
 	if incompleteMarkers!=1{t.Fatalf("M6.1 incomplete typed window improperly committed: %d",incompleteMarkers)}
-	t.Log("PASS: cross-window legacy USN binding, same-window M6.1 source capture, change/reason COPY, continuity gap, restart, late rollback, incomplete capture refusal, canonical SoR untouched")
+
+	// A source-bound capture with its boundary at the end of window zero
+	// and its object at the start of window one is not yet reconstructable
+	// after restart. Reject the first window instead of accepting partial
+	// source-bound capture authority.
+	split:=backlogUSNFixture(t,"fi-usn-capture-cross-window.iss.local","split")
+	splitRoot:=privateBacklogTestRoot(t)
+	for i:=0;i<2;i++{
+		if _,err:=MaterializeBacklogWindow(ctx,split,limits,i,splitRoot);err!=nil{t.Fatal(err)}
+		if err:=RecordVerifiedBacklogArtifactWindow(ctx,writer,split,limits,i,splitRoot);err!=nil{t.Fatal(err)}
+		if err:=StageVerifiedBacklogSourceWindow(ctx,writer,split,limits,i,splitRoot);err!=nil{t.Fatal(err)}
+	}
+	if err:=StageBacklogTypedWindow(ctx,reader,writer,split,limits,0,splitRoot);err==nil||
+		!strings.Contains(err.Error(),"capture completeness"){
+		t.Fatalf("split source-bound capture was not rejected before durable typed commit: %v",err)
+	}
+	var splitMarkers int64
+	if err:=writer.QueryRow(ctx,`
+SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')
+`,split.ReceiptSHA256).Scan(&splitMarkers);err!=nil{t.Fatal(err)}
+	if splitMarkers!=0{t.Fatalf("cross-window M6.1 capture leaked typed progress: %d",splitMarkers)}
+	t.Log("PASS: cross-window legacy USN binding, same-window M6.1 capture, changes/reasons, continuity gap, restart, late rollback, incomplete and split capture refusal, zero canonical SoR")
 }
