@@ -259,5 +259,8 @@ SELECT
 	t.Run("remaining-five-record-families",func(t *testing.T){
 		exerciseBacklogRemainingFamilies(t,ctx,reader,writer)
 	})
+	t.Run("whole-generation-recovery-after-reconnect",func(t *testing.T){
+		exerciseBacklogRecoveryRunner(t,ctx,reader,writer)
+	})
 	t.Log("PASS: typed window recovery, complete signed generation proof, missing-window/tamper rejection, late rollback, zero canonical FI rows")
 }
