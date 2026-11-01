@@ -224,11 +224,22 @@ func TestMultiBatchGenerationSizeReplay(t *testing.T) {
 		"sacl_observation":             int64(fileCount),
 	}
 	for table, want := range expected {
-		query := fmt.Sprintf(`SELECT count(*) FROM fi.%s AS child
-          JOIN fi.source_record sr USING (source_record_id)
-          JOIN fi.source_batch sb USING (source_batch_id)
-          JOIN fi.recorded_generation rg USING (recorded_generation_id)
+		var query string
+		if table == "source_record" {
+			// The authoritative table is the row being counted; do not
+			// self-join source_record and create duplicate join columns.
+			query = `SELECT count(*) FROM fi.source_record sr
+          JOIN fi.source_batch sb ON sr.source_batch_id = sb.source_batch_id
+          JOIN fi.recorded_generation rg ON sb.recorded_generation_id = rg.recorded_generation_id
+          WHERE rg.source_id=$1 AND rg.generation_id=$2`
+		} else {
+			// All joins are explicit to avoid USING-column ambiguity.
+			query = fmt.Sprintf(`SELECT count(*) FROM fi.%s AS child
+          JOIN fi.source_record sr ON child.source_record_id = sr.source_record_id
+          JOIN fi.source_batch sb ON sr.source_batch_id = sb.source_batch_id
+          JOIN fi.recorded_generation rg ON sb.recorded_generation_id = rg.recorded_generation_id
           WHERE rg.source_id=$1 AND rg.generation_id=$2`, table)
+		}
 		var got int64
 		if err := admin.QueryRow(ctx, query, multiBatchSource, signed.GenerationID).Scan(&got); err != nil {
 			t.Fatalf("verification query %s: %v", table, err)
