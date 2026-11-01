@@ -21,12 +21,10 @@ import (
 // one bounded window's actual typed projections to the PRIVATE relational
 // shadow, together with its completed-window marker, in one transaction.
 //
-// Gate 3J permits legacy USN boundaries and their relationally resolved
-// objects across windows, plus complete M6.1 captures confined to one window.
-// Each window reconstructs bounded capture and COPY state. A source-bound
-// capture split between windows is explicitly rejected until durable
-// cross-window capture reconstruction is separately accepted. This path does not mark any
-// generation Accepted or modify the canonical fi.* system of record.
+// M6.1 source-bound captures may cross private typed windows. Restarts
+// reconstruct missing capture context from durable private relational rows.
+// Only a complete final window may close the generation. This path never
+// marks any generation Accepted or modifies the canonical fi.* system of record.
 func StageBacklogTypedWindow(
     ctx context.Context,
     reader, writer *pgx.Conn,
@@ -164,6 +162,7 @@ WHERE receipt_sha256=$1 AND window_index=$2
     ctx=context.WithValue(ctx,usnChangeCopyContextKey{},usnCopy)
     captureState:=newUSNCaptureState(d.SourceID,d.GenerationID)
     ctx=context.WithValue(ctx,usnCaptureContextKey{},captureState)
+    ctx=context.WithValue(ctx,backlogUSNCrossWindowContextKey{},true)
     ctx=context.WithValue(ctx,usnTimingContextKey{},&usnTimingCounters{})
     var profile ingestStageProfile
     profile.coverageBuffer=newSecurityCoverageBulkState(&profile)
@@ -189,9 +188,15 @@ WHERE receipt_sha256=$1 AND window_index=$2
     if err:=verifyBacklogShadowWindowCounts(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch],
         totalRecords,totalBytes);err!=nil{return err}
     if err:=verifyGenerationProjectionCoverage(ctx,shadow,id);err!=nil{return err}
-    // Reject incomplete source-bound M6.1 captures before durable completion.
-    // The in-memory association intentionally cannot extend across windows.
-    if err:=captureState.verify();err!=nil{return fmt.Errorf("FI typed window: M6.1 capture completeness: %w",err)}
+    // Intermediate bounded windows may commit unfinished M6.1 captures.
+    // The final window requires complete durable SQL counts for EVERY capture,
+    // including captures that began in previously committed windows.
+    if index==len(descriptors)-1 {
+        if err:=captureState.verify();err!=nil{return fmt.Errorf("FI typed window: M6.1 capture completeness: %w",err)}
+        if err:=verifyBacklogUSNCapturesComplete(ctx,shadow,id);err!=nil{
+            return fmt.Errorf("FI typed window: M6.1 capture completeness: %w",err)
+        }
+    }
     _,err=tx.Exec(ctx,`
 INSERT INTO fi_recovery.typed_window (
  receipt_sha256,window_index,descriptor_sha256,shadow_generation_id,
