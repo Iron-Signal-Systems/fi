@@ -1,0 +1,112 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, in the repository root LICENSE file.
+
+package recordingest
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func privateBacklogStageFixture(t *testing.T) *PreparedGeneration {
+	t.Helper()
+	g:=backlogWindowFixture([]int{3,3,3},8)
+	g.Receipt.Descriptor.SourceID="fi-private-stage-test.iss.local"
+	g.Receipt.Descriptor.GenerationID="20261101T120000.000000000Z-test"
+	g.ReceiptSHA256=strings.Repeat("a",64)
+	g.Receipt.TransferSHA256=strings.Repeat("b",64)
+	for i:=range g.Batches {
+		data:=bytes.Repeat([]byte{byte('a'+i)},8)
+		dataHash:=sha256.Sum256(data)
+		manifest:=[]byte(fmt.Sprintf("test original manifest %d",i))
+		manifestHash:=sha256.Sum256(manifest)
+		g.Batches[i].Manifest.DataSHA256=hex.EncodeToString(dataHash[:])
+		g.Batches[i].ManifestSHA256=hex.EncodeToString(manifestHash[:])
+		g.Batches[i].ManifestRawBytes=manifest
+		g.Batches[i].DataPath=filepath.Join(t.TempDir(),"source.jsonl")
+		if err:=os.WriteFile(g.Batches[i].DataPath,data,0600);err!=nil{t.Fatal(err)}
+	}
+	return g
+}
+
+func TestBacklogStagePrivateDurableWindowAndVerifiedReuse(t *testing.T){
+	g:=privateBacklogStageFixture(t)
+	root:=t.TempDir()
+	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+	ctx:=context.Background()
+	path,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
+	if err!=nil{t.Fatal(err)}
+	if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,0,root);err!=nil{t.Fatal(err)}
+	path2,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
+	if err!=nil || path2!=path{t.Fatalf("durable stage reuse: first=%s second=%s err=%v",path,path2,err)}
+	path3,err:=MaterializeBacklogWindow(ctx,g,limits,1,root)
+	if err!=nil || path3==path{t.Fatalf("second window materialization: %s %v",path3,err)}
+	if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,1,root);err!=nil{t.Fatal(err)}
+	if _,err:=os.Stat(filepath.Join(path,"batch-00000002.data"));!os.IsNotExist(err){
+		t.Fatalf("window 0 unexpectedly contains batch 2: %v",err)
+	}
+}
+
+func TestBacklogStageRejectsTamperedMaterializedBytesAndNeverOverwrites(t *testing.T){
+	g:=privateBacklogStageFixture(t)
+	root:=t.TempDir()
+	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+	ctx:=context.Background()
+	p,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
+	if err!=nil{t.Fatal(err)}
+	tamper:=filepath.Join(p,"batch-00000000.data")
+	if err:=os.WriteFile(tamper,[]byte("cccccccc"),0600);err!=nil{t.Fatal(err)}
+	if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,0,root);err==nil{t.Fatal("tampered data accepted")}
+	if _,err:=MaterializeBacklogWindow(ctx,g,limits,0,root);err==nil{t.Fatal("existing tampered window silently replaced")}
+	rechecked,err:=os.ReadFile(tamper)
+	if err!=nil || string(rechecked)!="cccccccc"{t.Fatalf("tampered evidence overwritten %q %v",rechecked,err)}
+}
+
+func TestBacklogStageRejectsManifestChangeAndReceiptChange(t *testing.T){
+	g:=privateBacklogStageFixture(t)
+	root:=t.TempDir()
+	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+	ctx:=context.Background()
+	p,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
+	if err!=nil{t.Fatal(err)}
+	manifest:=filepath.Join(p,"batch-00000000.manifest")
+	if err:=os.WriteFile(manifest,[]byte("x"),0600);err!=nil{t.Fatal(err)}
+	if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,0,root);err==nil{t.Fatal("changed manifest accepted")}
+	g.ReceiptSHA256=strings.Repeat("c",64)
+	if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,0,root);err==nil{t.Fatal("different receipt accepted at same stage")}
+}
+
+func TestBacklogStageRejectsCorruptedInputWithoutPublishing(t *testing.T){
+	g:=privateBacklogStageFixture(t)
+	root:=t.TempDir()
+	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+	if err:=os.WriteFile(g.Batches[1].DataPath,[]byte("badbytes"),0600);err!=nil{t.Fatal(err)}
+	if _,err:=MaterializeBacklogWindow(context.Background(),g,limits,0,root);err==nil{t.Fatal("modified source data staged")}
+	d,err:=DescribeBacklogWindows(g,limits)
+	if err!=nil{t.Fatal(err)}
+	ready:=filepath.Join(root,"receipt-"+d[0].ReceiptSHA256,"window-00000000")
+	if _,err:=os.Stat(ready);!os.IsNotExist(err){t.Fatalf("unverified complete window became visible: %v",err)}
+}
+
+func TestBacklogStageRejectsUnsafePrivateRootAndCancel(t *testing.T){
+	g:=privateBacklogStageFixture(t)
+	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+	root:=t.TempDir()
+	if err:=os.Chmod(root,0755);err!=nil{t.Fatal(err)}
+	if _,err:=MaterializeBacklogWindow(context.Background(),g,limits,0,root);err==nil{t.Fatal("world-readable stage root accepted")}
+	target:=t.TempDir()
+	link:=filepath.Join(t.TempDir(),"stage-link")
+	if err:=os.Symlink(target,link);err!=nil{t.Fatal(err)}
+	if _,err:=MaterializeBacklogWindow(context.Background(),g,limits,0,link);err==nil{t.Fatal("symlink stage root accepted")}
+	ctx,cancel:=context.WithCancel(context.Background())
+	cancel()
+	if _,err:=MaterializeBacklogWindow(ctx,g,limits,0,target);err==nil{t.Fatal("canceled stage request accepted")}
+}
