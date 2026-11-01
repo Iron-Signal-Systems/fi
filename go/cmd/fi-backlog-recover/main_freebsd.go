@@ -29,7 +29,7 @@ const expectedBatches uint64 = 8399
 
 func run() error {
  var source, generation, pg, custody, recorded, private string
- var namespaces, enable, streamLoader, indexedPrivate, preflightOnly bool
+ var namespaces, enable, streamLoader, indexedPrivate, preflightOnly, continuousPrivate bool
  var maxRuntime time.Duration
  var maxWindows, startWindow int
  flag.StringVar(&source,"source","","exact original signed FI source")
@@ -43,6 +43,7 @@ func run() error {
  flag.BoolVar(&streamLoader,"stream-loader",false,"retain only requested window data while streaming and verifying entire signed custody")
  flag.BoolVar(&indexedPrivate,"indexed-private",false,"PRIVATE-ONLY resume from earlier complete validated shadow metadata; partial custody scan is NOT complete transfer verification")
  flag.BoolVar(&preflightOnly,"preflight-only",false,"read-only 10m indexed source preflight; no database writes or checkpoints")
+ flag.BoolVar(&continuousPrivate,"continuous-private",false,"single signed custody stream, durable private commits for all remaining windows, full final verification; never Accepted")
  flag.DurationVar(&maxRuntime,"max-runtime",0,"hard run deadline including extraction and PostgreSQL operations, e.g. 10m")
  flag.IntVar(&maxWindows,"max-windows",2,"private windows to process per invocation; 0 means to final window")
  flag.IntVar(&startWindow,"start-window",0,"original signed window index to resume from")
@@ -65,6 +66,9 @@ func run() error {
  }
  if maxRuntime<0 || maxRuntime>10*time.Minute {return errors.New("max-runtime must be between 0 and 10m")}
  if preflightOnly && (!indexedPrivate||enable){return errors.New("preflight-only must use indexed-private WITHOUT private-writes")}
+ if continuousPrivate && (indexedPrivate||streamLoader||preflightOnly||!enable||maxWindows!=0||startWindow<1){
+  return errors.New("continuous-private requires private-writes, start-window>0, max-windows=0, no other recovery mode")
+ }
  if indexedPrivate && (streamLoader||startWindow==0||maxWindows<1||maxWindows>2) {
   return errors.New("indexed-private requires start-window > 0 and one or two selected windows; cannot combine with stream-loader")
  }
@@ -111,6 +115,29 @@ WHERE source_id=$1 AND generation_id=$2)
   MaxCanonicalBytes:68719476736,MaxEncodedBytes:68719476736,MaxManifestBytes:1048576,
  }
  limits:=recordingest.BacklogWindowLimits{MaxRecords:32768,MaxDataBytes:256<<20}
+ if continuousPrivate {
+  fmt.Printf("FI REAL BACKLOG CONTINUOUS PRIVATE start_window=%d original_signed_generation=%s\n",startWindow,generation)
+  began:=time.Now()
+  result,err:=recordingest.RecoverBacklogContinuousPrivate(ctx,reader,canonical,loadConfig,generation,limits,private,startWindow,
+   func(p recordingest.BacklogContinuousProgress){
+    if p.WindowCommitted>=0 {
+     fmt.Printf("FI REAL BACKLOG DURABLE window=%d/%d inspected_batches=%d/%d records_through=%d/%d window=%s elapsed=%s\n",
+      p.WindowCommitted+1,p.TotalWindows,p.BatchesSeen,p.TotalBatches,
+      p.RecordsDurable,expectedRecords,p.WindowDuration.Round(time.Millisecond),p.Elapsed.Round(time.Millisecond))
+    }else{
+     fmt.Printf("FI REAL BACKLOG CONTINUOUS scanned_batches=%d/%d inspected_records=%d/%d durable_records=%d/%d elapsed=%s\n",
+      p.BatchesSeen,p.TotalBatches,p.RecordsInspected,expectedRecords,p.RecordsDurable,expectedRecords,p.Elapsed.Round(time.Millisecond))
+    }
+   })
+  if err!=nil{return fmt.Errorf("FI continuous private recovery: %w",err)}
+  if result.Windows<=0||result.Records!=expectedRecords||result.SourceID!=sourceID||
+   result.GenerationID!=generationID||result.ReceiptSHA256==""{
+   return errors.New("FI continuous private: final verification identity/count mismatch")
+  }
+  fmt.Printf("FI REAL BACKLOG PRIVATE COMPLETE windows=%d records=%d bytes=%d elapsed=%s; NO Accepted journal or authoritative publication\n",
+   result.Windows,result.Records,result.DataBytes,time.Since(began).Round(time.Millisecond))
+  return nil
+ }
  var prepared *recordingest.PreparedGeneration
  if indexedPrivate {
   fmt.Printf("FI REAL BACKLOG INDEXED PRIVATE selective custody prefix start_window=%d count=%d; full FIGT verification deferred to final acceptance\n",startWindow,maxWindows)
