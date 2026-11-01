@@ -48,7 +48,7 @@ func backlogSourceWindowFixture(t *testing.T, counts []int, lateInvalid bool) *P
 				Version:SpoolRecordVersion,
 				RecordKind:"NTFSCollectionError",
 				ScopeID:fmt.Sprintf("fi-recovery-window-%d",batchIndex),
-				WrittenAt:"2026-11-01T12:00:00Z",
+				WrittenAt:"2026-11-01T12:00:00.123456789Z",
 				Payload:json.RawMessage(`{"synthetic":true}`),
 			}
 			if lateInvalid && batchIndex==len(counts)-1 && i==0 {
