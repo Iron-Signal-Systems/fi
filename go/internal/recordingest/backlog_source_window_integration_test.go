@@ -68,8 +68,9 @@ func backlogSourceWindowFixture(t *testing.T, counts []int, lateInvalid bool) *P
 		b.Manifest.Version=spool.ManifestVersion
 		b.Manifest.CreatedAt="2026-11-01T11:59:00Z"
 		b.Manifest.CompletedAt="2026-11-01T12:00:00Z"
-		b.ManifestRawBytes,err=json.Marshal(b.Manifest)
+		manifestRaw,err:=json.Marshal(b.Manifest)
 		if err!=nil{t.Fatal(err)}
+		b.ManifestRawBytes=manifestRaw
 		manifestDigest:=sha256.Sum256(b.ManifestRawBytes)
 		b.ManifestSHA256=hex.EncodeToString(manifestDigest[:])
 		g.Receipt.DataBytes+=uint64(len(raw))
