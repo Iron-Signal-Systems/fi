@@ -44,21 +44,22 @@ func TestBacklogArtifactLedgerIsolatedAcceptance(t *testing.T) {
 	}
 	admin,err:=pgx.Connect(ctx,connect("fi_m1_admin"))
 	if err!=nil{t.Fatal(err)}
-	defer admin.Close(context.Background())
+	t.Cleanup(func(){ _ = admin.Close(context.Background()) })
 	runtime,err:=pgx.Connect(ctx,connect("fi_ingest"))
 	if err!=nil{t.Fatal(err)}
-	defer runtime.Close(context.Background())
+	t.Cleanup(func(){ _ = runtime.Close(context.Background()) })
 
 	for _,item:=range []struct{conn *pgx.Conn;user string}{
 		{admin,"fi_m1_admin"},{runtime,"fi_ingest"},
 	}{
-		var who,db,port,pgVersion string
+		var who,db,port,pgVersion,dataDirectory string
 		if err:=item.conn.QueryRow(ctx,`
 SELECT current_user, current_database(),
-       current_setting('port'), current_setting('server_version_num')
-`).Scan(&who,&db,&port,&pgVersion);err!=nil{t.Fatal(err)}
-		if who!=item.user||db!="fi"||port!="55418"||!strings.HasPrefix(pgVersion,"18"){
-			t.Fatalf("STOP: wrong isolated fixture identity user=%s db=%s port=%s version=%s",who,db,port,pgVersion)
+       current_setting('port'), current_setting('server_version_num'),
+       current_setting('data_directory')
+`).Scan(&who,&db,&port,&pgVersion,&dataDirectory);err!=nil{t.Fatal(err)}
+		if who!=item.user||db!="fi"||port!="55418"||!strings.HasPrefix(pgVersion,"18")||filepath.Clean(dataDirectory)!=filepath.Join(root,"data"){
+			t.Fatalf("STOP: wrong isolated fixture identity user=%s db=%s port=%s version=%s data_directory=%s",who,db,port,pgVersion,dataDirectory)
 		}
 	}
 	var exists bool
