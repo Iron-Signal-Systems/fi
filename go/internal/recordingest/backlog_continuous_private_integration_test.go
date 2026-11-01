@@ -34,6 +34,8 @@ func TestBacklogContinuousPrivateFullTransferAfterResume(t *testing.T){
  if err!=nil||string(version)!="18\n"{t.Fatal("STOP: isolated PostgreSQL 18 root unavailable")}
  ctx,cancel:=context.WithTimeout(context.Background(),10*time.Minute)
  defer cancel()
+ ctx,err:=WithFixedSecurityBulkProfile(ctx,"P3")
+ if err!=nil{t.Fatal(err)}
  connect:=func(user string)string{return fmt.Sprintf(
   "host=%s port=55418 user=%s dbname=fi sslmode=disable connect_timeout=3",
   filepath.Join(root,"socket"),user)}
