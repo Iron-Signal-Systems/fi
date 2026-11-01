@@ -107,7 +107,7 @@ WHERE source_id=$1 AND generation_id=$2)
  limits:=recordingest.BacklogWindowLimits{MaxRecords:32768,MaxDataBytes:256<<20}
  var prepared *recordingest.PreparedGeneration
  if indexedPrivate {
-  fmt.Printf("FI REAL BACKLOG INDEXED PRIVATE selective custody prefix start_window=%d count=%d; full FIGT verification deferred to final acceptance\\n",startWindow,maxWindows)
+  fmt.Printf("FI REAL BACKLOG INDEXED PRIVATE selective custody prefix start_window=%d count=%d; full FIGT verification deferred to final acceptance\n",startWindow,maxWindows)
   prepared,err=recordingest.LoadIndexedBacklogPrivateWindows(ctx,canonical,loadConfig,generation,limits,startWindow,maxWindows)
  }else if streamLoader {
   if maxWindows<1||maxWindows>8 {
