@@ -262,5 +262,8 @@ SELECT
 	t.Run("whole-generation-recovery-after-reconnect",func(t *testing.T){
 		exerciseBacklogRecoveryRunner(t,ctx,reader,writer)
 	})
+	t.Run("complete-private-to-atomic-canonical-ingest",func(t *testing.T){
+		exerciseBacklogAuthoritativeBridge(t,ctx,admin,reader,writer)
+	})
 	t.Log("PASS: typed window recovery, complete signed generation proof, missing-window/tamper rejection, late rollback, zero canonical FI rows")
 }
