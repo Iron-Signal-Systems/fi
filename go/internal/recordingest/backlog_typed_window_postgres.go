@@ -21,11 +21,11 @@ import (
 // one bounded window's actual typed projections to the PRIVATE relational
 // shadow, together with its completed-window marker, in one transaction.
 //
-// Gate 3I permits independent errors, Windows Security events/coverage, and
-// FileObservation with its NTFS identity and file-child relationships.
-// Every window reconstructs the bounded caches and flushes the pending hash
-// and ACE COPY writers before its atomic typed-window completion marker.
-// USN and remaining cross-window families remain fail-closed. This path does not mark any
+// Gate 3J permits legacy USN boundaries and their relationally resolved
+// objects across windows, plus complete M6.1 captures confined to one window.
+// Each window reconstructs bounded capture and COPY state. A source-bound
+// capture split between windows is explicitly rejected until durable
+// cross-window capture reconstruction is separately accepted. This path does not mark any
 // generation Accepted or modify the canonical fi.* system of record.
 func StageBacklogTypedWindow(
     ctx context.Context,
@@ -160,6 +160,11 @@ WHERE receipt_sha256=$1 AND window_index=$2
     ctx=context.WithValue(ctx,aceCopyContextKey{},aceCopy)
     ntfsTiming:=&ntfsStageTimingCounters{}
     ctx=context.WithValue(ctx,ntfsStageTimingContextKey{},ntfsTiming)
+    usnCopy:=newUSNChangeCopyState()
+    ctx=context.WithValue(ctx,usnChangeCopyContextKey{},usnCopy)
+    captureState:=newUSNCaptureState(d.SourceID,d.GenerationID)
+    ctx=context.WithValue(ctx,usnCaptureContextKey{},captureState)
+    ctx=context.WithValue(ctx,usnTimingContextKey{},&usnTimingCounters{})
     var profile ingestStageProfile
     profile.coverageBuffer=newSecurityCoverageBulkState(&profile)
     var totalRecords int64
@@ -175,6 +180,7 @@ WHERE receipt_sha256=$1 AND window_index=$2
         totalBytes+=batch.Manifest.DataBytes
     }
     if err:=profile.coverageBuffer.flush(ctx,shadow);err!=nil{return err}
+    if err:=usnCopy.flushAll(ctx,shadow);err!=nil{return fmt.Errorf("FI typed window: final USN change/reason COPY: %w",err)}
     if err:=hashCopy.flush(ctx,shadow);err!=nil{return fmt.Errorf("FI typed window: final content hash COPY: %w",err)}
     if err:=aceCopy.flushAll(ctx,shadow);err!=nil{return fmt.Errorf("FI typed window: final ACE COPY: %w",err)}
     if totalRecords!=int64(summary.RecordCount)||totalBytes!=int64(summary.DataBytes){
@@ -183,6 +189,9 @@ WHERE receipt_sha256=$1 AND window_index=$2
     if err:=verifyBacklogShadowWindowCounts(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch],
         totalRecords,totalBytes);err!=nil{return err}
     if err:=verifyGenerationProjectionCoverage(ctx,shadow,id);err!=nil{return err}
+    // Reject incomplete source-bound M6.1 captures before durable completion.
+    // The in-memory association intentionally cannot extend across windows.
+    if err:=captureState.verify();err!=nil{return fmt.Errorf("FI typed window: M6.1 capture completeness: %w",err)}
     _,err=tx.Exec(ctx,`
 INSERT INTO fi_recovery.typed_window (
  receipt_sha256,window_index,descriptor_sha256,shadow_generation_id,
@@ -240,7 +249,7 @@ WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
 
 func backlogTypedKindAllowed(kind string) bool {
     switch kind {
-    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage", "FileObservation":
+    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage", "FileObservation", "USNReadBoundary", "USNObjectObservation", "USNContinuityGap":
         return true
     default:
         return false
