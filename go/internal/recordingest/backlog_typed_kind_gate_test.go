@@ -13,6 +13,7 @@ func TestBacklogTypedKindAdmissionIsExplicit(t *testing.T) {
         "NTFSCollectionError": true,
         "SupportingSourceCollectionError": true,
         "WindowsSecurityEvent": true,
+        "WindowsSecurityCoverage": true,
     }
     kinds:=SupportedRecordKinds()
     if len(kinds)!=13 {t.Fatalf("FI added or removed a record kind: review backlog admission (got %d)",len(kinds))}
