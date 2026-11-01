@@ -16,6 +16,21 @@ import (
 	"testing"
 )
 
+// privateBacklogTestRoot sets the explicit security boundary required by
+// the durable stage. testing.T.TempDir() need not use mode 0700 for every
+// child directory on every operating system and test umask.
+func privateBacklogTestRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPrivateBacklogRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func privateBacklogStageFixture(t *testing.T) *PreparedGeneration {
 	t.Helper()
 	g:=backlogWindowFixture([]int{3,3,3},8)
@@ -39,7 +54,7 @@ func privateBacklogStageFixture(t *testing.T) *PreparedGeneration {
 
 func TestBacklogStagePrivateDurableWindowAndVerifiedReuse(t *testing.T){
 	g:=privateBacklogStageFixture(t)
-	root:=t.TempDir()
+	root:=privateBacklogTestRoot(t)
 	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
 	ctx:=context.Background()
 	path,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
@@ -61,7 +76,7 @@ func TestBacklogStagePrivateDurableWindowAndVerifiedReuse(t *testing.T){
 
 func TestBacklogStageRejectsTamperedMaterializedBytesAndNeverOverwrites(t *testing.T){
 	g:=privateBacklogStageFixture(t)
-	root:=t.TempDir()
+	root:=privateBacklogTestRoot(t)
 	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
 	ctx:=context.Background()
 	p,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
@@ -76,7 +91,7 @@ func TestBacklogStageRejectsTamperedMaterializedBytesAndNeverOverwrites(t *testi
 
 func TestBacklogStageRejectsManifestChangeAndReceiptChange(t *testing.T){
 	g:=privateBacklogStageFixture(t)
-	root:=t.TempDir()
+	root:=privateBacklogTestRoot(t)
 	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
 	ctx:=context.Background()
 	p,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
@@ -90,10 +105,12 @@ func TestBacklogStageRejectsManifestChangeAndReceiptChange(t *testing.T){
 
 func TestBacklogStageRejectsCorruptedInputWithoutPublishing(t *testing.T){
 	g:=privateBacklogStageFixture(t)
-	root:=t.TempDir()
+	root:=privateBacklogTestRoot(t)
 	limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
 	if err:=os.WriteFile(g.Batches[1].DataPath,[]byte("badbytes"),0600);err!=nil{t.Fatal(err)}
-	if _,err:=MaterializeBacklogWindow(context.Background(),g,limits,0,root);err==nil{t.Fatal("modified source data staged")}
+	if _,err:=MaterializeBacklogWindow(context.Background(),g,limits,0,root);err==nil || !strings.Contains(err.Error(),"digest") {
+		t.Fatalf("modified source data must fail at its digest check, got %v",err)
+	}
 	d,err:=DescribeBacklogWindows(g,limits)
 	if err!=nil{t.Fatal(err)}
 	ready:=filepath.Join(root,"receipt-"+d[0].ReceiptSHA256,"window-00000000")
