@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -42,6 +43,9 @@ func StageVerifiedBacklogSourceWindow(
 	if err != nil { return err }
 	if index < 0 || index >= len(descriptors) { return errors.New("FI backlog source stage: invalid window index") }
 	d := descriptors[index]
+	if d.EndRecord > math.MaxInt64 || d.DataBytes > math.MaxInt64 {
+		return errors.New("FI backlog source stage: source totals exceed PostgreSQL bigint")
+	}
 	// Never trust a persisted artifact checkpoint without checking the bytes.
 	if err := VerifyMaterializedBacklogWindow(ctx,g,limits,index,privateRoot);err!=nil {
 		return fmt.Errorf("FI backlog source stage: source copy verification failed: %w",err)
