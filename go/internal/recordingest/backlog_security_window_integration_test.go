@@ -253,5 +253,8 @@ SELECT
 		t.Fatalf("STOP: failed Security typed transaction leaked generation=%d records=%d events=%d marker=%d",
 			leakedGen,leakedRows,leakedEvents,leakedMarkers)
 	}
+	t.Run("coverage-audit-policies-roots-across-source-batches",func(t *testing.T){
+		exerciseBacklogSecurityCoverageWindows(t,ctx,reader,writer)
+	})
 	t.Log("PASS: Security events/scopes/fields, 2 windows and reconnect, late COPY rollback, canonical SoR untouched")
 }
