@@ -144,7 +144,7 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 					}
 				case 1:
 					kind="USNObjectObservation"
-					payload=backlogUSNObject(1001,scenario!="split",false)
+					payload=backlogUSNObject(1001,scenario!="split" && scenario!="split-missing",false)
 				case 2:
 					kind="USNObjectObservation"
 					payload=backlogUSNObject(1002,false,scenario=="late-invalid")
