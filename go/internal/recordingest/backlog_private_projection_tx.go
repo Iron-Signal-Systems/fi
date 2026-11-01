@@ -80,10 +80,10 @@ func (privateProjectionFailedBatch) Close()error{
 // statement, multiple statements, dollar-quote or unterminated literal
 // fails closed. All projector statements must be statically authored.
 func rewritePrivateProjectionStatement(sql string)(string,error){
-    trimmed:=strings.ToUpper(strings.TrimSpace(sql))
-    if !strings.HasPrefix(trimmed,"SELECT ") &&
-       !strings.HasPrefix(trimmed,"INSERT ") &&
-       !strings.HasPrefix(trimmed,"WITH "){
+    words:=strings.Fields(sql)
+    if len(words)==0{return "",errors.New("FI private projector: empty SQL")}
+    verb:=strings.ToUpper(words[0])
+    if verb!="SELECT"&&verb!="INSERT"&&verb!="WITH"{
         return "",errors.New("FI private projector: only SELECT/INSERT/WITH are allowed")
     }
     if strings.Contains(sql,privateProjectionSchema+"."){
