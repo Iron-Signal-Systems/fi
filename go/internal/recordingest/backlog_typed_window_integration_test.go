@@ -212,5 +212,8 @@ SELECT
     t.Run("file-ntfs-identity-hash-children-across-windows",func(t *testing.T){
 		exerciseBacklogFileWindows(t,ctx,reader,writer)
 	})
+	t.Run("usn-legacy-cross-window-and-m61-complete-capture",func(t *testing.T){
+		exerciseBacklogUSNWindows(t,ctx,reader,writer)
+	})
 	t.Log("PASS: independent typed projections commit by window, resume after disconnect, late rollback, zero canonical FI rows")
 }
