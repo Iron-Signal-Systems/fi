@@ -21,9 +21,9 @@ import (
 // one bounded window's actual typed projections to the PRIVATE relational
 // shadow, together with its completed-window marker, in one transaction.
 //
-// Gate 3F explicitly permits only these independent record families. FI's
-// Security, File, USN, and cross-batch state must be independently accepted
-// before those families are allowed here. This path does not mark any
+// Gate 3G permits independent error record families and WindowsSecurityEvent
+// with its own matched-scope and event-field children. Security coverage,
+// File, USN, and other cross-batch families remain disabled until proven. This path does not mark any
 // generation Accepted or modify the canonical fi.* system of record.
 func StageBacklogTypedWindow(
     ctx context.Context,
@@ -51,7 +51,7 @@ func StageBacklogTypedWindow(
     summary,err:=ReplayVerifiedBacklogSourceWindow(ctx,reader,generation,limits,index,privateRoot,
         func(_ int,_ int64,record SourceRecord)error{
             switch record.Record.RecordKind {
-            case "NTFSCollectionError","SupportingSourceCollectionError":
+            case "NTFSCollectionError","SupportingSourceCollectionError","WindowsSecurityEvent":
                 return nil
             default:
                 return fmt.Errorf("FI typed window: family %q requires cross-window projection acceptance",record.Record.RecordKind)
