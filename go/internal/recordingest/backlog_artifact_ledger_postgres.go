@@ -6,6 +6,7 @@ package recordingest
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -114,8 +115,8 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		&existingStartRecord, &existingEndRecord, &existingBytes,
 	)
 	if err == nil {
-		if !bytesEqual(existingDigest,digest) || !bytesEqual(existingPrevious,previous) ||
-			!bytesEqual(existingTransfer,transfer) ||
+		if subtle.ConstantTimeCompare(existingDigest,digest)!=1 || subtle.ConstantTimeCompare(existingPrevious,previous)!=1 ||
+			subtle.ConstantTimeCompare(existingTransfer,transfer)!=1 ||
 			existingSource != d.SourceID || existingGeneration != d.GenerationID ||
 			existingStartBatch != int64(d.StartBatch) || existingEndBatch != int64(d.EndBatch) ||
 			existingStartRecord != int64(d.StartRecord) || existingEndRecord != int64(d.EndRecord) ||
@@ -145,7 +146,7 @@ LIMIT 1
 	} else if err != nil {
 		return err
 	} else if lastIndex+1 != index ||
-		!bytesEqual(lastDigest,previous) ||
+		subtle.ConstantTimeCompare(lastDigest,previous)!=1 ||
 		lastEndBatch != int64(d.StartBatch) ||
 		lastEndRecord != int64(d.StartRecord) {
 		return errors.New("FI recovery artifact ledger: skipped or conflicting window boundary")
@@ -164,9 +165,3 @@ INSERT INTO fi_recovery.verified_artifact_window (
 	return tx.Commit(ctx)
 }
 
-func bytesEqual(a,b []byte) bool {
-	if len(a)!=len(b) {return false}
-	var result byte
-	for i:=range a{result|=a[i]^b[i]}
-	return result==0
-}
