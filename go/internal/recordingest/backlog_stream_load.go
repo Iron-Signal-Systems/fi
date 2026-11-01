@@ -187,8 +187,11 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 				dataPath=filepath.Join(stageDir,fmt.Sprintf("batch-%08d.data",len(batches)))
 				f,err:=os.OpenFile(dataPath,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
 				if err!=nil{return err}
-				_,writeErr:=f.Write(buffer.Bytes())
-				if writeErr==nil{writeErr=f.Close()}else{_ = f.Close()}
+				written,writeErr:=f.Write(buffer.Bytes())
+				if writeErr==nil && written!=buffer.Len(){
+					writeErr=io.ErrShortWrite
+				}
+				writeErr=errors.Join(writeErr,f.Close())
 				if writeErr!=nil{return writeErr}
 				retained++
 			}
