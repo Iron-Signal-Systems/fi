@@ -109,8 +109,8 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 	g:=privateTypedFixture(t,source,false)
 	hash:=sha256.Sum256([]byte(source))
 	g.Receipt.Descriptor.GenerationID="20261101T140000.000000000Z-"+hex.EncodeToString(hash[:8])
-	g.Receipt.TransferSHA256=hex.EncodeToString(sha256SumString(source+"/transfer"))
-	g.ReceiptSHA256=hex.EncodeToString(sha256SumString(source+"/receipt"))
+	g.Receipt.TransferSHA256=hex.EncodeToString(backlogUSNSHA256String(source+"/transfer"))
+	g.ReceiptSHA256=hex.EncodeToString(backlogUSNSHA256String(source+"/receipt"))
 	g.Receipt.DataBytes=0
 	for bi:=range g.Batches{
 		b:=&g.Batches[bi]
@@ -173,7 +173,7 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 	return g
 }
 
-func sha256SumString(value string) []byte {
+func backlogUSNSHA256String(value string) []byte {
 	sum:=sha256.Sum256([]byte(value))
 	return sum[:]
 }
