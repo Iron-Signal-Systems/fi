@@ -120,7 +120,7 @@ func verifyPrivateBacklogRoot(dir string)error{
 	info,err:=os.Lstat(dir)
 	if err!=nil{return err}
 	if info.Mode()&os.ModeSymlink!=0||!info.IsDir()||info.Mode().Perm()!=0700 {
-		return fmt.Errorf("FI backlog stage: private directory must be real and 0700: %s",dir)
+		return fmt.Errorf("FI backlog stage: private directory must be real and 0700: %s (mode=%s permissions=%#o)",dir,info.Mode(),info.Mode().Perm())
 	}
 	return nil
 }
