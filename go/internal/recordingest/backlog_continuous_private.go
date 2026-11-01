@@ -33,6 +33,10 @@ type BacklogContinuousProgress struct {
  TotalWindows int
  RecordsDurable uint64
  WindowDuration time.Duration
+ ArtifactDuration time.Duration
+ LedgerDuration time.Duration
+ SourceDuration time.Duration
+ TypedDuration time.Duration
  Elapsed time.Duration
 }
 
@@ -303,15 +307,22 @@ SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
     if _,err:=MaterializeBacklogWindow(ctx,g,limits,index,privateRoot);err!=nil{
      return fmt.Errorf("FI continuous private: window %d durable materialization: %w",index,err)
     }
+    artifactTime:=time.Since(start)
+    tick:=time.Now()
     if err:=RecordVerifiedBacklogArtifactWindow(ctx,writer,g,limits,index,privateRoot);err!=nil{
-     return fmt.Errorf("FI continuous private: window %d artifact checkpoint: %w",index,err)
+     return fmt.Errorf("FI continuous private: window %d artifact marker: %w",index,err)
     }
+    ledgerTime:=time.Since(tick)
+    tick=time.Now()
     if err:=StageVerifiedBacklogSourceWindow(ctx,writer,g,limits,index,privateRoot);err!=nil{
      return fmt.Errorf("FI continuous private: window %d source stage: %w",index,err)
     }
+    sourceTime:=time.Since(tick)
+    tick=time.Now()
     if err:=StageBacklogTypedWindow(ctx,reader,writer,g,limits,index,privateRoot);err!=nil{
      return fmt.Errorf("FI continuous private: window %d typed stage: %w",index,err)
     }
+    typedTime:=time.Since(tick)
     // Data has been durably materialized and every private marker committed.
     // Release the disposable per-window staging files immediately.
     for i:=descriptors[index].StartBatch;i<descriptors[index].EndBatch;i++{
@@ -325,7 +336,9 @@ SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
      BatchesSeen:nextBatch,TotalBatches:len(g.Batches),
      RecordsInspected:scannedRecords,WindowCommitted:index,
      TotalWindows:len(descriptors),RecordsDurable:durableRecords,
-     WindowDuration:time.Since(start),Elapsed:time.Since(started),
+     WindowDuration:time.Since(start),ArtifactDuration:artifactTime,
+     LedgerDuration:ledgerTime,SourceDuration:sourceTime,TypedDuration:typedTime,
+     Elapsed:time.Since(started),
     })}
     windowIndex++
     windowStarted=time.Now()
