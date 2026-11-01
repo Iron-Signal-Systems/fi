@@ -21,11 +21,11 @@ import (
 // one bounded window's actual typed projections to the PRIVATE relational
 // shadow, together with its completed-window marker, in one transaction.
 //
-// Gate 3H permits independent error records, WindowsSecurityEvent and
-// WindowsSecurityCoverage including audit-policy and governed-root children.
-// The existing coverage buffer spans source batches within each transaction,
-// and flushes before its window completion marker. File, USN, and other
-// cross-window families remain fail-closed pending separate acceptance. This path does not mark any
+// Gate 3I permits independent errors, Windows Security events/coverage, and
+// FileObservation with its NTFS identity and file-child relationships.
+// Every window reconstructs the bounded caches and flushes the pending hash
+// and ACE COPY writers before its atomic typed-window completion marker.
+// USN and remaining cross-window families remain fail-closed. This path does not mark any
 // generation Accepted or modify the canonical fi.* system of record.
 func StageBacklogTypedWindow(
     ctx context.Context,
@@ -149,6 +149,17 @@ WHERE receipt_sha256=$1 AND window_index=$2
 
     batchIDs,err:=lookupBacklogShadowBatchIDs(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch])
     if err!=nil{return err}
+    // The established file ingest path relies on window-scoped identity
+    // caches, as well as deferred hash and ACE COPY writers. These are
+    // reconstructed after each restart and MUST flush before committing.
+    ctx=context.WithValue(ctx,ntfsObjectCacheContextKey{},newNTFSObjectCache())
+    ctx=context.WithValue(ctx,ntfsScopeIdentityCacheContextKey{},newNTFSScopeIdentityCache())
+    hashCopy:=newContentHashCopyState()
+    ctx=context.WithValue(ctx,contentHashCopyContextKey{},hashCopy)
+    aceCopy:=newACECopyState()
+    ctx=context.WithValue(ctx,aceCopyContextKey{},aceCopy)
+    ntfsTiming:=&ntfsStageTimingCounters{}
+    ctx=context.WithValue(ctx,ntfsStageTimingContextKey{},ntfsTiming)
     var profile ingestStageProfile
     profile.coverageBuffer=newSecurityCoverageBulkState(&profile)
     var totalRecords int64
@@ -164,6 +175,8 @@ WHERE receipt_sha256=$1 AND window_index=$2
         totalBytes+=batch.Manifest.DataBytes
     }
     if err:=profile.coverageBuffer.flush(ctx,shadow);err!=nil{return err}
+    if err:=hashCopy.flush(ctx,shadow);err!=nil{return fmt.Errorf("FI typed window: final content hash COPY: %w",err)}
+    if err:=aceCopy.flushAll(ctx,shadow);err!=nil{return fmt.Errorf("FI typed window: final ACE COPY: %w",err)}
     if totalRecords!=int64(summary.RecordCount)||totalBytes!=int64(summary.DataBytes){
         return errors.New("FI typed window: processed counts differ from signed receipt")
     }
@@ -227,7 +240,7 @@ WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
 
 func backlogTypedKindAllowed(kind string) bool {
     switch kind {
-    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage":
+    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage", "FileObservation":
         return true
     default:
         return false
