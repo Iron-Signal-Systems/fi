@@ -45,6 +45,10 @@ func TestBacklogStagePrivateDurableWindowAndVerifiedReuse(t *testing.T){
 	path,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
 	if err!=nil{t.Fatal(err)}
 	if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,0,root);err!=nil{t.Fatal(err)}
+	// Simulate loss of the original ephemeral loader staging files. The
+	// durable copy must independently survive and verify on resume.
+	if err:=os.Remove(g.Batches[0].DataPath);err!=nil{t.Fatal(err)}
+	if err:=os.Remove(g.Batches[1].DataPath);err!=nil{t.Fatal(err)}
 	path2,err:=MaterializeBacklogWindow(ctx,g,limits,0,root)
 	if err!=nil || path2!=path{t.Fatalf("durable stage reuse: first=%s second=%s err=%v",path,path2,err)}
 	path3,err:=MaterializeBacklogWindow(ctx,g,limits,1,root)
