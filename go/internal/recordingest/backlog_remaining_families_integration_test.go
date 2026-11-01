@@ -15,7 +15,6 @@ import (
     "fmt"
     "os"
     "path/filepath"
-    "strings"
     "testing"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
@@ -29,16 +28,15 @@ import (
 func backlogRemainingFamiliesFixture(t *testing.T, badLate bool) *PreparedGeneration {
     t.Helper()
     source:="fi-private-all-families.iss.local"
-    receiptHex:="a"
-    transferHex:="c"
     if badLate {
         source="fi-private-all-families-late.iss.local"
-        receiptHex="b"
-        transferHex="d"
     }
     g:=privateTypedFixture(t,source,false)
-    g.ReceiptSHA256=strings.Repeat(receiptHex,64)
-    g.Receipt.TransferSHA256=strings.Repeat(transferHex,64)
+    g.Receipt.Descriptor.GenerationID="20261101T130000.000000000Z-all-families"
+    receiptDigest:=sha256.Sum256([]byte("fi-private-all-families-test/receipt/"+source))
+    transferDigest:=sha256.Sum256([]byte("fi-private-all-families-test/transfer/"+source))
+    g.ReceiptSHA256=hex.EncodeToString(receiptDigest[:])
+    g.Receipt.TransferSHA256=hex.EncodeToString(transferDigest[:])
     g.Receipt.DataBytes=0
 
     observed:="2026-11-01T13:00:00.123456789Z"
