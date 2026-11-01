@@ -30,7 +30,7 @@ const expectedBatches uint64 = 8399
 func run() error {
  var source, generation, pg, custody, recorded, private string
  var namespaces, enable bool
- var maxWindows int
+ var maxWindows, startWindow int
  flag.StringVar(&source,"source","","exact original signed FI source")
  flag.StringVar(&generation,"generation-id","","exact original signed FI generation")
  flag.StringVar(&pg,"postgres","","FI ingest PostgreSQL connection string")
@@ -39,10 +39,11 @@ func run() error {
  flag.StringVar(&private,"private-root","","pre-created private 0700 recovery directory")
  flag.BoolVar(&namespaces,"source-namespaces",false,"recorded receipt uses per-source directory")
  flag.BoolVar(&enable,"private-writes",false,"explicitly enable PRIVATE recovery writes")
- flag.IntVar(&maxWindows,"max-windows",2,"maximum private windows per invocation; 0 means entire generation")
+ flag.IntVar(&maxWindows,"max-windows",2,"private windows to process per invocation; 0 means to final window")
+ flag.IntVar(&startWindow,"start-window",0,"original signed window index to resume from")
  flag.Parse()
  if flag.NArg()!=0 || source!=sourceID || generation!=generationID ||
-  pg=="" || private=="" || !enable || maxWindows<0 || maxWindows>1000 {
+  pg=="" || private=="" || !enable || maxWindows<0 || maxWindows>1000 || startWindow<0 {
   return errors.New("exact source/generation, postgres, private-root, private-writes and max-windows 0..1000 required")
  }
  if !filepath.IsAbs(private)||!filepath.IsAbs(custody)||!filepath.IsAbs(recorded){
@@ -74,7 +75,8 @@ SELECT
  to_regclass('fi_recovery.typed_window') IS NOT NULL AND
  to_regclass('fi_recovery_projection.recorded_generation') IS NOT NULL AND
  to_regclass('fi_recovery_projection.source_record') IS NOT NULL AND
- has_table_privilege(current_user,'fi_recovery.typed_window','SELECT,INSERT') AND
+ has_table_privilege(current_user,'fi_recovery.typed_window','SELECT') AND
+ has_table_privilege(current_user,'fi_recovery.typed_window','INSERT') AND
  NOT has_table_privilege(current_user,'fi_recovery.typed_window','UPDATE,DELETE,TRUNCATE')
 `).Scan(&ready);err!=nil{return fmt.Errorf("FI private schema verification: %w",err)}
  if !ready{return errors.New("FI private recovery schemas and append-only rights are not installed")}
@@ -101,11 +103,12 @@ WHERE source_id=$1 AND generation_id=$2)
  windows,err:=recordingest.DescribeBacklogWindows(prepared,limits);if err!=nil{return err}
  fmt.Printf("FI REAL BACKLOG verified signed receipt records=%d batches=%d windows=%d receipt=%s load=%s\n",
   expectedRecords,expectedBatches,len(windows),prepared.ReceiptSHA256,time.Since(loadStarted).Round(time.Millisecond))
- if maxWindows==0 {maxWindows=len(windows)}
- if maxWindows>len(windows){maxWindows=len(windows)}
+ if startWindow>=len(windows){return fmt.Errorf("start window %d outside signed window count %d",startWindow,len(windows))}
+ end:=startWindow+maxWindows
+ if maxWindows==0||end>len(windows){end=len(windows)}
  var records uint64
  started:=time.Now()
- for i:=0;i<maxWindows;i++{
+ for i:=startWindow;i<end;i++{
   window:=windows[i]
   var times [4]time.Duration
   tick:=time.Now()
@@ -126,13 +129,13 @@ WHERE source_id=$1 AND generation_id=$2)
    times[0].Round(time.Millisecond),times[1].Round(time.Millisecond),times[2].Round(time.Millisecond),
    times[3].Round(time.Millisecond),time.Since(started).Round(time.Millisecond))
  }
- if maxWindows==len(windows){
+ if end==len(windows){
   verified,err:=recordingest.VerifyCompleteBacklogTypedGeneration(ctx,reader,prepared,limits)
   if err!=nil{return fmt.Errorf("FI whole-generation private verification: %w",err)}
   fmt.Printf("FI REAL BACKLOG PRIVATE COMPLETE windows=%d records=%d bytes=%d\n",verified.Windows,verified.Records,verified.DataBytes)
  }else {
-  fmt.Printf("FI REAL BACKLOG PAUSED after=%d windows durable_records_through=%d/%d; no Accepted journal or authoritative writes\n",
-   maxWindows,records,expectedRecords)
+  fmt.Printf("FI REAL BACKLOG PAUSED completed_to_window=%d durable_records_through=%d/%d; no Accepted journal or authoritative writes\n",
+   end,records,expectedRecords)
  }
  if strings.TrimSpace(prepared.ReceiptSHA256)==""{return errors.New("missing receipt")}
  return nil
