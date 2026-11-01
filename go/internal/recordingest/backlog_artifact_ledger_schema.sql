@@ -70,4 +70,23 @@ CREATE TABLE fi_recovery.source_window (
 );
 REVOKE ALL ON fi_recovery.pending_source_record, fi_recovery.source_window FROM PUBLIC;
 GRANT SELECT, INSERT ON fi_recovery.pending_source_record, fi_recovery.source_window TO fi_ingest;
+-- A typed-window marker commits in the same transaction as its private
+-- 49-table relational rows. This does not authorize query publication.
+CREATE TABLE fi_recovery.typed_window (
+    receipt_sha256 bytea NOT NULL CHECK (octet_length(receipt_sha256)=32),
+    window_index integer NOT NULL CHECK (window_index >= 0),
+    descriptor_sha256 bytea NOT NULL CHECK (octet_length(descriptor_sha256)=32),
+    shadow_generation_id bigint NOT NULL CHECK (shadow_generation_id > 0),
+    start_batch integer NOT NULL CHECK (start_batch >= 0),
+    end_batch integer NOT NULL CHECK (end_batch > start_batch),
+    committed_records bigint NOT NULL CHECK (committed_records > 0),
+    committed_bytes bigint NOT NULL CHECK (committed_bytes > 0),
+    ingest_version text NOT NULL,
+    completed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (receipt_sha256,window_index),
+    FOREIGN KEY (receipt_sha256,window_index)
+        REFERENCES fi_recovery.source_window(receipt_sha256,window_index)
+);
+REVOKE ALL ON fi_recovery.typed_window FROM PUBLIC;
+GRANT SELECT, INSERT ON fi_recovery.typed_window TO fi_ingest;
 COMMIT;
