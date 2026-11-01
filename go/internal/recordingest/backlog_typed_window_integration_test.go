@@ -256,5 +256,8 @@ SELECT
 	t.Run("usn-legacy-cross-window-and-m61-complete-capture",func(t *testing.T){
 		exerciseBacklogUSNWindows(t,ctx,reader,writer)
 	})
+	t.Run("remaining-five-record-families",func(t *testing.T){
+		exerciseBacklogRemainingFamilies(t,ctx,reader,writer)
+	})
 	t.Log("PASS: typed window recovery, complete signed generation proof, missing-window/tamper rejection, late rollback, zero canonical FI rows")
 }
