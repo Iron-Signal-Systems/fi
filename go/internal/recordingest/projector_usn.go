@@ -58,6 +58,14 @@ func projectUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID string, sou
 			return err
 		}
 	}
+	if sourceBound {
+		if enabled, _ := ctx.Value(backlogUSNCrossWindowContextKey{}).(bool); enabled {
+			state := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+			if err := checkBacklogUSNCaptureUnique(ctx, tx, state, sourceID, scopeID, value.SourceBatchSHA256); err != nil {
+				return err
+			}
+		}
+	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO fi.usn_read_boundary (
  source_record_id,observed_at,collection_method,ntfs_volume_id,journal_id,start_usn,next_usn,source_record_count,source_distinct_object_count,
@@ -72,11 +80,6 @@ INSERT INTO fi.usn_read_boundary (
 	}
 	if sourceBound {
 		state := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
-		if enabled, _ := ctx.Value(backlogUSNCrossWindowContextKey{}).(bool); enabled {
-			if err := checkBacklogUSNCaptureUnique(ctx, tx, state, sourceID, scopeID, value.SourceBatchSHA256); err != nil {
-				return err
-			}
-		}
 		if err := state.remember(sourceID, scopeID, value.SourceBatchSHA256, usnCaptureBoundary{
 			recordID: sourceRecordID, volumeID: volumeID, root: *value.RootIdentity,
 			expectedObjects: value.SourceDistinctObjectCount, expectedChanges: value.SourceRecordCount,
