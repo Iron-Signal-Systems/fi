@@ -16,7 +16,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -129,7 +128,7 @@ ORDER BY window_index DESC LIMIT 1
 	}
 
 	copyCols:=[]string{"receipt_sha256","window_index","batch_index","record_ordinal",
-		"version","record_kind","scope_id","written_at","record_bytes","record_sha256"}
+		"version","record_kind","scope_id","written_at","written_at_original","record_bytes","record_sha256"}
 	rows:=make([][]any,0,backlogSourceCopyRows)
 	flush:=func()error{
 		if len(rows)==0{return nil}
@@ -145,7 +144,7 @@ ORDER BY window_index DESC LIMIT 1
 			if err!=nil{return err}
 			rows=append(rows,[]any{receipt,index,batchIndex,ordinal,
 				item.Record.Version,item.Record.RecordKind,item.Record.ScopeID,item.WrittenAtUTC,
-				item.RecordBytes,digest})
+				item.Record.WrittenAt,item.RecordBytes,digest})
 			if len(rows)>=backlogSourceCopyRows{return flush()}
 			return nil
 		})
@@ -212,7 +211,7 @@ func scanBacklogWindowRecords(
 			digest,err:=hex.DecodeString(item.RecordSHA256)
 			if err!=nil{streamErr=err;break}
 			backlogHashSourceRow(h,batchIndex,count,item.Record.Version,item.Record.RecordKind,
-				item.Record.ScopeID,item.WrittenAtUTC,item.RecordBytes,digest)
+				item.Record.ScopeID,item.Record.WrittenAt,item.RecordBytes,digest)
 			if consume!=nil{
 				if err:=consume(batchIndex,count,item);err!=nil{streamErr=err;break}
 			}
@@ -235,7 +234,7 @@ func scanBacklogWindowRecords(
 // staged JSONL scanner; it is used both before commit and for restart proof.
 func hashBacklogDatabaseSourceRows(ctx context.Context,tx pgx.Tx,receipt []byte,index int)([]byte,uint64,uint64,error){
 	rows,err:=tx.Query(ctx,`
-SELECT batch_index,record_ordinal,version,record_kind,scope_id,written_at,record_bytes,record_sha256
+SELECT batch_index,record_ordinal,version,record_kind,scope_id,written_at_original,record_bytes,record_sha256
 FROM fi_recovery.pending_source_record
 WHERE receipt_sha256=$1 AND window_index=$2
 ORDER BY batch_index,record_ordinal
@@ -248,7 +247,7 @@ ORDER BY batch_index,record_ordinal
 		var batchIndex,recordBytes int
 		var ordinal int64
 		var version,kind,scope string
-		var written time.Time
+		var written string
 		var digest []byte
 		if err:=rows.Scan(&batchIndex,&ordinal,&version,&kind,&scope,&written,&recordBytes,&digest);err!=nil{return nil,0,0,err}
 		backlogHashSourceRow(h,batchIndex,ordinal,version,kind,scope,written,recordBytes,digest)
@@ -257,13 +256,13 @@ ORDER BY batch_index,record_ordinal
 	if err:=rows.Err();err!=nil{return nil,0,0,err}
 	return h.Sum(nil),n,bytes,nil
 }
-func backlogHashSourceRow(h hash.Hash,batchIndex int,ordinal int64,version,kind,scope string,written time.Time,bytes int,digest []byte){
+func backlogHashSourceRow(h hash.Hash,batchIndex int,ordinal int64,version,kind,scope,written string,bytes int,digest []byte){
 	backlogDigestNumber(h,uint64(batchIndex))
 	backlogDigestNumber(h,uint64(ordinal))
 	backlogDigestString(h,version)
 	backlogDigestString(h,kind)
 	backlogDigestString(h,scope)
-	backlogDigestString(h,written.UTC().Format(time.RFC3339Nano))
+	backlogDigestString(h,written)
 	backlogDigestNumber(h,uint64(bytes))
 	_,_=h.Write(digest)
 }
