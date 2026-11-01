@@ -29,7 +29,8 @@ const expectedBatches uint64 = 8399
 
 func run() error {
  var source, generation, pg, custody, recorded, private string
- var namespaces, enable, streamLoader bool
+ var namespaces, enable, streamLoader, indexedPrivate bool
+ var maxRuntime time.Duration
  var maxWindows, startWindow int
  flag.StringVar(&source,"source","","exact original signed FI source")
  flag.StringVar(&generation,"generation-id","","exact original signed FI generation")
@@ -40,6 +41,8 @@ func run() error {
  flag.BoolVar(&namespaces,"source-namespaces",false,"recorded receipt uses per-source directory")
  flag.BoolVar(&enable,"private-writes",false,"explicitly enable PRIVATE recovery writes")
  flag.BoolVar(&streamLoader,"stream-loader",false,"retain only requested window data while streaming and verifying entire signed custody")
+ flag.BoolVar(&indexedPrivate,"indexed-private",false,"PRIVATE-ONLY resume from earlier complete validated shadow metadata; partial custody scan is NOT complete transfer verification")
+ flag.DurationVar(&maxRuntime,"max-runtime",0,"hard run deadline including extraction and PostgreSQL operations, e.g. 10m")
  flag.IntVar(&maxWindows,"max-windows",2,"private windows to process per invocation; 0 means to final window")
  flag.IntVar(&startWindow,"start-window",0,"original signed window index to resume from")
  flag.Parse()
@@ -59,7 +62,14 @@ func run() error {
    return fmt.Errorf("private root %s must have exact 0700 permissions",p)
   }
  }
- ctx,stop:=context.WithCancel(context.Background());defer stop()
+ if maxRuntime<0 || maxRuntime>10*time.Minute {return errors.New("max-runtime must be between 0 and 10m")}
+ if indexedPrivate && (streamLoader||startWindow==0||maxWindows<1||maxWindows>2) {
+  return errors.New("indexed-private requires start-window > 0 and one or two selected windows; cannot combine with stream-loader")
+ }
+ ctx:=context.Background()
+ var stop context.CancelFunc
+ if maxRuntime>0 {ctx,stop=context.WithTimeout(ctx,maxRuntime)} else {ctx,stop=context.WithCancel(ctx)}
+ defer stop()
  canonical, state,err:=recordingest.OpenPostgreSQL(ctx,pg)
  if err!=nil{return err}
  defer canonical.Close(context.Background())
@@ -96,7 +106,10 @@ WHERE source_id=$1 AND generation_id=$2)
  }
  limits:=recordingest.BacklogWindowLimits{MaxRecords:32768,MaxDataBytes:256<<20}
  var prepared *recordingest.PreparedGeneration
- if streamLoader {
+ if indexedPrivate {
+  fmt.Printf("FI REAL BACKLOG INDEXED PRIVATE selective custody prefix start_window=%d count=%d; full FIGT verification deferred to final acceptance\\n",startWindow,maxWindows)
+  prepared,err=recordingest.LoadIndexedBacklogPrivateWindows(ctx,canonical,loadConfig,generation,limits,startWindow,maxWindows)
+ }else if streamLoader {
   if maxWindows<1||maxWindows>8 {
    return errors.New("stream-loader currently requires 1..8 requested windows")
   }
@@ -124,6 +137,7 @@ WHERE source_id=$1 AND generation_id=$2)
  if startWindow>=len(windows){return fmt.Errorf("start window %d outside signed window count %d",startWindow,len(windows))}
  end:=startWindow+maxWindows
  if maxWindows==0||end>len(windows){end=len(windows)}
+ if indexedPrivate && end==len(windows){return errors.New("indexed-private must not finish generation without complete signed custody revalidation")}
  var records uint64
  started:=time.Now()
  for i:=startWindow;i<end;i++{
