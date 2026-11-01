@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
 )
 
 // This tests stream selection against FI's already-tested real FIGT sealer,
@@ -103,6 +102,3 @@ func TestBacklogStreamingSelectedWindowsMatchSignedGeneration(t *testing.T) {
 	t.Log("PASS: whole signed transfer authenticated in one streamed pass; 2/4 data batches retained; identical signed window hashes; private stage copy verified; no PostgreSQL writes")
 }
 
-// Keep a compile-time check that our streaming fixture continues to use
-// the same recorder receipt authority as the established trust loader.
-var _ generationrecorder.RecordedReceipt
