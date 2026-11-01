@@ -70,8 +70,11 @@ func MaterializeBacklogWindow(ctx context.Context, g *PreparedGeneration, limits
 	if err:=ctx.Err();err!=nil{return "",err}
 	// A completed window directory is published only after every file was
 	// written and synced. Never overwrite an existing completed directory.
-	if _,err:=os.Lstat(ready);err==nil{return "",errors.New("FI backlog stage: concurrent publication conflict")}
-	else if !os.IsNotExist(err){return "",err}
+	if _, err := os.Lstat(ready); err == nil {
+		return "", errors.New("FI backlog stage: concurrent publication conflict")
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
 	if err:=os.Rename(tmp,ready);err!=nil{return "",fmt.Errorf("FI backlog stage: atomic window publication: %w",err)}
 	if err:=syncBacklogStageDir(generationDir);err!=nil{return "",fmt.Errorf("FI backlog stage: directory sync after publication: %w",err)}
 	return ready,nil
