@@ -29,7 +29,7 @@ const expectedBatches uint64 = 8399
 
 func run() error {
  var source, generation, pg, custody, recorded, private string
- var namespaces, enable bool
+ var namespaces, enable, streamLoader bool
  var maxWindows, startWindow int
  flag.StringVar(&source,"source","","exact original signed FI source")
  flag.StringVar(&generation,"generation-id","","exact original signed FI generation")
@@ -39,6 +39,7 @@ func run() error {
  flag.StringVar(&private,"private-root","","pre-created private 0700 recovery directory")
  flag.BoolVar(&namespaces,"source-namespaces",false,"recorded receipt uses per-source directory")
  flag.BoolVar(&enable,"private-writes",false,"explicitly enable PRIVATE recovery writes")
+ flag.BoolVar(&streamLoader,"stream-loader",false,"retain only requested window data while streaming and verifying entire signed custody")
  flag.IntVar(&maxWindows,"max-windows",2,"private windows to process per invocation; 0 means to final window")
  flag.IntVar(&startWindow,"start-window",0,"original signed window index to resume from")
  flag.Parse()
@@ -89,17 +90,34 @@ WHERE source_id=$1 AND generation_id=$2)
 
  fmt.Printf("FI REAL BACKLOG loading authenticated custody source=%s generation=%s\n",source,generation)
  loadStarted:=time.Now()
- prepared,err:=recordingest.LoadRecordedGeneration(recordingest.GenerationLoadConfig{
+ loadConfig:=recordingest.GenerationLoadConfig{
   CustodyRoot:custody,RecordedRoot:recorded,SourceID:source,SourceNamespaces:namespaces,
   MaxCanonicalBytes:68719476736,MaxEncodedBytes:68719476736,MaxManifestBytes:1048576,
- },generation)
+ }
+ limits:=recordingest.BacklogWindowLimits{MaxRecords:32768,MaxDataBytes:256<<20}
+ var prepared *recordingest.PreparedGeneration
+ if streamLoader {
+  if maxWindows<1||maxWindows>8 {
+   return errors.New("stream-loader currently requires 1..8 requested windows")
+  }
+  prepared,err=recordingest.LoadRecordedGenerationSelectedWindows(
+   loadConfig,generation,limits,startWindow,maxWindows,
+   func(p recordingest.BacklogStreamProgress){
+    if p.BatchesSeen==1 || p.BatchesSeen%128==0 || p.BatchesSeen==expectedBatches {
+     fmt.Printf("FI REAL BACKLOG STREAM inspected_batches=%d/%d records=%d/%d bytes=%d retained_batches=%d current_window=%d elapsed=%s\n",
+      p.BatchesSeen,expectedBatches,p.RecordsSeen,expectedRecords,p.DataBytesSeen,
+      p.RetainedBatches,p.WindowIndex,time.Since(loadStarted).Round(time.Millisecond))
+    }
+   })
+ }else{
+  prepared,err=recordingest.LoadRecordedGeneration(loadConfig,generation)
+ }
  if err!=nil{return fmt.Errorf("FI signed custody load: %w",err)}
  defer prepared.Close()
  if prepared.Receipt.RecordCount!=expectedRecords || prepared.Receipt.BatchCount!=expectedBatches ||
   prepared.Receipt.Descriptor.SourceID!=source || prepared.Receipt.Descriptor.GenerationID!=generation {
   return fmt.Errorf("FI signed receipt does not match target records=%d batches=%d",prepared.Receipt.RecordCount,prepared.Receipt.BatchCount)
  }
- limits:=recordingest.BacklogWindowLimits{MaxRecords:32768,MaxDataBytes:256<<20}
  windows,err:=recordingest.DescribeBacklogWindows(prepared,limits);if err!=nil{return err}
  fmt.Printf("FI REAL BACKLOG verified signed receipt records=%d batches=%d windows=%d receipt=%s load=%s\n",
   expectedRecords,expectedBatches,len(windows),prepared.ReceiptSHA256,time.Since(loadStarted).Round(time.Millisecond))
