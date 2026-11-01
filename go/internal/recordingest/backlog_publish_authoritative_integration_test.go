@@ -64,15 +64,15 @@ AND rg.source_id=$1 AND rg.generation_id=$2`,
 			`DELETE FROM fi.source_batch AS sb USING fi.recorded_generation AS rg
 WHERE sb.recorded_generation_id=rg.recorded_generation_id AND rg.source_id=$1 AND rg.generation_id=$2`,
 			`DELETE FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2`,
-			`DELETE FROM fi.ingest_journal WHERE source_id=$1 AND generation_id=$2 AND attempt_id=$3`,
 		}{
-			var err error
-			if count:=3;count==3 && query==`DELETE FROM fi.ingest_journal WHERE source_id=$1 AND generation_id=$2 AND attempt_id=$3`{
-				_,err=tx.Exec(c,query,source,g.Receipt.Descriptor.GenerationID,attemptID)
-			}else{
-				_,err=tx.Exec(c,query,source,g.Receipt.Descriptor.GenerationID)
+			if _,err:=tx.Exec(c,query,source,g.Receipt.Descriptor.GenerationID);err!=nil{
+				t.Errorf("bridge cleanup hierarchy: %v",err);return
 			}
-			if err!=nil{t.Errorf("bridge cleanup hierarchy: %v",err);return}
+		}
+		if _,err:=tx.Exec(c,
+			`DELETE FROM fi.ingest_journal WHERE source_id=$1 AND generation_id=$2 AND attempt_id=$3`,
+			source,g.Receipt.Descriptor.GenerationID,attemptID);err!=nil{
+			t.Errorf("bridge cleanup journal: %v",err);return
 		}
 		if err:=tx.Commit(c);err!=nil{t.Errorf("bridge cleanup commit: %v",err);return}
 		var generations,journal,records int64
