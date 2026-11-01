@@ -18,6 +18,11 @@ func TestBacklogTypedKindAdmissionIsExplicit(t *testing.T) {
         "USNReadBoundary": true,
         "USNObjectObservation": true,
         "USNContinuityGap": true,
+        "CollectorIdentity": true,
+        "DirectoryPrincipalSnapshot": true,
+        "LocalPrincipalSnapshot": true,
+        "SMBShareSnapshot": true,
+        "WindowsSecurityContinuityGap": true,
     }
     kinds:=SupportedRecordKinds()
     if len(kinds)!=13 {t.Fatalf("FI added or removed a record kind: review backlog admission (got %d)",len(kinds))}
