@@ -18,28 +18,6 @@ import (
 // process memory, and no schema or authority is added to the canonical SoR.
 type backlogUSNCrossWindowContextKey struct{}
 
-func checkBacklogUSNCaptureUnique(ctx context.Context, tx pgx.Tx, state *usnCaptureState, sourceID, scopeID, digest string) error {
-    if state == nil || state.sourceID != sourceID || state.generationID == "" || scopeID == "" {
-        return errors.New("FI backlog USN: invalid capture generation context")
-    }
-    raw, err := decodeHex(digest, 32, true, "usn_read_boundary.source_batch_sha256")
-    if err != nil { return err }
-    var exists bool
-    err = tx.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1
-    FROM fi.usn_read_boundary AS b
-    JOIN fi.source_record AS sr ON sr.source_record_id=b.source_record_id
-    JOIN fi.source_batch AS sb ON sb.source_batch_id=sr.source_batch_id
-    JOIN fi.recorded_generation AS rg ON rg.recorded_generation_id=sb.recorded_generation_id
-    WHERE rg.source_id=$1 AND rg.generation_id=$2 AND sr.scope_id=$3
-      AND b.source_batch_sha256=$4
-)`, sourceID, state.generationID, scopeID, raw).Scan(&exists)
-    if err != nil { return fmt.Errorf("FI backlog USN: check durable duplicate capture: %w", err) }
-    if exists { return errors.New("FI backlog USN: duplicate source-bound capture across windows") }
-    return nil
-}
-
 // Called only after the in-window map has no matching key. SQL reads are made
 // through the privateProjectionTx, and require this generation, source, scope,
 // digest, and a preceding boundary. Counts include all committed earlier
