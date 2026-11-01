@@ -32,6 +32,7 @@ func run() error {
  var namespaces, enable, streamLoader, indexedPrivate, preflightOnly, continuousPrivate bool
  var maxRuntime time.Duration
  var maxWindows, startWindow int
+ var securityProfile string
  flag.StringVar(&source,"source","","exact original signed FI source")
  flag.StringVar(&generation,"generation-id","","exact original signed FI generation")
  flag.StringVar(&pg,"postgres","","FI ingest PostgreSQL connection string")
@@ -45,6 +46,7 @@ func run() error {
  flag.BoolVar(&preflightOnly,"preflight-only",false,"read-only 10m indexed source preflight; no database writes or checkpoints")
  flag.BoolVar(&continuousPrivate,"continuous-private",false,"single signed custody stream, durable private commits for all remaining windows, full final verification; never Accepted")
  flag.DurationVar(&maxRuntime,"max-runtime",0,"hard run deadline including extraction and PostgreSQL operations, e.g. 10m")
+ flag.StringVar(&securityProfile,"security-profile","P1","fixed bounded security source COPY batch: P1 conservative, P3 benchmark candidate; immutable for this invocation")
  flag.IntVar(&maxWindows,"max-windows",2,"private windows to process per invocation; 0 means to final window")
  flag.IntVar(&startWindow,"start-window",0,"original signed window index to resume from")
  flag.Parse()
@@ -76,6 +78,14 @@ func run() error {
  var stop context.CancelFunc
  if maxRuntime>0 {ctx,stop=context.WithTimeout(ctx,maxRuntime)} else {ctx,stop=context.WithCancel(ctx)}
  defer stop()
+ if securityProfile!="P1" && securityProfile!="P3" {
+  return errors.New("FI backlog recovery permits only benchmarked P1/P3 security profiles")
+ }
+ var profileErr error
+ ctx,profileErr=recordingest.WithFixedSecurityBulkProfile(ctx,securityProfile)
+ if profileErr!=nil{return profileErr}
+ fmt.Printf("FI REAL BACKLOG CONFIG security_profile=%s max_window_records=32768 max_window_data_bytes=268435456\n",
+  recordingest.FixedSecurityBulkProfileName(ctx))
  canonical, state,err:=recordingest.OpenPostgreSQL(ctx,pg)
  if err!=nil{return err}
  defer canonical.Close(context.Background())
