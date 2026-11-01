@@ -38,11 +38,11 @@ func TestBacklogContinuousPrivateFullTransferAfterResume(t *testing.T){
   "host=%s port=55418 user=%s dbname=fi sslmode=disable connect_timeout=3",
   filepath.Join(root,"socket"),user)}
  admin,err:=pgx.Connect(ctx,connect("fi_m1_admin"));if err!=nil{t.Fatal(err)}
- defer admin.Close(context.Background())
+ t.Cleanup(func(){_ = admin.Close(context.Background())})
  writer,err:=pgx.Connect(ctx,connect("fi_ingest"));if err!=nil{t.Fatal(err)}
- defer writer.Close(context.Background())
+ t.Cleanup(func(){_ = writer.Close(context.Background())})
  reader,err:=pgx.Connect(ctx,connect("fi_ingest"));if err!=nil{t.Fatal(err)}
- defer reader.Close(context.Background())
+ t.Cleanup(func(){_ = reader.Close(context.Background())})
  for _,c:=range []struct{conn *pgx.Conn; role string}{{admin,"fi_m1_admin"},{writer,"fi_ingest"},{reader,"fi_ingest"}}{
   var who,db,port string
   if err:=c.conn.QueryRow(ctx,"SELECT current_user,current_database(),current_setting('port')").Scan(&who,&db,&port);err!=nil{t.Fatal(err)}
