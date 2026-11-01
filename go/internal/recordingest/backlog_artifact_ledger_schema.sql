@@ -39,6 +39,7 @@ CREATE TABLE fi_recovery.pending_source_record (
     record_kind text NOT NULL,
     scope_id text NOT NULL,
     written_at timestamptz NOT NULL,
+    written_at_original text NOT NULL CHECK (length(written_at_original) > 0),
     record_bytes integer NOT NULL CHECK (record_bytes > 0),
     record_sha256 bytea NOT NULL CHECK (octet_length(record_sha256)=32),
     PRIMARY KEY (receipt_sha256,batch_index,record_ordinal),
