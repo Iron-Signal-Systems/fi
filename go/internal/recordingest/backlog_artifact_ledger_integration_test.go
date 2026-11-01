@@ -52,15 +52,19 @@ func TestBacklogArtifactLedgerIsolatedAcceptance(t *testing.T) {
 	for _,item:=range []struct{conn *pgx.Conn;user string}{
 		{admin,"fi_m1_admin"},{runtime,"fi_ingest"},
 	}{
-		var who,db,port,pgVersion,dataDirectory string
+		var who,db,port,pgVersion string
 		if err:=item.conn.QueryRow(ctx,`
 SELECT current_user, current_database(),
-       current_setting('port'), current_setting('server_version_num'),
-       current_setting('data_directory')
-`).Scan(&who,&db,&port,&pgVersion,&dataDirectory);err!=nil{t.Fatal(err)}
-		if who!=item.user||db!="fi"||port!="55418"||!strings.HasPrefix(pgVersion,"18")||filepath.Clean(dataDirectory)!=filepath.Join(root,"data"){
-			t.Fatalf("STOP: wrong isolated fixture identity user=%s db=%s port=%s version=%s data_directory=%s",who,db,port,pgVersion,dataDirectory)
+       current_setting('port'), current_setting('server_version_num')
+`).Scan(&who,&db,&port,&pgVersion);err!=nil{t.Fatal(err)}
+		if who!=item.user||db!="fi"||port!="55418"||!strings.HasPrefix(pgVersion,"18"){
+			t.Fatalf("STOP: wrong isolated fixture identity user=%s db=%s port=%s version=%s",who,db,port,pgVersion)
 		}
+	}
+	var dataDirectory string
+	if err:=admin.QueryRow(ctx,"SELECT current_setting('data_directory')").Scan(&dataDirectory);err!=nil{t.Fatal(err)}
+	if filepath.Clean(dataDirectory)!=filepath.Join(root,"data"){
+		t.Fatalf("STOP: PostgreSQL data_directory mismatch: %s",dataDirectory)
 	}
 	var exists bool
 	if err:=admin.QueryRow(ctx,"SELECT to_regnamespace('fi_recovery') IS NOT NULL").Scan(&exists);err!=nil{t.Fatal(err)}
