@@ -263,3 +263,89 @@ SELECT
     }
     t.Log("PASS: all 5 remaining source families and child rows, complete recovery verification, replay, late rollback, zero canonical rows")
 }
+
+
+func backlogRecoveryRunnerFixture(t *testing.T, invalidLate bool) *PreparedGeneration {
+	t.Helper()
+	g := backlogRemainingFamiliesFixture(t, invalidLate)
+	source := "fi-private-recovery-runner.iss.local"
+	if invalidLate {
+		source = "fi-private-recovery-runner-late.iss.local"
+	}
+	g.Receipt.Descriptor.SourceID = source
+	g.Receipt.Descriptor.GenerationID = "20261101T140000.000000000Z-runner"
+	receipt := sha256.Sum256([]byte("fi-private-recovery-runner/receipt/" + source))
+	transfer := sha256.Sum256([]byte("fi-private-recovery-runner/transfer/" + source))
+	g.ReceiptSHA256 = hex.EncodeToString(receipt[:])
+	g.Receipt.TransferSHA256 = hex.EncodeToString(transfer[:])
+	return g
+}
+
+func exerciseBacklogRecoveryRunner(t *testing.T, ctx context.Context, reader, writer *pgx.Conn) {
+	t.Helper()
+	limits := BacklogWindowLimits{MaxRecords: 3, MaxDataBytes: 1 << 20}
+	g := backlogRecoveryRunnerFixture(t, false)
+	root := privateBacklogTestRoot(t)
+
+	// Simulate a crash after window zero's durable typed commit, then resume
+	// through the same public recovery function with a new SQL connection.
+	if _, err := MaterializeBacklogWindow(ctx, g, limits, 0, root); err != nil { t.Fatal(err) }
+	if err := RecordVerifiedBacklogArtifactWindow(ctx, writer, g, limits, 0, root); err != nil { t.Fatal(err) }
+	if err := StageVerifiedBacklogSourceWindow(ctx, writer, g, limits, 0, root); err != nil { t.Fatal(err) }
+	if err := StageBacklogTypedWindow(ctx, reader, writer, g, limits, 0, root); err != nil { t.Fatal(err) }
+	restarted, err := pgx.ConnectConfig(ctx, writer.Config().Copy())
+	if err != nil { t.Fatal(err) }
+	defer restarted.Close(context.Background())
+	result, err := RecoverBacklogGenerationToPrivateShadow(ctx, reader, restarted, g, limits, root)
+	if err != nil { t.Fatalf("resume private generation: %v", err) }
+	if result.Windows != 2 || result.Records != 6 || result.DataBytes != g.Receipt.DataBytes ||
+		result.SourceID != g.Receipt.Descriptor.SourceID || result.ReceiptSHA256 != g.ReceiptSHA256 {
+		t.Fatalf("invalid resumed generation: %+v", result)
+	}
+	if _, err := RecoverBacklogGenerationToPrivateShadow(ctx, reader, restarted, g, limits, root); err != nil {
+		t.Fatalf("idempotent complete-generation replay: %v", err)
+	}
+	var markers, sources, authoritative int64
+	if err := restarted.QueryRow(ctx, `
+SELECT
+ (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery_projection.source_record AS sr
+  JOIN fi_recovery_projection.source_batch AS sb ON sb.source_batch_id=sr.source_batch_id
+  JOIN fi_recovery_projection.recorded_generation AS rg ON rg.recorded_generation_id=sb.recorded_generation_id
+  WHERE rg.source_id=$2),
+ (SELECT count(*) FROM fi.recorded_generation WHERE source_id=$2)
+`, g.ReceiptSHA256, g.Receipt.Descriptor.SourceID).Scan(&markers,&sources,&authoritative); err != nil {
+		t.Fatal(err)
+	}
+	if markers != 2 || sources != 6 || authoritative != 0 {
+		t.Fatalf("resumed generation leak/collision markers=%d sources=%d authoritative=%d", markers, sources, authoritative)
+	}
+
+	// Fail after durable window zero, during a late typed record in window one.
+	// The runner must not emit a whole-generation result or commit partial
+	// window-one typed projections.
+	bad := backlogRecoveryRunnerFixture(t, true)
+	badRoot := privateBacklogTestRoot(t)
+	if _, err := RecoverBacklogGenerationToPrivateShadow(ctx, reader, restarted, bad, limits, badRoot); err == nil {
+		t.Fatal("runner accepted a generation with late invalid typed source")
+	}
+	if _, err := VerifyCompleteBacklogTypedGeneration(ctx, reader, bad, limits); err == nil {
+		t.Fatal("runner accepted partially recovered generation")
+	}
+	var failedMarkers, failedRecords, failedAuthoritative int64
+	if err := restarted.QueryRow(ctx, `
+SELECT
+ (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery_projection.source_record AS sr
+  JOIN fi_recovery_projection.source_batch AS sb ON sb.source_batch_id=sr.source_batch_id
+  JOIN fi_recovery_projection.recorded_generation AS rg ON rg.recorded_generation_id=sb.recorded_generation_id
+  WHERE rg.source_id=$2),
+ (SELECT count(*) FROM fi.recorded_generation WHERE source_id=$2)
+`, bad.ReceiptSHA256, bad.Receipt.Descriptor.SourceID).Scan(
+		&failedMarkers,&failedRecords,&failedAuthoritative); err != nil { t.Fatal(err) }
+	if failedMarkers != 1 || failedRecords != 3 || failedAuthoritative != 0 {
+		t.Fatalf("partial runner rollback invalid markers=%d rows=%d authoritative=%d",
+			failedMarkers, failedRecords, failedAuthoritative)
+	}
+	t.Log("PASS: one-call recovered generation after restart, safe replay, late typed rollback, no authoritative records")
+}
