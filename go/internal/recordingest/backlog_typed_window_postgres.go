@@ -50,12 +50,10 @@ func StageBacklogTypedWindow(
     // fail closed, rather than accidentally dropping their child projections.
     summary,err:=ReplayVerifiedBacklogSourceWindow(ctx,reader,generation,limits,index,privateRoot,
         func(_ int,_ int64,record SourceRecord)error{
-            switch record.Record.RecordKind {
-            case "NTFSCollectionError","SupportingSourceCollectionError","WindowsSecurityEvent":
-                return nil
-            default:
+            if !backlogTypedKindAllowed(record.Record.RecordKind) {
                 return fmt.Errorf("FI typed window: family %q requires cross-window projection acceptance",record.Record.RecordKind)
             }
+            return nil
         })
     if err!=nil{return fmt.Errorf("FI typed window: source preflight: %w",err)}
     if summary.RecordCount!=d.EndRecord-d.StartRecord||summary.DataBytes!=d.DataBytes{
@@ -223,4 +221,13 @@ WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
             gotRecords,gotBytes,records,bytes)
     }
     return nil
+}
+
+func backlogTypedKindAllowed(kind string) bool {
+    switch kind {
+    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent":
+        return true
+    default:
+        return false
+    }
 }
