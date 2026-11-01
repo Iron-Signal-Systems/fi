@@ -131,9 +131,12 @@ WHERE source_id=$1 AND generation_id=$2)
   result,err:=recordingest.RecoverBacklogContinuousPrivate(ctx,reader,canonical,loadConfig,generation,limits,private,startWindow,
    func(p recordingest.BacklogContinuousProgress){
     if p.WindowCommitted>=0 {
-     fmt.Printf("FI REAL BACKLOG DURABLE window=%d/%d inspected_batches=%d/%d records_through=%d/%d window=%s elapsed=%s\n",
+     fmt.Printf("FI REAL BACKLOG DURABLE window=%d/%d inspected_batches=%d/%d records_through=%d/%d artifact=%s ledger=%s source=%s typed=%s window=%s elapsed=%s\n",
       p.WindowCommitted+1,p.TotalWindows,p.BatchesSeen,p.TotalBatches,
-      p.RecordsDurable,expectedRecords,p.WindowDuration.Round(time.Millisecond),p.Elapsed.Round(time.Millisecond))
+      p.RecordsDurable,expectedRecords,
+      p.ArtifactDuration.Round(time.Millisecond),p.LedgerDuration.Round(time.Millisecond),
+      p.SourceDuration.Round(time.Millisecond),p.TypedDuration.Round(time.Millisecond),
+      p.WindowDuration.Round(time.Millisecond),p.Elapsed.Round(time.Millisecond))
     }else{
      fmt.Printf("FI REAL BACKLOG CONTINUOUS scanned_batches=%d/%d inspected_records=%d/%d durable_records=%d/%d elapsed=%s\n",
       p.BatchesSeen,p.TotalBatches,p.RecordsInspected,expectedRecords,p.RecordsDurable,expectedRecords,p.Elapsed.Round(time.Millisecond))
