@@ -100,7 +100,11 @@ WHERE source_id=$1 AND generation_id=$2)
 `,source,generation).Scan(&already);err!=nil{return err}
  if already{return errors.New("generation already authoritative; private recovery not required")}
 
- fmt.Printf("FI REAL BACKLOG loading authenticated custody source=%s generation=%s\n",source,generation)
+ if indexedPrivate {
+  fmt.Printf("FI REAL BACKLOG reading authenticated shadow batch index and selected custody prefix source=%s generation=%s; NOT full-transfer validation\n",source,generation)
+ }else{
+  fmt.Printf("FI REAL BACKLOG loading authenticated custody source=%s generation=%s\n",source,generation)
+ }
  loadStarted:=time.Now()
  loadConfig:=recordingest.GenerationLoadConfig{
   CustodyRoot:custody,RecordedRoot:recorded,SourceID:source,SourceNamespaces:namespaces,
