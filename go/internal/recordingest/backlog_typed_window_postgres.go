@@ -21,9 +21,11 @@ import (
 // one bounded window's actual typed projections to the PRIVATE relational
 // shadow, together with its completed-window marker, in one transaction.
 //
-// Gate 3G permits independent error record families and WindowsSecurityEvent
-// with its own matched-scope and event-field children. Security coverage,
-// File, USN, and other cross-batch families remain disabled until proven. This path does not mark any
+// Gate 3H permits independent error records, WindowsSecurityEvent and
+// WindowsSecurityCoverage including audit-policy and governed-root children.
+// The existing coverage buffer spans source batches within each transaction,
+// and flushes before its window completion marker. File, USN, and other
+// cross-window families remain fail-closed pending separate acceptance. This path does not mark any
 // generation Accepted or modify the canonical fi.* system of record.
 func StageBacklogTypedWindow(
     ctx context.Context,
@@ -225,7 +227,7 @@ WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
 
 func backlogTypedKindAllowed(kind string) bool {
     switch kind {
-    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent":
+    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage":
         return true
     default:
         return false
