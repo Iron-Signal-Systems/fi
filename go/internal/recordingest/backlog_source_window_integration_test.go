@@ -147,6 +147,13 @@ SELECT has_table_privilege(current_user,'fi_recovery.pending_source_record','UPD
 	if err:=StageVerifiedBacklogSourceWindow(ctx,conn,g,lim,1,privateRoot);err==nil{
 		t.Fatal("source window 1 accepted without source window 0")
 	}
+	if _,err:=ReplayVerifiedBacklogSourceWindow(ctx,conn,g,lim,1,privateRoot,
+		func(_ int,_ int64,_ SourceRecord)error{
+			t.Fatal("incomplete window unexpectedly reached projection visitor")
+			return nil
+		});err==nil{
+		t.Fatal("missing private source-window marker was accepted by projection replay")
+	}
 	if err:=StageVerifiedBacklogSourceWindow(ctx,conn,g,lim,0,privateRoot);err!=nil{t.Fatal(err)}
 	// Drop the connection to prove the transaction's durable committed state.
 	if err:=conn.Close(ctx);err!=nil{t.Fatal(err)}
@@ -156,6 +163,26 @@ SELECT has_table_privilege(current_user,'fi_recovery.pending_source_record','UPD
 		t.Fatalf("verified source-window replay should be idempotent: %v",err)
 	}
 	if err:=StageVerifiedBacklogSourceWindow(ctx,conn,g,lim,1,privateRoot);err!=nil{t.Fatal(err)}
+	// Replay window 0 after reconnect. Envelopes must be delivered in the
+	// exact two-batch / three-ordinal sequence from the signed source.
+	var delivered []string
+	stats,err:=ReplayVerifiedBacklogSourceWindow(ctx,conn,g,lim,0,privateRoot,
+		func(batchIndex int,ordinal int64,record SourceRecord)error{
+			if record.Record.RecordKind!="NTFSCollectionError"||record.RecordSHA256==""{
+				t.Fatal("replay record identity invalid")
+			}
+			delivered=append(delivered,fmt.Sprintf("%d/%d",batchIndex,ordinal))
+			return nil
+		})
+	if err!=nil{t.Fatal(err)}
+	if stats.BatchCount!=2||stats.RecordCount!=6||stats.DataBytes==0||
+		strings.Join(delivered,",")!="0/1,0/2,0/3,1/1,1/2,1/3"{
+		t.Fatalf("incorrect ordered projection input: %+v delivered=%v",stats,delivered)
+	}
+	if _,err:=ReplayVerifiedBacklogSourceWindow(ctx,conn,g,lim,0,privateRoot,
+		func(_ int,_ int64,_ SourceRecord)error{return fmt.Errorf("injected downstream rejection")});err==nil{
+		t.Fatal("downstream visitor failure was lost")
+	}
 	var sourceRows,markers,authoritative,authoritativeRows int64
 	if err:=conn.QueryRow(ctx,`
 SELECT
@@ -179,6 +206,13 @@ SELECT
 	if err:=os.WriteFile(tamper,original,0600);err!=nil{t.Fatal(err)}
 	if err:=StageVerifiedBacklogSourceWindow(ctx,conn,g,lim,0,privateRoot);err==nil{
 		t.Fatal("tampered staged source was accepted on replay")
+	}
+	if _,err:=ReplayVerifiedBacklogSourceWindow(ctx,conn,g,lim,0,privateRoot,
+		func(_ int,_ int64,_ SourceRecord)error{
+			t.Fatal("tampered source was delivered to projection visitor")
+			return nil
+		});err==nil{
+		t.Fatal("tampered private source was replayed")
 	}
 	// Late malformed source envelope after an earlier 1024-row COPY must
 	// roll back its entire window, including all previously copied rows.
