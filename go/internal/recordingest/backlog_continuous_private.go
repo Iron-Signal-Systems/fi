@@ -59,8 +59,25 @@ func RecoverBacklogContinuousPrivate(
  startWindow int,
  report func(BacklogContinuousProgress),
 ) (BacklogGenerationVerification,error) {
+ return recoverBacklogContinuousPrivateWithTrust(ctx,reader,writer,config,generationID,limits,privateRoot,startWindow,report,loadInstalledGenerationTrust)
+}
+
+// recoverBacklogContinuousPrivateWithTrust is used by the isolated acceptance
+// fixture to supply its own signed trust material. The deployed entry point
+// always uses FI's enrolled production trust.
+func recoverBacklogContinuousPrivateWithTrust(
+ ctx context.Context,
+ reader,writer *pgx.Conn,
+ config GenerationLoadConfig,
+ generationID string,
+ limits BacklogWindowLimits,
+ privateRoot string,
+ startWindow int,
+ report func(BacklogContinuousProgress),
+ resolveTrust generationTrustResolver,
+) (BacklogGenerationVerification,error) {
  var empty BacklogGenerationVerification
- if ctx==nil||reader==nil||writer==nil||reader==writer{
+ if ctx==nil||reader==nil||writer==nil||reader==writer||resolveTrust==nil{
   return empty,errors.New("FI continuous private: distinct reader and writer connections required")
  }
  if err:=ctx.Err();err!=nil{return empty,err}
@@ -191,7 +208,7 @@ SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
  WHERE source_id=$1 AND generation_id=$2)`,config.SourceID,generationID).Scan(&authoritative);err!=nil{return empty,err}
  if authoritative{return empty,errors.New("FI continuous private: generation already authoritative")}
 
- trust,err:=loadInstalledGenerationTrust(config.SourceID)
+ trust,err:=resolveTrust(config.SourceID)
  if err!=nil{return empty,err}
  if !strings.EqualFold(trust.Source.SourceID,config.SourceID)||
   trust.Root==nil||trust.BatchIssuer==nil||trust.BatchCRL==nil{
