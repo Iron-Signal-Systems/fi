@@ -209,5 +209,8 @@ SELECT
     if lateShadow!=0||lateMarkers!=0{
         t.Fatalf("STOP: late typed failure leaked generation/marker: %d/%d",lateShadow,lateMarkers)
     }
-    t.Log("PASS: independent typed projections commit by window, resume after disconnect, late rollback, zero canonical FI rows")
+    t.Run("file-ntfs-identity-hash-children-across-windows",func(t *testing.T){
+		exerciseBacklogFileWindows(t,ctx,reader,writer)
+	})
+	t.Log("PASS: independent typed projections commit by window, resume after disconnect, late rollback, zero canonical FI rows")
 }
