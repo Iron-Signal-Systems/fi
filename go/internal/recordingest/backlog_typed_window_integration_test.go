@@ -167,12 +167,53 @@ SELECT has_table_privilege('fi_ingest','fi_recovery.typed_window','UPDATE'),
         t.Fatal("window 1 accepted without completed typed window 0")
     }
     if err:=StageBacklogTypedWindow(ctx,reader,writer,g,limits,0,privateRoot);err!=nil{t.Fatal(err)}
+    // A private generation cannot be declared complete from its first
+    // committed typed window, even when all existing projections are valid.
+    if _,err:=VerifyCompleteBacklogTypedGeneration(ctx,reader,g,limits);err==nil {
+        t.Fatal("partial staged generation incorrectly verified as complete")
+    }
     if err:=writer.Close(ctx);err!=nil{t.Fatal(err)}
     writer,err=pgx.Connect(ctx,connect("fi_ingest"));if err!=nil{t.Fatal(err)}
     if err:=StageBacklogTypedWindow(ctx,reader,writer,g,limits,0,privateRoot);err!=nil{
         t.Fatalf("committed typed window not resumable: %v",err)
     }
     if err:=StageBacklogTypedWindow(ctx,reader,writer,g,limits,1,privateRoot);err!=nil{t.Fatal(err)}
+    completed,err:=VerifyCompleteBacklogTypedGeneration(ctx,reader,g,limits)
+    if err!=nil{t.Fatalf("whole-generation private verification failed: %v",err)}
+    if completed.Windows!=2||completed.Records!=6||
+        completed.DataBytes!=g.Receipt.DataBytes||completed.ReceiptSHA256!=g.ReceiptSHA256||
+        completed.SourceID!=g.Receipt.Descriptor.SourceID||
+        completed.GenerationID!=g.Receipt.Descriptor.GenerationID||
+        completed.ShadowGenerationID<=0{
+        t.Fatalf("wrong whole-generation verification result: %+v",completed)
+    }
+    // The source/typed identity comparison must detect an admin-side change
+    // after the window marker was committed. The test restores its private
+    // fixture immediately and never touches the canonical fi.* schema.
+    var tamperID int64
+    var originalScope string
+    if err:=admin.QueryRow(ctx,`
+SELECT sr.source_record_id,sr.scope_id
+FROM fi_recovery_projection.source_record sr
+JOIN fi_recovery_projection.source_batch sb ON sb.source_batch_id=sr.source_batch_id
+JOIN fi_recovery_projection.recorded_generation rg ON rg.recorded_generation_id=sb.recorded_generation_id
+WHERE rg.source_id=$1
+ORDER BY sr.source_record_id LIMIT 1
+`,g.Receipt.Descriptor.SourceID).Scan(&tamperID,&originalScope);err!=nil{t.Fatal(err)}
+    if _,err:=admin.Exec(ctx,`
+UPDATE fi_recovery_projection.source_record SET scope_id='fi-tamper-test'
+WHERE source_record_id=$1
+`,tamperID);err!=nil{t.Fatal(err)}
+    if _,err:=VerifyCompleteBacklogTypedGeneration(ctx,reader,g,limits);err==nil{
+        t.Fatal("private source/typed identity tamper was not detected")
+    }
+    if _,err:=admin.Exec(ctx,`
+UPDATE fi_recovery_projection.source_record SET scope_id=$2
+WHERE source_record_id=$1
+`,tamperID,originalScope);err!=nil{t.Fatal(err)}
+    if _,err:=VerifyCompleteBacklogTypedGeneration(ctx,reader,g,limits);err!=nil{
+        t.Fatalf("whole-generation verification not restored after fixture repair: %v",err)
+    }
     var typed,records,markers,authoritative int64
     if err:=writer.QueryRow(ctx,`
 SELECT
@@ -215,5 +256,5 @@ SELECT
 	t.Run("usn-legacy-cross-window-and-m61-complete-capture",func(t *testing.T){
 		exerciseBacklogUSNWindows(t,ctx,reader,writer)
 	})
-	t.Log("PASS: independent typed projections commit by window, resume after disconnect, late rollback, zero canonical FI rows")
+	t.Log("PASS: typed window recovery, complete signed generation proof, missing-window/tamper rejection, late rollback, zero canonical FI rows")
 }
