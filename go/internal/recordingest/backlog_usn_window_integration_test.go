@@ -123,7 +123,7 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 				case 0:kind="USNReadBoundary";payload=backlogUSNBoundary(false,1)
 				case 1:kind="USNObjectObservation";payload=backlogUSNObject(1000,false,false)
 				case 2:
-					if scenario=="split" || scenario=="split-overflow" {
+					if scenario=="split" || scenario=="split-overflow" || scenario=="split-missing" {
 						kind="USNReadBoundary"
 						payload=backlogUSNBoundary(true,1)
 					}else{
@@ -133,9 +133,9 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 			}else{
 				switch n{
 				case 0:
-					if scenario=="split" {
+					if scenario=="split" || scenario=="split-overflow" || scenario=="split-missing" {
 						kind="USNObjectObservation"
-						payload=backlogUSNObject(1001,true,false)
+						payload=backlogUSNObject(1001,scenario!="split-missing",false)
 					}else{
 						kind="USNReadBoundary"
 						expected:=1
@@ -343,5 +343,24 @@ SELECT
 		t.Fatalf("over-counted capture leaked second window markers=%d boundObjects=%d",
 			overflowMarkers,overflowBound)
 	}
-	t.Log("PASS: cross-window legacy and M6.1 binding, restart and replay, late rollback, incomplete final capture refusal, split overflow rollback, zero canonical SoR")
+	// The final window contains no M6.1 object. Its empty in-memory
+	// capture map must not conceal an unfinished earlier committed boundary.
+	missing:=backlogUSNFixture(t,"fi-usn-capture-cross-window-missing.iss.local","split-missing")
+	missingRoot:=privateBacklogTestRoot(t)
+	for i:=0;i<2;i++{
+		if _,err:=MaterializeBacklogWindow(ctx,missing,limits,i,missingRoot);err!=nil{t.Fatal(err)}
+		if err:=RecordVerifiedBacklogArtifactWindow(ctx,writer,missing,limits,i,missingRoot);err!=nil{t.Fatal(err)}
+		if err:=StageVerifiedBacklogSourceWindow(ctx,writer,missing,limits,i,missingRoot);err!=nil{t.Fatal(err)}
+	}
+	if err:=StageBacklogTypedWindow(ctx,reader,writer,missing,limits,0,missingRoot);err!=nil{t.Fatal(err)}
+	if err:=StageBacklogTypedWindow(ctx,reader,writer,missing,limits,1,missingRoot);err==nil||
+		!strings.Contains(err.Error(),"incomplete durable capture"){
+		t.Fatalf("missing M6.1 object across committed windows not rejected by SQL: %v",err)
+	}
+	var missingMarkers int64
+	if err:=writer.QueryRow(ctx,`
+SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')
+`,missing.ReceiptSHA256).Scan(&missingMarkers);err!=nil{t.Fatal(err)}
+	if missingMarkers!=1{t.Fatalf("missing capture committed final window: markers=%d",missingMarkers)}
+	t.Log("PASS: cross-window legacy and M6.1 binding, restart and replay, late rollback, incomplete final capture refusal, split overflow and missing-across-window rollback, zero canonical SoR")
 }
