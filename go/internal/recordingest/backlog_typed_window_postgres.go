@@ -254,7 +254,7 @@ WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
 
 func backlogTypedKindAllowed(kind string) bool {
     switch kind {
-    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage", "FileObservation", "USNReadBoundary", "USNObjectObservation", "USNContinuityGap":
+    case "NTFSCollectionError", "SupportingSourceCollectionError", "WindowsSecurityEvent", "WindowsSecurityCoverage", "FileObservation", "USNReadBoundary", "USNObjectObservation", "USNContinuityGap", "CollectorIdentity", "DirectoryPrincipalSnapshot", "LocalPrincipalSnapshot", "SMBShareSnapshot", "WindowsSecurityContinuityGap":
         return true
     default:
         return false
