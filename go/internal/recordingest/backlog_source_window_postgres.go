@@ -95,7 +95,7 @@ FROM fi_recovery.source_window WHERE receipt_sha256=$1 AND window_index=$2
 		}
 		// Recompute source digest AND database rows. The completed marker itself
 		// is never proof of the persisted rows' integrity or completeness.
-		sourceHash,records,bytes,err:=scanBacklogWindowRecords(ctx,g,d,privateRoot,nil)
+		sourceHash,records,bytes,err:=scanBacklogWindowRecords(ctx,g,d,index,privateRoot,nil)
 		if err!=nil{return err}
 		if records!=d.EndRecord-d.StartRecord||bytes!=d.DataBytes ||
 			subtle.ConstantTimeCompare(sourceHash,existingDigest)!=1 {
@@ -139,7 +139,7 @@ ORDER BY window_index DESC LIMIT 1
 		rows=rows[:0]
 		return nil
 	}
-	sourceHash,records,bytes,err:=scanBacklogWindowRecords(ctx,g,d,privateRoot,
+	sourceHash,records,bytes,err:=scanBacklogWindowRecords(ctx,g,d,index,privateRoot,
 		func(batchIndex int, ordinal int64, item SourceRecord)error{
 			digest,err:=hex.DecodeString(item.RecordSHA256)
 			if err!=nil{return err}
@@ -172,21 +172,63 @@ INSERT INTO fi_recovery.source_window (
 }
 
 func scanBacklogWindowRecords(
-	ctx context.Context,g *PreparedGeneration,d BacklogCheckpointDescriptor,root string,
-	consume func(batchIndex int,ordinal int64,item SourceRecord)error,
-)([]byte,uint64,uint64,error){
-	dir:=filepath.Join(root,"receipt-"+d.ReceiptSHA256,fmt.Sprintf("window-%08d",d.StartBatch))
-	// Directory identity must use the window ordinal, not StartBatch. Resolve
-	// it by the exact signed descriptor from the generation.
-	var index int = -1
-	for i,w:=range g.Batches {
-		if i==d.StartBatch && w.BatchID==d.FirstBatchID {break}
+	ctx context.Context, g *PreparedGeneration, d BacklogCheckpointDescriptor,
+	index int, root string,
+	consume func(batchIndex int, ordinal int64, item SourceRecord) error,
+) ([]byte, uint64, uint64, error) {
+	dir := filepath.Join(root, "receipt-"+d.ReceiptSHA256, fmt.Sprintf("window-%08d", index))
+	if err := verifyPrivateBacklogRoot(dir); err != nil { return nil,0,0,err }
+	if d.StartBatch < 0 || d.EndBatch > len(g.Batches) || d.StartBatch >= d.EndBatch {
+		return nil,0,0,errors.New("FI backlog source stage: invalid batch range")
 	}
-	limits:=BacklogWindowLimits{MaxRecords:1,MaxDataBytes:1}
-	_ = limits
-	_ = dir
-	_ = index
-	return nil,0,0,errors.New("FI backlog source stage: uninitialized window directory")
+	h := sha256.New()
+	var totalRecords,totalBytes uint64
+	for batchIndex:=d.StartBatch;batchIndex<d.EndBatch;batchIndex++{
+		if err:=ctx.Err();err!=nil{return nil,0,0,err}
+		batch:=g.Batches[batchIndex]
+		path:=filepath.Join(dir,fmt.Sprintf("batch-%08d.data",batchIndex))
+		info,err:=os.Lstat(path)
+		if err!=nil{return nil,0,0,err}
+		if info.Mode()&os.ModeSymlink!=0||!info.Mode().IsRegular()||
+			info.Mode().Perm()!=0600||info.Size()!=batch.Manifest.DataBytes {
+			return nil,0,0,fmt.Errorf("FI backlog source stage: data path metadata mismatch for batch %d",batchIndex)
+		}
+		file,err:=os.Open(path)
+		if err!=nil{return nil,0,0,err}
+		reader:=bufio.NewReaderSize(file,64<<10)
+		batchHash:=sha256.New()
+		var count,byteCount int64
+		var streamErr error
+		for {
+			if err:=ctx.Err();err!=nil{streamErr=err;break}
+			raw,err:=readBacklogSourceJSONL(reader)
+			if errors.Is(err,io.EOF){break}
+			if err!=nil{streamErr=err;break}
+			count++
+			byteCount+=int64(len(raw))
+			_,_=batchHash.Write(raw)
+			item,err:=PrepareSourceRecord(raw)
+			if err!=nil{streamErr=fmt.Errorf("FI backlog source stage: batch %d record %d: %w",batchIndex,count,err);break}
+			digest,err:=hex.DecodeString(item.RecordSHA256)
+			if err!=nil{streamErr=err;break}
+			backlogHashSourceRow(h,batchIndex,count,item.Record.Version,item.Record.RecordKind,
+				item.Record.ScopeID,item.WrittenAtUTC,item.RecordBytes,digest)
+			if consume!=nil{
+				if err:=consume(batchIndex,count,item);err!=nil{streamErr=err;break}
+			}
+		}
+		closeErr:=file.Close()
+		if streamErr!=nil{return nil,0,0,errors.Join(streamErr,closeErr)}
+		if closeErr!=nil{return nil,0,0,closeErr}
+		if count!=int64(batch.Manifest.RecordCount) ||
+			byteCount!=batch.Manifest.DataBytes ||
+			hex.EncodeToString(batchHash.Sum(nil))!=batch.Manifest.DataSHA256 {
+			return nil,0,0,fmt.Errorf("FI backlog source stage: staged batch %d violates signed manifest count/bytes/SHA",batchIndex)
+		}
+		totalRecords+=uint64(count)
+		totalBytes+=uint64(byteCount)
+	}
+	return h.Sum(nil),totalRecords,totalBytes,nil
 }
 
 // hashBacklogDatabaseSourceRows calculates the same canonical digest as the
