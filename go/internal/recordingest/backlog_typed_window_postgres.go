@@ -113,7 +113,7 @@ WHERE receipt_sha256=$1 AND window_index=$2
         if !found||id!=shadowID{return errors.New("FI typed window: shadow generation identity changed")}
         if err:=verifyBacklogShadowWindowCounts(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch],
             int64(summary.RecordCount),int64(summary.DataBytes));err!=nil{return err}
-        if err:=verifyGenerationProjectionCoverage(ctx,shadow,id);err!=nil{return err}
+        if err:=verifyBacklogWindowProjectionCoverage(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch]);err!=nil{return err}
         return tx.Commit(ctx)
     }
     if !errors.Is(err,pgx.ErrNoRows){return err}
@@ -187,7 +187,7 @@ WHERE receipt_sha256=$1 AND window_index=$2
     }
     if err:=verifyBacklogShadowWindowCounts(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch],
         totalRecords,totalBytes);err!=nil{return err}
-    if err:=verifyGenerationProjectionCoverage(ctx,shadow,id);err!=nil{return err}
+    if err:=verifyBacklogWindowProjectionCoverage(ctx,shadow,id,generation.Batches[d.StartBatch:d.EndBatch]);err!=nil{return err}
     // Intermediate bounded windows may commit unfinished M6.1 captures.
     // The final window requires complete durable SQL counts for EVERY capture,
     // including captures that began in previously committed windows.
