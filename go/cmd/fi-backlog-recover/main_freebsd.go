@@ -29,7 +29,7 @@ const expectedBatches uint64 = 8399
 
 func run() error {
  var source, generation, pg, custody, recorded, private string
- var namespaces, enable, streamLoader, indexedPrivate bool
+ var namespaces, enable, streamLoader, indexedPrivate, preflightOnly bool
  var maxRuntime time.Duration
  var maxWindows, startWindow int
  flag.StringVar(&source,"source","","exact original signed FI source")
@@ -42,12 +42,13 @@ func run() error {
  flag.BoolVar(&enable,"private-writes",false,"explicitly enable PRIVATE recovery writes")
  flag.BoolVar(&streamLoader,"stream-loader",false,"retain only requested window data while streaming and verifying entire signed custody")
  flag.BoolVar(&indexedPrivate,"indexed-private",false,"PRIVATE-ONLY resume from earlier complete validated shadow metadata; partial custody scan is NOT complete transfer verification")
+ flag.BoolVar(&preflightOnly,"preflight-only",false,"read-only 10m indexed source preflight; no database writes or checkpoints")
  flag.DurationVar(&maxRuntime,"max-runtime",0,"hard run deadline including extraction and PostgreSQL operations, e.g. 10m")
  flag.IntVar(&maxWindows,"max-windows",2,"private windows to process per invocation; 0 means to final window")
  flag.IntVar(&startWindow,"start-window",0,"original signed window index to resume from")
  flag.Parse()
  if flag.NArg()!=0 || source!=sourceID || generation!=generationID ||
-  pg=="" || private=="" || !enable || maxWindows<0 || maxWindows>1000 || startWindow<0 {
+  pg=="" || private=="" || (!enable&&!preflightOnly) || maxWindows<0 || maxWindows>1000 || startWindow<0 {
   return errors.New("exact source/generation, postgres, private-root, private-writes and max-windows 0..1000 required")
  }
  if !filepath.IsAbs(private)||!filepath.IsAbs(custody)||!filepath.IsAbs(recorded){
@@ -63,6 +64,7 @@ func run() error {
   }
  }
  if maxRuntime<0 || maxRuntime>10*time.Minute {return errors.New("max-runtime must be between 0 and 10m")}
+ if preflightOnly && (!indexedPrivate||enable){return errors.New("preflight-only must use indexed-private WITHOUT private-writes")}
  if indexedPrivate && (streamLoader||startWindow==0||maxWindows<1||maxWindows>2) {
   return errors.New("indexed-private requires start-window > 0 and one or two selected windows; cannot combine with stream-loader")
  }
@@ -132,12 +134,21 @@ WHERE source_id=$1 AND generation_id=$2)
   return fmt.Errorf("FI signed receipt does not match target records=%d batches=%d",prepared.Receipt.RecordCount,prepared.Receipt.BatchCount)
  }
  windows,err:=recordingest.DescribeBacklogWindows(prepared,limits);if err!=nil{return err}
- fmt.Printf("FI REAL BACKLOG verified signed receipt records=%d batches=%d windows=%d receipt=%s load=%s\n",
-  expectedRecords,expectedBatches,len(windows),prepared.ReceiptSHA256,time.Since(loadStarted).Round(time.Millisecond))
+ if indexedPrivate {
+  fmt.Printf("FI REAL BACKLOG INDEXED selected prefix hashes match previously authenticated shadow index records=%d batches=%d windows=%d receipt=%s partial_read=%s; NOT full transfer revalidation\n",
+   expectedRecords,expectedBatches,len(windows),prepared.ReceiptSHA256,time.Since(loadStarted).Round(time.Millisecond))
+ }else{
+  fmt.Printf("FI REAL BACKLOG verified signed receipt records=%d batches=%d windows=%d receipt=%s load=%s\n",
+   expectedRecords,expectedBatches,len(windows),prepared.ReceiptSHA256,time.Since(loadStarted).Round(time.Millisecond))
+ }
  if startWindow>=len(windows){return fmt.Errorf("start window %d outside signed window count %d",startWindow,len(windows))}
  end:=startWindow+maxWindows
  if maxWindows==0||end>len(windows){end=len(windows)}
  if indexedPrivate && end==len(windows){return errors.New("indexed-private must not finish generation without complete signed custody revalidation")}
+ if preflightOnly {
+  fmt.Printf("FI REAL BACKLOG PREFLIGHT ONLY selected_windows=%d..%d; no private writes, no accepted record, no authoritative changes\n",startWindow,end-1)
+  return nil
+ }
  var records uint64
  started:=time.Now()
  for i:=startWindow;i<end;i++{
