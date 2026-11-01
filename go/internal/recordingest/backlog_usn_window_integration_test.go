@@ -123,7 +123,7 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 				case 0:kind="USNReadBoundary";payload=backlogUSNBoundary(false,1)
 				case 1:kind="USNObjectObservation";payload=backlogUSNObject(1000,false,false)
 				case 2:
-					if scenario=="split" {
+					if scenario=="split" || scenario=="split-overflow" {
 						kind="USNReadBoundary"
 						payload=backlogUSNBoundary(true,1)
 					}else{
@@ -142,7 +142,9 @@ func backlogUSNFixture(t *testing.T,source,scenario string)*PreparedGeneration{
 						if scenario=="incomplete" {expected=2}
 						payload=backlogUSNBoundary(true,expected)
 					}
-				case 1:kind="USNObjectObservation";payload=backlogUSNObject(1001,true,false)
+				case 1:
+					kind="USNObjectObservation"
+					payload=backlogUSNObject(1001,scenario!="split",false)
 				case 2:
 					kind="USNObjectObservation"
 					payload=backlogUSNObject(1002,false,scenario=="late-invalid")
@@ -271,10 +273,9 @@ SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'he
 `,incomplete.ReceiptSHA256).Scan(&incompleteMarkers);err!=nil{t.Fatal(err)}
 	if incompleteMarkers!=1{t.Fatalf("M6.1 incomplete typed window improperly committed: %d",incompleteMarkers)}
 
-	// A source-bound capture with its boundary at the end of window zero
-	// and its object at the start of window one is not yet reconstructable
-	// after restart. Reject the first window instead of accepting partial
-	// source-bound capture authority.
+	// A capture boundary is durably committed at the end of window zero.
+	// After reconnect, its object in window one must recover the exact
+	// generation/scope/digest binding and remaining counts from SQL.
 	split:=backlogUSNFixture(t,"fi-usn-capture-cross-window.iss.local","split")
 	splitRoot:=privateBacklogTestRoot(t)
 	for i:=0;i<2;i++{
@@ -282,14 +283,65 @@ SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'he
 		if err:=RecordVerifiedBacklogArtifactWindow(ctx,writer,split,limits,i,splitRoot);err!=nil{t.Fatal(err)}
 		if err:=StageVerifiedBacklogSourceWindow(ctx,writer,split,limits,i,splitRoot);err!=nil{t.Fatal(err)}
 	}
-	if err:=StageBacklogTypedWindow(ctx,reader,writer,split,limits,0,splitRoot);err==nil||
-		!strings.Contains(err.Error(),"capture completeness"){
-		t.Fatalf("split source-bound capture was not rejected before durable typed commit: %v",err)
+	if err:=StageBacklogTypedWindow(ctx,reader,writer,split,limits,0,splitRoot);err!=nil{
+		t.Fatalf("split M6.1 first window failed: %v",err)
 	}
-	var splitMarkers int64
+	restarted,err:=pgx.ConnectConfig(ctx,writer.Config().Copy())
+	if err!=nil{t.Fatal(err)}
+	defer restarted.Close(context.Background())
+	if err:=StageBacklogTypedWindow(ctx,reader,restarted,split,limits,1,splitRoot);err!=nil{
+		t.Fatalf("split M6.1 cross-window restore failed: %v",err)
+	}
+	if err:=StageBacklogTypedWindow(ctx,reader,restarted,split,limits,1,splitRoot);err!=nil{
+		t.Fatalf("split M6.1 replay failed: %v",err)
+	}
+	var splitMarkers,splitObjects,splitBound,splitCanonical int64
+	if err:=restarted.QueryRow(ctx,`
+SELECT
+ (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery_projection.usn_object_observation AS o
+  JOIN fi_recovery_projection.source_record AS sr ON sr.source_record_id=o.source_record_id
+  JOIN fi_recovery_projection.source_batch AS sb ON sb.source_batch_id=sr.source_batch_id
+  JOIN fi_recovery_projection.recorded_generation AS rg ON rg.recorded_generation_id=sb.recorded_generation_id
+  WHERE rg.source_id=$2),
+ (SELECT count(*) FROM fi_recovery_projection.usn_object_observation AS o
+  JOIN fi_recovery_projection.source_record AS sr ON sr.source_record_id=o.source_record_id
+  JOIN fi_recovery_projection.source_batch AS sb ON sb.source_batch_id=sr.source_batch_id
+  JOIN fi_recovery_projection.recorded_generation AS rg ON rg.recorded_generation_id=sb.recorded_generation_id
+  WHERE rg.source_id=$2 AND o.source_batch_sha256 IS NOT NULL),
+ (SELECT count(*) FROM fi.recorded_generation WHERE source_id=$2)
+`,split.ReceiptSHA256,split.Receipt.Descriptor.SourceID).Scan(
+        &splitMarkers,&splitObjects,&splitBound,&splitCanonical);err!=nil{t.Fatal(err)}
+	if splitMarkers!=2||splitObjects!=4||splitBound!=1||splitCanonical!=0{
+		t.Fatalf("split capture SQL mismatch: windows=%d objects=%d bound=%d canonical=%d",
+			splitMarkers,splitObjects,splitBound,splitCanonical)
+	}
+	// More objects than a preceding bound capture permits must roll back the
+	// entire second window, retaining only the first durable marker.
+	overflow:=backlogUSNFixture(t,"fi-usn-capture-cross-window-overflow.iss.local","split-overflow")
+	overflowRoot:=privateBacklogTestRoot(t)
+	for i:=0;i<2;i++{
+		if _,err:=MaterializeBacklogWindow(ctx,overflow,limits,i,overflowRoot);err!=nil{t.Fatal(err)}
+		if err:=RecordVerifiedBacklogArtifactWindow(ctx,writer,overflow,limits,i,overflowRoot);err!=nil{t.Fatal(err)}
+		if err:=StageVerifiedBacklogSourceWindow(ctx,writer,overflow,limits,i,overflowRoot);err!=nil{t.Fatal(err)}
+	}
+	if err:=StageBacklogTypedWindow(ctx,reader,writer,overflow,limits,0,overflowRoot);err!=nil{t.Fatal(err)}
+	if err:=StageBacklogTypedWindow(ctx,reader,writer,overflow,limits,1,overflowRoot);err==nil{
+		t.Fatal("over-counted split M6.1 capture was accepted")
+	}
+	var overflowMarkers,overflowBound int64
 	if err:=writer.QueryRow(ctx,`
-SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')
-`,split.ReceiptSHA256).Scan(&splitMarkers);err!=nil{t.Fatal(err)}
-	if splitMarkers!=0{t.Fatalf("cross-window M6.1 capture leaked typed progress: %d",splitMarkers)}
-	t.Log("PASS: cross-window legacy USN binding, same-window M6.1 capture, changes/reasons, continuity gap, restart, late rollback, incomplete and split capture refusal, zero canonical SoR")
+SELECT
+ (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery_projection.usn_object_observation AS o
+  JOIN fi_recovery_projection.source_record AS sr ON sr.source_record_id=o.source_record_id
+  JOIN fi_recovery_projection.source_batch AS sb ON sb.source_batch_id=sr.source_batch_id
+  JOIN fi_recovery_projection.recorded_generation AS rg ON rg.recorded_generation_id=sb.recorded_generation_id
+  WHERE rg.source_id=$2 AND o.source_batch_sha256 IS NOT NULL)
+`,overflow.ReceiptSHA256,overflow.Receipt.Descriptor.SourceID).Scan(&overflowMarkers,&overflowBound);err!=nil{t.Fatal(err)}
+	if overflowMarkers!=1||overflowBound!=0{
+		t.Fatalf("over-counted capture leaked second window markers=%d boundObjects=%d",
+			overflowMarkers,overflowBound)
+	}
+	t.Log("PASS: cross-window legacy and M6.1 binding, restart and replay, late rollback, incomplete final capture refusal, split overflow rollback, zero canonical SoR")
 }
