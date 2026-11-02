@@ -43,4 +43,5 @@ jobs:
       - name: Cross-batch typed COPY and late rollback acceptance
         env:
           FI_TYPED_CHUNK_PG_DSN: 'host=127.0.0.1 port=5432 user=fi_typed_test password=isolated-only-test dbname=fi_typed_chunks_integration sslmode=disable'
-        run: go test -tags fi_typed_chunk_pg_integration -count=1 -run '^TestBacklogTypedChunksPostgres$' -v ./internal/recordingest
+        run: go test -tags fi_typed_chunk_pg_integration -count=1 -run '^TestBacklog(TypedChunks|SecurityChunk)Postgres
+ -v ./internal/recordingest
