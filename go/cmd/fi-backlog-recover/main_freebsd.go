@@ -68,9 +68,10 @@ func run() error {
 	var source, generation, pg, custody, recorded, private string
 	var namespaces, enable, streamLoader, indexedPrivate, preflightOnly, continuousPrivate bool
 	var maxRuntime time.Duration
-	var maxWindows, startWindow int
+	var maxWindows, startWindow, processingChunkRecords int
 	var securityProfile, windowProfile string
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
+	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental private joined-source COPY rows across signed batches (32768,65536,98304,131072); W128 continuous only; zero retains existing behavior")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
 	flag.StringVar(&generation, "generation-id", "", "exact original signed FI generation")
 	flag.StringVar(&pg, "postgres", "", "FI ingest PostgreSQL connection string")
@@ -111,6 +112,16 @@ func run() error {
 	if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
 		return err
 	}
+	if processingChunkRecords != 0 {
+		if windowProfile != "W128" || !continuousPrivate {
+			return errors.New("FI processing-chunk-records requires W128 continuous-private; existing paths remain unchanged")
+		}
+		switch processingChunkRecords {
+		case 32768, 65536, 98304, 131072:
+		default:
+			return errors.New("FI processing-chunk-records must be 32768,65536,98304,131072")
+		}
+	}
 	if maxRuntime < 0 || maxRuntime > 10*time.Minute {
 		return errors.New("max-runtime must be between 0 and 10m")
 	}
@@ -131,6 +142,13 @@ func run() error {
 		ctx, stop = context.WithCancel(ctx)
 	}
 	defer stop()
+	if processingChunkRecords != 0 {
+		var chunkErr error
+		ctx, chunkErr = recordingest.WithBacklogJoinedSourceChunkRecords(ctx, processingChunkRecords)
+		if chunkErr != nil {
+			return chunkErr
+		}
+	}
 	if securityProfile != "P1" && securityProfile != "P3" {
 		return errors.New("FI backlog recovery permits only benchmarked P1/P3 security profiles")
 	}
@@ -230,7 +248,7 @@ WHERE source_id=$1 AND generation_id=$2)
 		MaxCanonicalBytes: 68719476736, MaxEncodedBytes: 68719476736, MaxManifestBytes: 1048576,
 	}
 	if continuousPrivate {
-		fmt.Printf("FI REAL BACKLOG CONTINUOUS PRIVATE start_window=%d original_signed_generation=%s\n", startWindow, generation)
+		fmt.Printf("FI REAL BACKLOG CONTINUOUS PRIVATE start_window=%d original_signed_generation=%s processing_chunk_records=%d\n", startWindow, generation, processingChunkRecords)
 		began := time.Now()
 		lastWindow := startWindow - 1
 		var durableThisRun uint64
