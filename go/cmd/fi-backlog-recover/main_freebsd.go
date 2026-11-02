@@ -27,8 +27,8 @@ const generationID = "20261030T000032.061323100Z-3e38b2210771462c"
 const expectedRecords uint64 = 15140785
 const expectedBatches uint64 = 8399
 
-// Window profiles define separate checkpoint chains. W128 cannot reuse W32
-// markers and must begin against an empty isolated private recovery database.
+// Window profiles define separate checkpoint chains. Non-W32 profiles cannot
+// reuse W32 markers and must begin against empty isolated private recovery.
 func privateWindowLimits(name string) (recordingest.BacklogWindowLimits, error) {
 	switch name {
 	case "W32":
@@ -40,12 +40,12 @@ func privateWindowLimits(name string) (recordingest.BacklogWindowLimits, error) 
 	case "W128":
 		return recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}, nil
 	default:
-		return recordingest.BacklogWindowLimits{}, errors.New("FI backlog recovery: window-profile must be W32 or W128")
+		return recordingest.BacklogWindowLimits{}, errors.New("FI backlog recovery: window-profile must be W32, W64, W96, or W128")
 	}
 }
 
-// The only W128 write modes are a fresh first-window source scan and a
-// continuous resume over already committed W128 descriptors.
+// Experimental write modes are a fresh first-window source scan and a
+// continuous resume over committed descriptors from the SAME window profile.
 func validatePrivateWindowMode(profile string, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly bool, startWindow, maxWindows int) error {
 	if profile == "W32" {
 		return nil // Preserve original W32 mode compatibility.
