@@ -19,6 +19,38 @@ import (
 // Production generation ingestion and the independent replay verifier are unchanged.
 type joinedBacklogSourceKey struct{}
 
+// Joined-source COPY chunks may span original signed source-batch boundaries,
+// but every row retains its original batch index and ordinal. This changes
+// ONLY the private, transaction-bound source-ledger COPY; P3/F3 typed COPY
+// limits are independent and unchanged.
+const backlogDefaultJoinedSourceChunkRecords = 8192
+
+type joinedBacklogChunkContextKey struct{}
+
+func WithBacklogJoinedSourceChunkRecords(ctx context.Context, records int) (context.Context, error) {
+    if ctx == nil {
+        return nil, errors.New("FI joined source: context required")
+    }
+    switch records {
+    case 32768, 65536, 98304, 131072:
+        return context.WithValue(ctx, joinedBacklogChunkContextKey{}, records), nil
+    default:
+        return nil, errors.New("FI joined source: chunk records must be 32768, 65536, 98304, or 131072")
+    }
+}
+
+func joinedBacklogChunkRecords(ctx context.Context) int {
+    if ctx != nil {
+        if n, ok := ctx.Value(joinedBacklogChunkContextKey{}).(int); ok {
+            switch n {
+            case 32768, 65536, 98304, 131072:
+                return n
+            }
+        }
+    }
+    return backlogDefaultJoinedSourceChunkRecords
+}
+
 type joinedBacklogSource struct {
 	tx         pgx.Tx
 	receipt    []byte
@@ -26,6 +58,8 @@ type joinedBacklogSource struct {
 	index      int
 	batchIndex int
 	rows       [][]any
+	chunkRows  int
+	copyCalls  uint64
 	digest     hash.Hash
 	records    uint64
 	bytes      uint64
@@ -89,8 +123,10 @@ WHERE receipt_sha256=$1 AND window_index=$2`, receipt, index-1).Scan(&priorDescr
 	if subtle.ConstantTimeCompare(priorDescriptor, prev) != 1 || priorEndBatch != d.StartBatch || priorEndRecord != int64(d.StartRecord) {
 		return nil, errors.New("FI joined source: previous source marker is discontinuous")
 	}
+	chunkRows := joinedBacklogChunkRecords(ctx)
 	return &joinedBacklogSource{tx: tx, receipt: receipt, descriptor: d, index: index,
-		rows: make([][]any, 0, 8192), digest: sha256.New(), families: families}, nil
+		chunkRows: chunkRows, rows: make([][]any, 0, backlogDefaultJoinedSourceChunkRecords),
+		digest: sha256.New(), families: families}, nil
 }
 
 func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRecord) error {
@@ -114,7 +150,7 @@ func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRe
 	s.records++
 	s.bytes += uint64(p.RecordBytes)
 	s.families[p.Record.RecordKind]++
-	if len(s.rows) == cap(s.rows) {
+	if len(s.rows) >= s.chunkRows {
 		return s.flush(ctx)
 	}
 	return nil
@@ -134,6 +170,7 @@ func (s *joinedBacklogSource) flush(ctx context.Context) error {
 		return fmt.Errorf("FI joined source: COPY mismatch %d of %d", got, len(s.rows))
 	}
 	s.rows = s.rows[:0]
+	s.copyCalls++
 	return nil
 }
 
@@ -145,6 +182,8 @@ func (s *joinedBacklogSource) finish(ctx context.Context) error {
 	if err := s.flush(ctx); err != nil {
 		return err
 	}
+	fmt.Printf("FI JOINED SOURCE COPY CHUNKS window=%d chunk_limit=%d calls=%d records=%d\n",
+		s.index, s.chunkRows, s.copyCalls, s.records)
 	d := s.descriptor
 	if s.records != d.EndRecord-d.StartRecord || s.bytes != d.DataBytes {
 		return fmt.Errorf("FI joined source: source totals records=%d/%d bytes=%d/%d",
