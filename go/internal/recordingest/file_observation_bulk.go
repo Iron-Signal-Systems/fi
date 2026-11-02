@@ -57,8 +57,9 @@ func (s *fileObservationBulkState) add(ctx context.Context, tx pgx.Tx, record fi
 	if s == nil || tx == nil || record.sourceID == "" || record.sourceRecordID <= 0 || record.bytes <= 0 {
 		return errors.New("FI file observation bulk input is incomplete")
 	}
-	if len(s.records) >= fileObservationBulkMaxRecords ||
-		(len(s.records) > 0 && s.bytes+record.bytes > fileObservationBulkMaxBytes) {
+	limits := fileBulkLimitsFromContext(ctx)
+	if len(s.records) >= limits.ObserveMaxRecords ||
+		(len(s.records) > 0 && record.bytes > limits.ObserveMaxBytes-s.bytes) {
 		if err := s.flush(ctx, tx); err != nil {
 			return err
 		}
@@ -90,7 +91,7 @@ func copyFileObservationBulk(ctx context.Context, tx pgx.Tx, pending []fileObser
 	if len(pending) == 0 {
 		return nil
 	}
-	if ctx == nil || tx == nil || len(pending) > fileObservationBulkMaxRecords {
+	if ctx == nil || tx == nil || len(pending) > fileBulkLimitsFromContext(ctx).ObserveMaxRecords {
 		return errors.New("FI file observation COPY input is incomplete or exceeds bounds")
 	}
 

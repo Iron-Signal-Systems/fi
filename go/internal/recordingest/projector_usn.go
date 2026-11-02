@@ -96,6 +96,14 @@ func projectUSNObjectObservation(ctx context.Context, tx pgx.Tx, sourceID string
 	var err error
 	if value.SourceBatchSHA256 != "" {
 		captureState, _ = ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		if enabled, _ := ctx.Value(backlogUSNCrossWindowContextKey{}).(bool); enabled && captureState != nil {
+			key := usnCaptureKey{sourceID: sourceID, scopeID: scopeID, sourceBatchSHA256: value.SourceBatchSHA256}
+			if _, found := captureState.boundaries[key]; !found {
+				if err := restoreBacklogUSNCapture(ctx, tx, captureState, sourceID, scopeID, value.SourceBatchSHA256, sourceRecordID); err != nil {
+					return err
+				}
+			}
+		}
 		capture, err = captureState.resolve(sourceID, scopeID, value.SourceBatchSHA256, sourceRecordID)
 		if err == nil {
 			boundaryRecordID, volumeID = capture.recordID, capture.volumeID

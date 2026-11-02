@@ -460,6 +460,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var contiguousSecurity int
 	var pendingFiles []fileSourceBulkRecord
 	var pendingFileBytes int64
+	fileLimits := fileBulkLimitsFromContext(ctx)
 	fileBulk := newFileObservationBulkState()
 	ctx = context.WithValue(ctx, fileObservationBulkContextKey{}, fileBulk)
 	flushFiles := func() error {
@@ -555,6 +556,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		}
 		// Coverage records can span source batches. Flush before the next
 		// distinct kind to preserve relational projection order.
+		if joinedSource := joinedBacklogSourceFromContext(ctx); joinedSource != nil {
+			if err := joinedSource.add(ctx, ordinal, prepared); err != nil {
+				return ordinal, fmt.Errorf("FI joined source: %w", err)
+			}
+		}
 		if prepared.Record.RecordKind != "WindowsSecurityCoverage" {
 			if err := profile.coverageBuffer.flush(ctx, tx); err != nil {
 				return ordinal, fmt.Errorf("%w: batch %s Security coverage COPY: %v", ErrSourceRecordRejected, batch.BatchID, err)
@@ -596,8 +602,8 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			return ordinal, err
 		}
 		if prepared.Record.RecordKind == "FileObservation" || prepared.Record.RecordKind == "USNObjectObservation" {
-			if len(pendingFiles) >= fileSourceBulkMaxRecords ||
-				(len(pendingFiles) > 0 && pendingFileBytes+int64(prepared.RecordBytes) > fileSourceBulkMaxBytes) {
+			if len(pendingFiles) >= fileLimits.SourceMaxRecords ||
+				(len(pendingFiles) > 0 && int64(prepared.RecordBytes) > fileLimits.SourceMaxBytes-pendingFileBytes) {
 				if err := flushFiles(); err != nil {
 					return ordinal, err
 				}

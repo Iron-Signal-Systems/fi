@@ -39,6 +39,7 @@ func (s *contentHashCopyState) add(
 		return fmt.Errorf("FI content hash COPY row has %d columns", len(row))
 	}
 
+	limits := fileBulkLimitsFromContext(ctx)
 	size := 160
 
 	for _, v := range row {
@@ -50,7 +51,7 @@ func (s *contentHashCopyState) add(
 		}
 	}
 
-	if size > contentHashCopyMaxBytes {
+	if size > limits.HashMaxBytes {
 		if err := s.flush(ctx, tx); err != nil {
 			return err
 		}
@@ -58,8 +59,8 @@ func (s *contentHashCopyState) add(
 	}
 
 	if len(s.rows) > 0 &&
-		(len(s.rows) >= contentHashCopyMaxRows ||
-			s.bytes+size > contentHashCopyMaxBytes) {
+		(len(s.rows) >= limits.HashMaxRows ||
+			size > limits.HashMaxBytes-s.bytes) {
 		if err := s.flush(ctx, tx); err != nil {
 			return err
 		}
@@ -68,7 +69,7 @@ func (s *contentHashCopyState) add(
 	s.rows = append(s.rows, row)
 	s.bytes += size
 
-	if len(s.rows) >= contentHashCopyMaxRows {
+	if len(s.rows) >= limits.HashMaxRows {
 		return s.flush(ctx, tx)
 	}
 

@@ -33,7 +33,7 @@ const (
 	fileReplaySource  = "fi-file-replay.iss.local"
 	fileReplayScope   = "fi-copy-file-replay"
 	fileReplayDefault = 1024
-	fileReplayMaximum = 4096
+	fileReplayMaximum = 16384
 )
 
 // TestCopyLatencyFileGenerationReplay uses the real signed-generation ingest
@@ -64,12 +64,22 @@ func TestCopyLatencyFileGenerationReplay(t *testing.T) {
 	if value := os.Getenv("FI_COPY_LATENCY_FILE_RECORDS"); value != "" {
 		count, err = strconv.Atoi(value)
 		if err != nil || count < 1 || count > fileReplayMaximum {
-			t.Fatal("FI_COPY_LATENCY_FILE_RECORDS must be 1..4096")
+			t.Fatal("FI_COPY_LATENCY_FILE_RECORDS must be 1..16384")
 		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	// A profile can only be selected inside this explicitly enabled isolated
+	// signed-generation test. Ordinary worker ingestion always uses F1.
+	if name := os.Getenv("FI_COPY_LATENCY_FILE_PROFILE"); name != "" {
+		ctx, err = withFixedFileBulkProfile(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	limits := fileBulkLimitsFromContext(ctx)
+	t.Logf("FI FILE PROFILE name=%s source_rows=%d source_bytes=%d observation_rows=%d observation_bytes=%d hash_rows=%d hash_bytes=%d child_rows=%d", limits.Name, limits.SourceMaxRecords, limits.SourceMaxBytes, limits.ObserveMaxRecords, limits.ObserveMaxBytes, limits.HashMaxRows, limits.HashMaxBytes, limits.ChildMaxRows)
 
 	connect := func(user string) string {
 		return fmt.Sprintf(
@@ -349,7 +359,7 @@ func fileReplayUTF16Path(path string) string {
 // failure the transaction rolls back and the test fails closed.
 func cleanupFileReplay(t *testing.T, admin *pgx.Conn, sourceID, generationID, attemptID string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	tx, err := admin.Begin(ctx)
@@ -401,6 +411,14 @@ WHERE child.source_record_id=sr.source_record_id
 		return
 	}
 	// Identity rows belong exclusively to this reserved synthetic source.
+	// Temporary supporting index for NTFS parent FK checks.
+	// Created and dropped inside the same cleanup transaction.
+	if _, err := tx.Exec(ctx, `CREATE INDEX fi_file_replay_parent_cleanup_idx
+	    ON fi.file_observation(parent_ntfs_object_id)
+	    WHERE parent_ntfs_object_id IS NOT NULL`); err != nil {
+		t.Errorf("create isolated cleanup FK index: %v", err)
+		return
+	}
 	for _, query := range []string{
 		`DELETE FROM fi.governed_root WHERE source_id=$1`,
 		`DELETE FROM fi.ntfs_object
@@ -412,6 +430,10 @@ WHERE child.source_record_id=sr.source_record_id
 			t.Errorf("clean up isolated NTFS identities: %v", err)
 			return
 		}
+	}
+	if _, err := tx.Exec(ctx, `DROP INDEX fi.fi_file_replay_parent_cleanup_idx`); err != nil {
+		t.Errorf("remove isolated cleanup FK index: %v", err)
+		return
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Errorf("commit isolated file fixture cleanup: %v", err)

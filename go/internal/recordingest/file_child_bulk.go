@@ -13,10 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Each group is already bounded by the existing 1,024-record/8-MiB file
-// projection envelope. Stream rows can outnumber file observations, so each
-// COPY call is independently bounded as well. All writes remain in the caller's
-// original generation transaction.
+// Each group is bounded by the selected file observation record/byte envelope.
+// Stream rows can outnumber file observations, so each COPY call has a separate
+// bounded row count. Child fan-out memory must be measured before larger
+// experimental profiles can be considered for production. All writes remain
+// in the caller's original generation transaction.
 const fileChildCopyMaxRows = 1024
 
 type fileChildBulkTable struct {
@@ -32,8 +33,9 @@ func (t *fileChildBulkTable) copy(ctx context.Context, tx pgx.Tx) error {
 	if ctx == nil || tx == nil {
 		return fmt.Errorf("FI %s child COPY requires transaction and context", t.name)
 	}
-	for offset := 0; offset < len(t.rows); offset += fileChildCopyMaxRows {
-		end := offset + fileChildCopyMaxRows
+	maxRows := fileBulkLimitsFromContext(ctx).ChildMaxRows
+	for offset := 0; offset < len(t.rows); offset += maxRows {
+		end := offset + maxRows
 		if end > len(t.rows) {
 			end = len(t.rows)
 		}

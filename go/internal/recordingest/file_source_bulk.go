@@ -36,7 +36,7 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 	if ctx == nil || tx == nil || profile == nil || sourceBatchID <= 0 {
 		return errors.New("FI FileObservation source COPY inputs are incomplete")
 	}
-	if len(pending) > fileSourceBulkMaxRecords {
+	if len(pending) > fileBulkLimitsFromContext(ctx).SourceMaxRecords {
 		return errors.New("FI FileObservation source COPY exceeds record limit")
 	}
 	for i, item := range pending {

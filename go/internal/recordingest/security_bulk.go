@@ -213,7 +213,7 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	var writtenFields int64
 	for cursor.hasNext() {
 		chunk := &securityFieldCopyChunk{
-			cursor: cursor, maxRows: securityFieldCopyMaxRows, maxBytes: securityFieldCopyMaxBytes,
+			cursor: cursor, maxRows: securityFieldCopyRowsForContext(ctx), maxBytes: securityFieldCopyBytesForContext(ctx),
 		}
 		fieldCopyStarted := time.Now()
 		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_field"},

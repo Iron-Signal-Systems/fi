@@ -62,6 +62,16 @@ func TestSerialMixedGenerationReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	fileProfile := os.Getenv("FI_SERIAL_MIXED_FILE_PROFILE")
+	if fileProfile == "" {
+		fileProfile = "F1"
+	}
+	ctx, err = withFixedFileBulkProfile(ctx, fileProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("FI SERIAL MIXED FILE PROFILE name=%s", fileProfile)
+
 	connect := func(user string) string {
 		return fmt.Sprintf("host=%s port=55418 user=%s dbname=fi sslmode=disable connect_timeout=3",
 			filepath.Join(root, "socket"), user)
@@ -251,7 +261,7 @@ func cleanupSerialMixedReplay(t *testing.T, admin *pgx.Conn, source, generation,
 		t.Error("STOP: refusing cleanup of an unrecognized source")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	tx, err := admin.Begin(ctx)
 	if err != nil {
@@ -297,6 +307,13 @@ WHERE sb.recorded_generation_id=rg.recorded_generation_id
 		t.Errorf("mixed journal cleanup: %v", err)
 		return
 	}
+	// Transaction-scoped support for NTFS parent FK checks.
+	if _, err := tx.Exec(ctx, `CREATE INDEX fi_serial_mixed_parent_cleanup_idx
+	    ON fi.file_observation(parent_ntfs_object_id)
+	    WHERE parent_ntfs_object_id IS NOT NULL`); err != nil {
+		t.Errorf("create mixed cleanup index: %v", err)
+		return
+	}
 	for _, q := range []string{
 		`DELETE FROM fi.governed_root WHERE source_id=$1`,
 		`DELETE FROM fi.ntfs_object WHERE ntfs_volume_id IN
@@ -307,6 +324,10 @@ WHERE sb.recorded_generation_id=rg.recorded_generation_id
 			t.Errorf("mixed identity cleanup: %v", err)
 			return
 		}
+	}
+	if _, err := tx.Exec(ctx, `DROP INDEX fi.fi_serial_mixed_parent_cleanup_idx`); err != nil {
+		t.Errorf("drop mixed cleanup index: %v", err)
+		return
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Errorf("commit isolated mixed cleanup: %v", err)
