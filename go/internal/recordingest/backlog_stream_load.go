@@ -22,6 +22,18 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
 )
 
+// A recovery WINDOW may contain 1GiB of source bytes, but the first-window
+// streaming loader only holds ONE signed batch in RAM. Preserve the old
+// per-batch 256MiB bound independently of the wider window budget.
+const backlogStreamBufferedBatchMaxBytes uint64 = 256 << 20
+
+func backlogStreamBatchBufferLimit(windowBytes uint64) uint64 {
+	if windowBytes > backlogStreamBufferedBatchMaxBytes {
+		return backlogStreamBufferedBatchMaxBytes
+	}
+	return windowBytes
+}
+
 // BacklogStreamProgress reports a successfully inspected batch. It is NOT a
 // verified whole generation or an authoritative ingest checkpoint.
 type BacklogStreamProgress struct {
@@ -74,7 +86,7 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 		return nil, errors.New("FI stream loader: nonnegative start and 1..8 selected windows required")
 	}
 	if limits.MaxRecords == 0 || limits.MaxDataBytes == 0 ||
-		limits.MaxDataBytes > 256<<20 || limits.MaxDataBytes > math.MaxInt64-1 {
+		limits.MaxDataBytes > 1<<30 || limits.MaxDataBytes > math.MaxInt64-1 {
 		return nil, errors.New("FI stream loader: invalid bounded window limits")
 	}
 	receiptRoot := config.RecordedRoot
@@ -143,6 +155,7 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 	var pendingName string
 	var pendingInspection spool.DataInspection
 	var buffer bytes.Buffer
+	batchBufferMax := backlogStreamBatchBufferLimit(limits.MaxDataBytes)
 	// Streaming artifact names are ordered as data,manifest pairs by the
 	// canonical transport framing. Reject any unexpected order or filename.
 	factory := func(desc transportgeneration.Descriptor) (transportgeneration.CanonicalArtifactHandler, error) {
@@ -161,11 +174,11 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 				// A bounded in-memory buffer avoids writing and deleting 60 GiB
 				// of unrelated source data just to discover window boundaries.
 				inspection, err := spool.InspectData(io.TeeReader(
-					io.LimitReader(reader, int64(limits.MaxDataBytes)+1), &buffer))
+					io.LimitReader(reader, int64(batchBufferMax)+1), &buffer))
 				if err != nil {
 					return fmt.Errorf("FI stream loader: inspect %s: %w", name, err)
 				}
-				if inspection.DataBytes <= 0 || uint64(inspection.DataBytes) > limits.MaxDataBytes ||
+				if inspection.DataBytes <= 0 || uint64(inspection.DataBytes) > batchBufferMax ||
 					int64(buffer.Len()) != inspection.DataBytes {
 					return errors.New("FI stream loader: batch data exceeds bounded memory budget")
 				}
