@@ -94,7 +94,7 @@ func recoverBacklogContinuousPrivateWithTrust(
 	if startWindow < 1 {
 		return empty, errors.New("FI continuous private: requires an existing committed prefix")
 	}
-	if limits.MaxRecords == 0 || limits.MaxDataBytes == 0 || limits.MaxDataBytes > 256<<20 {
+	if limits.MaxRecords == 0 || limits.MaxDataBytes == 0 || limits.MaxDataBytes > 1<<30 {
 		return empty, errors.New("FI continuous private: bounded window limits required")
 	}
 	if err := verifyPrivateBacklogRoot(privateRoot); err != nil {
