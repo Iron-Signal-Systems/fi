@@ -120,6 +120,10 @@ grep 'FI REAL BACKLOG PAUSED completed_to_window=1' "$FI_BENCH_OUTPUT_ROOT/W128/
   stop "W128 seed did not report committed first window"
 [ "$(psql_check "SELECT count(*) FROM fi_recovery.typed_window")" = 1 ] ||
   stop "W128 database first typed window not durable"
+[ "$(psql_check "SELECT count(*) FROM fi_recovery_projection.source_batch")" = 8399 ] ||
+  stop "W128 database source-batch index not complete"
+seed_hash=$(psql_check "SELECT encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window WHERE window_index=0")
+[ "${#seed_hash}" -eq 64 ] || stop "W128 seed descriptor fingerprint missing"
 printf '%s FI CHUNK BENCH W128 initial private checkpoint durable\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 
 # Make one consistent source snapshot, then restore to three NEW, empty
@@ -141,6 +145,10 @@ for profile in W32 W64 W96; do
        stop "$profile PostgreSQL restore failed; see restore-$profile.log"
     [ "$(psql_check "SELECT count(*) FROM fi_recovery.typed_window")" = 1 ] ||
        stop "$profile missing cloned W128 committed checkpoint"
+    [ "$(psql_check "SELECT count(*) FROM fi_recovery_projection.source_batch")" = 8399 ] ||
+       stop "$profile incomplete authenticated source-batch index after clone"
+    clone_hash=$(psql_check "SELECT encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window WHERE window_index=0")
+    [ "$clone_hash" = "$seed_hash" ] || stop "$profile seed descriptor differs from W128"
     mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT/$profile" "$FI_BENCH_OUTPUT_ROOT/$profile/private"
     cp -Rp "$seed_root/." "$FI_BENCH_OUTPUT_ROOT/$profile/private/" ||
         stop "$profile private artifact seed copy failed"
