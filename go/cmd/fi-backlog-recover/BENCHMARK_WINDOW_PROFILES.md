@@ -128,3 +128,34 @@ Preflight validates that all four private databases are empty *before*
 creating files or starting ingestion. Each profile's full signed-custody
 seed phase is untimed; then it receives exactly one 10-minute continuous
 benchmark. Total elapsed duration is therefore **more than 40 minutes**.
+
+## New disposable cluster provisioner (fi-dev jail)
+
+The existing 55418 FI PostgreSQL test cluster is preserved. It currently
+contains canonical FI tables but no private recovery schemas, so it must
+NOT be used as any of the four targets.
+
+Run `provision_four_benchmark_clusters.sh` **inside fi-dev as jwood** with
+`FI_BENCH_NEW_CLUSTER_ROOT` pointing to an unused
+`/home/jwood/fi-window-bench-<unique>` directory and
+`FI_BENCH_BINARY_SHA256` set to the backend binary's verified SHA.
+
+The provisioner initializes and starts PostgreSQL 18.6 instances at Unix
+socket ports 55431/55432/55433/55434. Each gets a fresh `fi` database,
+`fi_owner` and `fi_ingest` roles, original five canonical migrations,
+and the existing test-validated private ledger/projection schema generator.
+It does not touch PostgreSQL 55418, production jails, or old checkpoints.
+Any failure aborts without deleting or resetting an existing cluster.
+
+The generated `fi-four-profiles.env` contains the **host-visible** jail
+filesystem path for each PostgreSQL Unix socket, plus
+`FI_BENCH_PSQL_JAIL=fi-dev`. This makes the host runner execute
+`psql` through `jexec -U jwood fi-dev` while the Go recovery executable
+runs on the backend host. Host psql installation is not needed.
+
+The operator must still verify the new cluster directories and adjust the
+recorded-receipt namespace setting to match the successful previous recovery.
+Only then change the generated confirmation selector from NO to YES. Because
+the Go executable and PostgreSQL live in different FreeBSD jail namespaces,
+the host must be able to access the jail's filesystem Unix sockets at the
+generated paths; any socket-connectivity error aborts the first trial.
