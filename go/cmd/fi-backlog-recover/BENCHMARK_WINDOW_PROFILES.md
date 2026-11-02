@@ -90,3 +90,41 @@ cross-batch security coverage ordering, deterministic source hashes, rollback
 and restart behavior. The existing 4,096-record P3 flush is not equivalent to
 a 32K internal COPY chunk. Do not label this window-size experiment as that
 different experiment.
+
+## Automated one-command runner
+
+`run_four_window_benchmarks.sh` runs W32, W64, W96, and W128 sequentially,
+**only after four separately prepared, empty, isolated PostgreSQL test
+instances exist**. It never provisions, resets, truncates, or drops a
+database. It stops on failed preflight or a failed run.
+
+On fi-dev (FreeBSD), pull the branch, run the package tests, build
+`fi-backlog-recover-window-profiles`, run
+`sh -n cmd/fi-backlog-recover/run_four_window_benchmarks.sh`, and record
+`sha256 -q` for the executable. Copy the resulting executable and runner
+to the benchmark host through the established deployment path. Do not run
+the older `fi_backend_ten_minute.sh`: it uses the active W32 state.
+
+On the benchmark host, copy `four_profiles.env.example` to a
+**root-owned 0600 file outside the repository** and fill in all four test
+cluster DSNs, the correct binary SHA, custody/receipt roots, and a new,
+unused output path. `FI_BENCH_ISOLATED_CLUSTERS_CONFIRMED=YES` is an
+explicit assertion by the operator that no DSN points to production.
+The runner also needs the `psql`, `sha256`, and standard FreeBSD
+utilities on its execution host.
+
+Example once all prerequisites are prepared:
+
+```sh
+set -a
+. /root/fi-four-profiles.env
+set +a
+/bin/sh /home/jwood/fi-real-backlog-20261101/run_four_window_benchmarks.sh
+```
+
+All seed/timed logs, vmstat/iostat/process samples, each terminal record
+count, and a combined SUMMARY.txt go into the new output directory.
+Preflight validates that all four private databases are empty *before*
+creating files or starting ingestion. Each profile's full signed-custody
+seed phase is untimed; then it receives exactly one 10-minute continuous
+benchmark. Total elapsed duration is therefore **more than 40 minutes**.
