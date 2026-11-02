@@ -27,6 +27,37 @@ const generationID = "20261030T000032.061323100Z-3e38b2210771462c"
 const expectedRecords uint64 = 15140785
 const expectedBatches uint64 = 8399
 
+// Window profiles define separate checkpoint chains. W128 cannot reuse W32
+// markers and must begin against an empty isolated private recovery database.
+func privateWindowLimits(name string) (recordingest.BacklogWindowLimits, error) {
+	switch name {
+	case "W32":
+		return recordingest.BacklogWindowLimits{MaxRecords: 32768, MaxDataBytes: 256 << 20}, nil
+	case "W128":
+		return recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}, nil
+	default:
+		return recordingest.BacklogWindowLimits{}, errors.New("FI backlog recovery: window-profile must be W32 or W128")
+	}
+}
+
+// The only W128 write modes are a fresh first-window source scan and a
+// continuous resume over already committed W128 descriptors.
+func validatePrivateWindowMode(profile string, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly bool, startWindow, maxWindows int) error {
+	if profile != "W128" {
+		return nil // Preserve original W32 mode compatibility.
+	}
+	if !enable || indexedPrivate || preflightOnly {
+		return errors.New("FI W128 requires private-writes and forbids indexed/preflight modes")
+	}
+	if streamLoader && !continuousPrivate && startWindow == 0 && maxWindows == 1 {
+		return nil
+	}
+	if continuousPrivate && !streamLoader && startWindow >= 1 && maxWindows == 0 {
+		return nil
+	}
+	return errors.New("FI W128 requires stream-loader start-window=0 max-windows=1, or continuous-private start-window>=1 max-windows=0")
+}
+
 func run() error {
 	var fileProfile string
 
@@ -73,11 +104,8 @@ func run() error {
 			return fmt.Errorf("private root %s must have exact 0700 permissions", p)
 		}
 	}
-	if windowProfile != "W32" && windowProfile != "W128" {
-		return errors.New("FI backlog recovery: window-profile must be W32 or W128")
-	}
-	if windowProfile == "W128" && streamLoader && (startWindow != 0 || maxWindows != 1) {
-		return errors.New("FI W128 initial streaming stage permits only start-window=0 max-windows=1; resume via continuous-private from window 1")
+	if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
+		return err
 	}
 	if maxRuntime < 0 || maxRuntime > 10*time.Minute {
 		return errors.New("max-runtime must be between 0 and 10m")
@@ -111,9 +139,9 @@ func run() error {
 	if profileErr != nil {
 		return profileErr
 	}
-	limits := recordingest.BacklogWindowLimits{MaxRecords: 32768, MaxDataBytes: 256 << 20}
-	if windowProfile == "W128" {
-		limits = recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}
+	limits, err := privateWindowLimits(windowProfile)
+	if err != nil {
+		return err
 	}
 	fRows, fBytes, oRows, oBytes := recordingest.EffectiveFileBulkLimits(ctx)
 	fmt.Printf("FI TUNING EFFECTIVE security_profile=%s file_profile=%s source_rows=%d source_bytes=%d observation_rows=%d observation_bytes=%d ntfs_prefetch_rows=512\\n", recordingest.FixedSecurityBulkProfileName(ctx), fileProfile, fRows, fBytes, oRows, oBytes)
@@ -162,19 +190,21 @@ WHERE source_id=$1 AND generation_id=$2)
 	if already {
 		return errors.New("generation already authoritative; private recovery not required")
 	}
-	// A W128 first-window run must never overwrite/mix the old W32
-	// checkpoint chain for this signed generation. Use fresh isolated DB
-	// recovery schemas and a separate private artifact directory.
+	// Never mix W128 checkpoints with the active W32 chain. The first
+	// W128 window requires *empty* private checkpoint and projection tables.
+	// Use a separately initialized PostgreSQL instance and artifact root.
 	if windowProfile == "W128" && startWindow == 0 {
 		var existing bool
-		if err := canonical.QueryRow(ctx, `SELECT EXISTS (
-SELECT 1 FROM fi_recovery.verified_artifact_window
-WHERE source_id=$1 AND generation_id=$2
-)`, source, generation).Scan(&existing); err != nil {
-			return fmt.Errorf("FI W128 existing checkpoint guard: %w", err)
+		if err := canonical.QueryRow(ctx, `SELECT
+ EXISTS (SELECT 1 FROM fi_recovery.verified_artifact_window) OR
+ EXISTS (SELECT 1 FROM fi_recovery.source_window) OR
+ EXISTS (SELECT 1 FROM fi_recovery.typed_window) OR
+ EXISTS (SELECT 1 FROM fi_recovery_projection.recorded_generation)
+`).Scan(&existing); err != nil {
+			return fmt.Errorf("FI W128 fresh recovery check: %w", err)
 		}
 		if existing {
-			return errors.New("FI W128 requires fresh isolated recovery state: existing signed-generation artifact checkpoints detected; no data changed")
+			return errors.New("FI W128 requires empty isolated private recovery tables; checkpoint/projection already exists; no data changed")
 		}
 	}
 
