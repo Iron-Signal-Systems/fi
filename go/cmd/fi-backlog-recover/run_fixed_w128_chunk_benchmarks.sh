@@ -25,6 +25,15 @@ done
 : "${FI_BENCH_W128_PORT:?missing W128 port}"
 [ "${FI_BENCH_ISOLATED_CLUSTERS_CONFIRMED:-}" = YES ] || stop "four disposable instances must be reviewed and confirmed"
 [ "${FI_BENCH_PSQL_JAIL:-}" = fi-dev ] || stop "requires fi-dev PostgreSQL client jail"
+jexec -U jwood fi-dev sh -c 'command -v psql >/dev/null && command -v pg_dump >/dev/null && command -v pg_restore >/dev/null' ||
+    stop "fi-dev requires psql, pg_dump, and pg_restore before any custody scan"
+for trust_file in \
+    /usr/local/etc/fi/pki/trust/fi-root-ca.crt.pem \
+    /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crt.pem \
+    /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem \
+    /usr/local/etc/fi/sources/iss-fs-22a.iss.local.conf; do
+    [ -r "$trust_file" ] || stop "missing installed host FI trust: $trust_file"
+done
 case "$FI_BENCH_BINARY" in /*) ;; *) stop "binary requires absolute path";; esac
 case "$FI_BENCH_OUTPUT_ROOT" in /var/tmp/fi-window-chunks-*) ;; *) stop "new output root must start /var/tmp/fi-window-chunks-";; esac
 [ ! -e "$FI_BENCH_OUTPUT_ROOT" ] || stop "output root already exists; cannot reuse"
