@@ -3,6 +3,10 @@
 package recordingest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"path/filepath"
 	"context"
 	"encoding/json"
 	"os"
@@ -265,6 +269,59 @@ AND octet_length(raw_xml_sha256) = 32
 `).Scan(&numericCount)
 	if err != nil || numericCount != 2 {
 		t.Fatalf("numeric/hash preservation: %d %v", numericCount, err)
+	}
+
+
+	// This exercises the actual JSONL ingest loop (not just copySecurityBulk).
+	// The first signed batch ends with one pending Security record, and the
+	// second signed batch completes the same *non-durable* processing chunk.
+	// Database parents/children must be absent until the chunk flush.
+	if _, err := tx.Exec(ctx, `INSERT INTO fi.source_batch VALUES (43),(44)`); err != nil {
+		t.Fatal(err)
+	}
+	ingestProfile := &ingestStageProfile{}
+	shared := &backlogTypedChunkState{fileBulk: newFileObservationBulkState()}
+	base, err := withFixedSecurityBulkProfile(ctx, "P3")
+	if err != nil { t.Fatal(err) }
+	for i, batchID := range []int64{43,44} {
+		current := value
+		current.EventRecordID = fmt.Sprintf("%d", 90000+i)
+		current.RawXML = fmt.Sprintf("<Event><Batch>%d</Batch></Event>", batchID)
+		payload, err := json.Marshal(current)
+		if err != nil { t.Fatal(err) }
+		envelope := spool.Record{
+			Version: SpoolRecordVersion, RecordKind: "WindowsSecurityEvent",
+			ScopeID: "test-a", WrittenAt: now, Payload: payload,
+		}
+		raw, err := json.Marshal(envelope)
+		if err != nil { t.Fatal(err) }
+		raw = append(raw, '\n')
+		hash := sha256.Sum256(raw)
+		path := filepath.Join(t.TempDir(), fmt.Sprintf("source-%d.jsonl",batchID))
+		if err := os.WriteFile(path,raw,0600);err!=nil {t.Fatal(err)}
+		batch := PreparedBatch{BatchID:fmt.Sprintf("signed-%d",batchID), DataPath:path,
+			Manifest:spool.Manifest{RecordCount:1,DataBytes:int64(len(raw)),DataSHA256:hex.EncodeToString(hash[:])}}
+		batchCtx := context.WithValue(base,backlogTypedChunkContextKey{},
+			backlogTypedChunkDirective{state:shared,finish:i==1})
+		n,err:=ingestSourceBatch(batchCtx,tx,"fi-typed-chunk-test",batchID,batch,ingestProfile)
+		if err!=nil {t.Fatalf("signed batch %d: %v",batchID,err)}
+		if n!=1 {t.Fatalf("signed batch %d reported %d records",batchID,n)}
+		if i==0 {
+			if len(shared.security)!=1 {t.Fatalf("buffer dropped record across signed batches: %d",len(shared.security))}
+			var rows int
+			if err:=tx.QueryRow(ctx,`SELECT count(*) FROM fi.source_record WHERE source_batch_id=43`).Scan(&rows);err!=nil {t.Fatal(err)}
+			if rows!=0 {t.Fatal("source record published before typed chunk boundary")}
+		}
+	}
+	if len(shared.security)!=0 || shared.securityBytes!=0 {t.Fatal("typed Security chunk did not flush")}
+	var crossBatchRows, crossBatchFields int
+	if err:=tx.QueryRow(ctx,`SELECT
+		(SELECT count(*) FROM fi.source_record WHERE source_batch_id IN (43,44)),
+		(SELECT count(*) FROM fi.windows_security_event_field f
+		 JOIN fi.source_record sr ON sr.source_record_id=f.source_record_id
+		 WHERE sr.source_batch_id IN (43,44))`).Scan(&crossBatchRows,&crossBatchFields);err!=nil {t.Fatal(err)}
+	if crossBatchRows!=2 || crossBatchFields!=4 {
+		t.Fatalf("typed ingest cross-batch projection incomplete: rows=%d fields=%d",crossBatchRows,crossBatchFields)
 	}
 
 	// Force a late child COPY foreign-key failure after all source, event,
