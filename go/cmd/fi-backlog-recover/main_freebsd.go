@@ -34,7 +34,8 @@ func run() error {
 	var namespaces, enable, streamLoader, indexedPrivate, preflightOnly, continuousPrivate bool
 	var maxRuntime time.Duration
 	var maxWindows, startWindow int
-	var securityProfile string
+	var securityProfile, windowProfile string
+	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE benchmark window plan W32=32768/256MiB or W128=131072/1GiB; checkpoint plans must not be mixed")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
 	flag.StringVar(&generation, "generation-id", "", "exact original signed FI generation")
 	flag.StringVar(&pg, "postgres", "", "FI ingest PostgreSQL connection string")
@@ -72,6 +73,12 @@ func run() error {
 			return fmt.Errorf("private root %s must have exact 0700 permissions", p)
 		}
 	}
+	if windowProfile != "W32" && windowProfile != "W128" {
+		return errors.New("FI backlog recovery: window-profile must be W32 or W128")
+	}
+	if windowProfile == "W128" && streamLoader && (startWindow != 0 || maxWindows != 1) {
+		return errors.New("FI W128 initial streaming stage permits only start-window=0 max-windows=1; resume via continuous-private from window 1")
+	}
 	if maxRuntime < 0 || maxRuntime > 10*time.Minute {
 		return errors.New("max-runtime must be between 0 and 10m")
 	}
@@ -104,11 +111,15 @@ func run() error {
 	if profileErr != nil {
 		return profileErr
 	}
+	limits := recordingest.BacklogWindowLimits{MaxRecords: 32768, MaxDataBytes: 256 << 20}
+	if windowProfile == "W128" {
+		limits = recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}
+	}
 	fRows, fBytes, oRows, oBytes := recordingest.EffectiveFileBulkLimits(ctx)
 	fmt.Printf("FI TUNING EFFECTIVE security_profile=%s file_profile=%s source_rows=%d source_bytes=%d observation_rows=%d observation_bytes=%d ntfs_prefetch_rows=512\\n", recordingest.FixedSecurityBulkProfileName(ctx), fileProfile, fRows, fBytes, oRows, oBytes)
 
-	fmt.Printf("FI REAL BACKLOG CONFIG security_profile=%s max_window_records=32768 max_window_data_bytes=268435456\n",
-		recordingest.FixedSecurityBulkProfileName(ctx))
+	fmt.Printf("FI REAL BACKLOG CONFIG security_profile=%s window_profile=%s max_window_records=%d max_window_data_bytes=%d\n",
+		recordingest.FixedSecurityBulkProfileName(ctx), windowProfile, limits.MaxRecords, limits.MaxDataBytes)
 	canonical, state, err := recordingest.OpenPostgreSQL(ctx, pg)
 	if err != nil {
 		return err
@@ -151,6 +162,21 @@ WHERE source_id=$1 AND generation_id=$2)
 	if already {
 		return errors.New("generation already authoritative; private recovery not required")
 	}
+	// A W128 first-window run must never overwrite/mix the old W32
+	// checkpoint chain for this signed generation. Use fresh isolated DB
+	// recovery schemas and a separate private artifact directory.
+	if windowProfile == "W128" && startWindow == 0 {
+		var existing bool
+		if err := canonical.QueryRow(ctx, `SELECT EXISTS (
+SELECT 1 FROM fi_recovery.verified_artifact_window
+WHERE source_id=$1 AND generation_id=$2
+)`, source, generation).Scan(&existing); err != nil {
+			return fmt.Errorf("FI W128 existing checkpoint guard: %w", err)
+		}
+		if existing {
+			return errors.New("FI W128 requires fresh isolated recovery state: existing signed-generation artifact checkpoints detected; no data changed")
+		}
+	}
 
 	if indexedPrivate {
 		fmt.Printf("FI REAL BACKLOG reading authenticated shadow batch index and selected custody prefix source=%s generation=%s; NOT full-transfer validation\n", source, generation)
@@ -162,7 +188,6 @@ WHERE source_id=$1 AND generation_id=$2)
 		CustodyRoot: custody, RecordedRoot: recorded, SourceID: source, SourceNamespaces: namespaces,
 		MaxCanonicalBytes: 68719476736, MaxEncodedBytes: 68719476736, MaxManifestBytes: 1048576,
 	}
-	limits := recordingest.BacklogWindowLimits{MaxRecords: 32768, MaxDataBytes: 256 << 20}
 	if continuousPrivate {
 		fmt.Printf("FI REAL BACKLOG CONTINUOUS PRIVATE start_window=%d original_signed_generation=%s\n", startWindow, generation)
 		began := time.Now()
