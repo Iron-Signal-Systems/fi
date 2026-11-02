@@ -209,6 +209,36 @@ for profile in W32 W64 W96 W128; do
     cat "$profile_dir/result.txt" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
     grep '^FI TYPED CHUNK COMMITTED ' "$profile_dir/timed.log" > "$profile_dir/typed-chunks.txt" ||
         stop "$profile did not exercise typed processing chunks"
+    # Validate actual SQL state rather than trusting the terminal log's
+    # 'authoritative=0 accepted=0' fields. Every profile has its own empty
+    # disposable cluster; a mismatch is a HARD test failure.
+    integrity_sql="SELECT CASE WHEN
+      (SELECT count(*) FROM fi_recovery.source_window)
+       = (SELECT count(*) FROM fi_recovery.typed_window)
+      AND (SELECT count(*) FROM fi_recovery.pending_source_record)
+       = (SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window)
+      AND (SELECT count(*) FROM fi_recovery_projection.source_record)
+       = (SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window)
+      AND NOT EXISTS(SELECT 1 FROM fi.recorded_generation
+        WHERE source_id='$source_id' AND generation_id='$generation_id')
+      AND NOT EXISTS(SELECT 1 FROM fi.ingest_journal WHERE outcome='Accepted')
+      THEN 'PASS' ELSE 'FAIL' END"
+    [ "$(psql_check "$integrity_sql")" = PASS ] ||
+        stop "$profile private source/typed markers, source rows, or canonical isolation failed"
+    # Each descriptor was previously signed and independently verified.
+    # Capture a comparable fingerprint of exactly the durable prefix actually
+    # completed: profiles may commit DIFFERENT numbers of windows by 10 min.
+    fingerprint_sql="SELECT
+      'FI CHUNK BENCH SQL CHECKPOINT profile=$profile windows=' || count(*) ||
+      ' durable_records=' || coalesce(sum(committed_records),0) ||
+      ' last_window=' || coalesce(max(window_index),-1) ||
+      ' descriptor_chain_md5=' ||
+      md5(coalesce(string_agg(window_index::text || ':' ||
+        encode(descriptor_sha256,'hex') || ':' || committed_records::text,
+        '|' ORDER BY window_index),''))
+      FROM fi_recovery.typed_window"
+    psql_check "$fingerprint_sql" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt" ||
+        stop "$profile could not read verified private SQL checkpoint"
 done
 printf '%s FI CHUNK BENCH COMPLETE: four timed W128/1GiB runs, output=%s\n' \
    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$FI_BENCH_OUTPUT_ROOT" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
