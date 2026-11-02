@@ -129,8 +129,21 @@ WHERE receipt_sha256=$1 AND window_index=$2`, receipt, index-1).Scan(&priorDescr
 		digest: sha256.New(), families: families}, nil
 }
 
-func shouldFlushJoinedSourceChunk(bufferedRows, maxRows int) bool {
-	return maxRows > 0 && bufferedRows >= maxRows
+// Flush only BETWEEN original signed source batches: no signed batch is
+// split across joined-ledger COPY calls. Outer SQL commit remains atomic.
+func shouldFlushJoinedSourceChunk(bufferedRows, incomingBatchRecords, maxRows int) bool {
+	return bufferedRows > 0 && incomingBatchRecords > maxRows-bufferedRows
+}
+
+func (s *joinedBacklogSource) beginBatch(ctx context.Context, sourceBatchRecords int) error {
+	if s == nil || sourceBatchRecords <= 0 || s.chunkRows <= 0 ||
+		sourceBatchRecords > s.chunkRows {
+		return errors.New("FI joined source: signed batch exceeds bounded COPY chunk")
+	}
+	if shouldFlushJoinedSourceChunk(len(s.rows), sourceBatchRecords, s.chunkRows) {
+		return s.flush(ctx)
+	}
+	return nil
 }
 
 func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRecord) error {
@@ -154,8 +167,8 @@ func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRe
 	s.records++
 	s.bytes += uint64(p.RecordBytes)
 	s.families[p.Record.RecordKind]++
-	if shouldFlushJoinedSourceChunk(len(s.rows), s.chunkRows) {
-		return s.flush(ctx)
+	if len(s.rows) > s.chunkRows {
+		return errors.New("FI joined source: source batch outgrew chunk buffer")
 	}
 	return nil
 }
