@@ -2,9 +2,11 @@
 
 Purpose: hold the signed private recovery **window** fixed at
 **131,072 source records / 1 GiB original data**, while experimentally
-varying the **joined private source-ledger COPY chunk** at 32K, 64K, 96K,
-and 128K rows. No signed batch is split or renamed; each row retains its
-original signed batch index and record ordinal. The whole W128 window
+varying the **joined private source-ledger COPY chunk** at nominal 32K,
+64K, 96K, and 128K source rows. COPY boundaries always fall between
+whole original signed batches; because signed batch record counts vary,
+actual COPY rows can be lower than the configured ceiling. Each row
+retains its original signed batch index and record ordinal. The whole W128 window
 stays ONE atomic PostgreSQL transaction for source and typed markers.
 
 ### Scope of the first implementation
