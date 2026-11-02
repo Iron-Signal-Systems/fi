@@ -129,6 +129,10 @@ WHERE receipt_sha256=$1 AND window_index=$2`, receipt, index-1).Scan(&priorDescr
 		digest: sha256.New(), families: families}, nil
 }
 
+func shouldFlushJoinedSourceChunk(bufferedRows, maxRows int) bool {
+	return maxRows > 0 && bufferedRows >= maxRows
+}
+
 func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRecord) error {
 	if s == nil || ordinal <= 0 || p.RecordBytes <= 0 || p.Record.RecordKind == "" {
 		return errors.New("FI joined source: invalid source envelope")
@@ -150,7 +154,7 @@ func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRe
 	s.records++
 	s.bytes += uint64(p.RecordBytes)
 	s.families[p.Record.RecordKind]++
-	if len(s.rows) >= s.chunkRows {
+	if shouldFlushJoinedSourceChunk(len(s.rows), s.chunkRows) {
 		return s.flush(ctx)
 	}
 	return nil
@@ -182,8 +186,6 @@ func (s *joinedBacklogSource) finish(ctx context.Context) error {
 	if err := s.flush(ctx); err != nil {
 		return err
 	}
-	fmt.Printf("FI JOINED SOURCE COPY CHUNKS window=%d chunk_limit=%d calls=%d records=%d\n",
-		s.index, s.chunkRows, s.copyCalls, s.records)
 	d := s.descriptor
 	if s.records != d.EndRecord-d.StartRecord || s.bytes != d.DataBytes {
 		return fmt.Errorf("FI joined source: source totals records=%d/%d bytes=%d/%d",
