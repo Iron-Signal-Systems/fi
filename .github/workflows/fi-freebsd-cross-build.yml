@@ -1,0 +1,37 @@
+name: FI FreeBSD Cross Build
+
+on:
+  push:
+    paths:
+      - 'go/internal/recordingest/**'
+      - 'go/cmd/fi-backlog-recover/**'
+      - 'go/go.mod'
+      - '.github/workflows/fi-freebsd-cross-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: FreeBSD recovery executable and typed-test cross compilation
+        env:
+          GOOS: freebsd
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
+          go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
+          go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest
