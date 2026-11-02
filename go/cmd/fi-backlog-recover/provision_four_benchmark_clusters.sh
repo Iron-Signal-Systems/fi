@@ -35,6 +35,16 @@ for tool in initdb pg_ctl psql createdb go; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing $tool"
 done
 
+# Use a separate port family for every fresh benchmark dataset.
+base_port=${FI_BENCH_BASE_PORT:-55431}
+case "$base_port" in
+  55431|55531|55631|55731) ;;
+  *) fail "FI_BENCH_BASE_PORT must be 55431,55531,55631,or 55731";;
+esac
+w32_port=$base_port
+w64_port=$((base_port + 1))
+w96_port=$((base_port + 2))
+w128_port=$((base_port + 3))
 mkdir -m 700 "$FI_BENCH_NEW_CLUSTER_ROOT"
 root=$FI_BENCH_NEW_CLUSTER_ROOT
 # The same generator used for acceptance tests; no hand-authored shadow tables.
@@ -46,7 +56,7 @@ grep 'CREATE SCHEMA fi_recovery;' "$root/private_schema.sql" >/dev/null ||
 grep 'CREATE SCHEMA fi_recovery_projection' "$root/private_schema.sql" >/dev/null ||
     fail "private SQL missing typed schema"
 
-for entry in W32:55431 W64:55432 W96:55433 W128:55434; do
+for entry in "W32:$w32_port" "W64:$w64_port" "W96:$w96_port" "W128:$w128_port"; do
     profile=${entry%:*}
     port=${entry#*:}
     dir="$root/$profile"
@@ -102,13 +112,18 @@ envfile="$root/fi-four-profiles.env"
     printf "FI_BENCH_RECORDED_ROOT='%s'\n" '/var/db/fi/custody/recorded'
     printf "FI_BENCH_SOURCE_NAMESPACES='%s'\n" 'false'
     printf "FI_BENCH_PSQL_JAIL='%s'\n" 'fi-dev'
-    for entry in W32:55431 W64:55432 W96:55433 W128:55434; do
+    for entry in "W32:$w32_port" "W64:$w64_port" "W96:$w96_port" "W128:$w128_port"; do
         profile=${entry%:*}
         port=${entry#*:}
         printf "FI_BENCH_%s_DSN='host=/usr/local/jails/containers/fi-dev%s/%s/socket port=%s user=fi_ingest dbname=fi sslmode=disable'\n" \
            "$profile" "$root" "$profile" "$port"
     done
     printf "FI_BENCH_ISOLATED_CLUSTERS_CONFIRMED='%s'\n" 'NO'
+    for entry in "W32:$w32_port" "W64:$w64_port" "W96:$w96_port" "W128:$w128_port"; do
+        profile=${entry%:*}
+        port=${entry#*:}
+        printf "FI_BENCH_%s_PORT='%s'\n" "$profile" "$port"
+    done
 } > "$envfile"
 chmod 600 "$envfile"
 printf 'FI BENCHMARK PROVISION COMPLETE: four NEW isolated PostgreSQL clusters only\n'
