@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -42,6 +43,7 @@ func StageBacklogTypedWindow(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	windowStarted := time.Now()
 	descriptors, err := DescribeBacklogWindows(generation, limits)
 	if err != nil {
 		return err
@@ -246,6 +248,8 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	var totalRecords int64
 	var totalBytes int64
 	stageDir := filepath.Join(privateRoot, "receipt-"+d.ReceiptSHA256, fmt.Sprintf("window-%08d", index))
+	setupElapsed := time.Since(windowStarted)
+	batchStarted := time.Now()
 	for offset := 0; offset < len(batchIDs); offset++ {
 		globalIndex := d.StartBatch + offset
 		batch := generation.Batches[globalIndex]
@@ -260,11 +264,15 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		totalRecords += seen
 		totalBytes += batch.Manifest.DataBytes
 	}
+	batchElapsed := time.Since(batchStarted)
+	joinedStarted := time.Now()
 	if joined {
 		if err := joinedSource.finish(ctx); err != nil {
 			return fmt.Errorf("FI typed window: joined source verification: %w", err)
 		}
 	}
+	joinedElapsed := time.Since(joinedStarted)
+	flushStarted := time.Now()
 	if err := profile.coverageBuffer.flush(ctx, shadow); err != nil {
 		return err
 	}
@@ -277,16 +285,22 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	if err := aceCopy.flushAll(ctx, shadow); err != nil {
 		return fmt.Errorf("FI typed window: final ACE COPY: %w", err)
 	}
+	flushElapsed := time.Since(flushStarted)
+	verifyStarted := time.Now()
 	if totalRecords != int64(summary.RecordCount) || totalBytes != int64(summary.DataBytes) {
 		return errors.New("FI typed window: processed counts differ from signed receipt")
 	}
+	countStarted := time.Now()
 	if err := verifyBacklogShadowWindowCounts(ctx, shadow, id, generation.Batches[d.StartBatch:d.EndBatch],
 		totalRecords, totalBytes); err != nil {
 		return err
 	}
+	countElapsed := time.Since(countStarted)
+	coverageStarted := time.Now()
 	if err := verifyBacklogWindowProjectionCoverage(ctx, shadow, id, generation.Batches[d.StartBatch:d.EndBatch]); err != nil {
 		return err
 	}
+	coverageElapsed := time.Since(coverageStarted)
 	// Intermediate bounded windows may commit unfinished M6.1 captures.
 	// The final window requires complete durable SQL counts for EVERY capture,
 	// including captures that began in previously committed windows.
@@ -298,6 +312,8 @@ WHERE receipt_sha256=$1 AND window_index=$2
 			return fmt.Errorf("FI typed window: M6.1 capture completeness: %w", err)
 		}
 	}
+	verifyElapsed := time.Since(verifyStarted)
+	commitStarted := time.Now()
 	_, err = tx.Exec(ctx, `
 INSERT INTO fi_recovery.typed_window (
  receipt_sha256,window_index,descriptor_sha256,shadow_generation_id,
@@ -310,6 +326,8 @@ INSERT INTO fi_recovery.typed_window (
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	commitElapsed := time.Since(commitStarted)
+	windowElapsed := time.Since(windowStarted)
 	keys := make([]string, 0, len(familyCounts))
 	for k := range familyCounts {
 		keys = append(keys, k)
@@ -320,6 +338,13 @@ INSERT INTO fi_recovery.typed_window (
 		parts = append(parts, fmt.Sprintf("%s:%d", k, familyCounts[k]))
 	}
 	fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d families=%s ntfs_identity=%s ntfs_file_copy=%s ntfs_metadata_copy=%s security_events=%d security_fields=%d security_source_copy=%s security_event_copy=%s security_field_copy=%s\n", index, totalRecords, strings.Join(parts, ","), ntfsTiming.Identity, ntfsTiming.FileCopyLatency.String(), ntfsTiming.MetadataCopyLatency.String(), profile.SecurityBulk.Events, profile.SecurityBulk.Fields, profile.SecurityBulk.SourceLatency.String(), profile.SecurityBulk.EventLatency.String(), profile.SecurityBulk.FieldLatency.String())
+	// Outer wall-clock stages partition the private typed window. The ingest
+	// counters below are nested (some include COPY), so they are NOT additive.
+	fmt.Printf("FI PRIVATE STAGE PROFILE index=%d records=%d joined=%t typed_total=%s setup=%s batch_ingest=%s joined_finish=%s deferred_flush=%s verification=%s verify_counts=%s verify_coverage=%s marker_commit=%s source_read=%s batch_hash=%s envelope_prepare=%s security_prepare=%s security_child_prepare=%s source_sql=%s file_projection_inclusive=%s security_id_lookup=%s security_source_copy=%s security_event_copy=%s security_scope_copy=%s security_field_copy=%s\n",
+		index, totalRecords, joined, windowElapsed, setupElapsed, batchElapsed, joinedElapsed, flushElapsed, verifyElapsed, countElapsed, coverageElapsed, commitElapsed,
+		profile.Read, profile.BatchHash, profile.Prepare, profile.SecurityBulk.Prepare, profile.SecurityBulk.ChildPrepare,
+		profile.SourceSQL, profile.Projection, profile.SecurityBulk.IDLookup, profile.SecurityBulk.SourceCopy,
+		profile.SecurityBulk.EventCopy, profile.SecurityBulk.ScopeCopy, profile.SecurityBulk.FieldCopy)
 	copyMetrics.report(os.Stdout, d.SourceID, d.GenerationID, fmt.Sprintf("PrivateWindow%dCommitted", index))
 	return nil
 }
