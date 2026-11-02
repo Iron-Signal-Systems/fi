@@ -32,6 +32,7 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: '0'
         run: |
+          sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
           go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
           go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
           go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest
