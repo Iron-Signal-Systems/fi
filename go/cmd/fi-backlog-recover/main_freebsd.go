@@ -33,6 +33,10 @@ func privateWindowLimits(name string) (recordingest.BacklogWindowLimits, error) 
 	switch name {
 	case "W32":
 		return recordingest.BacklogWindowLimits{MaxRecords: 32768, MaxDataBytes: 256 << 20}, nil
+	case "W64":
+		return recordingest.BacklogWindowLimits{MaxRecords: 65536, MaxDataBytes: 1 << 30}, nil
+	case "W96":
+		return recordingest.BacklogWindowLimits{MaxRecords: 98304, MaxDataBytes: 1 << 30}, nil
 	case "W128":
 		return recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}, nil
 	default:
@@ -43,11 +47,11 @@ func privateWindowLimits(name string) (recordingest.BacklogWindowLimits, error) 
 // The only W128 write modes are a fresh first-window source scan and a
 // continuous resume over already committed W128 descriptors.
 func validatePrivateWindowMode(profile string, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly bool, startWindow, maxWindows int) error {
-	if profile != "W128" {
+	if profile == "W32" {
 		return nil // Preserve original W32 mode compatibility.
 	}
 	if !enable || indexedPrivate || preflightOnly {
-		return errors.New("FI W128 requires private-writes and forbids indexed/preflight modes")
+		return errors.New("FI non-W32 window profiles require private-writes and forbid indexed/preflight modes")
 	}
 	if streamLoader && !continuousPrivate && startWindow == 0 && maxWindows == 1 {
 		return nil
@@ -55,7 +59,7 @@ func validatePrivateWindowMode(profile string, enable, streamLoader, continuousP
 	if continuousPrivate && !streamLoader && startWindow >= 1 && maxWindows == 0 {
 		return nil
 	}
-	return errors.New("FI W128 requires stream-loader start-window=0 max-windows=1, or continuous-private start-window>=1 max-windows=0")
+	return errors.New("FI non-W32 windows require stream-loader start-window=0 max-windows=1, or continuous-private start-window>=1 max-windows=0")
 }
 
 func run() error {
@@ -66,7 +70,7 @@ func run() error {
 	var maxRuntime time.Duration
 	var maxWindows, startWindow int
 	var securityProfile, windowProfile string
-	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE benchmark window plan W32=32768/256MiB or W128=131072/1GiB; checkpoint plans must not be mixed")
+	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
 	flag.StringVar(&generation, "generation-id", "", "exact original signed FI generation")
 	flag.StringVar(&pg, "postgres", "", "FI ingest PostgreSQL connection string")
@@ -190,10 +194,10 @@ WHERE source_id=$1 AND generation_id=$2)
 	if already {
 		return errors.New("generation already authoritative; private recovery not required")
 	}
-	// Never mix W128 checkpoints with the active W32 chain. The first
-	// W128 window requires *empty* private checkpoint and projection tables.
+	// Never mix experimental window checkpoints with the active W32 chain.
+	// The first experimental window requires empty private checkpoint and projection tables.
 	// Use a separately initialized PostgreSQL instance and artifact root.
-	if windowProfile == "W128" && startWindow == 0 {
+	if windowProfile != "W32" && startWindow == 0 {
 		var existing bool
 		if err := canonical.QueryRow(ctx, `SELECT
  EXISTS (SELECT 1 FROM fi_recovery.verified_artifact_window) OR
@@ -201,10 +205,17 @@ WHERE source_id=$1 AND generation_id=$2)
  EXISTS (SELECT 1 FROM fi_recovery.typed_window) OR
  EXISTS (SELECT 1 FROM fi_recovery_projection.recorded_generation)
 `).Scan(&existing); err != nil {
-			return fmt.Errorf("FI W128 fresh recovery check: %w", err)
+			return fmt.Errorf("FI fresh recovery check: %w", err)
 		}
 		if existing {
-			return errors.New("FI W128 requires empty isolated private recovery tables; checkpoint/projection already exists; no data changed")
+			return errors.New("FI experimental window profile requires empty isolated private recovery tables; checkpoint/projection already exists; no data changed")
+		}
+		files, err := os.ReadDir(private)
+		if err != nil {
+			return fmt.Errorf("FI experimental private root scan: %w", err)
+		}
+		if len(files) != 0 {
+			return errors.New("FI experimental window requires a new empty private artifact root; no data changed")
 		}
 	}
 
