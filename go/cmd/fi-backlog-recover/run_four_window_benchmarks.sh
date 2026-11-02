@@ -20,9 +20,24 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "missing executable $1"; }
 [ "${FI_BENCH_ISOLATED_CLUSTERS_CONFIRMED:-}" = "YES" ] || fail "set FI_BENCH_ISOLATED_CLUSTERS_CONFIRMED=YES after checking four separate disposable PostgreSQL instances"
 
 need sha256
-need psql
 need grep
 need date
+if [ "${FI_BENCH_PSQL_JAIL:-}" = "fi-dev" ]; then
+    need jexec
+    need sed
+    # The executable runs on the host; psql runs inside the fi-dev jail.
+    # DSNs use host-visible socket paths, rewritten only for psql in jail.
+    psql_check() {
+        jail_dsn=$(printf '%s\n' "$dsn" | sed 's@host=/usr/local/jails/containers/fi-dev/@host=/@') ||
+          fail "cannot translate host socket to fi-dev jail socket"
+        jexec -U jwood fi-dev psql "$jail_dsn" "$@"
+    }
+elif [ -z "${FI_BENCH_PSQL_JAIL:-}" ]; then
+    need psql
+    psql_check() { psql "$dsn" "$@"; }
+else
+    fail "FI_BENCH_PSQL_JAIL supports only fi-dev or unset"
+fi
 case "$FI_BENCH_BINARY" in /*) ;; *) fail "FI_BENCH_BINARY must be absolute";; esac
 case "$FI_BENCH_OUTPUT_ROOT" in /*) ;; *) fail "FI_BENCH_OUTPUT_ROOT must be absolute";; esac
 case "$FI_BENCH_CUSTODY_ROOT" in /*) ;; *) fail "FI_BENCH_CUSTODY_ROOT must be absolute";; esac
@@ -76,11 +91,18 @@ empty_sql="SELECT CASE WHEN
  THEN 'EMPTY' ELSE 'NOT_EMPTY' END"
 
 printf 'FI BENCHMARK preflight: four unique disposable database connections, one binary=%s\n' "$actual_sha"
+cluster_keys=
 for profile in W32 W64 W96 W128; do
     get_dsn "$profile"
-    schema=$(psql "$dsn" -X -qAt -v ON_ERROR_STOP=1 -c "$ready_sql") || fail "$profile schema preflight failed"
+    schema=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "$ready_sql") || fail "$profile schema preflight failed"
     [ "$schema" = "SCHEMA_READY" ] || fail "$profile schema is not installed or wrong DB role"
-    empty=$(psql "$dsn" -X -qAt -v ON_ERROR_STOP=1 -c "$empty_sql") || fail "$profile empty-state query failed"
+    # Different DSN strings are not proof of independent clusters.
+    cluster_key=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')") ||
+      fail "$profile data-directory preflight failed"
+    [ -n "$cluster_key" ] || fail "$profile data directory missing"
+    case "|$cluster_keys|" in *"|$cluster_key|"*) fail "$profile reuses an existing cluster data directory";; esac
+    cluster_keys="$cluster_keys|$cluster_key"
+    empty=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "$empty_sql") || fail "$profile empty-state query failed"
     [ "$empty" = "EMPTY" ] || fail "$profile recovery state is not empty; no changes made"
     printf 'FI BENCHMARK preflight profile=%s status=isolated-empty\n' "$profile"
 done
