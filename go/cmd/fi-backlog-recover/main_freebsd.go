@@ -71,7 +71,7 @@ func run() error {
 	var maxWindows, startWindow, processingChunkRecords int
 	var securityProfile, windowProfile string
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
-	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental private joined-source COPY rows across signed batches (32768,65536,98304,131072); W128 continuous only; zero retains existing behavior")
+	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
 	flag.StringVar(&generation, "generation-id", "", "exact original signed FI generation")
 	flag.StringVar(&pg, "postgres", "", "FI ingest PostgreSQL connection string")

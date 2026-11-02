@@ -46,6 +46,7 @@ type securityBulkTimingCounters struct {
 }
 
 type securityBulkRecord struct {
+	sourceBatchID  int64 // original signed batch, not a processing-chunk identifier
 	ordinal        int64
 	prepared       SourceRecord
 	digest         []byte
@@ -106,7 +107,7 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns,
 		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			p := pending[i]
-			return []any{sourceBatchID, p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
+			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
 		}))
 	elapsedSourceCopy := time.Since(sourceCopyStarted)
 	profile.SecurityBulk.SourceCopy += elapsedSourceCopy
@@ -119,31 +120,18 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	}
 
 	idLookupStarted := time.Now()
-	rows, err := tx.Query(ctx, `SELECT record_ordinal,source_record_id FROM fi.source_record WHERE source_batch_id=$1 AND record_ordinal BETWEEN $2 AND $3 ORDER BY record_ordinal`, sourceBatchID, pending[0].ordinal, pending[len(pending)-1].ordinal)
+	batchIDs := make([]int64, len(pending))
+	ordinals := make([]int64, len(pending))
+	for i, p := range pending {
+		batchIDs[i] = bulkSourceBatchID(p.sourceBatchID, sourceBatchID)
+		ordinals[i] = p.ordinal
+	}
+	ids, err := lookupBulkSourceRecordIDs(ctx, tx, batchIDs, ordinals)
 	if err != nil {
 		return fmt.Errorf("FI Security bulk source ID lookup: %w", err)
 	}
-	index := 0
-	for rows.Next() {
-		var ordinal, id int64
-		if err := rows.Scan(&ordinal, &id); err != nil {
-			rows.Close()
-			return fmt.Errorf("FI Security bulk source ID scan: %w", err)
-		}
-		if index >= len(pending) || ordinal != pending[index].ordinal || id <= 0 {
-			rows.Close()
-			return fmt.Errorf("FI Security bulk source identity mismatch at index %d", index)
-		}
-		pending[index].sourceRecordID = id
-		index++
-	}
-	queryErr := rows.Err()
-	rows.Close()
-	if queryErr != nil {
-		return fmt.Errorf("FI Security bulk source ID read: %w", queryErr)
-	}
-	if index != len(pending) {
-		return fmt.Errorf("FI Security bulk source IDs: got %d expected %d", index, len(pending))
+	for i, id := range ids {
+		pending[i].sourceRecordID = id
 	}
 	profile.SecurityBulk.IDLookup += time.Since(idLookupStarted)
 	profile.SourceSQL += time.Since(sqlStarted)

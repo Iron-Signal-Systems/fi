@@ -21,6 +21,7 @@ const (
 // fileSourceBulkRecord holds only authoritative, already-validated source
 // envelope fields. The normal projector processes each record after COPY.
 type fileSourceBulkRecord struct {
+	sourceBatchID  int64 // original signed batch, not a processing-chunk identifier
 	ordinal        int64
 	prepared       SourceRecord
 	digest         []byte
@@ -40,9 +41,14 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 		return errors.New("FI FileObservation source COPY exceeds record limit")
 	}
 	for i, item := range pending {
-		if item.ordinal <= 0 || (item.prepared.Record.RecordKind != "FileObservation" && item.prepared.Record.RecordKind != "USNObjectObservation") ||
+		batchID := bulkSourceBatchID(item.sourceBatchID, sourceBatchID)
+		previousBatch := sourceBatchID
+		if i > 0 {
+			previousBatch = bulkSourceBatchID(pending[i-1].sourceBatchID, sourceBatchID)
+		}
+		if batchID <= 0 || item.ordinal <= 0 || (item.prepared.Record.RecordKind != "FileObservation" && item.prepared.Record.RecordKind != "USNObjectObservation") ||
 			item.prepared.RecordBytes <= 0 || len(item.digest) != 32 ||
-			(i > 0 && item.ordinal != pending[i-1].ordinal+1) {
+			(i > 0 && batchID == previousBatch && item.ordinal != pending[i-1].ordinal+1) {
 			return fmt.Errorf("FI FileObservation source COPY invalid record at index %d", i)
 		}
 	}
@@ -57,7 +63,7 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, columns,
 		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			p := pending[i]
-			return []any{sourceBatchID, p.ordinal, p.prepared.Record.Version,
+			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version,
 				p.prepared.Record.RecordKind, p.prepared.Record.ScopeID,
 				p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
 		}))
@@ -68,35 +74,18 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 		return fmt.Errorf("FI FileObservation source COPY count: got %d expected %d", copied, len(pending))
 	}
 
-	rows, err := tx.Query(ctx, `
-SELECT record_ordinal, source_record_id
-FROM fi.source_record
-WHERE source_batch_id=$1 AND record_ordinal BETWEEN $2 AND $3
-ORDER BY record_ordinal`, sourceBatchID, pending[0].ordinal, pending[len(pending)-1].ordinal)
+	batchIDs := make([]int64, len(pending))
+	ordinals := make([]int64, len(pending))
+	for i, p := range pending {
+		batchIDs[i] = bulkSourceBatchID(p.sourceBatchID, sourceBatchID)
+		ordinals[i] = p.ordinal
+	}
+	ids, err := lookupBulkSourceRecordIDs(ctx, tx, batchIDs, ordinals)
 	if err != nil {
 		return fmt.Errorf("FI FileObservation source ID lookup: %w", err)
 	}
-	index := 0
-	for rows.Next() {
-		var ordinal, sourceRecordID int64
-		if err := rows.Scan(&ordinal, &sourceRecordID); err != nil {
-			rows.Close()
-			return fmt.Errorf("FI FileObservation source ID scan: %w", err)
-		}
-		if index >= len(pending) || ordinal != pending[index].ordinal || sourceRecordID <= 0 {
-			rows.Close()
-			return fmt.Errorf("FI FileObservation source ID mismatch at index %d", index)
-		}
-		pending[index].sourceRecordID = sourceRecordID
-		index++
-	}
-	queryErr := rows.Err()
-	rows.Close()
-	if queryErr != nil {
-		return fmt.Errorf("FI FileObservation source ID read: %w", queryErr)
-	}
-	if index != len(pending) {
-		return fmt.Errorf("FI FileObservation source IDs: got %d expected %d", index, len(pending))
+	for i, id := range ids {
+		pending[i].sourceRecordID = id
 	}
 	return nil
 }

@@ -9,19 +9,28 @@ actual COPY rows can be lower than the configured ceiling. Each row
 retains its original signed batch index and record ordinal. The whole W128 window
 stays ONE atomic PostgreSQL transaction for source and typed markers.
 
-### Scope of the first implementation
+### Scope of the typed-chunk implementation
 
 `-processing-chunk-records` is opt-in, allowed only for W128
-`-continuous-private` recovery, and applies to the joined
-`fi_recovery.pending_source_record` COPY operation. It makes a real
-cross-original-batch COPY call; previously joined source COPY flushed at
-8,192 rows. This does **not** silently modify the independent P3
-security-event/field COPY limits, F3 file COPY limits, or canonical
-SoR ingestion. Therefore it isolates one COPY path's overhead and must
-not be misrepresented as a complete change to every typed COPY
-operation. To compare all typed COPYs at 32K–128K requires additional
-batched-key mapping and bounded child-row streaming work and independent
-atomicity acceptance testing.
+`-continuous-private` recovery. The setting groups whole original signed
+batches into processing chunks (32K, 64K, 96K, or 128K source records) *inside*
+one W128 private recovery transaction. Within each processing chunk, eligible
+typed Security and File source buffers can cross signed-batch boundaries.
+All source rows keep their original source-batch identity and record ordinal.
+The parent ID mapper resolves the pair, not an assumed consecutive sequence.
+
+The independent P3 security-event/field and F3 file/child COPY row and byte
+limits remain active for safety. A 96K processing chunk is therefore **not**
+a 96K-row COPY of every typed table. Other typed families retain their
+existing per-record paths. This comparison measures processing boundaries,
+not the earlier W32/W64/W96/W128 atomic recovery-window comparison.
+No canonical SoR or Accepted journal writes are enabled.
+
+`FI TYPED CHUNK COMMITTED` records are emitted only after the W128
+transaction commits, giving original batch ranges, record counts and
+per-chunk processing time. Source/typed marker durability remains W128.
+Unit tests cover signed-batch boundaries; real mixed-family rollback and
+performance acceptance must pass before adopting a winning chunk size.
 
 The per-window output contains
 `FI JOINED SOURCE COPY CHUNKS COMMITTED window=... chunk_limit=...

@@ -19,10 +19,11 @@ import (
 // Production generation ingestion and the independent replay verifier are unchanged.
 type joinedBacklogSourceKey struct{}
 
-// Joined-source COPY chunks may span original signed source-batch boundaries,
-// but every row retains its original batch index and ordinal. This changes
-// ONLY the private, transaction-bound source-ledger COPY; P3/F3 typed COPY
-// limits are independent and unchanged.
+// Joined-source and typed processing chunks may span signed source-batch
+// boundaries. Every source row preserves its original batch identity and
+// ordinal; individual P3/F3 table COPY memory ceilings stay independent.
+// The processing-chunk setting closes cross-batch typed buffers, not the
+// outer durable transaction.
 const backlogDefaultJoinedSourceChunkRecords = 8192
 
 type joinedBacklogChunkContextKey struct{}

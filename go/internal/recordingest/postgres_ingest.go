@@ -454,6 +454,17 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var byteCount int64
 	var pendingSecurity []securityBulkRecord
 	var pendingSecurityBytes int64
+	// This state is provided ONLY by the isolated W128 private benchmark.
+	// It carries bounded typed COPY buffers across intact signed batches,
+	// without creating another durability or trust boundary.
+	chunk, hasChunk := ctx.Value(backlogTypedChunkContextKey{}).(backlogTypedChunkDirective)
+	if hasChunk {
+		if chunk.state == nil || chunk.state.fileBulk == nil {
+			return 0, errors.New("FI typed chunk: invalid shared buffer")
+		}
+		pendingSecurity = chunk.state.security
+		pendingSecurityBytes = chunk.state.securityBytes
+	}
 	securityLimits := securityBulkLimitsFromContext(ctx)
 	// This run counter is local to ONE signed source batch, even when the
 	// pending Security COPY buffer flushes several times within that batch.
@@ -462,6 +473,15 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var pendingFileBytes int64
 	fileLimits := fileBulkLimitsFromContext(ctx)
 	fileBulk := newFileObservationBulkState()
+	if hasChunk {
+		pendingFiles = chunk.state.files
+		pendingFileBytes = chunk.state.fileBytes
+		fileBulk = chunk.state.fileBulk
+		defer func() {
+			chunk.state.security, chunk.state.securityBytes = pendingSecurity, pendingSecurityBytes
+			chunk.state.files, chunk.state.fileBytes = pendingFiles, pendingFileBytes
+		}()
+	}
 	ctx = context.WithValue(ctx, fileObservationBulkContextKey{}, fileBulk)
 	flushFiles := func() error {
 		if len(pendingFiles) == 0 {
@@ -580,6 +600,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			if err != nil {
 				return ordinal, fmt.Errorf("%w: batch %s record %d (WindowsSecurityEvent): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
 			}
+			securityRecord.sourceBatchID = sourceBatchID
 			if securityLimits.shouldFlushBefore(
 				len(pendingSecurity), pendingSecurityBytes, int64(prepared.RecordBytes),
 			) {
@@ -609,7 +630,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				}
 			}
 			pendingFiles = append(pendingFiles, fileSourceBulkRecord{
-				ordinal: ordinal, prepared: prepared, digest: digest,
+				sourceBatchID: sourceBatchID, ordinal: ordinal, prepared: prepared, digest: digest,
 			})
 			pendingFileBytes += int64(prepared.RecordBytes)
 			if readErr != nil {
@@ -658,17 +679,22 @@ RETURNING source_record_id
 			return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
 		}
 	}
-	if err := flushFiles(); err != nil {
-		return ordinal, err
-	}
-	if err := flushSecurity(); err != nil {
-		return ordinal, err
-	}
-	fileFlushStarted := time.Now()
-	fileFlushErr := fileBulk.flush(ctx, tx)
-	profile.Projection += time.Since(fileFlushStarted)
-	if fileFlushErr != nil {
-		return ordinal, fmt.Errorf("%w: batch %s FileObservation final bulk projection: %v", ErrSourceRecordRejected, batch.BatchID, fileFlushErr)
+	// Retain buffers for the NEXT signed batch only within the SAME selected
+	// processing chunk. On its last batch, flush everything while the outer
+	// W128 transaction is still open; failure rolls back the whole window.
+	if !hasChunk || chunk.finish {
+		if err := flushFiles(); err != nil {
+			return ordinal, err
+		}
+		if err := flushSecurity(); err != nil {
+			return ordinal, err
+		}
+		fileFlushStarted := time.Now()
+		fileFlushErr := fileBulk.flush(ctx, tx)
+		profile.Projection += time.Since(fileFlushStarted)
+		if fileFlushErr != nil {
+			return ordinal, fmt.Errorf("%w: batch %s FileObservation final bulk projection: %v", ErrSourceRecordRejected, batch.BatchID, fileFlushErr)
+		}
 	}
 
 	gotSHA := hex.EncodeToString(hasher.Sum(nil))

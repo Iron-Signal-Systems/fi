@@ -250,6 +250,18 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	stageDir := filepath.Join(privateRoot, "receipt-"+d.ReceiptSHA256, fmt.Sprintf("window-%08d", index))
 	setupElapsed := time.Since(windowStarted)
 	batchStarted := time.Now()
+	// Real typed processing chunks: COPY buffers may span original signed
+	// batches; their final flush occurs at a configured chunk boundary.
+	// All chunks still belong to this ONE transaction and marker.
+	var typedChunk *backlogTypedChunkState
+	chunkLimit := joinedBacklogChunkRecords(ctx)
+	if joined && chunkLimit > backlogDefaultJoinedSourceChunkRecords {
+		typedChunk = &backlogTypedChunkState{fileBulk: newFileObservationBulkState()}
+	}
+	chunkRows := 0
+	chunkFirst := d.StartBatch
+	chunkStarted := time.Now()
+	var chunkSamples []backlogTypedChunkSample
 	for offset := 0; offset < len(batchIDs); offset++ {
 		globalIndex := d.StartBatch + offset
 		batch := generation.Batches[globalIndex]
@@ -260,12 +272,44 @@ WHERE receipt_sha256=$1 AND window_index=$2
 				return fmt.Errorf("FI typed window: joined COPY boundary before signed batch %d: %w", globalIndex, err)
 			}
 		}
-		seen, err := ingestSourceBatch(ctx, shadow, d.SourceID, batchIDs[offset], batch, &profile)
+		batchCtx := ctx
+		finishChunk := false
+		if typedChunk != nil {
+			count := batch.Manifest.RecordCount
+			if count <= 0 || count > chunkLimit-chunkRows {
+				return fmt.Errorf("FI typed chunk: invalid signed batch size at %d", globalIndex)
+			}
+			chunkRows += count
+			next := 0
+			if offset+1 < len(batchIDs) {
+				next = generation.Batches[globalIndex+1].Manifest.RecordCount
+			}
+			finishChunk, err = shouldFinishBacklogTypedChunk(chunkRows, next, chunkLimit)
+			if err != nil {
+				return err
+			}
+			batchCtx = context.WithValue(ctx, backlogTypedChunkContextKey{},
+				backlogTypedChunkDirective{state: typedChunk, finish: finishChunk})
+		}
+		seen, err := ingestSourceBatch(batchCtx, shadow, d.SourceID, batchIDs[offset], batch, &profile)
 		if err != nil {
 			return fmt.Errorf("FI typed window: batch %d: %w", globalIndex, err)
 		}
 		totalRecords += seen
 		totalBytes += batch.Manifest.DataBytes
+		if finishChunk {
+			if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
+				len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
+				return errors.New("FI typed chunk: buffers remained after required flush")
+			}
+			chunkSamples = append(chunkSamples, backlogTypedChunkSample{
+				firstBatch: chunkFirst, endBatch: globalIndex + 1,
+				records: chunkRows, duration: time.Since(chunkStarted),
+			})
+			chunkRows = 0
+			chunkFirst = globalIndex + 1
+			chunkStarted = time.Now()
+		}
 	}
 	batchElapsed := time.Since(batchStarted)
 	joinedStarted := time.Now()
@@ -351,6 +395,10 @@ INSERT INTO fi_recovery.typed_window (
 	if joinedSource != nil {
 		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d\n",
 			index, joinedSource.chunkRows, joinedSource.copyCalls, joinedSource.records)
+	}
+	for i, chunk := range chunkSamples {
+		fmt.Printf("FI TYPED CHUNK COMMITTED window=%d chunk=%d limit=%d batches=%d..%d records=%d processing=%s\n",
+			index, i, chunkLimit, chunk.firstBatch, chunk.endBatch, chunk.records, chunk.duration)
 	}
 	copyMetrics.report(os.Stdout, d.SourceID, d.GenerationID, fmt.Sprintf("PrivateWindow%dCommitted", index))
 	return nil

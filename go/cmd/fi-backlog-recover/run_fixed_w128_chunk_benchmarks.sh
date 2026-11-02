@@ -207,6 +207,8 @@ for profile in W32 W64 W96 W128; do
     grep '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$profile_dir/timed.log" > "$profile_dir/result.txt" ||
        stop "$profile did not produce a ten-minute terminal checkpoint"
     cat "$profile_dir/result.txt" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
+    grep '^FI TYPED CHUNK COMMITTED ' "$profile_dir/timed.log" > "$profile_dir/typed-chunks.txt" ||
+        stop "$profile did not exercise typed processing chunks"
 done
 printf '%s FI CHUNK BENCH COMPLETE: four timed W128/1GiB runs, output=%s\n' \
    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$FI_BENCH_OUTPUT_ROOT" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
