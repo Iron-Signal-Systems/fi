@@ -345,6 +345,10 @@ INSERT INTO fi_recovery.typed_window (
 		profile.Read, profile.BatchHash, profile.Prepare, profile.SecurityBulk.Prepare, profile.SecurityBulk.ChildPrepare,
 		profile.SourceSQL, profile.Projection, profile.SecurityBulk.IDLookup, profile.SecurityBulk.SourceCopy,
 		profile.SecurityBulk.EventCopy, profile.SecurityBulk.ScopeCopy, profile.SecurityBulk.FieldCopy)
+	if joinedSource != nil {
+		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d\n",
+			index, joinedSource.chunkRows, joinedSource.copyCalls, joinedSource.records)
+	}
 	copyMetrics.report(os.Stdout, d.SourceID, d.GenerationID, fmt.Sprintf("PrivateWindow%dCommitted", index))
 	return nil
 }
