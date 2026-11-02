@@ -1,0 +1,46 @@
+name: FI Typed Chunk PostgreSQL Acceptance
+
+on:
+  push:
+    paths:
+      - 'go/internal/recordingest/**'
+      - 'go/cmd/fi-backlog-recover/**'
+      - 'go/go.mod'
+      - '.github/workflows/fi-typed-chunk-postgres.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typed-chunk-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: fi_typed_chunks_integration
+          POSTGRES_USER: fi_typed_test
+          POSTGRES_PASSWORD: isolated-only-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fi_typed_test -d fi_typed_chunks_integration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Cross-batch typed COPY and late rollback acceptance
+        env:
+          FI_TYPED_CHUNK_PG_DSN: 'host=127.0.0.1 port=5432 user=fi_typed_test password=isolated-only-test dbname=fi_typed_chunks_integration sslmode=disable'
+        run: go test -tags fi_typed_chunk_pg_integration -count=1 -run '^TestBacklogTypedChunksPostgres$' -v ./internal/recordingest
