@@ -253,6 +253,8 @@ WHERE source_id=$1 AND generation_id=$2)
 		lastWindow := startWindow - 1
 		var durableThisRun uint64
 		var durableThrough uint64
+		var completedWindowTime time.Duration
+		var lastCheckpointElapsed time.Duration
 
 		result, err := recordingest.RecoverBacklogContinuousPrivate(ctx, reader, canonical, loadConfig, generation, limits, private, startWindow,
 			func(p recordingest.BacklogContinuousProgress) {
@@ -260,6 +262,10 @@ WHERE source_id=$1 AND generation_id=$2)
 					lastWindow = p.WindowCommitted
 					durableThrough = p.RecordsDurable
 					durableThisRun += p.WindowRecords
+					completedWindowTime += p.WindowDuration
+					// Report a successful durable checkpoint's actual completion time,
+					// not the eventual 10m timer expiration. No partial window counts.
+					lastCheckpointElapsed = time.Since(began)
 
 					fmt.Printf("FI REAL BACKLOG DURABLE window=%d/%d inspected_batches=%d/%d records_through=%d/%d artifact=%s ledger=%s source=%s typed=%s window=%s elapsed=%s\n",
 						p.WindowCommitted+1, p.TotalWindows, p.BatchesSeen, p.TotalBatches,
@@ -275,11 +281,22 @@ WHERE source_id=$1 AND generation_id=$2)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				elapsed := time.Since(began)
-				rate := float64(0)
+				wallRate := float64(0)
+				checkpointRate := float64(0)
+				windowRate := float64(0)
 				if elapsed > 0 {
-					rate = float64(durableThisRun) / elapsed.Seconds()
+					wallRate = float64(durableThisRun) / elapsed.Seconds()
 				}
-				fmt.Printf("FI TEN MINUTE STOP elapsed=%s last_window=%d new_durable=%d durable_through=%d throughput=%.1f/sec authoritative=0 accepted=0\n", elapsed.Round(time.Millisecond), lastWindow, durableThisRun, durableThrough, rate)
+				if lastCheckpointElapsed > 0 {
+					checkpointRate = float64(durableThisRun) / lastCheckpointElapsed.Seconds()
+				}
+				if completedWindowTime > 0 {
+					windowRate = float64(durableThisRun) / completedWindowTime.Seconds()
+				}
+				fmt.Printf("FI TEN MINUTE STOP elapsed=%s last_window=%d new_durable=%d durable_through=%d throughput=%.1f/sec checkpoint_elapsed=%s checkpoint_rate=%.1f/sec committed_window_time=%s committed_window_rate=%.1f/sec authoritative=0 accepted=0\n",
+					elapsed.Round(time.Millisecond), lastWindow, durableThisRun, durableThrough,
+					wallRate, lastCheckpointElapsed.Round(time.Millisecond), checkpointRate,
+					completedWindowTime.Round(time.Millisecond), windowRate)
 				return nil
 			}
 			return fmt.Errorf("FI continuous private recovery: %w", err)
