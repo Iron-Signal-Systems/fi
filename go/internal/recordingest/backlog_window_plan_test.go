@@ -97,3 +97,66 @@ func TestBacklogWindowsFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBacklogWindows128KOneGiBLimits(t *testing.T) {
+	countFixture := backlogWindowFixture([]int{
+		8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192,
+		8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192,
+	}, 32<<20)
+	originalReceipt := countFixture.Receipt
+	limits := BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}
+	countWindows, err := PlanBacklogWindows(countFixture, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCount := []BacklogWindow{
+		{StartBatch: 0, EndBatch: 16, StartRecord: 0, EndRecord: 131072, DataBytes: 512 << 20},
+		{StartBatch: 16, EndBatch: 17, StartRecord: 131072, EndRecord: 139264, DataBytes: 32 << 20},
+	}
+	if !reflect.DeepEqual(countWindows, wantCount) {
+		t.Fatalf("W128 count bound: got=%+v want=%+v", countWindows, wantCount)
+	}
+	if !reflect.DeepEqual(countFixture.Receipt, originalReceipt) {
+		t.Fatal("W128 planner mutated signed receipt")
+	}
+
+	byteFixture := backlogWindowFixture([]int{
+		8192, 8192, 8192, 8192, 8192, 8192,
+		8192, 8192, 8192, 8192, 8192, 8192,
+	}, 96<<20)
+	byteWindows, err := PlanBacklogWindows(byteFixture, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBytes := []BacklogWindow{
+		{StartBatch: 0, EndBatch: 10, StartRecord: 0, EndRecord: 81920, DataBytes: 960 << 20},
+		{StartBatch: 10, EndBatch: 12, StartRecord: 81920, EndRecord: 98304, DataBytes: 192 << 20},
+	}
+	if !reflect.DeepEqual(byteWindows, wantBytes) {
+		t.Fatalf("W128 byte bound: got=%+v want=%+v", byteWindows, wantBytes)
+	}
+}
+
+func TestBacklogWindows32K64K96K128KSeparatePlans(t *testing.T) {
+	counts := make([]int, 17)
+	for i := range counts {
+		counts[i] = 8192
+	}
+	g := backlogWindowFixture(counts, 32<<20)
+	profiles := []BacklogWindowLimits{
+		{MaxRecords: 32768, MaxDataBytes: 256 << 20},
+		{MaxRecords: 65536, MaxDataBytes: 1 << 30},
+		{MaxRecords: 98304, MaxDataBytes: 1 << 30},
+		{MaxRecords: 131072, MaxDataBytes: 1 << 30},
+	}
+	expected := []int{5, 3, 2, 2}
+	for i, limits := range profiles {
+		windows, err := PlanBacklogWindows(g, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(windows) != expected[i] {
+			t.Errorf("%d record max: got %d windows, want %d", limits.MaxRecords, len(windows), expected[i])
+		}
+	}
+}
