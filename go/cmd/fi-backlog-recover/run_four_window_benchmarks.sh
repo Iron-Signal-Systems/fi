@@ -96,11 +96,15 @@ for profile in W32 W64 W96 W128; do
     get_dsn "$profile"
     schema=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "$ready_sql") || fail "$profile schema preflight failed"
     [ "$schema" = "SCHEMA_READY" ] || fail "$profile schema is not installed or wrong DB role"
-    # Different DSN strings are not proof of independent clusters.
-    cluster_key=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')") ||
-      fail "$profile data-directory preflight failed"
-    [ -n "$cluster_key" ] || fail "$profile data directory missing"
-    case "|$cluster_keys|" in *"|$cluster_key|"*) fail "$profile reuses an existing cluster data directory";; esac
+    # Check the freshly provisioned, independently listening test ports.
+    # data_directory is intentionally not queryable by unprivileged fi_ingest.
+    cluster_key=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('port')") ||
+      fail "$profile PostgreSQL port preflight failed"
+    case "$profile:$cluster_key" in
+      W32:55431|W64:55432|W96:55433|W128:55434) ;;
+      *) fail "$profile connected to wrong test PostgreSQL instance (port $cluster_key)";;
+    esac
+    case "|$cluster_keys|" in *"|$cluster_key|"*) fail "$profile reuses an existing PostgreSQL port";; esac
     cluster_keys="$cluster_keys|$cluster_key"
     empty=$(psql_check -X -qAt -v ON_ERROR_STOP=1 -c "$empty_sql") || fail "$profile empty-state query failed"
     [ "$empty" = "EMPTY" ] || fail "$profile recovery state is not empty; no changes made"
