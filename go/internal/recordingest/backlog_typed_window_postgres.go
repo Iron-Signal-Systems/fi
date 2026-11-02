@@ -256,6 +256,9 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		batch.DataPath = filepath.Join(stageDir, fmt.Sprintf("batch-%08d.data", globalIndex))
 		if joined {
 			joinedSource.batchIndex = globalIndex
+			if err := joinedSource.beginBatch(ctx, batch.Manifest.RecordCount); err != nil {
+				return fmt.Errorf("FI typed window: joined COPY boundary before signed batch %d: %w", globalIndex, err)
+			}
 		}
 		seen, err := ingestSourceBatch(ctx, shadow, d.SourceID, batchIDs[offset], batch, &profile)
 		if err != nil {
