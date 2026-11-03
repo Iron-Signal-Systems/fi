@@ -68,12 +68,34 @@ func LoadRecordedGenerationSelectedWindows(
 		loadInstalledGenerationTrust, progress)
 }
 
+// LoadRecordedGenerationSelectedWindowsCached authenticates the full signed
+// FIGT once and, after successful transfer verification, publishes all 8,399
+// original batches to a shared, receipt-bound read-only benchmark cache.
+// Only the requested bounded window is returned to the private ingester.
+func LoadRecordedGenerationSelectedWindowsCached(
+	config GenerationLoadConfig, generationID string,
+	limits BacklogWindowLimits, startWindow, maxWindows int,
+	cacheRoot string, progress func(BacklogStreamProgress),
+) (*PreparedGeneration,error) {
+	return loadRecordedGenerationSelectedWindowsWithTrustAndCache(
+		config,generationID,limits,startWindow,maxWindows,cacheRoot,
+		loadInstalledGenerationTrust,progress)
+}
 func loadRecordedGenerationSelectedWindowsWithTrust(
 	config GenerationLoadConfig, generationID string,
 	limits BacklogWindowLimits, startWindow, maxWindows int,
 	resolveTrust generationTrustResolver,
 	progress func(BacklogStreamProgress),
 ) (*PreparedGeneration, error) {
+	return loadRecordedGenerationSelectedWindowsWithTrustAndCache(
+		config,generationID,limits,startWindow,maxWindows,"",resolveTrust,progress)
+}
+func loadRecordedGenerationSelectedWindowsWithTrustAndCache(
+	config GenerationLoadConfig, generationID string,
+	limits BacklogWindowLimits, startWindow, maxWindows int,
+	cacheRoot string, resolveTrust generationTrustResolver,
+	progress func(BacklogStreamProgress),
+) (*PreparedGeneration,error) {
 	if err := validateGenerationLoadConfig(config, generationID); err != nil {
 		return nil, err
 	}
@@ -141,6 +163,14 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 		return nil, err
 	}
 	keep := false
+	cacheStaging:=""
+	if cacheRoot!="" {
+		cacheStaging,err=backlogVerifiedCacheBegin(cacheRoot,receiptSHA)
+		if err!=nil{return nil,fmt.Errorf("FI stream cache: preflight: %w",err)}
+	}
+	defer func(){
+		if cacheStaging!=""{_ = os.RemoveAll(cacheStaging)}
+	}()
 	defer func() {
 		if !keep {
 			_ = removeGenerationStageDirectory(stageDir)
@@ -241,6 +271,18 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 				}
 				retained++
 			}
+			// Cache only manifests that matched their inspected data bytes,
+			// signing metadata and canonical batch order. These remain
+			// provisional until the WHOLE signed FIGT verifies at EOF.
+			if cacheStaging!=""{
+				index:=len(batches)
+				if err:=writeBacklogStageFile(backlogCacheBatchData(cacheStaging,index),buffer.Bytes());err!=nil{
+					return fmt.Errorf("FI verified cache: data batch %d: %w",index,err)
+				}
+				if err:=writeBacklogStageFile(backlogCacheBatchManifest(cacheStaging,index),manifestRaw);err!=nil{
+					return fmt.Errorf("FI verified cache: manifest batch %d: %w",index,err)
+				}
+			}
 			hash := sha256.Sum256(manifestRaw)
 			batches = append(batches, PreparedBatch{
 				BatchID: batchID, DataArtifactName: pendingName, DataPath: dataPath,
@@ -326,6 +368,13 @@ func loadRecordedGenerationSelectedWindowsWithTrust(
 		if selected != (batches[i].DataPath != "") {
 			return nil, fmt.Errorf("FI stream loader: retained batch selection mismatch at %d", i)
 		}
+	}
+	if cacheStaging!=""{
+		if err:=backlogVerifiedCacheCommit(cacheRoot,cacheStaging,receiptSHA,
+			receipt.TransferSHA256,receipt.BatchCount,receipt.RecordCount,receipt.DataBytes);err!=nil{
+			return nil,fmt.Errorf("FI verified cache: publish complete authenticated dataset: %w",err)
+		}
+		cacheStaging=""
 	}
 	keep = true
 	return gen, nil
