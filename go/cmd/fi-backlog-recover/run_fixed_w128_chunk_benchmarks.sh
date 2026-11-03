@@ -7,11 +7,14 @@ set -eu
 umask 077
 
 stop() { printf 'FI W128 CHUNK BENCH STOP: %s\n' "$*" >&2; exit 1; }
-for n in jexec sha256 pgrep ps date grep tail cp mkdir ln nc; do
+for n in jexec sha256 pgrep ps date grep tail cp mkdir sleep; do
     command -v "$n" >/dev/null 2>&1 || stop "missing $n"
 done
 : "${FI_BENCH_BINARY:?missing executable}"
 : "${FI_BENCH_BINARY_SHA256:?missing executable SHA}"
+: "${FI_BENCH_RELAY_BINARY:?missing verified host-to-jail PostgreSQL relay}"
+: "${FI_BENCH_RELAY_SHA256:?missing host-to-jail relay SHA256}"
+: "${FI_BENCH_JAIL_RELAY_BINARY:=/home/jwood/fi-w128-chunk-build/fi-backlog-pg-relay}"
 : "${FI_BENCH_OUTPUT_ROOT:?missing fresh output root}"
 : "${FI_BENCH_CUSTODY_ROOT:?missing custody root}"
 : "${FI_BENCH_RECORDED_ROOT:?missing recorded receipt root}"
@@ -39,6 +42,11 @@ case "$FI_BENCH_OUTPUT_ROOT" in /var/tmp/fi-window-chunks-*) ;; *) stop "new out
 [ ! -e "$FI_BENCH_OUTPUT_ROOT" ] || stop "output root already exists; cannot reuse"
 [ -x "$FI_BENCH_BINARY" ] || stop "binary missing/unexecutable"
 [ "$(sha256 -q "$FI_BENCH_BINARY")" = "$FI_BENCH_BINARY_SHA256" ] || stop "wrong build SHA"
+[ -x "$FI_BENCH_RELAY_BINARY" ] || stop "missing host-to-jail relay executable"
+[ "$(sha256 -q "$FI_BENCH_RELAY_BINARY")" = "$FI_BENCH_RELAY_SHA256" ] ||
+    stop "wrong host-to-jail relay executable SHA"
+jexec -U jwood fi-dev test -x "$FI_BENCH_JAIL_RELAY_BINARY" ||
+    stop "fi-dev must have the built relay executable (run build in separate fi-dev SSH)"
 for f in "$FI_BENCH_CUSTODY_ROOT" "$FI_BENCH_RECORDED_ROOT"; do
     [ -d "$f" ] || stop "missing custody/recorded root $f"
 done
@@ -64,10 +72,11 @@ get_profile() {
        host=/home/jwood/fi-window-bench-*" user=fi_ingest dbname=fi sslmode=disable") ;;
        *) stop "invalid test database DSN for $1";;
     esac
-    # Host-visible jail paths can exceed FreeBSD's AF_UNIX sun_path limit
-    # (104 bytes). Keep original jail_dsn for PostgreSQL utilities inside
-    # fi-dev; only the host recovery process uses short symlink DSNs.
-    if [ "${host_socket_links_ready:-NO}" = YES ]; then
+    # Only the original jail_dsn goes to in-jail PostgreSQL clients.
+    # The host recovery executable connects to a real host-owned Unix
+    # listener. The relay enters fi-dev for each PG connection; no
+    # symlinks, TCP services, database restarts or jail networking changes.
+    if [ "${host_relay_ready:-NO}" = YES ]; then
         dsn="host=$FI_BENCH_OUTPUT_ROOT/pg-$1 port=$expected user=fi_ingest dbname=fi sslmode=disable"
     fi
 }
@@ -111,32 +120,47 @@ host_jail_archive="/usr/local/jails/containers/fi-dev$jail_archive"
 [ -d "/usr/local/jails/containers/fi-dev$jail_cluster_root" ] || stop "jail cluster root missing"
 
 mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT" || stop "cannot create new output root"
-# Postgres socket path seen by the HOST, including .s.PGSQL.NNNNN, must
-# fit FreeBSD sockaddr_un.sun_path. The original path can be too long even
-# though the same socket works inside fi-dev. Use test-owned short links;
-# never reconfigure databases or expose a TCP port for this benchmark.
-for profile in W32 W64 W96 W128; do
-    get_profile "$profile"
-    socket_dir=${dsn#host=}
-    socket_dir=${socket_dir%% port=*}
-    case "$socket_dir" in
-      /usr/local/jails/containers/fi-dev/home/jwood/fi-window-bench-*/"$profile"/socket) ;;
-      *) stop "$profile unexpected jail socket path";;
-    esac
-    original_socket="$socket_dir/.s.PGSQL.$expected"
-    short_dir="$FI_BENCH_OUTPUT_ROOT/pg-$profile"
-    ln -s "$socket_dir" "$short_dir" || stop "$profile could not create short host socket path"
-    socket="$short_dir/.s.PGSQL.$expected"
-    [ "${#socket}" -lt 104 ] || stop "$profile host Unix socket path still too long"
-    [ -S "$socket" ] || stop "$profile PostgreSQL Unix socket missing through short path"
-    nc -z -U -w 3 "$socket" </dev/null >/dev/null 2>&1 ||
-        stop "$profile host cannot connect through short Unix socket; no custody scan started"
-    printf 'FI CHUNK BENCH HOST SOCKET profile=%s original_bytes=%s short_bytes=%s connect=ok\n' \
-        "$profile" "${#original_socket}" "${#socket}"
+# A separate, verified helper bridges private host AF_UNIX endpoints into
+# fi-dev by entering the jail for each PostgreSQL connection. Unlike a
+# symlink to a jailed PostgreSQL socket, the host endpoints are created by
+# the host process itself. Startup sends a real PostgreSQL SSLRequest over
+# every relay and requires an N/S response BEFORE the signed-custody seed.
+relay_pid=
+relay_cleanup() {
+    if [ -n "$relay_pid" ]; then
+        kill "$relay_pid" 2>/dev/null || :
+        wait "$relay_pid" 2>/dev/null || :
+        relay_pid=
+    fi
+}
+trap relay_cleanup 0
+"$FI_BENCH_RELAY_BINARY" \
+    -cluster-root="$jail_cluster_root" \
+    -output-root="$FI_BENCH_OUTPUT_ROOT" \
+    -base-port="$FI_BENCH_W32_PORT" \
+    -jail-binary="$FI_BENCH_JAIL_RELAY_BINARY" \
+    > "$FI_BENCH_OUTPUT_ROOT/relay.log" 2>&1 &
+relay_pid=$!
+tries=0
+while [ "$tries" -lt 30 ]; do
+    ready_count=$(grep -c '^FI PG RELAY READY profile=' "$FI_BENCH_OUTPUT_ROOT/relay.log" || :)
+    if [ "$ready_count" -eq 4 ]; then break; fi
+    if ! kill -0 "$relay_pid" 2>/dev/null; then
+        tail -n 30 "$FI_BENCH_OUTPUT_ROOT/relay.log" >&2 || :
+        stop "host-to-jail relay exited before confirming four PostgreSQL wire handshakes"
+    fi
+    sleep 1
+    tries=$((tries + 1))
 done
-host_socket_links_ready=YES
+[ "$ready_count" -eq 4 ] || {
+    tail -n 30 "$FI_BENCH_OUTPUT_ROOT/relay.log" >&2 || :
+    stop "host-to-jail relay failed PostgreSQL wire handshake preflight"
+}
+host_relay_ready=YES
+cat "$FI_BENCH_OUTPUT_ROOT/relay.log"
 printf 'fixed_window_records=131072 fixed_window_bytes=1073741824 original_signed_generation=yes\n' > "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 printf 'binary_sha256=%s\n' "$FI_BENCH_BINARY_SHA256" >> "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
+printf 'relay_sha256=%s\n' "$FI_BENCH_RELAY_SHA256" >> "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 source_id=iss-fs-22a.iss.local
 generation_id=20261030T000032.061323100Z-3e38b2210771462c
 seed_root="$FI_BENCH_OUTPUT_ROOT/W128/private"
@@ -201,7 +225,7 @@ monitor_cleanup() {
     done
     mon_vm=; mon_io=; mon_ps=
 }
-trap monitor_cleanup 0
+trap 'monitor_cleanup; relay_cleanup' 0
 trap 'exit 130' 2
 trap 'exit 143' 15
 for profile in W32 W64 W96 W128; do
