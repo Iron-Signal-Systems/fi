@@ -279,6 +279,7 @@ func mergePrivateVolume(ctx context.Context,tx pgx.Tx)(int64,error){
  sql:=`INSERT INTO fi.ntfs_volume(source_id,identity_method_version,volume_guid,volume_serial)
  SELECT source_id,identity_method_version,volume_guid,volume_serial
  FROM fi_recovery_projection.ntfs_volume
+ WHERE true
  ON CONFLICT ON CONSTRAINT ntfs_volume_identity_uq DO NOTHING`
  tag,err:=tx.Exec(ctx,sql)
  if err!=nil{return 0,err}
@@ -297,6 +298,7 @@ func mergePrivateObject(ctx context.Context,tx pgx.Tx)(int64,error){
  SELECT mv.new_id,src.identity_method_version,src.file_reference_number,src.sequence_number
  FROM fi_recovery_projection.ntfs_object src
  JOIN pg_temp.fi_promote_map_ntfs_volume mv ON mv.old_id=src.ntfs_volume_id
+ WHERE true
  ON CONFLICT ON CONSTRAINT ntfs_object_identity_uq DO NOTHING`
  tag,err:=tx.Exec(ctx,sql);if err!=nil{return 0,err}
  mapSQL:=`INSERT INTO pg_temp.fi_promote_map_ntfs_object(old_id,new_id)
@@ -318,6 +320,7 @@ func mergePrivateRoot(ctx context.Context,tx pgx.Tx)(int64,error){
  FROM fi_recovery_projection.governed_root src
  JOIN pg_temp.fi_promote_map_ntfs_volume mv ON mv.old_id=src.ntfs_volume_id
  JOIN pg_temp.fi_promote_map_ntfs_object mo ON mo.old_id=src.ntfs_object_id
+ WHERE true
  ON CONFLICT ON CONSTRAINT governed_root_identity_uq DO NOTHING`
  tag,err:=tx.Exec(ctx,sql);if err!=nil{return 0,err}
  mapSQL:=`INSERT INTO pg_temp.fi_promote_map_governed_root(old_id,new_id)
