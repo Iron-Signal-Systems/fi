@@ -7,7 +7,7 @@ set -eu
 umask 077
 
 stop() { printf 'FI W128 CHUNK BENCH STOP: %s\n' "$*" >&2; exit 1; }
-for n in jexec sha256 pgrep ps date grep tail cp mkdir; do
+for n in jexec sha256 pgrep ps date grep tail cp mkdir ln nc; do
     command -v "$n" >/dev/null 2>&1 || stop "missing $n"
 done
 : "${FI_BENCH_BINARY:?missing executable}"
@@ -64,6 +64,12 @@ get_profile() {
        host=/home/jwood/fi-window-bench-*" user=fi_ingest dbname=fi sslmode=disable") ;;
        *) stop "invalid test database DSN for $1";;
     esac
+    # Host-visible jail paths can exceed FreeBSD's AF_UNIX sun_path limit
+    # (104 bytes). Keep original jail_dsn for PostgreSQL utilities inside
+    # fi-dev; only the host recovery process uses short symlink DSNs.
+    if [ "${host_socket_links_ready:-NO}" = YES ]; then
+        dsn="host=$FI_BENCH_OUTPUT_ROOT/pg-$1 port=$expected user=fi_ingest dbname=fi sslmode=disable"
+    fi
 }
 psql_check() {
     jexec -U jwood fi-dev psql "$jail_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "$1"
@@ -105,6 +111,29 @@ host_jail_archive="/usr/local/jails/containers/fi-dev$jail_archive"
 [ -d "/usr/local/jails/containers/fi-dev$jail_cluster_root" ] || stop "jail cluster root missing"
 
 mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT" || stop "cannot create new output root"
+# Postgres socket path seen by the HOST, including .s.PGSQL.NNNNN, must
+# fit FreeBSD sockaddr_un.sun_path. The original path can be too long even
+# though the same socket works inside fi-dev. Use test-owned short links;
+# never reconfigure databases or expose a TCP port for this benchmark.
+for profile in W32 W64 W96 W128; do
+    get_profile "$profile"
+    socket_dir=${dsn#host=}
+    socket_dir=${socket_dir%% port=*}
+    case "$socket_dir" in
+      /usr/local/jails/containers/fi-dev/home/jwood/fi-window-bench-*/"$profile"/socket) ;;
+      *) stop "$profile unexpected jail socket path";;
+    esac
+    short_dir="$FI_BENCH_OUTPUT_ROOT/pg-$profile"
+    ln -s "$socket_dir" "$short_dir" || stop "$profile could not create short host socket path"
+    socket="$short_dir/.s.PGSQL.$expected"
+    [ "${#socket}" -lt 104 ] || stop "$profile host Unix socket path still too long"
+    [ -S "$socket" ] || stop "$profile PostgreSQL Unix socket missing through short path"
+    nc -z -U -w 3 "$socket" </dev/null >/dev/null 2>&1 ||
+        stop "$profile host cannot connect through short Unix socket; no custody scan started"
+    printf 'FI CHUNK BENCH HOST SOCKET profile=%s original_bytes=%s short_bytes=%s connect=ok\n' \
+        "$profile" "$(("${#socket_dir}" + 14))" "${#socket}"
+done
+host_socket_links_ready=YES
 printf 'fixed_window_records=131072 fixed_window_bytes=1073741824 original_signed_generation=yes\n' > "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 printf 'binary_sha256=%s\n' "$FI_BENCH_BINARY_SHA256" >> "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 source_id=iss-fs-22a.iss.local
