@@ -79,3 +79,38 @@ jobs:
           FI_BOOTSTRAP_CI_PG_ADMIN_DSN: 'host=127.0.0.1 port=5432 user=fi_m1_admin password=isolated-only-test dbname=fi sslmode=disable'
           FI_BOOTSTRAP_CI_PG_INGEST_DSN: 'host=127.0.0.1 port=5432 user=fi_ingest password=isolated-only-test dbname=fi sslmode=disable'
         run: go test -tags fi_bootstrap_pg_integration -count=1 -run '^TestBacklogBootstrapPromoteFreshIsolatedPostgres$' -v ./internal/recordingest
+
+  populated-sor-postgres:
+    name: Populated SoR remapped File/Security SQL promotion and rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: fi
+          POSTGRES_USER: fi_m1_admin
+          POSTGRES_PASSWORD: isolated-only-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fi_m1_admin -d fi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Remap signed file/security generations into populated canonical SoR
+        env:
+          FI_BOOTSTRAP_CI_ALLOW_ISOLATED_WRITES: '1'
+          FI_BOOTSTRAP_CI_PG_ADMIN_DSN: 'host=127.0.0.1 port=5432 user=fi_m1_admin password=isolated-only-test dbname=fi sslmode=disable'
+          FI_BOOTSTRAP_CI_PG_INGEST_DSN: 'host=127.0.0.1 port=5432 user=fi_ingest password=isolated-only-test dbname=fi sslmode=disable'
+        run: go test -tags fi_bootstrap_pg_integration -count=1 -run '^TestPopulatedSoRSQLPromotionRemapsFIIdentitiesAndRollsBack$' -v ./internal/recordingest
