@@ -1,8 +1,14 @@
 package recordingest
 
 import (
+    "bytes"
     "context"
+    "crypto/sha256"
+    "encoding/hex"
     "testing"
+    "time"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
 
 // Each COPY group is an ordered sequence of intact authenticated 8,192-row
@@ -106,5 +112,57 @@ func TestJoinedSourceChunkRejectsInvalidInputs(t *testing.T) {
     s := &joinedBacklogSource{chunkRows:32768}
     if err := s.beginBatch(context.Background(), 32769); err == nil {
         t.Fatal("oversized signed batch accepted")
+    }
+}
+
+func TestJoinedSourcePreparedDigestAndCrossBatchIdentity(t *testing.T) {
+    ctx := context.Background()
+    at := time.Date(2026, 11, 3, 12, 34, 56, 0, time.UTC)
+    var digest [32]byte
+    for i := range digest { digest[i] = byte(i + 1) }
+    p := SourceRecord{
+        Record: spool.Record{
+            Version: SpoolRecordVersion, RecordKind: "WindowsSecurityEvent",
+            ScopeID: "test-scope", WrittenAt: "2026-11-03T12:34:56.000000000Z",
+        },
+        RecordBytes: 512, RecordSHA256: hex.EncodeToString(digest[:]),
+        WrittenAtUTC: at,
+    }
+    s := &joinedBacklogSource{
+        descriptor: BacklogCheckpointDescriptor{StartBatch: 0, EndBatch: 3},
+        batchIndex: 1, chunkRows: 32768,
+        digest: sha256.New(), families: make(map[string]uint64),
+    }
+    sourceBytes := append([]byte(nil), digest[:]...)
+    if err := s.addPrepared(ctx, 1, p, sourceBytes); err != nil { t.Fatal(err) }
+    sourceBytes[0] ^= 0xff // The COPY buffer must own its source digest bytes.
+    if s.rows[0].digest != digest { t.Fatal("source digest aliased caller buffer") }
+    if s.rows[0].batchIndex != 1 || s.rows[0].ordinal != 1 ||
+       s.rows[0].version != p.Record.Version || s.rows[0].recordKind != p.Record.RecordKind ||
+       s.rows[0].scopeID != p.Record.ScopeID || !s.rows[0].writtenAtUTC.Equal(at) ||
+       s.rows[0].writtenAtOriginal != p.Record.WrittenAt || s.rows[0].recordBytes != 512 {
+        t.Fatal("typed buffer changed source row identity or COPY columns")
+    }
+    s.batchIndex = 2
+    if err := s.addPrepared(ctx, 1, p, digest[:]); err != nil { t.Fatal(err) }
+    if len(s.rows) != 2 || s.rows[1].batchIndex != 2 || s.rows[1].ordinal != 1 {
+        t.Fatal("cross-signed-batch ordinals or identity changed")
+    }
+    expected := sha256.New()
+    backlogHashSourceRow(expected, 1, 1, p.Record.Version, p.Record.RecordKind,
+        p.Record.ScopeID, p.Record.WrittenAt, p.RecordBytes, digest[:])
+    backlogHashSourceRow(expected, 2, 1, p.Record.Version, p.Record.RecordKind,
+        p.Record.ScopeID, p.Record.WrittenAt, p.RecordBytes, digest[:])
+    if !bytes.Equal(s.digest.Sum(nil), expected.Sum(nil)) {
+        t.Fatal("joined source digest changed after avoiding duplicate decode")
+    }
+    if s.records != 2 || s.bytes != 1024 || s.families["WindowsSecurityEvent"] != 2 {
+        t.Fatal("joined source counters changed")
+    }
+    if err := s.addPrepared(ctx, 2, p, digest[:31]); err == nil {
+        t.Fatal("short digest accepted")
+    }
+    if err := s.add(ctx, 2, SourceRecord{RecordSHA256: "invalid"}); err == nil {
+        t.Fatal("legacy direct-add accepted invalid source hex digest")
     }
 }
