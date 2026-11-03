@@ -181,3 +181,43 @@ func TestBacklogStageRejectsUnsafePrivateRootAndCancel(t *testing.T) {
 		t.Fatal("canceled stage request accepted")
 	}
 }
+
+// The optimized continuous-private handoff is tested for signed hash equality
+// and persistent file survival, not as a synthetic throughput benchmark.
+func TestVerifiedBacklogStageLinkSurvivesEphemeralSourceRemoval(t *testing.T) {
+	root := privateBacklogTestRoot(t)
+	stageDir, err := os.MkdirTemp(root, ".fi-backlog-continuous-")
+	if err != nil { t.Fatal(err) }
+	data := []byte("exact signed FI source bytes\n")
+	src := filepath.Join(stageDir, "batch-00000000.data")
+	dest := filepath.Join(root, "durable-window.data")
+	if err := os.WriteFile(src, data, 0600); err != nil { t.Fatal(err) }
+	sum := sha256.Sum256(data)
+	linked, err := linkVerifiedBacklogStageArtifact(context.Background(), src, dest,
+		int64(len(data)), hex.EncodeToString(sum[:]))
+	if err != nil { t.Fatal(err) }
+	if !linked { t.Skip("filesystem does not support hardlink handoff; verified copy fallback passed") }
+	s, err := os.Stat(src)
+	if err != nil { t.Fatal(err) }
+	d, err := os.Stat(dest)
+	if err != nil { t.Fatal(err) }
+	if !os.SameFile(s,d) { t.Fatal("optimized durable handoff copied rather than linked inode") }
+	if err := os.RemoveAll(stageDir); err != nil { t.Fatal(err) }
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got,data) { t.Fatalf("durable linked evidence lost: %v",err) }
+	if err := hashBacklogStageFile(context.Background(),dest,int64(len(data)),hex.EncodeToString(sum[:]));err!=nil { t.Fatal(err) }
+}
+
+func TestVerifiedBacklogStageLinkFailsClosedOnBadDigestAndMode(t *testing.T) {
+	root := privateBacklogTestRoot(t)
+	src := filepath.Join(root,"staged.data")
+	dest := filepath.Join(root,"durable.data")
+	data := []byte("original signed bytes")
+	if err:=os.WriteFile(src,data,0600);err!=nil{t.Fatal(err)}
+	other := sha256.Sum256([]byte("different signed bytes"))
+	if _,err:=linkVerifiedBacklogStageArtifact(context.Background(),src,dest,int64(len(data)),hex.EncodeToString(other[:]));err==nil{t.Fatal("tampered data linked")}
+	if _,err:=os.Lstat(dest);!os.IsNotExist(err){t.Fatalf("invalid data materialized: %v",err)}
+	sum:=sha256.Sum256(data)
+	if err:=os.Chmod(src,0644);err!=nil{t.Fatal(err)}
+	if _,err:=linkVerifiedBacklogStageArtifact(context.Background(),src,dest,int64(len(data)),hex.EncodeToString(sum[:]));err==nil{t.Fatal("unsafe stage file permissions accepted")}
+}

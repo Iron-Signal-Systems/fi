@@ -282,7 +282,10 @@ SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0400 || info.Size() <= 0 {
 		return empty, errors.New("FI continuous private: immutable custody metadata invalid")
 	}
-	stageDir, err := os.MkdirTemp("", "fi-backlog-continuous-*")
+	// Stage inside the private dataset so a verified batch can be durably
+	// hard-linked instead of copied a second time. Nothing is linked out
+	// of signed custody; only this one-use temp staging area is eligible.
+	stageDir, err := os.MkdirTemp(privateRoot, ".fi-backlog-continuous-")
 	if err != nil {
 		return empty, err
 	}
@@ -386,7 +389,7 @@ SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
 			if nextBatch == descriptors[windowIndex].EndBatch {
 				index := windowIndex
 				start := time.Now()
-				if _, err := MaterializeBacklogWindow(ctx, g, limits, index, privateRoot); err != nil {
+				if _, err := materializeBacklogWindow(ctx, g, limits, index, privateRoot, true); err != nil {
 					return fmt.Errorf("FI continuous private: window %d durable materialization: %w", index, err)
 				}
 				artifactTime := time.Since(start)

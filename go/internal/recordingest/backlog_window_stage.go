@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // MaterializeBacklogWindow makes an independently verifiable, private, durable
@@ -25,6 +26,13 @@ import (
 // ingestion path do not call it. Full signed custody validation is a PRECONDITION
 // supplied by LoadRecordedGeneration, not performed by this function.
 func MaterializeBacklogWindow(ctx context.Context, g *PreparedGeneration, limits BacklogWindowLimits, index int, privateRoot string) (string, error) {
+	return materializeBacklogWindow(ctx, g, limits, index, privateRoot, false)
+}
+
+// materializeBacklogWindow permits a verified hard-link handoff only when the
+// continuous private loader itself stages original, authenticated batch data
+// inside this same private root. All other callers retain copy-and-hash.
+func materializeBacklogWindow(ctx context.Context, g *PreparedGeneration, limits BacklogWindowLimits, index int, privateRoot string, reuseStage bool) (string, error) {
 	if ctx == nil {
 		return "", errors.New("FI backlog stage: context required")
 	}
@@ -66,13 +74,40 @@ func MaterializeBacklogWindow(ctx context.Context, g *PreparedGeneration, limits
 	}
 	defer os.RemoveAll(tmp) // removes only the unpublished, privately owned copy
 
+	var linked, copied int
+	if reuseStage {
+		// Never link arbitrary custody or caller-owned files into the private
+		// durable area. Only a 0700 staging directory created directly under
+		// our previously verified privateRoot is eligible.
+		if g.stagedDirectory == "" ||
+			filepath.Dir(g.stagedDirectory) != privateRoot ||
+			!strings.HasPrefix(filepath.Base(g.stagedDirectory), ".fi-backlog-continuous-") {
+			return "", errors.New("FI backlog stage: verified reuse requires owned continuous private staging")
+		}
+		if err := verifyPrivateBacklogRoot(g.stagedDirectory); err != nil {
+			return "", err
+		}
+	}
 	for i := d.StartBatch; i < d.EndBatch; i++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		b := g.Batches[i]
-		if err := copyBacklogStageArtifact(ctx, b.DataPath, filepath.Join(tmp, fmt.Sprintf("batch-%08d.data", i)), b.Manifest.DataBytes, b.Manifest.DataSHA256); err != nil {
-			return "", fmt.Errorf("FI backlog stage: data batch %d: %w", i, err)
+		dst := filepath.Join(tmp, fmt.Sprintf("batch-%08d.data", i))
+		if reuseStage {
+			if b.DataPath != filepath.Join(g.stagedDirectory, fmt.Sprintf("batch-%08d.data", i)) {
+				return "", fmt.Errorf("FI backlog stage: batch %d is not owned by continuous staging", i)
+			}
+			usedLink, err := linkVerifiedBacklogStageArtifact(ctx, b.DataPath, dst, b.Manifest.DataBytes, b.Manifest.DataSHA256)
+			if err != nil {
+				return "", fmt.Errorf("FI backlog stage: data batch %d: %w", i, err)
+			}
+			if usedLink { linked++ } else { copied++ }
+		} else {
+			if err := copyBacklogStageArtifact(ctx, b.DataPath, dst, b.Manifest.DataBytes, b.Manifest.DataSHA256); err != nil {
+				return "", fmt.Errorf("FI backlog stage: data batch %d: %w", i, err)
+			}
+			copied++
 		}
 		if len(b.ManifestRawBytes) == 0 || len(b.ManifestRawBytes) > 1<<20 {
 			return "", fmt.Errorf("FI backlog stage: manifest %d outside byte limits", i)
@@ -110,6 +145,9 @@ func MaterializeBacklogWindow(ctx context.Context, g *PreparedGeneration, limits
 	}
 	if err := syncBacklogStageDir(generationDir); err != nil {
 		return "", fmt.Errorf("FI backlog stage: directory sync after publication: %w", err)
+	}
+	if reuseStage {
+		fmt.Printf("FI PRIVATE ARTIFACT HANDOFF window=%d verified_links=%d verified_copy_fallbacks=%d\n", index, linked, copied)
 	}
 	return ready, nil
 }
@@ -248,6 +286,54 @@ func copyBacklogStageArtifact(ctx context.Context, src, dst string, expectedByte
 		copyErr = out.Sync()
 	}
 	return errors.Join(copyErr, out.Close())
+}
+
+// linkVerifiedBacklogStageArtifact checks the entire signed SHA-256 and
+// syncs the source inode before linking into the new durable window. It never
+// changes signed custody. Linking only changes a directory entry: after
+// continuous staging cleanup, the durable file remains independently readable
+// and verifiable using VerifyMaterializedBacklogWindow on every restart.
+// If the filesystem refuses hard links, retain the original copy-and-sync
+// implementation. An invalid digest or metadata always fails closed.
+func linkVerifiedBacklogStageArtifact(ctx context.Context, src, dst string, expectedBytes int64, expectedSHA string) (bool, error) {
+	info, err := os.Lstat(src)
+	if err != nil { return false, err }
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 ||
+		info.Mode()&os.ModeSymlink != 0 || info.Size() != expectedBytes {
+		return false, errors.New("FI backlog stage: invalid continuous stage file")
+	}
+	if err := hashBacklogStageFile(ctx, src, expectedBytes, expectedSHA); err != nil {
+		return false, err
+	}
+	// Hash and fsync are separate checks: source content must be verified
+	// before it can become a persistent directory entry.
+	f, err := os.Open(src)
+	if err != nil { return false, err }
+	opened, statErr := f.Stat()
+	syncErr := error(nil)
+	if statErr == nil && !os.SameFile(info, opened) {
+		statErr = errors.New("FI backlog stage: source replaced before durable handoff")
+	}
+	if statErr == nil {
+		syncErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if err := errors.Join(statErr, syncErr, closeErr); err != nil {
+		return false, err
+	}
+	if err := os.Link(src, dst); err != nil {
+		if errCopy := copyBacklogStageArtifact(ctx, src, dst, expectedBytes, expectedSHA); errCopy != nil {
+			return false, fmt.Errorf("FI backlog stage: link failed (%v), copy fallback: %w", err, errCopy)
+		}
+		return false, nil
+	}
+	linked, err := os.Lstat(dst)
+	if err != nil { return false, err }
+	if !os.SameFile(info, linked) || linked.Mode().Perm() != 0600 ||
+		linked.Size() != expectedBytes {
+		return false, errors.New("FI backlog stage: linked durable inode identity changed")
+	}
+	return true, nil
 }
 
 func hashBacklogStageFile(ctx context.Context, path string, expectedBytes int64, expectedSHA string) error {
