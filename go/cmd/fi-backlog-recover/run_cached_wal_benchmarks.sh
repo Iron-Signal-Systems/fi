@@ -49,7 +49,7 @@ grep '^source_id=iss-fs-22a.iss.local$' "$FI_BENCH_PRIOR_OUTPUT_ROOT/RUN_MANIFES
     stop "wrong cached source"
 grep '^signed_source_records=15140785$' "$FI_BENCH_PRIOR_OUTPUT_ROOT/RUN_MANIFEST.txt" >/dev/null ||
     stop "wrong cached record count"
-grep '^FI VERIFIED CACHE SINGLE SCAN COMPLETE ' "$FI_BENCH_PRIOR_OUTPUT_ROOT/SUMMARY.txt" >/dev/null ||
+grep 'FI VERIFIED CACHE SINGLE SCAN COMPLETE ' "$FI_BENCH_PRIOR_OUTPUT_ROOT/SUMMARY.txt" >/dev/null ||
     stop "previous authenticated full FIGT cache not completed"
 [ -d "$FI_BENCH_PRIOR_OUTPUT_ROOT/W128/private" ] || stop "previous W128 private seed missing"
 marker_count=$(find "$FI_BENCH_PRIOR_OUTPUT_ROOT/verified-cache" -name verified.json -type f | wc -l | tr -d ' ')
