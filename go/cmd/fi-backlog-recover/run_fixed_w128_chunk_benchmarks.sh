@@ -123,6 +123,7 @@ for profile in W32 W64 W96 W128; do
       /usr/local/jails/containers/fi-dev/home/jwood/fi-window-bench-*/"$profile"/socket) ;;
       *) stop "$profile unexpected jail socket path";;
     esac
+    original_socket="$socket_dir/.s.PGSQL.$expected"
     short_dir="$FI_BENCH_OUTPUT_ROOT/pg-$profile"
     ln -s "$socket_dir" "$short_dir" || stop "$profile could not create short host socket path"
     socket="$short_dir/.s.PGSQL.$expected"
@@ -131,7 +132,7 @@ for profile in W32 W64 W96 W128; do
     nc -z -U -w 3 "$socket" </dev/null >/dev/null 2>&1 ||
         stop "$profile host cannot connect through short Unix socket; no custody scan started"
     printf 'FI CHUNK BENCH HOST SOCKET profile=%s original_bytes=%s short_bytes=%s connect=ok\n' \
-        "$profile" "$(("${#socket_dir}" + 14))" "${#socket}"
+        "$profile" "${#original_socket}" "${#socket}"
 done
 host_socket_links_ready=YES
 printf 'fixed_window_records=131072 fixed_window_bytes=1073741824 original_signed_generation=yes\n' > "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
