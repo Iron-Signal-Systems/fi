@@ -194,6 +194,18 @@ to_regnamespace('fi') IS NOT NULL`).Scan(&role,&db,&port,&version,&fiPresent)
  receipt:=sha256.Sum256([]byte("bootstrap-promote/receipt/"+source))
  g.Receipt.TransferSHA256=hex.EncodeToString(transfer[:])
  g.ReceiptSHA256=hex.EncodeToString(receipt[:])
+ // The legacy synthetic fixture uses a deliberately non-production manifest
+ // version. A verified cached batch MUST use the canonical signed-manifest
+ // decoder, so this test specializes only its disposable input manifests.
+ for i:=range g.Batches{
+  batch:=&g.Batches[i]
+  batch.Manifest.Version=spool.ManifestVersion
+  raw,e:=json.Marshal(batch.Manifest);if e!=nil{t.Fatal(e)}
+  batch.ManifestRawBytes=raw
+  batch.ManifestBytes=len(raw)
+  sum:=sha256.Sum256(raw)
+  batch.ManifestSHA256=hex.EncodeToString(sum[:])
+ }
  limits:=BacklogWindowLimits{MaxRecords:3,MaxDataBytes:1<<20}
  privateRoot:=privateBacklogTestRoot(t)
  // Original first window uses existing private staging.
