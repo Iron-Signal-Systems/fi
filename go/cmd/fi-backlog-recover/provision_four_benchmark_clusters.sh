@@ -30,6 +30,10 @@ esac
 [ "${#FI_BENCH_BINARY_SHA256}" -eq 64 ] || fail "SHA256 must be 64 hex chars"
 
 repo=/home/jwood/src/fi
+command -v git >/dev/null 2>&1 || fail "git required to bind source commit"
+source_git_sha=$(git -C "$repo" rev-parse HEAD) || fail "cannot resolve source commit"
+case "$source_git_sha" in *[!a-f0-9]*|'') fail "invalid Git SHA";; esac
+[ "${#source_git_sha}" -eq 40 ] || fail "expected 40-character Git SHA"
 schema_dir="$repo/database/schema"
 ledger="$repo/go/internal/recordingest/backlog_artifact_ledger_schema.sql"
 for name in 0001_relational.sql 0002_source_families.sql 0003_usn_relational_identity.sql 0004_security_field_name_index.sql 0005_usn_capture_binding.sql; do
@@ -112,6 +116,8 @@ envfile="$root/fi-four-profiles.env"
 {
     printf "FI_BENCH_BINARY='%s'\n" "$FI_BENCH_HOST_BINARY_PATH"
     printf "FI_BENCH_BINARY_SHA256='%s'\n" "$FI_BENCH_BINARY_SHA256"
+    printf "FI_BENCH_SOURCE_GIT_SHA='%s'\n" "$source_git_sha"
+    printf "FI_BENCH_RUN_LABEL='%s'\n" 'optimized-signed-real-W128-P3-F3'
     printf "FI_BENCH_OUTPUT_ROOT='%s'\n" "/var/tmp/fi-window-chunks-$(date -u '+%Y%m%dT%H%M%SZ')"
     printf "FI_BENCH_CUSTODY_ROOT='%s'\n" '/var/db/fi/custody/generation'
     printf "FI_BENCH_RECORDED_ROOT='%s'\n" '/var/db/fi/custody/recorded'
