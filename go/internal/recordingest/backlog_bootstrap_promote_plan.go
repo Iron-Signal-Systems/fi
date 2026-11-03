@@ -65,7 +65,11 @@ func bootstrapSoRPromotionOrder(tables []string, foreignKeys [][2]string) ([]str
 		deps[child][parent]=true
 	}
 	delete(remaining,"ingest_journal")
-	out:=make([]string,0,len(remaining))
+	// The generation identity must be the first committed parent even when
+	// catalog FK metadata is absent or the test graph is deliberately sparse.
+	delete(remaining,"recorded_generation")
+	out:=make([]string,0,len(remaining)+1)
+	out=append(out,"recorded_generation")
 	for len(remaining)>0 {
 		var eligible []string
 		for child:=range remaining {
