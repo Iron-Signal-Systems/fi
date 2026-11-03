@@ -48,6 +48,30 @@ func BootstrapPromoteVerifiedBacklogToEmptySoR(
 		return empty,errors.New("FI SoR bootstrap: missing signed generation identity")
 	}
 	started:=time.Now()
+	// A committed matching generation is already authoritative. A retry
+	// must never insert another Started/Accepted event or duplicate rows.
+	var existingID int64
+	var existingTransfer,existingReceipt []byte
+	existingErr:=verifier.QueryRow(ctx,`SELECT recorded_generation_id,transfer_sha256,receipt_sha256
+FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2`,
+		desc.SourceID,desc.GenerationID).Scan(&existingID,&existingTransfer,&existingReceipt)
+	if existingErr==nil {
+		wantTransfer,err:=decodeHex(g.Receipt.TransferSHA256,32,true,"bootstrap.retry.transfer_sha256")
+		if err!=nil{return empty,err}
+		wantReceipt,err:=decodeHex(g.ReceiptSHA256,32,true,"bootstrap.retry.receipt_sha256")
+		if err!=nil{return empty,err}
+		if !bytesEqual(existingTransfer,wantTransfer) || !bytesEqual(existingReceipt,wantReceipt){
+			return empty,ErrGenerationConflict
+		}
+		return IngestResult{AttemptID:attemptID,SourceID:desc.SourceID,GenerationID:desc.GenerationID,
+			TransferSHA256:g.Receipt.TransferSHA256,ReceiptSHA256:g.ReceiptSHA256,
+			Batches:len(g.Batches),DataBytes:g.Receipt.DataBytes,
+			RecordsSeen:int64(g.Receipt.RecordCount),RecordedGenerationID:existingID,
+			Outcome:"AlreadyAccepted"},nil
+	}
+	if !errors.Is(existingErr,pgx.ErrNoRows){
+		return empty,fmt.Errorf("FI SoR bootstrap: authoritative identity read: %w",existingErr)
+	}
 	// Retain the canonical Started record outside the publication transaction.
 	// An interrupted/rolled-back attempt is never mislabeled Accepted.
 	// A publisher without owner/table-lock/sequence rights will fail closed.

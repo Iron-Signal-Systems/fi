@@ -147,9 +147,14 @@ DROP CONSTRAINT fi_bootstrap_test_late_fail`);err!=nil{t.Fatal(err)}
  if recs!=6 || errorsNTFS!=3 || errorsSupporting!=3 || accepted!=1 {
   t.Fatalf("accepted SQL mismatch records=%d ntfs=%d supporting=%d journal=%d",recs,errorsNTFS,errorsSupporting,accepted)
  }
- // A second generation cannot silently use this bootstrap-only route.
- if _,err=BootstrapPromoteVerifiedBacklogToEmptySoR(ctx,reader,admin,g,limits,"fi-bootstrap-retry");err==nil{
-  t.Fatal("nonempty canonical SoR accepted bootstrap without remapping")
+ // The same signed generation is idempotent. No additional journal rows.
+ replay,err:=BootstrapPromoteVerifiedBacklogToEmptySoR(ctx,reader,admin,g,limits,"fi-bootstrap-retry")
+ if err!=nil || replay.Outcome!="AlreadyAccepted" || replay.RecordedGenerationID!=result.RecordedGenerationID {
+  t.Fatalf("exact accepted generation not idempotent: %+v %v",replay,err)
  }
- t.Log("PASS: 48-table SQL promotion, late rollback, one atomic Accepted, exact signed counts, nonempty-SoR rejection")
+ var journalCount int64
+ if err=reader.QueryRow(ctx,`SELECT count(*) FROM fi.ingest_journal
+WHERE source_id=$1 AND outcome='Accepted'`,source).Scan(&journalCount);err!=nil{t.Fatal(err)}
+ if journalCount!=1 {t.Fatal("retry created another Accepted journal")}
+ t.Log("PASS: 48-table SQL promotion, late rollback, one atomic Accepted, exact signed counts, idempotent retry")
 }
