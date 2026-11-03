@@ -44,3 +44,38 @@ jobs:
         env:
           FI_TYPED_CHUNK_PG_DSN: 'host=127.0.0.1 port=5432 user=fi_typed_test password=isolated-only-test dbname=fi_typed_chunks_integration sslmode=disable'
         run: go test -tags fi_typed_chunk_pg_integration -count=1 -run TestBacklog -v ./internal/recordingest
+
+  bootstrap-sor-postgres:
+    name: Fresh PostgreSQL 18 SoR bootstrap promotion rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: fi
+          POSTGRES_USER: fi_m1_admin
+          POSTGRES_PASSWORD: isolated-only-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fi_m1_admin -d fi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Atomic 48-table private-to-SoR promotion and late rollback
+        env:
+          FI_BOOTSTRAP_CI_ALLOW_ISOLATED_WRITES: '1'
+          FI_BOOTSTRAP_CI_PG_ADMIN_DSN: 'host=127.0.0.1 port=5432 user=fi_m1_admin password=isolated-only-test dbname=fi sslmode=disable'
+          FI_BOOTSTRAP_CI_PG_INGEST_DSN: 'host=127.0.0.1 port=5432 user=fi_ingest password=isolated-only-test dbname=fi sslmode=disable'
+        run: go test -tags fi_bootstrap_pg_integration -count=1 -run '^TestBacklogBootstrapPromoteFreshIsolatedPostgres$' -v ./internal/recordingest
