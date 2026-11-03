@@ -7,6 +7,7 @@
 package recordingest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -140,5 +141,32 @@ func TestBacklogStreamingSelectedWindowsMatchSignedGeneration(t *testing.T) {
 	if err := VerifyMaterializedBacklogWindow(context.Background(), streamed, limits, 1, root); err != nil {
 		t.Fatal(err)
 	}
+	// Independently authenticate a full original FIGT once and commit its
+	// entire signed batch cache. No PostgreSQL is needed for this proof.
+	cacheRoot:=t.TempDir()
+	seed,cacheErr:=loadRecordedGenerationSelectedWindowsWithTrustAndCache(
+		config,signed.GenerationID,limits,0,1,cacheRoot,trustFn,nil)
+	if cacheErr!=nil{t.Fatalf("one-scan verified cache seed: %v",cacheErr)}
+	defer seed.Close()
+	cacheDir,cacheErr:=backlogVerifiedCacheOpen(cacheRoot,seed.ReceiptSHA256,
+		seed.Receipt.TransferSHA256,seed.Receipt.BatchCount,seed.Receipt.RecordCount,seed.Receipt.DataBytes)
+	if cacheErr!=nil{t.Fatalf("verified signed cache cannot reopen: %v",cacheErr)}
+	for i,b:=range full.Batches{
+		raw,e:=backlogVerifiedCacheManifest(cacheDir,i,b.ManifestSHA256,1<<20)
+		if e!=nil{t.Fatalf("verified cached batch %d manifest: %v",i,e)}
+		if len(raw)==0{t.Fatal("empty verified cached manifest")}
+		rootData,e:=os.ReadFile(b.DataPath)
+		if e!=nil{t.Fatal(e)}
+		cacheData,e:=os.ReadFile(backlogCacheBatchData(cacheDir,i))
+		if e!=nil{t.Fatal(e)}
+		if !bytes.Equal(rootData,cacheData){t.Fatalf("cached batch %d differs from original signed source",i)}
+	}
+	// A cached manifest edit cannot silently become signed input.
+	editPath:=backlogCacheBatchManifest(cacheDir,2)
+	if e:=os.WriteFile(editPath,[]byte("tampered"),0600);e!=nil{t.Fatal(e)}
+	if _,e:=backlogVerifiedCacheManifest(cacheDir,2,full.Batches[2].ManifestSHA256,1<<20);e==nil{
+		t.Fatal("tampered cached manifest was accepted")
+	}
+	t.Log("PASS: one complete signed FIGT verified cache stored all four batches, source bytes matched, cache manifest tampering rejected")
 	t.Log("PASS: whole signed transfer authenticated in one streamed pass; 2/4 data batches retained; identical signed window hashes; private stage copy verified; no PostgreSQL writes")
 }
