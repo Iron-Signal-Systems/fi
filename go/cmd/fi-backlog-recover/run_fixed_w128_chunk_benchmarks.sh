@@ -7,7 +7,7 @@ set -eu
 umask 077
 
 stop() { printf 'FI W128 CHUNK BENCH STOP: %s\n' "$*" >&2; exit 1; }
-for n in jexec sha256 pgrep ps date grep tail cp mkdir sleep openssl git; do
+for n in jexec sha256 pgrep ps date grep tail cp mkdir sleep openssl; do
     command -v "$n" >/dev/null 2>&1 || stop "missing $n"
 done
 : "${FI_BENCH_BINARY:?missing executable}"
