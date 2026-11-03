@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -139,14 +140,34 @@ func BootstrapPromoteVerifiedBacklogToEmptySoR(
 	verifyTime:=time.Since(verifyStarted)
 	var sourceCount,relationRows int64
 	copyStarted:=time.Now()
+	// The signed source timestamps and digests are never changed. Ingested_at
+	// is a database operational timestamp, not a source-observed timestamp;
+	// record actual canonical publication time instead of private stage time.
+	canonicalIngestedAt:=time.Now().UTC()
 	for _,name:=range order {
 		target:=pgx.Identifier{"fi",name}.Sanitize()
 		source:=pgx.Identifier{privateProjectionSchema,name}.Sanitize()
-		// OVERRIDING SYSTEM VALUE retains exact private identities. The
-		// precondition that canonical history is empty avoids all PK/FK
-		// remapping and cross-generation NTFS merge ambiguity.
-		sql:="INSERT INTO "+target+" OVERRIDING SYSTEM VALUE SELECT * FROM "+source
-		tag,copyErr:=tx.Exec(ctx,sql)
+		cols,colErr:=bootstrapReadColumns(ctx,tx,"fi",name)
+		if colErr!=nil{return empty,colErr}
+		names:=make([]string,0,len(cols))
+		values:=make([]string,0,len(cols))
+		var args []any
+		for _,col:=range cols {
+			ident:=pgx.Identifier{col.name}.Sanitize()
+			names=append(names,ident)
+			if col.name=="ingested_at" {
+				values=append(values,"$1::timestamptz")
+				args=[]any{canonicalIngestedAt}
+			}else{
+				values=append(values,"src."+ident)
+			}
+		}
+		// OVERRIDING SYSTEM VALUE retains private IDs. The empty-SoR
+		// precondition avoids all FK remapping and cross-generation merges.
+		sql:="INSERT INTO "+target+" ("+strings.Join(names,",")+
+			") OVERRIDING SYSTEM VALUE SELECT "+strings.Join(values,",")+
+			" FROM "+source+" AS src"
+		tag,copyErr:=tx.Exec(ctx,sql,args...)
 		if copyErr!=nil {return empty,fmt.Errorf("FI SoR bootstrap: %s relational promotion: %w",name,copyErr)}
 		relationRows+=tag.RowsAffected()
 		if name=="source_record" {sourceCount=tag.RowsAffected()}
