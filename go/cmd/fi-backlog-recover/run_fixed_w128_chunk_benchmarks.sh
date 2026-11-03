@@ -7,11 +7,13 @@ set -eu
 umask 077
 
 stop() { printf 'FI W128 CHUNK BENCH STOP: %s\n' "$*" >&2; exit 1; }
-for n in jexec sha256 pgrep ps date grep tail cp mkdir sleep; do
+for n in jexec sha256 pgrep ps date grep tail cp mkdir sleep openssl git; do
     command -v "$n" >/dev/null 2>&1 || stop "missing $n"
 done
 : "${FI_BENCH_BINARY:?missing executable}"
 : "${FI_BENCH_BINARY_SHA256:?missing executable SHA}"
+: "${FI_BENCH_SOURCE_GIT_SHA:?missing optimized source Git commit}"
+: "${FI_BENCH_RUN_LABEL:?missing dev test run label}"
 : "${FI_BENCH_RELAY_BINARY:?missing verified host-to-jail PostgreSQL relay}"
 : "${FI_BENCH_RELAY_SHA256:?missing host-to-jail relay SHA256}"
 : "${FI_BENCH_JAIL_RELAY_BINARY:=/home/jwood/fi-w128-chunk-build/fi-backlog-pg-relay}"
@@ -27,6 +29,12 @@ done
 : "${FI_BENCH_W96_PORT:?missing W96 port}"
 : "${FI_BENCH_W128_PORT:?missing W128 port}"
 [ "${FI_BENCH_ISOLATED_CLUSTERS_CONFIRMED:-}" = YES ] || stop "four disposable instances must be reviewed and confirmed"
+case "$FI_BENCH_SOURCE_GIT_SHA" in *[!a-f0-9]*|'') stop "invalid source Git SHA";; esac
+[ "${#FI_BENCH_SOURCE_GIT_SHA}" -eq 40 ] || stop "source Git SHA must contain 40 hexadecimal characters"
+actual_source_commit=$(jexec -U jwood fi-dev git -C /home/jwood/src/fi rev-parse HEAD) ||
+    stop "cannot inspect fi-dev source commit"
+[ "$actual_source_commit" = "$FI_BENCH_SOURCE_GIT_SHA" ] ||
+    stop "fi-dev source commit differs from the provisioned optimized build"
 [ "${FI_BENCH_PSQL_JAIL:-}" = fi-dev ] || stop "requires fi-dev PostgreSQL client jail"
 jexec -U jwood fi-dev sh -c 'command -v psql >/dev/null && command -v pg_dump >/dev/null && command -v pg_restore >/dev/null' ||
     stop "fi-dev requires psql, pg_dump, and pg_restore before any custody scan"
@@ -37,6 +45,12 @@ for trust_file in \
     /usr/local/etc/fi/sources/iss-fs-22a.iss.local.conf; do
     [ -r "$trust_file" ] || stop "missing installed host FI trust: $trust_file"
 done
+# The Go signed loader remains authoritative for expiration/revocation.
+# Preflight additionally checks that host's installed CRL signature is
+# authentic (do not use receiver-jail CRLs for this test).
+openssl crl -in /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem \
+    -noout -verify -CAfile /usr/local/etc/fi/pki/trust/fi-root-ca.crt.pem \
+    >/dev/null || stop "host-installed batch CRL signature invalid"
 case "$FI_BENCH_BINARY" in /*) ;; *) stop "binary requires absolute path";; esac
 case "$FI_BENCH_OUTPUT_ROOT" in /var/tmp/fi-window-chunks-*) ;; *) stop "new output root must start /var/tmp/fi-window-chunks-";; esac
 [ ! -e "$FI_BENCH_OUTPUT_ROOT" ] || stop "output root already exists; cannot reuse"
@@ -120,6 +134,27 @@ host_jail_archive="/usr/local/jails/containers/fi-dev$jail_archive"
 [ -d "/usr/local/jails/containers/fi-dev$jail_cluster_root" ] || stop "jail cluster root missing"
 
 mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT" || stop "cannot create new output root"
+{
+    printf 'FI REAL SIGNED BACKLOG - OPTIMIZED SINGLE-WORKER EXPERIMENT\n'
+    printf 'label=%s\n' "$FI_BENCH_RUN_LABEL"
+    printf 'git_commit=%s\n' "$FI_BENCH_SOURCE_GIT_SHA"
+    printf 'recover_binary_sha256=%s\n' "$FI_BENCH_BINARY_SHA256"
+    printf 'relay_binary_sha256=%s\n' "$FI_BENCH_RELAY_SHA256"
+    printf 'source_id=iss-fs-22a.iss.local\n'
+    printf 'generation_id=20261030T000032.061323100Z-3e38b2210771462c\n'
+    printf 'signed_source_records=15140785\nsigned_batches=8399\n'
+    printf 'preparation=one complete original signed custody scan; first W128 durable seed\n'
+    printf 'four_tests=independent cloned seed, 10 minutes each, serial W32 W64 W96 W128\n'
+    printf 'atomic_window_records=131072\natomic_window_bytes=1073741824\n'
+    printf 'security_profile=P3\nfile_profile=F3\n'
+    printf 'inner_chunk_records=32768,65536,98304,131072\n'
+    printf 'publication=disabled; private durable throughput only\n'
+    printf 'start_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'host=%s\n' "$(hostname)"
+    printf 'crl_sha256=%s\n' "$(sha256 -q /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem)"
+    openssl crl -in /usr/local/etc/fi/pki/trust/fi-batch-signing-ca.crl.pem \
+        -noout -lastupdate -nextupdate -crlnumber
+} > "$FI_BENCH_OUTPUT_ROOT/RUN_MANIFEST.txt"
 # A separate, verified helper bridges private host AF_UNIX endpoints into
 # fi-dev by entering the jail for each PostgreSQL connection. Unlike a
 # symlink to a jailed PostgreSQL socket, the host endpoints are created by
@@ -158,7 +193,8 @@ done
 }
 host_relay_ready=YES
 cat "$FI_BENCH_OUTPUT_ROOT/relay.log"
-printf 'fixed_window_records=131072 fixed_window_bytes=1073741824 original_signed_generation=yes\n' > "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
+printf 'fixed_window_records=131072 fixed_window_bytes=1073741824 original_signed_generation=yes source_git=%s run_label=%s\n' \
+    "$FI_BENCH_SOURCE_GIT_SHA" "$FI_BENCH_RUN_LABEL" > "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 printf 'binary_sha256=%s\n' "$FI_BENCH_BINARY_SHA256" >> "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 printf 'relay_sha256=%s\n' "$FI_BENCH_RELAY_SHA256" >> "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 source_id=iss-fs-22a.iss.local
@@ -245,6 +281,10 @@ for profile in W32 W64 W96 W128; do
         sleep 15
       done
     ) > "$profile_dir/process.log" 2>&1 & mon_ps=$!
+    before_wal=$(psql_check "SELECT wal_bytes::text || '|' || wal_buffers_full::text FROM pg_stat_wal") ||
+        stop "$profile WAL baseline read failed"
+    before_checkpoints=$(psql_check "SELECT num_requested::text || '|' || num_timed::text FROM pg_stat_checkpointer") ||
+        stop "$profile checkpoint baseline read failed"
     printf '%s FI CHUNK BENCH profile=%s chunk_records=%s timed-start\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$profile" "$chunk" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
     if ! "$FI_BENCH_BINARY" \
         -source="$source_id" -generation-id="$generation_id" -postgres="$dsn" \
@@ -262,6 +302,13 @@ for profile in W32 W64 W96 W128; do
     grep '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$profile_dir/timed.log" > "$profile_dir/result.txt" ||
        stop "$profile did not produce a ten-minute terminal checkpoint"
     cat "$profile_dir/result.txt" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
+    after_wal=$(psql_check "SELECT wal_bytes::text || '|' || wal_buffers_full::text FROM pg_stat_wal") ||
+        stop "$profile ending WAL counters unreadable"
+    after_checkpoints=$(psql_check "SELECT num_requested::text || '|' || num_timed::text FROM pg_stat_checkpointer") ||
+        stop "$profile ending checkpoint counters unreadable"
+    printf 'FI PG COUNTERS profile=%s WAL_before=%s WAL_after=%s checkpoints_before=%s checkpoints_after=%s\n' \
+       "$profile" "$before_wal" "$after_wal" "$before_checkpoints" "$after_checkpoints" \
+       | tee "$profile_dir/postgres-counters.txt" >> "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
     grep '^FI TYPED CHUNK COMMITTED ' "$profile_dir/timed.log" > "$profile_dir/typed-chunks.txt" ||
         stop "$profile did not exercise typed processing chunks"
     # Validate actual SQL state rather than trusting the terminal log's
@@ -297,3 +344,4 @@ for profile in W32 W64 W96 W128; do
 done
 printf '%s FI CHUNK BENCH COMPLETE: four timed W128/1GiB runs, output=%s\n' \
    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$FI_BENCH_OUTPUT_ROOT" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
+printf 'completed_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$FI_BENCH_OUTPUT_ROOT/RUN_MANIFEST.txt"
