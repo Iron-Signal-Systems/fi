@@ -49,7 +49,8 @@ SELECT name,setting,unit
 FROM pg_settings
 WHERE name IN ('shared_buffers','effective_cache_size','max_wal_size',
 'checkpoint_timeout','wal_compression','synchronous_commit','fsync','full_page_writes',
-'maintenance_work_mem','work_mem')
+'maintenance_work_mem','work_mem','track_io_timing','track_wal_io_timing',
+'checkpoint_completion_target','wal_buffers','bgwriter_lru_maxpages')
 ORDER BY name;
 \echo --- Largest real private projection relations and index weights
 SELECT c.relname AS relation,
@@ -86,8 +87,29 @@ WHERE n.nspname='fi_recovery_projection'
  'windows_security_event','windows_security_event_field',
  'windows_security_event_scope','content_hash_observation')
 ORDER BY c.relname;
-\echo --- PostgreSQL cumulative WAL and cluster I/O: contextual, not per-test causation
-SELECT wal_records,wal_fpi,wal_bytes FROM pg_stat_wal;
+\echo --- Actual checkpoint pressure and write/sync work (cumulative since stats_reset)
+SELECT num_timed,num_requested,num_done,buffers_written,write_time,sync_time,stats_reset
+FROM pg_stat_checkpointer;
+\echo --- WAL pressure including buffer-full induced writes (cumulative)
+SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full,stats_reset
+FROM pg_stat_wal;
+\echo --- Background writer pressure (cumulative)
+SELECT buffers_clean,maxwritten_clean,buffers_alloc,stats_reset FROM pg_stat_bgwriter;
+\echo --- PostgreSQL 18 relation and WAL I/O, including client buffer evictions
+SELECT backend_type,object,context,
+ reads,read_bytes,hits,writes,write_bytes,extends,extend_bytes,evictions,
+ fsyncs,read_time,write_time,fsync_time,stats_reset
+FROM pg_stat_io
+WHERE object IN ('relation','wal') AND
+ (coalesce(reads,0)+coalesce(writes,0)+coalesce(extends,0)+
+  coalesce(evictions,0)+coalesce(fsyncs,0))>0
+ORDER BY object,backend_type,context;
+\echo --- Security-field primary key cache accesses despite zero index scans
+SELECT indexrelname,idx_blks_read,idx_blks_hit
+FROM pg_statio_user_indexes
+WHERE schemaname='fi_recovery_projection'
+ AND relname='windows_security_event_field';
+\echo --- PostgreSQL cluster I/O: cumulative not necessarily incurred by timed window
 SELECT datname,blks_read,blks_hit,blk_read_time,blk_write_time,temp_files,temp_bytes,
        deadlocks,conflicts
 FROM pg_stat_database WHERE datname='fi';
