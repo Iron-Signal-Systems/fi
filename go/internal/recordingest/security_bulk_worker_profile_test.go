@@ -49,3 +49,16 @@ func TestWorkerFixedSecurityProfileRejectsInvalidInput(t *testing.T) {
 		t.Fatal("accepted nil context")
 	}
 }
+
+func TestEffectiveSecurityBulkLimitsMatchesProfile(t *testing.T) {
+	ctx, err := WithFixedSecurityBulkProfile(context.Background(), "P3")
+	if err != nil { t.Fatal(err) }
+	rows, bytes := EffectiveSecurityBulkLimits(ctx)
+	if rows != 4096 || bytes != 16<<20 {
+		t.Fatalf("real backlog P3 limits differ from replay: %d rows %d bytes",rows,bytes)
+	}
+	defaultRows, defaultBytes := EffectiveSecurityBulkLimits(context.Background())
+	if defaultRows != 1024 || defaultBytes != 8<<20 {
+		t.Fatalf("P1 default unexpectedly changed: %d %d",defaultRows,defaultBytes)
+	}
+}

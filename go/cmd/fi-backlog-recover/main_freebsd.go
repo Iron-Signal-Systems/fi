@@ -166,7 +166,9 @@ func run() error {
 		return err
 	}
 	fRows, fBytes, oRows, oBytes := recordingest.EffectiveFileBulkLimits(ctx)
-	fmt.Printf("FI TUNING EFFECTIVE security_profile=%s file_profile=%s source_rows=%d source_bytes=%d observation_rows=%d observation_bytes=%d ntfs_prefetch_rows=512\\n", recordingest.FixedSecurityBulkProfileName(ctx), fileProfile, fRows, fBytes, oRows, oBytes)
+	sRows, sBytes := recordingest.EffectiveSecurityBulkLimits(ctx)
+	fmt.Printf("FI TUNING EFFECTIVE security_profile=%s security_source_rows=%d security_source_bytes=%d file_profile=%s source_rows=%d source_bytes=%d observation_rows=%d observation_bytes=%d ntfs_prefetch_rows=512\n",
+		recordingest.FixedSecurityBulkProfileName(ctx), sRows, sBytes, fileProfile, fRows, fBytes, oRows, oBytes)
 
 	fmt.Printf("FI REAL BACKLOG CONFIG security_profile=%s window_profile=%s max_window_records=%d max_window_data_bytes=%d\n",
 		recordingest.FixedSecurityBulkProfileName(ctx), windowProfile, limits.MaxRecords, limits.MaxDataBytes)

@@ -19,3 +19,11 @@ func WithFixedSecurityBulkProfile(ctx context.Context, name string) (context.Con
 func FixedSecurityBulkProfileName(ctx context.Context) string {
 	return securityBulkLimitsFromContext(ctx).Name
 }
+
+// EffectiveSecurityBulkLimits reports the actual bounded COPY source
+// limits in the supplied ingest context. Useful for proving that a real
+// signed-backlog replay uses the same P3 settings as isolated replay tests.
+func EffectiveSecurityBulkLimits(ctx context.Context) (rows int, bytes int64) {
+	limits := securityBulkLimitsFromContext(ctx)
+	return limits.MaxRecords, limits.MaxBytes
+}
