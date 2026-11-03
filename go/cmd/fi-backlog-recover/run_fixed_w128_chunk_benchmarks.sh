@@ -80,7 +80,7 @@ get_profile() {
       W128) dsn=$FI_BENCH_W128_DSN; expected=$FI_BENCH_W128_PORT; chunk=131072;;
       *) stop "invalid profile";;
     esac
-    case "$expected" in 5553[1-4]|5563[1-4]|5573[1-4]) ;; *) stop "unexpected disposable cluster port $expected";; esac
+    case "$expected" in 5553[1-4]|5563[1-4]|5573[1-4]|5583[1-4]) ;; *) stop "unexpected disposable cluster port $expected";; esac
     jail_dsn=$(printf '%s\n' "$dsn" | sed 's@host=/usr/local/jails/containers/fi-dev/@host=/@')
     case "$jail_dsn" in
        host=/home/jwood/fi-window-bench-*" user=fi_ingest dbname=fi sslmode=disable") ;;

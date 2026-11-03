@@ -47,8 +47,8 @@ done
 # Use a separate port family for every fresh benchmark dataset.
 base_port=${FI_BENCH_BASE_PORT:-55431}
 case "$base_port" in
-  55431|55531|55631|55731) ;;
-  *) fail "FI_BENCH_BASE_PORT must be 55431,55531,55631,or 55731";;
+  55431|55531|55631|55731|55831) ;;
+  *) fail "FI_BENCH_BASE_PORT must be 55431,55531,55631,55731,or 55831";;
 esac
 w32_port=$base_port
 w64_port=$((base_port + 1))
