@@ -279,6 +279,185 @@ func ciPromoteSecurityFixture(t *testing.T, source string, invalidLate bool) *Pr
 }
 
 
+const ciPromoteUSNScope = "usn-recovery-scope"
+const ciPromoteUSNObservedAt = "2026-11-01T14:00:00.123456789Z"
+
+func ciPromoteUSNBoundary(sourceBound bool, expectedObjects int) usnReadBoundaryPayload {
+	b := usnReadBoundaryPayload{
+		ObservedAt:       ciPromoteUSNObservedAt,
+		CollectionMethod: records.WindowsUSNCollectionMethod,
+		VolumeIdentity: records.VolumeIdentity{
+			MethodVersion: ntfs.IdentityMethodVersion,
+			VolumeGUID:    `\\?\Volume{12345678-1234-1234-1234-123456789abc}\`,
+			VolumeSerial:  "123456789",
+		},
+		JournalID: "7", StartUSN: "100", NextUSN: "200",
+		SourceRecordCount:          expectedObjects,
+		SourceDistinctObjectCount:  expectedObjects,
+		SelectedRecordCount:        expectedObjects,
+		SelectedObjectCount:        expectedObjects,
+		ScopeUnresolvedObjectCount: expectedObjects,
+		ReObservationOperationID:   "fi-recovery-reobserve",
+		USNReadOperationID:         "fi-recovery-legacy-read",
+	}
+	if sourceBound {
+		b.SourceBatchSHA256 = strings.Repeat("a", 64)
+		b.CorrelationSHA256 = strings.Repeat("b", 64)
+		root := records.NTFSObjectIdentity{
+			MethodVersion:       ntfs.IdentityMethodVersion,
+			FileReferenceNumber: "5", SequenceNumber: "1",
+		}
+		b.RootIdentity = &root
+		b.USNReadOperationID = ""
+	}
+	return b
+}
+
+func ciPromoteUSNObject(frn int, sourceBound bool, invalidChange bool) usnObjectObservationPayload {
+	file := records.NTFSObjectIdentity{
+		MethodVersion:       ntfs.IdentityMethodVersion,
+		FileReferenceNumber: fmt.Sprint(frn), SequenceNumber: "1",
+	}
+	parent := records.NTFSObjectIdentity{
+		MethodVersion:       ntfs.IdentityMethodVersion,
+		FileReferenceNumber: "5", SequenceNumber: "1",
+	}
+	change := records.USNChangeObservation{
+		MajorVersion: "2", MinorVersion: "0", FileIdentity: file, ParentIdentity: parent,
+		USN: fmt.Sprint(frn * 10), Timestamp: ciPromoteUSNObservedAt,
+		ReasonRaw: "2", ReasonNames: []string{"CLOSE", "FILE_CREATE"},
+		SourceInfoRaw: "0", SecurityID: "0", FileAttributesRaw: "32",
+		FileNameUTF16LEBase64URL: "ZgA",
+	}
+	if invalidChange {
+		change.FileIdentity.FileReferenceNumber = "999999"
+	}
+	v := usnObjectObservationPayload{
+		FileIdentity: file, ScopeBasis: "ScopeUnresolvedIncluded",
+		Status: "Unavailable", ReasonCode: "TEST_UNAVAILABLE",
+		Changes: []records.USNChangeObservation{change},
+	}
+	if sourceBound {
+		v.SourceBatchSHA256 = strings.Repeat("a", 64)
+	}
+	return v
+}
+
+func ciPromoteUSNGap() records.USNContinuityGapObservation {
+	return records.USNContinuityGapObservation{
+		ObservedAt:       ciPromoteUSNObservedAt,
+		CollectionMethod: records.WindowsUSNCollectionMethod,
+		ScopeID:          ciPromoteUSNScope, GovernedRoot: `C:\FI-USN`,
+		ReasonCode:          "TEST_JOURNAL_GAP",
+		CheckpointJournalID: "7", CheckpointNextUSN: "100",
+		CurrentJournalID: "8", CurrentFirstUSN: "200",
+		CurrentLowestValidUSN: "200", CurrentNextUSN: "300",
+		CoverageState:        records.USNContinuityGapCoverageIncomplete,
+		ReconciliationAction: records.USNContinuityGapReconcileBaselineAndCatchUp,
+	}
+}
+
+// The first committed window contains a legacy boundary/object and a
+// continuity gap. The second contains an M6.1 source-bound boundary/object,
+// plus a legacy object that must resolve the older legacy boundary in SQL.
+// "late-invalid" fails after earlier valid USN changes and reason COPY.
+// "incomplete" has a source-bound capture count that cannot close.
+func ciPromoteUSNFixture(t *testing.T, source, scenario string) *PreparedGeneration {
+	t.Helper()
+	g := bootstrapCIFixture(t, source, false)
+	hash := sha256.Sum256([]byte(source))
+	g.Receipt.Descriptor.GenerationID = "20261101T140000.000000000Z-" + hex.EncodeToString(hash[:8])
+	g.Receipt.TransferSHA256 = hex.EncodeToString(ciPromoteUSNSHA256String(source + "/transfer"))
+	g.ReceiptSHA256 = hex.EncodeToString(ciPromoteUSNSHA256String(source + "/receipt"))
+	g.Receipt.DataBytes = 0
+	for bi := range g.Batches {
+		b := &g.Batches[bi]
+		var data []byte
+		for n := 0; n < b.Manifest.RecordCount; n++ {
+			var kind string
+			var payload any
+			if bi == 0 {
+				switch n {
+				case 0:
+					kind = "USNReadBoundary"
+					payload = ciPromoteUSNBoundary(false, 1)
+				case 1:
+					kind = "USNObjectObservation"
+					payload = ciPromoteUSNObject(1000, false, false)
+				case 2:
+					if scenario == "split" || scenario == "split-overflow" || scenario == "split-missing" {
+						kind = "USNReadBoundary"
+						payload = ciPromoteUSNBoundary(true, 1)
+					} else {
+						kind = "USNContinuityGap"
+						payload = ciPromoteUSNGap()
+					}
+				}
+			} else {
+				switch n {
+				case 0:
+					if scenario == "split" || scenario == "split-overflow" || scenario == "split-missing" {
+						kind = "USNObjectObservation"
+						payload = ciPromoteUSNObject(1001, scenario != "split-missing", false)
+					} else {
+						kind = "USNReadBoundary"
+						expected := 1
+						if scenario == "incomplete" {
+							expected = 2
+						}
+						payload = ciPromoteUSNBoundary(true, expected)
+					}
+				case 1:
+					kind = "USNObjectObservation"
+					payload = ciPromoteUSNObject(1001, scenario != "split" && scenario != "split-missing", false)
+				case 2:
+					kind = "USNObjectObservation"
+					payload = ciPromoteUSNObject(1002, false, scenario == "late-invalid")
+				}
+			}
+			encodedPayload, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := spool.Record{
+				Version: SpoolRecordVersion, RecordKind: kind,
+				ScopeID: ciPromoteUSNScope, WrittenAt: ciPromoteUSNObservedAt,
+				Payload: encodedPayload,
+			}
+			encoded, err := json.Marshal(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, encoded...)
+			data = append(data, '\n')
+		}
+		path := filepath.Join(t.TempDir(), "usn.jsonl")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		b.DataPath = path
+		b.Manifest.DataBytes = int64(len(data))
+		batchDigest := sha256.Sum256(data)
+		b.Manifest.DataSHA256 = hex.EncodeToString(batchDigest[:])
+		manifestRaw, err := json.Marshal(b.Manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.ManifestRawBytes = manifestRaw
+		b.ManifestBytes = len(manifestRaw)
+		manifestDigest := sha256.Sum256(manifestRaw)
+		b.ManifestSHA256 = hex.EncodeToString(manifestDigest[:])
+		g.Receipt.DataBytes += uint64(len(data))
+	}
+	return g
+}
+
+func ciPromoteUSNSHA256String(value string) []byte {
+	sum := sha256.Sum256([]byte(value))
+	return sum[:]
+}
+
+
 func TestPopulatedSoRSQLPromotionRemapsFIIdentitiesAndRollsBack(t *testing.T){
  if os.Getenv("GITHUB_ACTIONS")!="true"||
   os.Getenv("FI_BOOTSTRAP_CI_ALLOW_ISOLATED_WRITES")!="1"{
@@ -482,5 +661,41 @@ WHERE sb.recorded_generation_id=$1`
  WHERE p.source_record_id=c.source_record_id)`,
  acceptedThird.RecordedGenerationID).Scan(&identicalNumericIDs);e!=nil{t.Fatal(e)}
  if identicalNumericIDs{t.Fatal("private numeric source ID leaked unchanged into populated SoR")}
- t.Log("PASS: populated SoR 3 generations, exact bidirectional signed source/field/scope equality, shared NTFS identities, late rollback, retries and Accepted")
+ // FOURTH signed generation contains a legacy USNReadBoundary,
+ // an M6.1 source-bound boundary, changes and reason rows that span windows.
+ // It reuses the earlier File family's NTFS volume/root objects.
+ _=reader.Close(ctx);_=writer.Close(ctx)
+ resetPrivate()
+ reader,writer=openIngester()
+ fourth:=ciPromoteUSNFixture(t,sourceID,"normal")
+ fourth.Receipt.Descriptor.GenerationID="20261103T150003.000000000Z-usn-four"
+ fourth.Receipt.TransferSHA256=strings.Repeat("7",64)
+ fourth.ReceiptSHA256=strings.Repeat("8",64)
+ stage(fourth)
+ acceptedFourth,e:=PromoteVerifiedBacklogToPopulatedSoR(ctx,reader,admin,fourth,limits,"fi-promote-usn")
+ if e!=nil || acceptedFourth.Outcome!="Accepted" {
+  t.Fatalf("USN bound cross-window promotion: %+v err=%v",acceptedFourth,e)
+ }
+ var usnBoundary,usnObject,usnChange,usnReason,usnGap,totalRecords,acceptedTotal int64
+ if e=reader.QueryRow(ctx,`SELECT
+ (SELECT count(*) FROM fi.usn_read_boundary),
+ (SELECT count(*) FROM fi.usn_object_observation),
+ (SELECT count(*) FROM fi.usn_object_change),
+ (SELECT count(*) FROM fi.usn_object_change_reason),
+ (SELECT count(*) FROM fi.usn_continuity_gap),
+ (SELECT count(*) FROM fi.source_record),
+ (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')`).Scan(
+  &usnBoundary,&usnObject,&usnChange,&usnReason,&usnGap,&totalRecords,&acceptedTotal);e!=nil{t.Fatal(e)}
+ if usnBoundary!=2 || usnObject!=3 || usnChange!=3 || usnReason!=6 ||
+  usnGap!=1 || totalRecords!=24 || acceptedTotal!=4{
+  t.Fatalf("remapped USN lineage broken: boundary=%d objects=%d changes=%d reasons=%d gaps=%d source=%d Accepted=%d",
+   usnBoundary,usnObject,usnChange,usnReason,usnGap,totalRecords,acceptedTotal)
+ }
+ var orphanedUSN int64
+ if e=reader.QueryRow(ctx,`SELECT count(*) FROM fi.usn_object_observation u
+LEFT JOIN fi.usn_read_boundary b ON b.source_record_id=u.usn_read_boundary_source_record_id
+LEFT JOIN fi.ntfs_object n ON n.ntfs_object_id=u.ntfs_object_id
+WHERE b.source_record_id IS NULL OR n.ntfs_object_id IS NULL`).Scan(&orphanedUSN);e!=nil{t.Fatal(e)}
+ if orphanedUSN!=0{t.Fatalf("source-bound USN FK remap produced %d orphans",orphanedUSN)}
+ t.Log("PASS: populated SoR 4 generations, signed lineage, shared NTFS, legacy+M6.1 USN references, fields/scopes, late rollback, retry and atomic Accepted")
 }
