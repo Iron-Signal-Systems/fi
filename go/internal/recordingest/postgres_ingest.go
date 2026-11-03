@@ -580,10 +580,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		if err != nil {
 			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
 		}
-		digest, err := decodeHex(prepared.RecordSHA256, 32, true, "source_record.record_sha256")
-		if err != nil {
-			return ordinal, err
-		}
+		// PrepareSourceRecord computed this over the exact LF-terminated
+		// signed JSONL bytes. Never decode its hex representation again.
+		digest := prepared.RecordDigest[:]
 		// Coverage records can span source batches. Flush before the next
 		// distinct kind to preserve relational projection order.
 		if joinedSource := joinedBacklogSourceFromContext(ctx); joinedSource != nil {

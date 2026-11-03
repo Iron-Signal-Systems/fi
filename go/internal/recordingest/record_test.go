@@ -32,6 +32,9 @@ func TestPrepareSourceRecordHashesExactJSONLBytes(t *testing.T) {
 	if got.RecordSHA256 != want {
 		t.Fatalf("RecordSHA256 = %q, want %q", got.RecordSHA256, want)
 	}
+	if got.RecordDigest != digest {
+		t.Fatal("binary source record digest does not equal signed JSONL SHA-256")
+	}
 }
 
 func TestPrepareSourceRecordRejectsMissingFinalLF(t *testing.T) {
@@ -78,7 +81,7 @@ func TestOwnedSourceRecordAvoidsSecondRawCopyWithoutChangingEvidence(t *testing.
 	if err != nil { t.Fatal(err) }
 	owned, err := prepareOwnedSourceRecord(raw)
 	if err != nil { t.Fatal(err) }
-	if owned.RecordSHA256 != baseline.RecordSHA256 || owned.RecordBytes != baseline.RecordBytes ||
+	if owned.RecordSHA256 != baseline.RecordSHA256 || owned.RecordDigest != baseline.RecordDigest || owned.RecordBytes != baseline.RecordBytes ||
 	   !bytes.Equal(owned.Record.Payload, baseline.Record.Payload) {
 		t.Fatal("owned real-ingest record changed signed envelope or digest")
 	}

@@ -45,6 +45,10 @@ type SourceRecord struct {
 	RawRecordBytes []byte
 	RecordBytes    int
 	RecordSHA256   string
+	// RecordDigest is the already-computed SHA-256 of the exact signed
+	// JSONL record, preserving the binary bytes without a hex decode in
+	// the real private and canonical ingest loops.
+	RecordDigest   [32]byte
 	WrittenAtUTC   time.Time
 }
 
@@ -127,6 +131,7 @@ func prepareSourceRecord(raw []byte, copyBytes bool) (SourceRecord, error) {
 		RawRecordBytes: evidenceBytes,
 		RecordBytes:    len(raw),
 		RecordSHA256:   hex.EncodeToString(digest[:]),
+		RecordDigest:   digest,
 		WrittenAtUTC:   writtenAt.UTC(),
 	}, nil
 }
