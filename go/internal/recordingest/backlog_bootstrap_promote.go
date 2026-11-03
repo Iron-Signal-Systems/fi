@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +49,8 @@ func BootstrapPromoteVerifiedBacklogToEmptySoR(
 	started:=time.Now()
 	// Retain the canonical Started record outside the publication transaction.
 	// An interrupted/rolled-back attempt is never mislabeled Accepted.
+	// A publisher without owner/table-lock/sequence rights will fail closed.
+	// Do not enable this candidate in a service until isolated acceptance.
 	if err:=WriteAttemptStarted(ctx,publisher,attemptID,desc.SourceID,desc.GenerationID);err!=nil{
 		return empty,fmt.Errorf("FI SoR bootstrap: journal start: %w",err)
 	}
@@ -141,7 +142,7 @@ func BootstrapPromoteVerifiedBacklogToEmptySoR(
 	for _,name:=range order {
 		target:=pgx.Identifier{"fi",name}.Sanitize()
 		source:=pgx.Identifier{privateProjectionSchema,name}.Sanitize()
-		// OVERrIDING SYSTEM VALUE retains exact private identities. The
+		// OVERRIDING SYSTEM VALUE retains exact private identities. The
 		// precondition that canonical history is empty avoids all PK/FK
 		// remapping and cross-generation NTFS merge ambiguity.
 		sql:="INSERT INTO "+target+" OVERRIDING SYSTEM VALUE SELECT * FROM "+source
@@ -160,8 +161,18 @@ func BootstrapPromoteVerifiedBacklogToEmptySoR(
 		if maxID==nil {continue}
 		// setval is non-transactional. On failed COMMIT it can leave only
 		// sequence gaps, never Accepted history or partial relational rows.
-		_,err=tx.Exec(ctx,"SELECT setval($1::regclass,GREATEST($2::bigint,(SELECT last_value FROM "+pgx.Identifier{strings.Split(seq.seq,".")[0],strings.Split(seq.seq,".")[1]}.Sanitize()+")),true)",seq.seq,*maxID)
+		_,err=tx.Exec(ctx,`SELECT setval($1::regclass,
+GREATEST($2::bigint,COALESCE((
+  SELECT last_value FROM pg_sequences
+  WHERE schemaname='fi'
+    AND sequencename=(SELECT relname FROM pg_class WHERE oid=$1::regclass)
+),0::bigint)),true)`,seq.seq,*maxID)
 		if err!=nil{return empty,fmt.Errorf("FI SoR bootstrap: advance identity %s: %w",seq.table,err)}
+	}
+	var acceptedGenerationID int64
+	if err=tx.QueryRow(ctx,`SELECT recorded_generation_id FROM fi.recorded_generation
+ WHERE source_id=$1 AND generation_id=$2`,desc.SourceID,desc.GenerationID).Scan(&acceptedGenerationID);err!=nil{
+		return empty,fmt.Errorf("FI SoR bootstrap: published generation ID lookup: %w",err)
 	}
 	transfer,err:=decodeHex(g.Receipt.TransferSHA256,32,true,"backlog.bootstrap.transfer_sha256")
 	if err!=nil{return empty,err}
@@ -180,7 +191,7 @@ INSERT INTO fi.ingest_journal (
 		TransferSHA256:g.Receipt.TransferSHA256,ReceiptSHA256:g.ReceiptSHA256,
 		Batches:len(g.Batches),DataBytes:g.Receipt.DataBytes,
 		RecordsSeen:int64(verified.Records),RecordsCommitted:int64(verified.Records),
-		Outcome:"Accepted",
+		RecordedGenerationID:acceptedGenerationID,Outcome:"Accepted",
 	}
 	fmt.Printf("FI SOR BOOTSTRAP PROMOTED source=%s generation=%s records=%d relational_rows=%d private_verify=%s sql_copy=%s commit=%s total=%s\n",
 		desc.SourceID,desc.GenerationID,verified.Records,relationRows,
