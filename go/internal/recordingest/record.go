@@ -53,6 +53,18 @@ type SourceRecord struct {
 // exact JSONL bytes, including the final LF, so source_record can be proven
 // against immutable recorder custody without storing the JSON again.
 func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
+	return prepareSourceRecord(raw, true)
+}
+
+// prepareOwnedSourceRecord is used only when the ingestion reader already
+// owns a fresh immutable []byte from bufio.ReadBytes. Unlike callers of the
+// exported PrepareSourceRecord, no second byte-for-byte copy is necessary.
+// This retains the same strict JSON, digest, and evidence validations.
+func prepareOwnedSourceRecord(raw []byte) (SourceRecord, error) {
+	return prepareSourceRecord(raw, false)
+}
+
+func prepareSourceRecord(raw []byte, copyBytes bool) (SourceRecord, error) {
 	if len(raw) == 0 {
 		return SourceRecord{}, errors.New("FI ingest source record is empty")
 	}
@@ -92,7 +104,10 @@ func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
 	if record.WrittenAt == "" {
 		return SourceRecord{}, errors.New("FI ingest source record written_at is required")
 	}
-	if len(record.Payload) == 0 || !json.Valid(record.Payload) {
+	// encoding/json already validated the nested json.RawMessage while
+	// strictly decoding the envelope. A second json.Valid traversal over
+	// every large Security payload duplicates work on the real backlog.
+	if len(record.Payload) == 0 {
 		return SourceRecord{}, errors.New("FI ingest source record payload JSON is required and must be valid")
 	}
 
@@ -102,10 +117,14 @@ func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
 	}
 
 	digest := sha256.Sum256(raw)
+	evidenceBytes := raw
+	if copyBytes {
+		evidenceBytes = append([]byte(nil), raw...)
+	}
 
 	return SourceRecord{
 		Record:         record,
-		RawRecordBytes: append([]byte(nil), raw...),
+		RawRecordBytes: evidenceBytes,
 		RecordBytes:    len(raw),
 		RecordSHA256:   hex.EncodeToString(digest[:]),
 		WrittenAtUTC:   writtenAt.UTC(),

@@ -5,6 +5,7 @@
 package recordingest
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -67,6 +68,41 @@ func TestSupportedRecordKindsExact(t *testing.T) {
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("supported kinds missing %q", want)
+		}
+	}
+}
+
+func TestOwnedSourceRecordAvoidsSecondRawCopyWithoutChangingEvidence(t *testing.T) {
+	raw := []byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":{"fields":[{"name":"FileName","value":"C:\\\\test.txt"}],"raw_xml":"<Event/>"}}` + "\n")
+	baseline, err := PrepareSourceRecord(raw)
+	if err != nil { t.Fatal(err) }
+	owned, err := prepareOwnedSourceRecord(raw)
+	if err != nil { t.Fatal(err) }
+	if owned.RecordSHA256 != baseline.RecordSHA256 || owned.RecordBytes != baseline.RecordBytes ||
+	   !bytes.Equal(owned.Record.Payload, baseline.Record.Payload) {
+		t.Fatal("owned real-ingest record changed signed envelope or digest")
+	}
+	if &owned.RawRecordBytes[0] != &raw[0] {
+		t.Fatal("owned real-ingest record unexpectedly copied immutable reader bytes")
+	}
+	if &baseline.RawRecordBytes[0] == &raw[0] {
+		t.Fatal("external PrepareSourceRecord no longer isolates caller mutation")
+	}
+	raw[0] ^= 1
+	if baseline.RawRecordBytes[0] != '{' {
+		t.Fatal("public SourceRecord evidence alias changed")
+	}
+}
+
+func TestOwnedSourceRecordStillRejectsMalformedNestedPayload(t *testing.T) {
+	cases := [][]byte{
+		[]byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":{"fields":[invalid]}}`+"\n"),
+		[]byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":}`+"\n"),
+		[]byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":null}`+"\n"),
+	}
+	for _, raw := range cases {
+		if _, err := prepareOwnedSourceRecord(raw); err == nil {
+			t.Fatalf("malformed payload accepted: %s", raw)
 		}
 	}
 }

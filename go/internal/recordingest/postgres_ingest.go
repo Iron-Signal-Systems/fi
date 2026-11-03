@@ -575,7 +575,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		profile.BatchHash += time.Since(hashStarted)
 
 		prepareStarted := time.Now()
-		prepared, err := PrepareSourceRecord(raw)
+		prepared, err := prepareOwnedSourceRecord(raw)
 		profile.Prepare += time.Since(prepareStarted)
 		if err != nil {
 			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
