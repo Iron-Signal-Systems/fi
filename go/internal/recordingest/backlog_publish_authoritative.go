@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -39,6 +40,7 @@ func PublishVerifiedBacklogWithAuthoritativeIngest(
 	if err := ctx.Err(); err != nil {
 		return IngestResult{}, err
 	}
+	publishStarted := time.Now()
 
 	// An exact matching canonical generation is already an atomic commit.
 	// Do not start another attempt, mutate a journal, or call private verifier
@@ -75,7 +77,9 @@ FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2
 		return IngestResult{}, fmt.Errorf("FI backlog publish: authoritative identity check: %w", err)
 	}
 
+	privateVerifyStarted := time.Now()
 	verified, err := VerifyCompleteBacklogTypedGeneration(ctx, verificationConn, generation, limits)
+	privateVerifyElapsed := time.Since(privateVerifyStarted)
 	if err != nil {
 		return IngestResult{}, fmt.Errorf("FI backlog publish: incomplete or mismatched private recovery: %w", err)
 	}
@@ -91,10 +95,14 @@ FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2
 	// batch files, validates every typed record, and atomically commits the
 	// generation with its Accepted journal event. Never treat the private
 	// verifier as authorization to copy mutable SQL rows into canonical fi.
+	journalStarted := time.Now()
 	if err := WriteAttemptStarted(ctx, canonicalConn, attemptID, desc.SourceID, desc.GenerationID); err != nil {
 		return IngestResult{}, fmt.Errorf("FI backlog publish: journal start: %w", err)
 	}
+	journalElapsed := time.Since(journalStarted)
+	canonicalStarted := time.Now()
 	result, err := IngestPreparedGeneration(ctx, canonicalConn, attemptID, generation)
+	canonicalElapsed := time.Since(canonicalStarted)
 	if err != nil {
 		return result, err
 	}
@@ -106,5 +114,17 @@ FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2
 			result.DataBytes != verified.DataBytes) {
 		return result, errors.New("FI backlog publish: canonical accepted count mismatch")
 	}
+	// Only a confirmed canonical Accepted/AlreadyAccepted outcome may print
+	// successful durable publication telemetry. In particular, private
+	// checkpoint throughput is never represented as authoritative throughput.
+	totalElapsed := time.Since(publishStarted)
+	rate := 0.0
+	if totalElapsed > 0 {
+		rate = float64(result.RecordsCommitted) / totalElapsed.Seconds()
+	}
+	fmt.Printf("FI SOR PUBLICATION PROFILE source=%s generation=%s outcome=%s records_committed=%d private_verify=%s journal_start=%s canonical_ingest=%s publication_total=%s durable_rate=%.1f/sec\n",
+		result.SourceID, result.GenerationID, result.Outcome, result.RecordsCommitted,
+		privateVerifyElapsed.Round(time.Millisecond), journalElapsed.Round(time.Millisecond),
+		canonicalElapsed.Round(time.Millisecond), totalElapsed.Round(time.Millisecond), rate)
 	return result, nil
 }
