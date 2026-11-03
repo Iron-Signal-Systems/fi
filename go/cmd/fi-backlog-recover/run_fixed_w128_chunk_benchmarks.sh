@@ -134,6 +134,12 @@ host_jail_archive="/usr/local/jails/containers/fi-dev$jail_archive"
 [ -d "/usr/local/jails/containers/fi-dev$jail_cluster_root" ] || stop "jail cluster root missing"
 
 mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT" || stop "cannot create new output root"
+# One complete original signed transfer is verified at seed time; preserve
+# every checked batch in this shared, receipt-bound cache for ALL four tests.
+cache_root="$FI_BENCH_OUTPUT_ROOT/verified-cache"
+mkdir -m 700 "$cache_root" || stop "cannot create verified cache"
+df -h "$cache_root" > "$FI_BENCH_OUTPUT_ROOT/cache-filesystem-before.txt" ||
+    stop "cannot inspect cache disk capacity"
 {
     printf 'FI REAL SIGNED BACKLOG - OPTIMIZED SINGLE-WORKER EXPERIMENT\n'
     printf 'label=%s\n' "$FI_BENCH_RUN_LABEL"
@@ -143,7 +149,8 @@ mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT" || stop "cannot create new output root"
     printf 'source_id=iss-fs-22a.iss.local\n'
     printf 'generation_id=20261030T000032.061323100Z-3e38b2210771462c\n'
     printf 'signed_source_records=15140785\nsigned_batches=8399\n'
-    printf 'preparation=one complete original signed custody scan; first W128 durable seed\n'
+    printf 'preparation=one complete signed custody scan, persists verified original batch data; first W128 durable seed\n'
+    printf 'verified_cache=shared receipt-bound source reused for four timed profiles\n'
     printf 'four_tests=independent cloned seed, 10 minutes each, serial W32 W64 W96 W128\n'
     printf 'atomic_window_records=131072\natomic_window_bytes=1073741824\n'
     printf 'security_profile=P3\nfile_profile=F3\n'
@@ -212,6 +219,7 @@ if ! "$FI_BENCH_BINARY" \
     -source-namespaces="$namespace_flag" -private-root="$seed_root" \
     -private-writes -security-profile=P3 -file-profile=F3 \
     -window-profile=W128 -stream-loader -start-window=0 -max-windows=1 \
+    -verified-cache-root="$cache_root" \
     > "$FI_BENCH_OUTPUT_ROOT/W128/seed.log" 2>&1; then
     tail -n 35 "$FI_BENCH_OUTPUT_ROOT/W128/seed.log" >&2 || :
     stop "W128 initial signed seed failed; other clusters remain empty"
@@ -224,6 +232,10 @@ grep 'FI REAL BACKLOG PAUSED completed_to_window=1' "$FI_BENCH_OUTPUT_ROOT/W128/
   stop "W128 database source-batch index not complete"
 seed_hash=$(psql_check "SELECT encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window WHERE window_index=0")
 [ "${#seed_hash}" -eq 64 ] || stop "W128 seed descriptor fingerprint missing"
+cache_batches=$(find "$cache_root" -type f -name '*.data' | wc -l | tr -d ' ')
+[ "$cache_batches" = 8399 ] || stop "verified signed cache has $cache_batches data batches, expected 8399"
+printf '%s FI VERIFIED CACHE SINGLE SCAN COMPLETE root=%s batches=8399\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$cache_root" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 printf '%s FI CHUNK BENCH W128 initial private checkpoint durable\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 
 # Make one consistent source snapshot, then restore to three NEW, empty
@@ -293,6 +305,7 @@ for profile in W32 W64 W96 W128; do
         -private-writes -security-profile=P3 -file-profile=F3 \
         -window-profile=W128 -processing-chunk-records="$chunk" \
         -continuous-private -start-window=1 -max-windows=0 -max-runtime=10m \
+        -verified-cache-root="$cache_root" \
         > "$profile_dir/timed.log" 2>&1; then
         monitor_cleanup
         tail -n 30 "$profile_dir/timed.log" >&2 || :
@@ -344,4 +357,5 @@ for profile in W32 W64 W96 W128; do
 done
 printf '%s FI CHUNK BENCH COMPLETE: four timed W128/1GiB runs, output=%s\n' \
    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$FI_BENCH_OUTPUT_ROOT" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
+df -h "$cache_root" > "$FI_BENCH_OUTPUT_ROOT/cache-filesystem-after.txt" || :
 printf 'completed_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$FI_BENCH_OUTPUT_ROOT/RUN_MANIFEST.txt"
