@@ -41,6 +41,8 @@ func PublishVerifiedBacklogWithAuthoritativeIngest(
 		return IngestResult{}, err
 	}
 	publishStarted := time.Now()
+	securityLimits := securityBulkLimitsFromContext(ctx)
+	fileLimits := fileBulkLimitsFromContext(ctx)
 
 	// An exact matching canonical generation is already an atomic commit.
 	// Do not start another attempt, mutate a journal, or call private verifier
@@ -122,8 +124,10 @@ FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2
 	if totalElapsed > 0 {
 		rate = float64(result.RecordsCommitted) / totalElapsed.Seconds()
 	}
-	fmt.Printf("FI SOR PUBLICATION PROFILE source=%s generation=%s outcome=%s records_committed=%d private_verify=%s journal_start=%s canonical_ingest=%s publication_total=%s durable_rate=%.1f/sec\n",
+	fmt.Printf("FI SOR PUBLICATION PROFILE source=%s generation=%s outcome=%s records_committed=%d security_profile=%s security_source_rows=%d security_source_bytes=%d file_profile=%s file_source_rows=%d file_source_bytes=%d private_verify=%s journal_start=%s canonical_ingest=%s publication_total=%s durable_rate=%.1f/sec\n",
 		result.SourceID, result.GenerationID, result.Outcome, result.RecordsCommitted,
+		securityLimits.Name, securityLimits.MaxRecords, securityLimits.MaxBytes,
+		fileLimits.Name, fileLimits.SourceMaxRecords, fileLimits.SourceMaxBytes,
 		privateVerifyElapsed.Round(time.Millisecond), journalElapsed.Round(time.Millisecond),
 		canonicalElapsed.Round(time.Millisecond), totalElapsed.Round(time.Millisecond), rate)
 	return result, nil
