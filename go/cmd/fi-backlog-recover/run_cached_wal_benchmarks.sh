@@ -224,6 +224,8 @@ for profile in W32 W64 W96 W128; do
         while :; do
             date -u '+UTC %Y-%m-%dT%H:%M:%SZ'
             ps -axo pid,ppid,%cpu,%mem,rss,comm | awk 'NR==1 || /fi-backlog-recover|postgres|postmaster/' || :
+            # Per-core CPU ticks for capacity and saturation comparisons.
+            sysctl -n kern.cp_times || :
             sleep 15
         done
     ) > "$profile_dir/process.log" 2>&1 & mon_ps=$!
