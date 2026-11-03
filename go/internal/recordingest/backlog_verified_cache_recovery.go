@@ -23,7 +23,7 @@ import (
 func recoverBacklogVerifiedCachedWindows(
  ctx context.Context,reader,writer *pgx.Conn,g *PreparedGeneration,
  limits BacklogWindowLimits,privateRoot string,startWindow int,
- cacheRoot string,descriptors []BacklogWindowDescriptor,
+ cacheRoot string,descriptors []BacklogCheckpointDescriptor,
  report func(BacklogContinuousProgress),
 )(BacklogGenerationVerification,error){
  var empty BacklogGenerationVerification
