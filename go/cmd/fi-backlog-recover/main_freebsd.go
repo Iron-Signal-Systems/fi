@@ -65,7 +65,7 @@ func validatePrivateWindowMode(profile string, enable, streamLoader, continuousP
 func run() error {
 	var fileProfile string
 
-	var source, generation, pg, custody, recorded, private string
+	var source, generation, pg, custody, recorded, private, verifiedCacheRoot string
 	var namespaces, enable, streamLoader, indexedPrivate, preflightOnly, continuousPrivate bool
 	var maxRuntime time.Duration
 	var maxWindows, startWindow, processingChunkRecords int
@@ -78,6 +78,7 @@ func run() error {
 	flag.StringVar(&custody, "custody-root", "/var/db/fi/custody/generation", "original immutable FIGT custody")
 	flag.StringVar(&recorded, "recorded-root", "/var/db/fi/custody/recorded", "original immutable recorded receipts")
 	flag.StringVar(&private, "private-root", "", "pre-created private 0700 recovery directory")
+	flag.StringVar(&verifiedCacheRoot, "verified-cache-root", "", "DEV ONLY: first stream fully authenticates and caches original FIGT; timed W128 resume reads verified cached batches without rescanning custody")
 	flag.BoolVar(&namespaces, "source-namespaces", false, "recorded receipt uses per-source directory")
 	flag.BoolVar(&enable, "private-writes", false, "explicitly enable PRIVATE recovery writes")
 	flag.BoolVar(&streamLoader, "stream-loader", false, "retain only requested window data while streaming and verifying entire signed custody")
@@ -111,6 +112,21 @@ func run() error {
 	}
 	if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
 		return err
+	}
+	if verifiedCacheRoot!="" {
+		if windowProfile!="W128" || !enable ||
+			!((streamLoader && startWindow==0 && maxWindows==1) ||
+			  (continuousPrivate && startWindow>=1 && maxWindows==0)){
+			return errors.New("verified-cache-root is restricted to W128 signed seed or verified cached continuous private trial")
+		}
+		if !filepath.IsAbs(verifiedCacheRoot){
+			return errors.New("FI verified cache: absolute root required")
+		}
+		info,err:=os.Lstat(verifiedCacheRoot)
+		if err!=nil{return err}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink!=0 || info.Mode().Perm()!=0700{
+			return errors.New("FI verified cache: existing real directory with exactly 0700 required")
+		}
 	}
 	if processingChunkRecords != 0 {
 		if windowProfile != "W128" || !continuousPrivate {
@@ -258,8 +274,7 @@ WHERE source_id=$1 AND generation_id=$2)
 		var completedWindowTime time.Duration
 		var lastCheckpointElapsed time.Duration
 
-		result, err := recordingest.RecoverBacklogContinuousPrivate(ctx, reader, canonical, loadConfig, generation, limits, private, startWindow,
-			func(p recordingest.BacklogContinuousProgress) {
+		progress := func(p recordingest.BacklogContinuousProgress) {
 				if p.WindowCommitted >= 0 {
 					lastWindow = p.WindowCommitted
 					durableThrough = p.RecordsDurable
@@ -279,7 +294,16 @@ WHERE source_id=$1 AND generation_id=$2)
 					fmt.Printf("FI REAL BACKLOG CONTINUOUS scanned_batches=%d/%d inspected_records=%d/%d durable_records=%d/%d elapsed=%s\n",
 						p.BatchesSeen, p.TotalBatches, p.RecordsInspected, expectedRecords, p.RecordsDurable, expectedRecords, p.Elapsed.Round(time.Millisecond))
 				}
-			})
+			}
+		var result recordingest.BacklogGenerationVerification
+		if verifiedCacheRoot!=""{
+			fmt.Printf("FI REAL BACKLOG VERIFIED CACHE RESUME root=%s; original FIGT archive will not be rescanned\n",verifiedCacheRoot)
+			result,err=recordingest.RecoverBacklogContinuousPrivateCached(ctx,reader,canonical,loadConfig,
+				generation,limits,private,startWindow,verifiedCacheRoot,progress)
+		}else{
+			result,err=recordingest.RecoverBacklogContinuousPrivate(ctx,reader,canonical,loadConfig,
+				generation,limits,private,startWindow,progress)
+		}
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				elapsed := time.Since(began)
@@ -319,15 +343,21 @@ WHERE source_id=$1 AND generation_id=$2)
 		if maxWindows < 1 || maxWindows > 8 {
 			return errors.New("stream-loader currently requires 1..8 requested windows")
 		}
-		prepared, err = recordingest.LoadRecordedGenerationSelectedWindows(
-			loadConfig, generation, limits, startWindow, maxWindows,
-			func(p recordingest.BacklogStreamProgress) {
-				if p.BatchesSeen == 1 || p.BatchesSeen%128 == 0 || p.BatchesSeen == expectedBatches {
-					fmt.Printf("FI REAL BACKLOG STREAM inspected_batches=%d/%d records=%d/%d bytes=%d retained_batches=%d current_window=%d elapsed=%s\n",
-						p.BatchesSeen, expectedBatches, p.RecordsSeen, expectedRecords, p.DataBytesSeen,
-						p.RetainedBatches, p.WindowIndex, time.Since(loadStarted).Round(time.Millisecond))
-				}
-			})
+		report := func(p recordingest.BacklogStreamProgress) {
+			if p.BatchesSeen == 1 || p.BatchesSeen%128 == 0 || p.BatchesSeen == expectedBatches {
+				fmt.Printf("FI REAL BACKLOG STREAM inspected_batches=%d/%d records=%d/%d bytes=%d retained_batches=%d current_window=%d elapsed=%s\n",
+					p.BatchesSeen, expectedBatches, p.RecordsSeen, expectedRecords, p.DataBytesSeen,
+					p.RetainedBatches, p.WindowIndex, time.Since(loadStarted).Round(time.Millisecond))
+			}
+		}
+		if verifiedCacheRoot!=""{
+			fmt.Printf("FI REAL BACKLOG ONE-SCAN CACHE BUILD root=%s; retaining all original signed batch data\n",verifiedCacheRoot)
+			prepared,err=recordingest.LoadRecordedGenerationSelectedWindowsCached(
+				loadConfig,generation,limits,startWindow,maxWindows,verifiedCacheRoot,report)
+		}else{
+			prepared,err=recordingest.LoadRecordedGenerationSelectedWindows(
+				loadConfig,generation,limits,startWindow,maxWindows,report)
+		}
 	} else {
 		prepared, err = recordingest.LoadRecordedGeneration(loadConfig, generation)
 	}
