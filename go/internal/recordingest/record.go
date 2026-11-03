@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
@@ -91,9 +90,16 @@ func prepareSourceRecord(raw []byte, copyBytes bool) (SourceRecord, error) {
 	if err := decoder.Decode(&record); err != nil {
 		return SourceRecord{}, fmt.Errorf("decode FI ingest source record: %w", err)
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return SourceRecord{}, errors.New("FI ingest source record contains trailing JSON")
+	// Decode strictly once. InputOffset points immediately after the first
+	// complete JSON value; the remaining bytes may contain only RFC 8259
+	// JSON whitespace. This rejects a second object or trailing garbage
+	// without creating a second decoder target for every Security event.
+	for i := decoder.InputOffset(); i < int64(len(body)); i++ {
+		switch body[i] {
+		case ' ', '\t', '\r', '\n':
+		default:
+			return SourceRecord{}, errors.New("FI ingest source record contains trailing JSON")
+		}
 	}
 
 	if record.Version != SpoolRecordVersion {

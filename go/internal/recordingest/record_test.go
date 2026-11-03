@@ -108,3 +108,17 @@ func TestOwnedSourceRecordStillRejectsMalformedNestedPayload(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareSourceRecordStrictSingleDecodeTrailingJSON(t *testing.T) {
+	base := `{"version":"fi-spool-record/0.1","record_kind":"CollectorIdentity","scope_id":"scope","written_at":"2026-11-03T12:00:00Z","payload":{"nested":[{"value":true}]}}`
+	for _, suffix := range []string{"  \t\r", ""} {
+		if _, err := PrepareSourceRecord([]byte(base + suffix + "\n")); err != nil {
+			t.Fatalf("valid JSONL suffix %q rejected: %v", suffix,err)
+		}
+	}
+	for _, suffix := range []string{" {}", " true", "0", "\v", " false", " garbage"} {
+		if _, err := PrepareSourceRecord([]byte(base + suffix + "\n")); err == nil {
+			t.Fatalf("trailing JSON or non-JSON whitespace %q accepted", suffix)
+		}
+	}
+}
