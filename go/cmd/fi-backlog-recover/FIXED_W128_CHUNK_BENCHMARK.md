@@ -40,7 +40,7 @@ committed records**, inclusive rate, post-prefix steady rate, system
 CPU/IO/memory, and field COPY time. Do not present COPY rows as signed
 generations or as new durability boundaries.
 
-### One scan, four identical seeds, then four 10-minute runs
+### One signed scan, shared verified cache, four identical seeds, then four 10-minute runs
 
 `run_fixed_w128_chunk_benchmarks.sh` verifies all four *new empty*
 PostgreSQL instances before doing work. W128 then performs one full
@@ -52,15 +52,29 @@ artifact directory is also copied to each profile's separate root.
 
 The runner confirms all four copies have exactly one committed
 `fi_recovery.typed_window`, the same window-0 descriptor SHA256, and
-all 8,399 authenticated original source-batch identities. It then
-sequentially executes W32 (32,768), W64 (65,536), W96 (98,304), W128
-(131,072) **with the window fixed W128** and P3/F3 unchanged, ten
-minutes each. Each continuous run replays signed custody as required
-by the existing streaming verifier; the one-time *preparation phase* is
-not repeated. Each run produces its own sampled vmstat/iostat/process
-logs, stage/COPY profiles and immutable checkpoint progress in a new
-output directory. On any failure the script stops without trying to
-repair, reset, or overwrite a database.
+all 8,399 authenticated original source-batch identities. The initial
+**ONE full signed FIGT custody scan** now persists all original batch
+data and exact manifest bytes to a shared receipt-bound verified cache.
+The cache is made visible only after the entire original transfer and
+original signed receipt have been authenticated. The seed then commits
+only its original W128 window in the private database.
+
+The four timed runs read the NEXT original batches only from the shared
+verified cache, 32K/64K/96K/128K internal chunks inside W128 atomic
+windows, unchanged P3/F3, ten minutes each. Every accessed cached batch
+is checked against its signed manifest digest, and its source data
+SHA-256 is checked while materializing the durable private window.
+**Timed runs never reopen or rescan the full FIGT custody archive.**
+Signed custody is authenticated only once for the four-profile experiment.
+
+This intentionally increases initial seed disk usage: the complete
+decoded original source dataset is retained, which may make preparation
+longer and requires substantial free space. No private benchmark
+checkpoint or cached data grants canonical SoR Accepted authority.
+
+Each timed run produces vmstat/iostat/process samples, stage/COPY
+profiles, WAL/checkpoint counters, and immutable checkpoint progress.
+On failure the runner stops without modifying earlier benchmarks.
 
 The former `run_four_window_benchmarks.sh` tests four outer window
 sizes, and **is not appropriate for this question**.
