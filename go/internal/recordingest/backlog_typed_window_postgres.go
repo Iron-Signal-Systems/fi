@@ -387,10 +387,14 @@ INSERT INTO fi_recovery.typed_window (
 	fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d families=%s ntfs_identity=%s ntfs_file_copy=%s ntfs_metadata_copy=%s security_events=%d security_fields=%d security_source_copy=%s security_event_copy=%s security_field_copy=%s\n", index, totalRecords, strings.Join(parts, ","), ntfsTiming.Identity, ntfsTiming.FileCopyLatency.String(), ntfsTiming.MetadataCopyLatency.String(), profile.SecurityBulk.Events, profile.SecurityBulk.Fields, profile.SecurityBulk.SourceLatency.String(), profile.SecurityBulk.EventLatency.String(), profile.SecurityBulk.FieldLatency.String())
 	// Outer wall-clock stages partition the private typed window. The ingest
 	// counters below are nested (some include COPY), so they are NOT additive.
-	fmt.Printf("FI PRIVATE STAGE PROFILE index=%d records=%d joined=%t typed_total=%s setup=%s batch_ingest=%s joined_finish=%s deferred_flush=%s verification=%s verify_counts=%s verify_coverage=%s marker_commit=%s source_read=%s batch_hash=%s envelope_prepare=%s security_prepare=%s security_child_prepare=%s source_sql=%s file_projection_inclusive=%s security_id_lookup=%s security_source_copy=%s security_event_copy=%s security_scope_copy=%s security_field_copy=%s\n",
+	// Projection_total retains the historical mixed projection accumulator.
+	// The File/Security/Other components now partition THAT accumulator and
+	// correct the former misleading file_projection_inclusive label.
+	fmt.Printf("FI PRIVATE STAGE PROFILE index=%d records=%d joined=%t typed_total=%s setup=%s batch_ingest=%s joined_finish=%s deferred_flush=%s verification=%s verify_counts=%s verify_coverage=%s marker_commit=%s source_read=%s batch_hash=%s envelope_prepare=%s security_prepare=%s security_child_prepare=%s source_sql=%s projection_total=%s file_projection_inclusive=%s security_projection_inclusive=%s other_projection_inclusive=%s security_id_lookup=%s security_source_copy=%s security_event_copy=%s security_scope_copy=%s security_field_copy=%s\n",
 		index, totalRecords, joined, windowElapsed, setupElapsed, batchElapsed, joinedElapsed, flushElapsed, verifyElapsed, countElapsed, coverageElapsed, commitElapsed,
 		profile.Read, profile.BatchHash, profile.Prepare, profile.SecurityBulk.Prepare, profile.SecurityBulk.ChildPrepare,
-		profile.SourceSQL, profile.Projection, profile.SecurityBulk.IDLookup, profile.SecurityBulk.SourceCopy,
+		profile.SourceSQL, profile.Projection, profile.FileProjection, profile.SecurityProjection, profile.OtherProjection,
+		profile.SecurityBulk.IDLookup, profile.SecurityBulk.SourceCopy,
 		profile.SecurityBulk.EventCopy, profile.SecurityBulk.ScopeCopy, profile.SecurityBulk.FieldCopy)
 	if joinedSource != nil {
 		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d copy_time=%s sql_verify_time=%s\n",

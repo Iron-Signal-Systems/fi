@@ -45,6 +45,9 @@ type ingestStageProfile struct {
 	Prepare        time.Duration
 	SourceSQL      time.Duration
 	Projection     time.Duration
+	FileProjection time.Duration // includes bounded File/USN source projections and related COPY
+	SecurityProjection time.Duration // Security event, scope and field projection; excludes source COPY
+	OtherProjection time.Duration // non-File/Security projections and final deferred writers
 	BatchBulk      sourceBatchBulkProfile
 	CoverageBulk   securityCoverageBulkProfile
 	SecurityBulk   securityBulkTimingCounters
@@ -176,6 +179,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	}
 	usnFinalFlush := time.Since(usnFlushStarted)
 	profile.Projection += usnFinalFlush
+	profile.OtherProjection += usnFinalFlush
 
 	hashFlushStarted := time.Now()
 	if err := hashCopy.flush(ctx, tx); err != nil {
@@ -183,6 +187,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	}
 	hashFinalFlush := time.Since(hashFlushStarted)
 	profile.Projection += hashFinalFlush
+	profile.OtherProjection += hashFinalFlush
 
 	aceFlushStarted := time.Now()
 	if err := aceCopy.flushAll(ctx, tx); err != nil {
@@ -190,6 +195,7 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	}
 	aceFinalFlush := time.Since(aceFlushStarted)
 	profile.Projection += aceFinalFlush
+	profile.OtherProjection += aceFinalFlush
 
 	if err := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState).verify(); err != nil {
 		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
@@ -493,7 +499,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			return fmt.Errorf("%w: batch %s FileObservation source records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
 		}
 		projectStarted := time.Now()
-		defer func() { profile.Projection += time.Since(projectStarted) }()
+		defer func() {
+			elapsed := time.Since(projectStarted)
+			profile.Projection += elapsed
+			profile.FileProjection += elapsed
+		}()
 		for _, item := range pendingFiles {
 			if item.prepared.Record.RecordKind == "USNObjectObservation" {
 				projectCtx := context.WithValue(ctx, fileObservationBulkBytesContextKey{}, item.prepared.RecordBytes)
@@ -667,7 +677,9 @@ RETURNING source_record_id
 				projectCtx = context.WithValue(ctx, fileObservationBulkBytesContextKey{}, prepared.RecordBytes)
 			}
 			projectErr = ProjectSourceRecord(projectCtx, tx, sourceID, sourceRecordID, prepared)
-			profile.Projection += time.Since(projectStarted)
+			elapsed := time.Since(projectStarted)
+			profile.Projection += elapsed
+			profile.OtherProjection += elapsed
 		}
 		if projectErr != nil {
 			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, projectErr)
@@ -691,7 +703,9 @@ RETURNING source_record_id
 		}
 		fileFlushStarted := time.Now()
 		fileFlushErr := fileBulk.flush(ctx, tx)
-		profile.Projection += time.Since(fileFlushStarted)
+		elapsed := time.Since(fileFlushStarted)
+		profile.Projection += elapsed
+		profile.FileProjection += elapsed
 		if fileFlushErr != nil {
 			return ordinal, fmt.Errorf("%w: batch %s FileObservation final bulk projection: %v", ErrSourceRecordRejected, batch.BatchID, fileFlushErr)
 		}

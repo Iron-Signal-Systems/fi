@@ -224,6 +224,8 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	profile.SecurityBulk.Events += int64(len(pending))
 	profile.SecurityBulk.Scopes += int64(len(scopes))
 	profile.SecurityBulk.Fields += writtenFields
-	profile.Projection += time.Since(projectionStarted)
+	elapsedProjection := time.Since(projectionStarted)
+	profile.Projection += elapsedProjection
+	profile.SecurityProjection += elapsedProjection
 	return nil
 }
