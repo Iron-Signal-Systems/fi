@@ -47,8 +47,8 @@ done
 # Use a separate port family for every fresh benchmark dataset.
 base_port=${FI_BENCH_BASE_PORT:-55431}
 case "$base_port" in
-  55431|55531|55631|55731|55831) ;;
-  *) fail "FI_BENCH_BASE_PORT must be 55431,55531,55631,55731,or 55831";;
+  55431|55531|55631|55731|55831|55931) ;;
+  *) fail "FI_BENCH_BASE_PORT must be 55431,55531,55631,55731,55831,or 55931";;
 esac
 w32_port=$base_port
 w64_port=$((base_port + 1))
@@ -73,6 +73,24 @@ for entry in "W32:$w32_port" "W64:$w64_port" "W96:$w96_port" "W128:$w128_port"; 
     mkdir -m 700 "$dir" "$sock"
     initdb -D "$dir/data" -U fi_m1_admin -A trust --no-instructions > "$dir/initdb.log" 2>&1 ||
         fail "$profile initdb failed; nothing on existing clusters was changed"
+    # Optional 2x2 factorial DEV benchmark: change exactly the PG WAL
+    # buffers and requested-checkpoint allowance, preserving fsync and
+    # synchronous_commit. Configuration is fixed BEFORE first server start.
+    case "${FI_BENCH_PG_WAL_COMPARE:-NO}" in
+      NO) ;;
+      YES)
+        case "$profile" in
+          W32) label='baseline-default';;
+          W64) label='wal-buffers-64MB'; echo "wal_buffers = '64MB'" >> "$dir/data/postgresql.conf";;
+          W96) label='max-wal-size-8GB'; echo "max_wal_size = '8GB'" >> "$dir/data/postgresql.conf";;
+          W128)
+            label='both-64MB-and-8GB'
+            echo "wal_buffers = '64MB'" >> "$dir/data/postgresql.conf"
+            echo "max_wal_size = '8GB'" >> "$dir/data/postgresql.conf";;
+        esac
+        printf 'FI BENCHMARK WAL profile=%s label=%s\n' "$profile" "$label";;
+      *) fail "FI_BENCH_PG_WAL_COMPARE must be YES or NO";;
+    esac
     # Socket-only, under a private 0700 directory. No TCP listener.
     pg_ctl -D "$dir/data" -l "$dir/postgres.log" \
       -o "-p $port -k $sock -c listen_addresses= -c unix_socket_permissions=0700" \
@@ -118,6 +136,7 @@ envfile="$root/fi-four-profiles.env"
     printf "FI_BENCH_BINARY_SHA256='%s'\n" "$FI_BENCH_BINARY_SHA256"
     printf "FI_BENCH_SOURCE_GIT_SHA='%s'\n" "$source_git_sha"
     printf "FI_BENCH_RUN_LABEL='%s'\n" 'optimized-signed-real-W128-P3-F3'
+    printf "FI_BENCH_PG_WAL_COMPARE='%s'\n" "${FI_BENCH_PG_WAL_COMPARE:-NO}"
     printf "FI_BENCH_OUTPUT_ROOT='%s'\n" "/var/tmp/fi-window-chunks-$(date -u '+%Y%m%dT%H%M%SZ')"
     printf "FI_BENCH_CUSTODY_ROOT='%s'\n" '/var/db/fi/custody/generation'
     printf "FI_BENCH_RECORDED_ROOT='%s'\n" '/var/db/fi/custody/recorded'

@@ -101,7 +101,7 @@ func serve(clusterRoot, outputRoot, jailBinary string, basePort int) error {
 		!strings.HasPrefix(jailBinary,"/home/jwood/fi-w128-chunk-build/") {
 		return errors.New("FI PG relay: unexpected jailed executable")
 	}
-	if basePort != 55531 && basePort != 55631 && basePort != 55731 && basePort != 55831 {
+	if basePort != 55531 && basePort != 55631 && basePort != 55731 && basePort != 55831 && basePort != 55931 {
 		return errors.New("FI PG relay: unexpected disposable cluster port family")
 	}
 	if os.Geteuid() != 0 {return errors.New("FI PG relay must run as host root")}
