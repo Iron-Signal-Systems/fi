@@ -7,6 +7,7 @@ on:
       - 'go/cmd/fi-backlog-recover/**'
       - 'go/cmd/fi-backlog-pg-relay/**'
       - 'go/cmd/fi-crl-publish/**'
+      - 'go/cmd/fi-backlog-publish/**'
       - 'go/internal/crlpublish/**'
       - 'go/go.mod'
       - '.github/workflows/fi-freebsd-cross-build.yml'
@@ -43,5 +44,6 @@ jobs:
           go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
           go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
           go build -o /tmp/fi-crl-publish-freebsd ./cmd/fi-crl-publish
+          go build -o /tmp/fi-backlog-publish-freebsd ./cmd/fi-backlog-publish
           go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
           go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest
