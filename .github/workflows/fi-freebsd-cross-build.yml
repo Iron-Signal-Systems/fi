@@ -34,5 +34,6 @@ jobs:
         run: |
           sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
           go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
+          go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
           go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
           go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest
