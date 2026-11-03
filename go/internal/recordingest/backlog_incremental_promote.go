@@ -96,6 +96,9 @@ func PromoteVerifiedBacklogToPopulatedSoR(
  if err!=nil{return zero,err}
  order,err:=bootstrapSoRPromotionOrder(canonical,edges)
  if err!=nil{return zero,err}
+ if err=verifySoRPromotionForeignKeys(ctx,tx);err!=nil{
+  return zero,fmt.Errorf("FI SoR promotion: FK preflight: %w",err)
+ }
  for _,table:=range canonical{
   canonicalTable:=pgx.Identifier{"fi",table}.Sanitize()
   privateTable:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
