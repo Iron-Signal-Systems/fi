@@ -142,11 +142,12 @@ generation_id=20261030T000032.061323100Z-3e38b2210771462c
 seed_root="$FI_BENCH_OUTPUT_ROOT/W128/private"
 mkdir -m 700 "$FI_BENCH_OUTPUT_ROOT/W128" "$seed_root"
 
+get_profile W128
 printf '%s FI CHUNK BENCH W128 one-time signed-custody seed started\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" | tee -a "$FI_BENCH_OUTPUT_ROOT/SUMMARY.txt"
 # One complete signed-custody scan authenticates all original source batches
 # and creates 1 committed W128 window before any 10-minute timed trial.
 if ! "$FI_BENCH_BINARY" \
-    -source="$source_id" -generation-id="$generation_id" -postgres="$FI_BENCH_W128_DSN" \
+    -source="$source_id" -generation-id="$generation_id" -postgres="$dsn" \
     -custody-root="$FI_BENCH_CUSTODY_ROOT" -recorded-root="$FI_BENCH_RECORDED_ROOT" \
     -source-namespaces="$namespace_flag" -private-root="$seed_root" \
     -private-writes -security-profile=P3 -file-profile=F3 \
