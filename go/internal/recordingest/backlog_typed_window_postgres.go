@@ -393,8 +393,9 @@ INSERT INTO fi_recovery.typed_window (
 		profile.SourceSQL, profile.Projection, profile.SecurityBulk.IDLookup, profile.SecurityBulk.SourceCopy,
 		profile.SecurityBulk.EventCopy, profile.SecurityBulk.ScopeCopy, profile.SecurityBulk.FieldCopy)
 	if joinedSource != nil {
-		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d\n",
-			index, joinedSource.chunkRows, joinedSource.copyCalls, joinedSource.records)
+		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d copy_time=%s sql_verify_time=%s\n",
+			index, joinedSource.chunkRows, joinedSource.copyCalls, joinedSource.records,
+			joinedSource.copyTime.Round(time.Millisecond), joinedSource.verifyTime.Round(time.Millisecond))
 	}
 	for i, chunk := range chunkSamples {
 		fmt.Printf("FI TYPED CHUNK COMMITTED window=%d chunk=%d limit=%d batches=%d..%d records=%d processing=%s\n",

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -52,15 +53,33 @@ func joinedBacklogChunkRecords(ctx context.Context) int {
     return backlogDefaultJoinedSourceChunkRecords
 }
 
+// Keep one compact, typed row in memory until the next signed-batch
+// boundary. The former [][]any boxed eleven columns for every source row,
+// holding those interface arrays live across an entire 32K-128K COPY chunk.
+// pgx.CopyFromSlice creates the transient []any only when streaming to COPY.
+type joinedBacklogSourceRow struct {
+	batchIndex       int
+	ordinal          int64
+	version          string
+	recordKind       string
+	scopeID          string
+	writtenAtUTC     time.Time
+	writtenAtOriginal string
+	recordBytes      int
+	digest           [32]byte
+}
+
 type joinedBacklogSource struct {
 	tx         pgx.Tx
 	receipt    []byte
 	descriptor BacklogCheckpointDescriptor
 	index      int
 	batchIndex int
-	rows       [][]any
+	rows       []joinedBacklogSourceRow
 	chunkRows  int
 	copyCalls  uint64
+	copyTime   time.Duration
+	verifyTime time.Duration
 	digest     hash.Hash
 	records    uint64
 	bytes      uint64
@@ -126,7 +145,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`, receipt, index-1).Scan(&priorDescr
 	}
 	chunkRows := joinedBacklogChunkRecords(ctx)
 	return &joinedBacklogSource{tx: tx, receipt: receipt, descriptor: d, index: index,
-		chunkRows: chunkRows, rows: make([][]any, 0, backlogDefaultJoinedSourceChunkRecords),
+		chunkRows: chunkRows, rows: make([]joinedBacklogSourceRow, 0, backlogDefaultJoinedSourceChunkRecords),
 		digest: sha256.New(), families: families}, nil
 }
 
@@ -147,7 +166,18 @@ func (s *joinedBacklogSource) beginBatch(ctx context.Context, sourceBatchRecords
 	return nil
 }
 
+// add is retained for existing direct-call unit tests and fails closed on
+// invalid source digests. The actual ingester supplies its already decoded
+// digest to addPrepared, avoiding a second hex decode for every real row.
 func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRecord) error {
+	digest, err := hex.DecodeString(p.RecordSHA256)
+	if err != nil {
+		return errors.New("FI joined source: invalid record digest")
+	}
+	return s.addPrepared(ctx, ordinal, p, digest)
+}
+
+func (s *joinedBacklogSource) addPrepared(ctx context.Context, ordinal int64, p SourceRecord, digest []byte) error {
 	if s == nil || ordinal <= 0 || p.RecordBytes <= 0 || p.Record.RecordKind == "" {
 		return errors.New("FI joined source: invalid source envelope")
 	}
@@ -157,14 +187,21 @@ func (s *joinedBacklogSource) add(ctx context.Context, ordinal int64, p SourceRe
 	if !backlogTypedKindAllowed(p.Record.RecordKind) {
 		return fmt.Errorf("FI joined source: unsupported typed family %q", p.Record.RecordKind)
 	}
-	digest, err := hex.DecodeString(p.RecordSHA256)
-	if err != nil || len(digest) != 32 {
+	if len(digest) != 32 {
 		return errors.New("FI joined source: invalid record digest")
 	}
+	// The caller has already decoded and validated the signed source
+	// record digest. Store a fixed-size value, never a second live []byte.
+	var sourceDigest [32]byte
+	copy(sourceDigest[:], digest)
 	backlogHashSourceRow(s.digest, s.batchIndex, ordinal, p.Record.Version, p.Record.RecordKind,
-		p.Record.ScopeID, p.Record.WrittenAt, p.RecordBytes, digest)
-	s.rows = append(s.rows, []any{s.receipt, s.index, s.batchIndex, ordinal, p.Record.Version,
-		p.Record.RecordKind, p.Record.ScopeID, p.WrittenAtUTC, p.Record.WrittenAt, p.RecordBytes, digest})
+		p.Record.ScopeID, p.Record.WrittenAt, p.RecordBytes, sourceDigest[:])
+	s.rows = append(s.rows, joinedBacklogSourceRow{
+		batchIndex: s.batchIndex, ordinal: ordinal, version: p.Record.Version,
+		recordKind: p.Record.RecordKind, scopeID: p.Record.ScopeID,
+		writtenAtUTC: p.WrittenAtUTC, writtenAtOriginal: p.Record.WrittenAt,
+		recordBytes: p.RecordBytes, digest: sourceDigest,
+	})
 	s.records++
 	s.bytes += uint64(p.RecordBytes)
 	s.families[p.Record.RecordKind]++
@@ -180,7 +217,15 @@ func (s *joinedBacklogSource) flush(ctx context.Context) error {
 	}
 	cols := []string{"receipt_sha256", "window_index", "batch_index", "record_ordinal",
 		"version", "record_kind", "scope_id", "written_at", "written_at_original", "record_bytes", "record_sha256"}
-	got, err := s.tx.CopyFrom(ctx, pgx.Identifier{"fi_recovery", "pending_source_record"}, cols, pgx.CopyFromRows(s.rows))
+	started := time.Now()
+	got, err := s.tx.CopyFrom(ctx, pgx.Identifier{"fi_recovery", "pending_source_record"}, cols,
+		pgx.CopyFromSlice(len(s.rows), func(i int) ([]any, error) {
+			r := &s.rows[i]
+			return []any{s.receipt, s.index, r.batchIndex, r.ordinal,
+				r.version, r.recordKind, r.scopeID, r.writtenAtUTC,
+				r.writtenAtOriginal, r.recordBytes, r.digest[:]}, nil
+		}))
+	s.copyTime += time.Since(started)
 	if err != nil {
 		return fmt.Errorf("FI joined source: source COPY: %w", err)
 	}
@@ -205,7 +250,9 @@ func (s *joinedBacklogSource) finish(ctx context.Context) error {
 		return fmt.Errorf("FI joined source: source totals records=%d/%d bytes=%d/%d",
 			s.records, d.EndRecord-d.StartRecord, s.bytes, d.DataBytes)
 	}
+	verifyStarted := time.Now()
 	sqlHash, dbRecords, dbBytes, err := hashBacklogDatabaseSourceRows(ctx, s.tx, s.receipt, s.index)
+	s.verifyTime += time.Since(verifyStarted)
 	if err != nil {
 		return fmt.Errorf("FI joined source: SQL verification: %w", err)
 	}

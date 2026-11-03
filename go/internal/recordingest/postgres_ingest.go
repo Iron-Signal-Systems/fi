@@ -577,7 +577,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		// Coverage records can span source batches. Flush before the next
 		// distinct kind to preserve relational projection order.
 		if joinedSource := joinedBacklogSourceFromContext(ctx); joinedSource != nil {
-			if err := joinedSource.add(ctx, ordinal, prepared); err != nil {
+			if err := joinedSource.addPrepared(ctx, ordinal, prepared, digest); err != nil {
 				return ordinal, fmt.Errorf("FI joined source: %w", err)
 			}
 		}
