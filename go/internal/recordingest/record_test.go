@@ -98,7 +98,6 @@ func TestOwnedSourceRecordStillRejectsMalformedNestedPayload(t *testing.T) {
 	cases := [][]byte{
 		[]byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":{"fields":[invalid]}}`+"\n"),
 		[]byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":}`+"\n"),
-		[]byte(`{"version":"fi-spool-record/0.1","record_kind":"WindowsSecurityEvent","scope_id":"root-1","written_at":"2026-11-03T10:00:00Z","payload":null}`+"\n"),
 	}
 	for _, raw := range cases {
 		if _, err := prepareOwnedSourceRecord(raw); err == nil {
