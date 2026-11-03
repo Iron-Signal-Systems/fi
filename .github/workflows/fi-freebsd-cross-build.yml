@@ -5,6 +5,7 @@ on:
     paths:
       - 'go/internal/recordingest/**'
       - 'go/cmd/fi-backlog-recover/**'
+      - 'go/cmd/fi-backlog-pg-relay/**'
       - 'go/go.mod'
       - '.github/workflows/fi-freebsd-cross-build.yml'
   workflow_dispatch:
@@ -26,6 +27,8 @@ jobs:
           go-version: '1.27.3'
           cache: true
           cache-dependency-path: go/go.sum
+      - name: PostgreSQL relay wire-protocol unit tests
+        run: go test -count=1 -v ./cmd/fi-backlog-pg-relay
       - name: FreeBSD recovery executable and typed-test cross compilation
         env:
           GOOS: freebsd
