@@ -426,5 +426,61 @@ current_setting('server_version_num')::int,to_regnamespace('fi') IS NOT NULL`).S
   t.Fatalf("remapped Security fields lost: source=%d events=%d fields=%d scopes=%d Accepted=%d",
    sources,securityEvents,securityFields,securityScopes,acceptedJournals)
  }
- t.Log("PASS: populated SoR 3 generations, shared NTFS identities, remapped File/Security fields, late rollback, exact retries, 3 atomic Accepted commits")
+ // Verify exact source digest, kind, scope, original timestamp and
+ // record ordinal, not merely table counts. Compare both directions so
+ // additional or omitted authoritative rows cannot go unnoticed.
+ pSource:=`SELECT sb.batch_id,sr.record_ordinal,sr.record_sha256,
+sr.record_kind,sr.scope_id,sr.written_at,sr.record_bytes
+FROM fi_recovery_projection.source_record sr
+JOIN fi_recovery_projection.source_batch sb USING(source_batch_id)`
+ cSource:=`SELECT sb.batch_id,sr.record_ordinal,sr.record_sha256,
+sr.record_kind,sr.scope_id,sr.written_at,sr.record_bytes
+FROM fi.source_record sr
+JOIN fi.source_batch sb USING(source_batch_id)
+WHERE sb.recorded_generation_id=$1`
+ assertSame:=func(name,p,c string){
+  t.Helper()
+  // Both generated statements have identical number/type of columns.
+  q:="SELECT (SELECT count(*) FROM ("+p+" EXCEPT ALL "+c+") unmatched),"+
+   "(SELECT count(*) FROM ("+c+" EXCEPT ALL "+p+") unexpected)"
+  var missed,unexpected int64
+  if e:=reader.QueryRow(ctx,q,acceptedThird.RecordedGenerationID).Scan(&missed,&unexpected);e!=nil{t.Fatalf("%s lineage SQL: %v",name,e)}
+  if missed!=0||unexpected!=0{t.Fatalf("%s changed signed lineage: missing=%d unexpected=%d",name,missed,unexpected)}
+ }
+ assertSame("signed source records",pSource,cSource)
+ pField:=`SELECT sb.batch_id,sr.record_ordinal,
+ f.field_ordinal,f.name,f.value
+ FROM fi_recovery_projection.windows_security_event_field f
+ JOIN fi_recovery_projection.source_record sr USING(source_record_id)
+ JOIN fi_recovery_projection.source_batch sb USING(source_batch_id)`
+ cField:=`SELECT sb.batch_id,sr.record_ordinal,
+ f.field_ordinal,f.name,f.value
+ FROM fi.windows_security_event_field f
+ JOIN fi.source_record sr USING(source_record_id)
+ JOIN fi.source_batch sb USING(source_batch_id)
+ WHERE sb.recorded_generation_id=$1`
+ assertSame("Security event fields",pField,cField)
+ pScope:=`SELECT sb.batch_id,sr.record_ordinal,
+ f.scope_ordinal,f.scope_id,f.governed_root
+ FROM fi_recovery_projection.windows_security_event_scope f
+ JOIN fi_recovery_projection.source_record sr USING(source_record_id)
+ JOIN fi_recovery_projection.source_batch sb USING(source_batch_id)`
+ cScope:=`SELECT sb.batch_id,sr.record_ordinal,
+ f.scope_ordinal,f.scope_id,f.governed_root
+ FROM fi.windows_security_event_scope f
+ JOIN fi.source_record sr USING(source_record_id)
+ JOIN fi.source_batch sb USING(source_batch_id)
+ WHERE sb.recorded_generation_id=$1`
+ assertSame("Security event scopes",pScope,cScope)
+ var identicalNumericIDs bool
+ if e=reader.QueryRow(ctx,`SELECT EXISTS(
+ SELECT 1 FROM fi_recovery_projection.source_record p
+ JOIN fi_recovery_projection.source_batch pb ON pb.source_batch_id=p.source_batch_id
+ JOIN fi.source_batch cb ON cb.batch_id=pb.batch_id AND cb.recorded_generation_id=$1
+ JOIN fi.source_record c ON c.source_batch_id=cb.source_batch_id
+   AND c.record_ordinal=p.record_ordinal
+ WHERE p.source_record_id=c.source_record_id)`,
+ acceptedThird.RecordedGenerationID).Scan(&identicalNumericIDs);e!=nil{t.Fatal(e)}
+ if identicalNumericIDs{t.Fatal("private numeric source ID leaked unchanged into populated SoR")}
+ t.Log("PASS: populated SoR 3 generations, exact bidirectional signed source/field/scope equality, shared NTFS identities, late rollback, retries and Accepted")
 }
