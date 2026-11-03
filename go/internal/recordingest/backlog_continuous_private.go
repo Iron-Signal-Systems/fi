@@ -67,9 +67,22 @@ func RecoverBacklogContinuousPrivate(
 	return recoverBacklogContinuousPrivateWithTrust(ctx, reader, writer, config, generationID, limits, privateRoot, startWindow, report, loadInstalledGenerationTrust)
 }
 
-// recoverBacklogContinuousPrivateWithTrust is used by the isolated acceptance
-// fixture to supply its own signed trust material. The deployed entry point
-// always uses FI's enrolled production trust.
+// RecoverBacklogContinuousPrivateCached reads the first seed's completed
+// signed-FIGT verified batch cache. It never reopens or decodes the original
+// custody archive. Every original batch and manifest is rechecked during
+// its bounded private window, with exactly the same relational stage path.
+// This is a DEV BENCHMARK mode, not a separate trust or Accepted authority.
+func RecoverBacklogContinuousPrivateCached(
+	ctx context.Context,reader,writer *pgx.Conn,
+	config GenerationLoadConfig,generationID string,limits BacklogWindowLimits,
+	privateRoot string,startWindow int,cacheRoot string,
+	report func(BacklogContinuousProgress),
+)(BacklogGenerationVerification,error){
+	return recoverBacklogContinuousPrivateWithTrustAndCache(ctx,reader,writer,
+		config,generationID,limits,privateRoot,startWindow,cacheRoot,report,loadInstalledGenerationTrust)
+}
+// recoverBacklogContinuousPrivateWithTrust is retained for the independent
+// signed-test fixtures; the default remains a complete FIGT scan.
 func recoverBacklogContinuousPrivateWithTrust(
 	ctx context.Context,
 	reader, writer *pgx.Conn,
@@ -78,6 +91,21 @@ func recoverBacklogContinuousPrivateWithTrust(
 	limits BacklogWindowLimits,
 	privateRoot string,
 	startWindow int,
+	report func(BacklogContinuousProgress),
+	resolveTrust generationTrustResolver,
+)(BacklogGenerationVerification,error){
+	return recoverBacklogContinuousPrivateWithTrustAndCache(ctx,reader,writer,config,
+		generationID,limits,privateRoot,startWindow,"",report,resolveTrust)
+}
+func recoverBacklogContinuousPrivateWithTrustAndCache(
+	ctx context.Context,
+	reader, writer *pgx.Conn,
+	config GenerationLoadConfig,
+	generationID string,
+	limits BacklogWindowLimits,
+	privateRoot string,
+	startWindow int,
+	cacheRoot string,
 	report func(BacklogContinuousProgress),
 	resolveTrust generationTrustResolver,
 ) (BacklogGenerationVerification, error) {
@@ -272,6 +300,12 @@ SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
 	if !strings.EqualFold(trust.Source.SourceID, config.SourceID) ||
 		trust.Root == nil || trust.BatchIssuer == nil || trust.BatchCRL == nil {
 		return empty, errors.New("FI continuous private: enrolled signing trust incomplete")
+	}
+	// Benchmark resume from the ONE previously authenticated complete signed
+	// FIGT: do not traverse custody or recheck its full transfer a second time.
+	if cacheRoot!="" {
+		return recoverBacklogVerifiedCachedWindows(ctx,reader,writer,g,limits,
+			privateRoot,startWindow,cacheRoot,descriptors,report)
 	}
 	custodyPath := filepath.Join(config.CustodyRoot,
 		transportgeneration.DurableCustodyObjectName(config.SourceID, generationID))
