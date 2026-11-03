@@ -10,6 +10,7 @@ import (
 
 func TestBacklogVerifiedCacheMarkerAtomicAndReceiptBound(t *testing.T){
  root:=t.TempDir()
+ if err:=os.Chmod(root,0700);err!=nil{t.Fatal(err)}
  receipt:=sha256.Sum256([]byte("original signed receipt identity"))
  transfer:=sha256.Sum256([]byte("original signed custody transfer"))
  digest:=hex.EncodeToString(receipt[:])

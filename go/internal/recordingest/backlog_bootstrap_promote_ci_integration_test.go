@@ -205,6 +205,7 @@ to_regnamespace('fi') IS NOT NULL`).Scan(&role,&db,&port,&version,&fiPresent)
  // its separate SQL continuation path without an original custody scan.
  // Full signed FIGT cache creation is proven by the signing fixture test.
  cacheRoot:=t.TempDir()
+ if e:=os.Chmod(cacheRoot,0700);e!=nil{t.Fatal(e)}
  pending,e:=backlogVerifiedCacheBegin(cacheRoot,g.ReceiptSHA256)
  if e!=nil{t.Fatal(e)}
  for i,b:=range g.Batches{

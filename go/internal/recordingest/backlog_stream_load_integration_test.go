@@ -144,6 +144,7 @@ func TestBacklogStreamingSelectedWindowsMatchSignedGeneration(t *testing.T) {
 	// Independently authenticate a full original FIGT once and commit its
 	// entire signed batch cache. No PostgreSQL is needed for this proof.
 	cacheRoot:=t.TempDir()
+	if err:=os.Chmod(cacheRoot,0700);err!=nil{t.Fatal(err)}
 	seed,cacheErr:=loadRecordedGenerationSelectedWindowsWithTrustAndCache(
 		config,signed.GenerationID,limits,0,1,cacheRoot,trustFn,nil)
 	if cacheErr!=nil{t.Fatalf("one-scan verified cache seed: %v",cacheErr)}
