@@ -196,11 +196,29 @@ to_regnamespace('fi') IS NOT NULL`).Scan(&role,&db,&port,&version,&fiPresent)
  g.ReceiptSHA256=hex.EncodeToString(receipt[:])
  limits:=BacklogWindowLimits{MaxRecords:3,MaxDataBytes:1<<20}
  privateRoot:=privateBacklogTestRoot(t)
- for i:=0;i<2;i++{
-  if _,err=MaterializeBacklogWindow(ctx,g,limits,i,privateRoot);err!=nil{t.Fatal(err)}
-  if err=RecordVerifiedBacklogArtifactWindow(ctx,writer,g,limits,i,privateRoot);err!=nil{t.Fatal(err)}
-  if err=StageVerifiedBacklogSourceWindow(ctx,writer,g,limits,i,privateRoot);err!=nil{t.Fatal(err)}
-  if err=StageBacklogTypedWindow(ctx,reader,writer,g,limits,i,privateRoot);err!=nil{t.Fatal(err)}
+ // Original first window uses existing private staging.
+ if _,err=MaterializeBacklogWindow(ctx,g,limits,0,privateRoot);err!=nil{t.Fatal(err)}
+ if err=RecordVerifiedBacklogArtifactWindow(ctx,writer,g,limits,0,privateRoot);err!=nil{t.Fatal(err)}
+ if err=StageVerifiedBacklogSourceWindow(ctx,writer,g,limits,0,privateRoot);err!=nil{t.Fatal(err)}
+ if err=StageBacklogTypedWindow(ctx,reader,writer,g,limits,0,privateRoot);err!=nil{t.Fatal(err)}
+ // Test-only synthetic fixture constructs an already-verified cache, proving
+ // its separate SQL continuation path without an original custody scan.
+ // Full signed FIGT cache creation is proven by the signing fixture test.
+ cacheRoot:=t.TempDir()
+ pending,e:=backlogVerifiedCacheBegin(cacheRoot,g.ReceiptSHA256)
+ if e!=nil{t.Fatal(e)}
+ for i,b:=range g.Batches{
+  raw,e:=os.ReadFile(b.DataPath);if e!=nil{t.Fatal(e)}
+  if e=writeBacklogStageFile(backlogCacheBatchData(pending,i),raw);e!=nil{t.Fatal(e)}
+  if e=writeBacklogStageFile(backlogCacheBatchManifest(pending,i),b.ManifestRawBytes);e!=nil{t.Fatal(e)}
+ }
+ if e=backlogVerifiedCacheCommit(cacheRoot,pending,g.ReceiptSHA256,
+   g.Receipt.TransferSHA256,g.Receipt.BatchCount,g.Receipt.RecordCount,g.Receipt.DataBytes);e!=nil{t.Fatal(e)}
+ windows,e:=DescribeBacklogWindows(g,limits);if e!=nil{t.Fatal(e)}
+ verified,e:=recoverBacklogVerifiedCachedWindows(ctx,reader,writer,g,limits,
+  privateRoot,1,cacheRoot,windows,nil)
+ if e!=nil || verified.Records!=6 || verified.Windows!=2{
+  t.Fatalf("cached signed-prefix continuation failed: %+v %v",verified,e)
  }
  // An explicit late failure must rollback the earlier table inserts and
  // never write Accepted. Only the test database receives this constraint.
