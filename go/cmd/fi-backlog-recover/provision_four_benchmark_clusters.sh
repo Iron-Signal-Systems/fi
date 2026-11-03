@@ -7,6 +7,11 @@ umask 077
 fail() { printf 'FI BENCHMARK PROVISION STOP: %s\n' "$*" >&2; exit 1; }
 : "${FI_BENCH_NEW_CLUSTER_ROOT:?set NEW /home/jwood/fi-window-bench-<unique> absolute directory}"
 : "${FI_BENCH_BINARY_SHA256:?set verified hash of the backend benchmark executable}"
+: "${FI_BENCH_HOST_BINARY_PATH:=/home/jwood/fi-real-backlog-20261101/fi-backlog-recover-window-profiles}"
+case "$FI_BENCH_HOST_BINARY_PATH" in
+  /*) ;;
+  *) fail "FI_BENCH_HOST_BINARY_PATH must be an absolute FreeBSD HOST path";;
+esac
 case "$FI_BENCH_NEW_CLUSTER_ROOT" in
   /home/jwood/fi-window-bench-[A-Za-z0-9]*)
     case "$FI_BENCH_NEW_CLUSTER_ROOT" in
@@ -105,9 +110,9 @@ done
 # paths. The host runner's psql jail bridge rewrites the prefix for fi-dev.
 envfile="$root/fi-four-profiles.env"
 {
-    printf "FI_BENCH_BINARY='%s'\n" '/home/jwood/fi-real-backlog-20261101/fi-backlog-recover-window-profiles'
+    printf "FI_BENCH_BINARY='%s'\n" "$FI_BENCH_HOST_BINARY_PATH"
     printf "FI_BENCH_BINARY_SHA256='%s'\n" "$FI_BENCH_BINARY_SHA256"
-    printf "FI_BENCH_OUTPUT_ROOT='%s'\n" "/var/tmp/fi-window-bench-$(date -u '+%Y%m%dT%H%M%SZ')"
+    printf "FI_BENCH_OUTPUT_ROOT='%s'\n" "/var/tmp/fi-window-chunks-$(date -u '+%Y%m%dT%H%M%SZ')"
     printf "FI_BENCH_CUSTODY_ROOT='%s'\n" '/var/db/fi/custody/generation'
     printf "FI_BENCH_RECORDED_ROOT='%s'\n" '/var/db/fi/custody/recorded'
     printf "FI_BENCH_SOURCE_NAMESPACES='%s'\n" 'false'
