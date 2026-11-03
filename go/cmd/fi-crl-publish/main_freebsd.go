@@ -114,13 +114,13 @@ func run()error{
  if !apply{fmt.Println("FI CRL DRY RUN ONLY: use -apply after reviewing new CRL");return nil}
  backupRoot,err:=os.MkdirTemp("/var/tmp","fi-crl-before-*");if err!=nil{return err}
  if err=os.Chmod(backupRoot,0700);err!=nil{return err}
+ defer func(){for _,t:=range targets{if t.stagedPath!=""{_=os.Remove(t.stagedPath)}}}()
  for i:=range targets{
   t:=&targets[i]
   if err:=backup(backupRoot,*t);err!=nil{return fmt.Errorf("backup %s: %w",t.name,err)}
   t.stagedPath,err=stage(t.path,pemBytes,t.fileInfo)
   if err!=nil{return fmt.Errorf("stage %s: %w",t.name,err)}
  }
- defer func(){for _,t:=range targets{if t.stagedPath!=""{_=os.Remove(t.stagedPath)}}}()
  if err:=syncDir(backupRoot);err!=nil{return err}
  // Reject races before first rename: all four existing trust files must
  // still have unchanged bytes, modes, and inode identities.

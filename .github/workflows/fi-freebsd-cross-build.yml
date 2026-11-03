@@ -6,6 +6,8 @@ on:
       - 'go/internal/recordingest/**'
       - 'go/cmd/fi-backlog-recover/**'
       - 'go/cmd/fi-backlog-pg-relay/**'
+      - 'go/cmd/fi-crl-publish/**'
+      - 'go/internal/crlpublish/**'
       - 'go/go.mod'
       - '.github/workflows/fi-freebsd-cross-build.yml'
   workflow_dispatch:
@@ -27,6 +29,8 @@ jobs:
           go-version: '1.27.3'
           cache: true
           cache-dependency-path: go/go.sum
+      - name: Signed root CRL renewal validation tests
+        run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
         run: go test -count=1 -v ./cmd/fi-backlog-pg-relay
       - name: FreeBSD recovery executable and typed-test cross compilation
@@ -38,5 +42,6 @@ jobs:
           sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
           go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
           go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
+          go build -o /tmp/fi-crl-publish-freebsd ./cmd/fi-crl-publish
           go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
           go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest

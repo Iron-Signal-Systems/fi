@@ -17,7 +17,7 @@ func TestSignedCRLRenewalRejectsExpiredAndRollback(t *testing.T){
  key,err:=rsa.GenerateKey(rand.Reader,2048);if err!=nil{t.Fatal(err)}
  template:=&x509.Certificate{SerialNumber:big.NewInt(1),Subject:pkix.Name{CommonName:"ISS-Root-CA"},
  NotBefore:now.Add(-24*time.Hour),NotAfter:now.AddDate(2,0,0),
- IsCA:true,BasicConstraintsValid:true,KeyUsage:x509.KeyUsageCertSign|x509.KeyUsageCRLSign}
+ IsCA:true,BasicConstraintsValid:true,SubjectKeyId:[]byte{1,2,3,4,5},KeyUsage:x509.KeyUsageCertSign|x509.KeyUsageCRLSign}
  der,err:=x509.CreateCertificate(rand.Reader,template,template,&key.PublicKey,key);if err!=nil{t.Fatal(err)}
  rootPEM:=pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:der})
  root,err:=ParseRoot(rootPEM);if err!=nil{t.Fatal(err)}
