@@ -67,8 +67,10 @@ func run() error {
 
 	var source, generation, pg, custody, recorded, private, verifiedCacheRoot string
 	var namespaces, enable, streamLoader, indexedPrivate, preflightOnly, continuousPrivate bool
+	var privateFieldPartitions bool
 	var maxRuntime time.Duration
 	var maxWindows, startWindow, processingChunkRecords int
+	var testStopAfterWindows, testFieldFailWindow int
 	var securityProfile, windowProfile string
 	var optimizedK32 bool
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
@@ -92,6 +94,9 @@ func run() error {
 	flag.StringVar(&securityProfile, "security-profile", "P1", "fixed bounded security source COPY batch: P1 conservative, P3 benchmark candidate; immutable for this invocation")
 	flag.IntVar(&maxWindows, "max-windows", 2, "private windows to process per invocation; 0 means to final window")
 	flag.IntVar(&startWindow, "start-window", 0, "original signed window index to resume from")
+	flag.BoolVar(&privateFieldPartitions, "private-field-partitions", false, "DEV ONLY: field COPY into validated detached partitions in an isolated W128 private database")
+	flag.IntVar(&testStopAfterWindows, "test-stop-after-windows", 0, "DEV ONLY: cancel after N durable W128 windows; 0 means normal behavior")
+	flag.IntVar(&testFieldFailWindow, "test-field-fail-window", 0, "DEV ONLY: inject late private-field partition rollback in exact window")
 	flag.Parse()
 	if optimizedK32 {
 		// A clean checkout without the validated partition implementation must
@@ -132,18 +137,20 @@ func run() error {
 	if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
 		return err
 	}
-	if verifiedCacheRoot!="" {
-		if windowProfile!="W128" || !enable ||
-			!((streamLoader && startWindow==0 && maxWindows==1) ||
-			  (continuousPrivate && startWindow>=1 && maxWindows==0)){
+	if verifiedCacheRoot != "" {
+		if windowProfile != "W128" || !enable ||
+			!((streamLoader && startWindow == 0 && maxWindows == 1) ||
+				(continuousPrivate && startWindow >= 1 && maxWindows == 0)) {
 			return errors.New("verified-cache-root is restricted to W128 signed seed or verified cached continuous private trial")
 		}
-		if !filepath.IsAbs(verifiedCacheRoot){
+		if !filepath.IsAbs(verifiedCacheRoot) {
 			return errors.New("FI verified cache: absolute root required")
 		}
-		info,err:=os.Lstat(verifiedCacheRoot)
-		if err!=nil{return err}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink!=0 || info.Mode().Perm()!=0700{
+		info, err := os.Lstat(verifiedCacheRoot)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
 			return errors.New("FI verified cache: existing real directory with exactly 0700 required")
 		}
 	}
@@ -169,6 +176,17 @@ func run() error {
 	if indexedPrivate && (streamLoader || startWindow == 0 || maxWindows < 1 || maxWindows > 2) {
 		return errors.New("indexed-private requires start-window > 0 and one or two selected windows; cannot combine with stream-loader")
 	}
+	if privateFieldPartitions && (!continuousPrivate || !enable || windowProfile != "W128" ||
+		(processingChunkRecords != 32768 && processingChunkRecords != 65536) || verifiedCacheRoot == "" || startWindow < 1 ||
+		securityProfile != "P3" || fileProfile != "F3") {
+		return errors.New("FI private field partitions require isolated cached W128 continuous-private P3/F3 with 32768 processing chunk")
+	}
+	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 || testStopAfterWindows > 2 || !continuousPrivate ||
+		windowProfile != "W128" || verifiedCacheRoot == "" || processingChunkRecords != 32768)) ||
+		(testFieldFailWindow != 0 && (!privateFieldPartitions || testFieldFailWindow < startWindow ||
+			testFieldFailWindow > startWindow+1)) {
+		return errors.New("FI isolated field benchmark: illegal test stop/failure combination")
+	}
 	ctx := context.Background()
 	var stop context.CancelFunc
 	if maxRuntime > 0 {
@@ -177,6 +195,16 @@ func run() error {
 		ctx, stop = context.WithCancel(ctx)
 	}
 	defer stop()
+	if privateFieldPartitions {
+		ctx = recordingest.WithPrivateSecurityFieldPartitions(ctx)
+	}
+	if testFieldFailWindow != 0 {
+		var failErr error
+		ctx, failErr = recordingest.WithPrivateSecurityFieldLateFailure(ctx, testFieldFailWindow)
+		if failErr != nil {
+			return failErr
+		}
+	}
 	if processingChunkRecords != 0 {
 		var chunkErr error
 		ctx, chunkErr = recordingest.WithBacklogJoinedSourceChunkRecords(ctx, processingChunkRecords)
@@ -292,36 +320,60 @@ WHERE source_id=$1 AND generation_id=$2)
 		var durableThrough uint64
 		var completedWindowTime time.Duration
 		var lastCheckpointElapsed time.Duration
+		var testStopTriggered bool
 
 		progress := func(p recordingest.BacklogContinuousProgress) {
-				if p.WindowCommitted >= 0 {
-					lastWindow = p.WindowCommitted
-					durableThrough = p.RecordsDurable
-					durableThisRun += p.WindowRecords
-					completedWindowTime += p.WindowDuration
-					// Report a successful durable checkpoint's actual completion time,
-					// not the eventual 10m timer expiration. No partial window counts.
-					lastCheckpointElapsed = time.Since(began)
+			if p.WindowCommitted >= 0 {
+				lastWindow = p.WindowCommitted
+				durableThrough = p.RecordsDurable
+				durableThisRun += p.WindowRecords
+				completedWindowTime += p.WindowDuration
+				// Report a successful durable checkpoint's actual completion time,
+				// not the eventual 10m timer expiration. No partial window counts.
+				lastCheckpointElapsed = time.Since(began)
 
-					fmt.Printf("FI REAL BACKLOG DURABLE window=%d/%d inspected_batches=%d/%d records_through=%d/%d artifact=%s ledger=%s source=%s typed=%s window=%s elapsed=%s\n",
-						p.WindowCommitted+1, p.TotalWindows, p.BatchesSeen, p.TotalBatches,
-						p.RecordsDurable, expectedRecords,
-						p.ArtifactDuration.Round(time.Millisecond), p.LedgerDuration.Round(time.Millisecond),
-						p.SourceDuration.Round(time.Millisecond), p.TypedDuration.Round(time.Millisecond),
-						p.WindowDuration.Round(time.Millisecond), p.Elapsed.Round(time.Millisecond))
-				} else {
-					fmt.Printf("FI REAL BACKLOG CONTINUOUS scanned_batches=%d/%d inspected_records=%d/%d durable_records=%d/%d elapsed=%s\n",
-						p.BatchesSeen, p.TotalBatches, p.RecordsInspected, expectedRecords, p.RecordsDurable, expectedRecords, p.Elapsed.Round(time.Millisecond))
+				fmt.Printf("FI REAL BACKLOG DURABLE window=%d/%d inspected_batches=%d/%d records_through=%d/%d artifact=%s ledger=%s source=%s typed=%s window=%s elapsed=%s\n",
+					p.WindowCommitted+1, p.TotalWindows, p.BatchesSeen, p.TotalBatches,
+					p.RecordsDurable, expectedRecords,
+					p.ArtifactDuration.Round(time.Millisecond), p.LedgerDuration.Round(time.Millisecond),
+					p.SourceDuration.Round(time.Millisecond), p.TypedDuration.Round(time.Millisecond),
+					p.WindowDuration.Round(time.Millisecond), p.Elapsed.Round(time.Millisecond))
+				if testStopAfterWindows > 0 && p.WindowCommitted == startWindow+testStopAfterWindows-1 {
+					testStopTriggered = true
+					stop()
 				}
+			} else {
+				fmt.Printf("FI REAL BACKLOG CONTINUOUS scanned_batches=%d/%d inspected_records=%d/%d durable_records=%d/%d elapsed=%s\n",
+					p.BatchesSeen, p.TotalBatches, p.RecordsInspected, expectedRecords, p.RecordsDurable, expectedRecords, p.Elapsed.Round(time.Millisecond))
 			}
+		}
 		var result recordingest.BacklogGenerationVerification
-		if verifiedCacheRoot!=""{
-			fmt.Printf("FI REAL BACKLOG VERIFIED CACHE RESUME root=%s; original FIGT archive will not be rescanned\n",verifiedCacheRoot)
-			result,err=recordingest.RecoverBacklogContinuousPrivateCached(ctx,reader,canonical,loadConfig,
-				generation,limits,private,startWindow,verifiedCacheRoot,progress)
-		}else{
-			result,err=recordingest.RecoverBacklogContinuousPrivate(ctx,reader,canonical,loadConfig,
-				generation,limits,private,startWindow,progress)
+		if verifiedCacheRoot != "" {
+			fmt.Printf("FI REAL BACKLOG VERIFIED CACHE RESUME root=%s; original FIGT archive will not be rescanned\n", verifiedCacheRoot)
+			result, err = recordingest.RecoverBacklogContinuousPrivateCached(ctx, reader, canonical, loadConfig,
+				generation, limits, private, startWindow, verifiedCacheRoot, progress)
+		} else {
+			result, err = recordingest.RecoverBacklogContinuousPrivate(ctx, reader, canonical, loadConfig,
+				generation, limits, private, startWindow, progress)
+		}
+		if testStopTriggered && (err == nil || errors.Is(err, context.Canceled)) {
+			// The stop request is issued ONLY from the callback after a durable
+			// completion marker. Verify it independently with a fresh context;
+			// never reinterpret a true ingest error as an intentional stop.
+			var markerCount int
+			var authoritativeCount int
+			checkErr := canonical.QueryRow(context.Background(), `
+SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 AND window_index < $2),
+       (SELECT count(*) FROM fi.recorded_generation) + (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')
+`, startWindow, startWindow+testStopAfterWindows).Scan(&markerCount, &authoritativeCount)
+			if checkErr != nil || markerCount != testStopAfterWindows || authoritativeCount != 0 ||
+				lastWindow != startWindow+testStopAfterWindows-1 {
+				return fmt.Errorf("FI controlled stop: marker/SoR mismatch windows=%d authoritative=%d last=%d err=%v",
+					markerCount, authoritativeCount, lastWindow, checkErr)
+			}
+			fmt.Printf("FI PRIVATE EXACT WINDOW STOP start=%d windows=%d last=%d records=%d committed_window_time=%s authoritative=0 accepted=0\n",
+				startWindow, testStopAfterWindows, lastWindow, durableThisRun, completedWindowTime.Round(time.Millisecond))
+			return nil
 		}
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -369,13 +421,13 @@ WHERE source_id=$1 AND generation_id=$2)
 					p.RetainedBatches, p.WindowIndex, time.Since(loadStarted).Round(time.Millisecond))
 			}
 		}
-		if verifiedCacheRoot!=""{
-			fmt.Printf("FI REAL BACKLOG ONE-SCAN CACHE BUILD root=%s; retaining all original signed batch data\n",verifiedCacheRoot)
-			prepared,err=recordingest.LoadRecordedGenerationSelectedWindowsCached(
-				loadConfig,generation,limits,startWindow,maxWindows,verifiedCacheRoot,report)
-		}else{
-			prepared,err=recordingest.LoadRecordedGenerationSelectedWindows(
-				loadConfig,generation,limits,startWindow,maxWindows,report)
+		if verifiedCacheRoot != "" {
+			fmt.Printf("FI REAL BACKLOG ONE-SCAN CACHE BUILD root=%s; retaining all original signed batch data\n", verifiedCacheRoot)
+			prepared, err = recordingest.LoadRecordedGenerationSelectedWindowsCached(
+				loadConfig, generation, limits, startWindow, maxWindows, verifiedCacheRoot, report)
+		} else {
+			prepared, err = recordingest.LoadRecordedGenerationSelectedWindows(
+				loadConfig, generation, limits, startWindow, maxWindows, report)
 		}
 	} else {
 		prepared, err = recordingest.LoadRecordedGeneration(loadConfig, generation)

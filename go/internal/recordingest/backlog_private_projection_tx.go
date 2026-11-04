@@ -22,7 +22,10 @@ import (
 //
 // This is not a generic SQL gateway and must not receive untrusted SQL.
 // Its only intended client is FI's existing statically authored projectors.
-type privateProjectionTx struct{ pgx.Tx }
+type privateProjectionTx struct {
+	pgx.Tx
+	fieldPartition string // empty unless the isolated, opt-in W128 experiment is active
+}
 
 func (p privateProjectionTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	rewritten, err := rewritePrivateProjectionStatement(sql)
@@ -48,6 +51,9 @@ func (p privateProjectionTx) QueryRow(ctx context.Context, sql string, args ...a
 func (p privateProjectionTx) CopyFrom(ctx context.Context, table pgx.Identifier, cols []string, src pgx.CopyFromSource) (int64, error) {
 	if len(table) != 2 || table[0] != "fi" || table[1] == "" {
 		return 0, errors.New("FI private projector: COPY target must be explicitly qualified fi table")
+	}
+	if table[1] == "windows_security_event_field" && p.fieldPartition != "" {
+		return p.Tx.CopyFrom(ctx, pgx.Identifier{privateProjectionSchema, p.fieldPartition}, cols, src)
 	}
 	return p.Tx.CopyFrom(ctx, pgx.Identifier{privateProjectionSchema, table[1]}, cols, src)
 }

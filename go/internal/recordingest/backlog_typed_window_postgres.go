@@ -134,7 +134,26 @@ SELECT descriptor_sha256 FROM fi_recovery.source_window
 
 	}
 	copyMetrics := newIngestCopyMetrics()
-	shadow := privateProjectionTx{Tx: &profiledIngestTx{Tx: tx, metrics: copyMetrics}}
+	var fieldPartitionName string
+	var fieldPartitionBegin time.Duration
+	if privateSecurityFieldPartitionsEnabled(ctx) {
+		if !joined || index < 1 {
+			return errors.New("FI private field partition: requires joined non-seed W128 window")
+		}
+		name, nameErr := privateSecurityFieldWindowTable(index)
+		if nameErr != nil {
+			return nameErr
+		}
+		started := time.Now()
+		if err := tx.QueryRow(ctx, `SELECT fi_recovery_projection.begin_security_field_window($1)`, index).Scan(&fieldPartitionName); err != nil {
+			return fmt.Errorf("FI private field partition: begin: %w", err)
+		}
+		fieldPartitionBegin = time.Since(started)
+		if fieldPartitionName != name {
+			return errors.New("FI private field partition: unexpected database table identifier")
+		}
+	}
+	shadow := privateProjectionTx{Tx: &profiledIngestTx{Tx: tx, metrics: copyMetrics}, fieldPartition: fieldPartitionName}
 	var joinedSource *joinedBacklogSource
 	if joined {
 		joinedSource, err = beginJoinedBacklogSource(ctx, tx, d, index, receipt, familyCounts)
@@ -333,6 +352,22 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		return fmt.Errorf("FI typed window: final ACE COPY: %w", err)
 	}
 	flushElapsed := time.Since(flushStarted)
+	var fieldPartitionFinish time.Duration
+	if fieldPartitionName != "" {
+		started := time.Now()
+		var fieldRows int64
+		if err := tx.QueryRow(ctx, `SELECT fi_recovery_projection.finish_security_field_window($1,$2)`,
+			index, profile.SecurityBulk.Fields).Scan(&fieldRows); err != nil {
+			return fmt.Errorf("FI private field partition: validate and attach: %w", err)
+		}
+		fieldPartitionFinish = time.Since(started)
+		if fieldRows != profile.SecurityBulk.Fields {
+			return errors.New("FI private field partition: validated row count differs from projected fields")
+		}
+		if privateSecurityFieldShouldFail(ctx, index) {
+			return fmt.Errorf("FI INJECTED PRIVATE FIELD PARTITION LATE FAILURE window=%d: rollback required", index)
+		}
+	}
 	verifyStarted := time.Now()
 	if totalRecords != int64(summary.RecordCount) || totalBytes != int64(summary.DataBytes) {
 		return errors.New("FI typed window: processed counts differ from signed receipt")
@@ -383,6 +418,10 @@ INSERT INTO fi_recovery.typed_window (
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%s:%d", k, familyCounts[k]))
+	}
+	if fieldPartitionName != "" {
+		fmt.Printf("FI PRIVATE FIELD PARTITION COMMITTED window=%d table=%s rows=%d begin=%s validate_attach=%s\n",
+			index, fieldPartitionName, profile.SecurityBulk.Fields, fieldPartitionBegin.Round(time.Millisecond), fieldPartitionFinish.Round(time.Millisecond))
 	}
 	fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d families=%s ntfs_identity=%s ntfs_file_copy=%s ntfs_metadata_copy=%s security_events=%d security_fields=%d security_source_copy=%s security_event_copy=%s security_field_copy=%s\n", index, totalRecords, strings.Join(parts, ","), ntfsTiming.Identity, ntfsTiming.FileCopyLatency.String(), ntfsTiming.MetadataCopyLatency.String(), profile.SecurityBulk.Events, profile.SecurityBulk.Fields, profile.SecurityBulk.SourceLatency.String(), profile.SecurityBulk.EventLatency.String(), profile.SecurityBulk.FieldLatency.String())
 	// Outer wall-clock stages partition the private typed window. The ingest
