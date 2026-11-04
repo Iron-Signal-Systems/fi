@@ -70,6 +70,8 @@ func run() error {
 	var maxRuntime time.Duration
 	var maxWindows, startWindow, processingChunkRecords int
 	var securityProfile, windowProfile string
+	var optimizedK32 bool
+	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
@@ -91,6 +93,23 @@ func run() error {
 	flag.IntVar(&maxWindows, "max-windows", 2, "private windows to process per invocation; 0 means to final window")
 	flag.IntVar(&startWindow, "start-window", 0, "original signed window index to resume from")
 	flag.Parse()
+	if optimizedK32 {
+		// A clean checkout without the validated partition implementation must
+		// fail closed. This never changes canonical FI ingest behavior.
+		partition := flag.Lookup("private-field-partitions")
+		partitionEnabled := partition != nil && partition.Value.String() == "true"
+		explicit := make(map[string]string)
+		flag.Visit(func(f *flag.Flag) { explicit[f.Name] = f.Value.String() })
+		preset, err := selectValidatedK32(explicit, partitionEnabled, enable, continuousPrivate,
+			indexedPrivate, streamLoader, preflightOnly, verifiedCacheRoot != "", startWindow, maxWindows)
+		if err != nil {
+			return err
+		}
+		windowProfile, processingChunkRecords = preset.WindowProfile, preset.ProcessingChunkRecords
+		securityProfile, fileProfile = preset.SecurityProfile, preset.FileProfile
+		fmt.Printf("FI VALIDATED PRIVATE PROFILE name=%s outer=%s chunk=%d security=%s file=%s field_partitions=required\n",
+			preset.Name, windowProfile, processingChunkRecords, securityProfile, fileProfile)
+	}
 	if flag.NArg() != 0 || source != sourceID || generation != generationID ||
 		pg == "" || private == "" || (!enable && !preflightOnly) || maxWindows < 0 || maxWindows > 1000 || startWindow < 0 {
 		return errors.New("exact source/generation, postgres, private-root, private-writes and max-windows 0..1000 required")
