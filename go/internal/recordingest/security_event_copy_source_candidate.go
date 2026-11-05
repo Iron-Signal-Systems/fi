@@ -8,6 +8,7 @@
 package recordingest
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 )
@@ -62,3 +63,11 @@ func (s *securityEventCopySource) Values() ([]any, error) {
 }
 
 func (s *securityEventCopySource) Err() error { return nil }
+
+// usePrivateSecurityEventCopySource keeps the proposed row-buffer optimization
+// out of the normal and production ingestion paths. Only the explicitly
+// enabled detached Security-field experiment using validated P3 may select it.
+func usePrivateSecurityEventCopySource(ctx context.Context) bool {
+	return ctx != nil && privateSecurityFieldPartitionsEnabled(ctx) &&
+		securityBulkLimitsFromContext(ctx).Name == "P3"
+}
