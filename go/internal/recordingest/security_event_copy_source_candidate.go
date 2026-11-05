@@ -8,7 +8,6 @@
 package recordingest
 
 import (
-	"context"
 	"crypto/sha256"
 	"errors"
 )
