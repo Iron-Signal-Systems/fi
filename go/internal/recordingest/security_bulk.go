@@ -145,10 +145,8 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		"raw_xml_bytes", "raw_xml_sha256",
 	}
 	eventCopyStarted := time.Now()
-	// The private detached-field W128 experiment may use the reusable
-	// event-row source. Ordinary P3 and production P1 retain the legacy
-	// COPY callback, unchanged.
-	eventRows := pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns,
+		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			p := pending[i]
 			v := p.value
 			rawXML := []byte(v.RawXML)
@@ -159,11 +157,7 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 				nullString(v.HandleID), nullString(v.ProcessID), nullString(v.ProcessName), nullString(v.AccessMask), nullString(v.AccessList), nullString(v.AccessReason), nullString(v.TransactionID), nullString(v.FileName), nullString(v.LinkName), nullString(v.SourceIP), nullString(v.SourcePort),
 				nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
 			}, nil
-		})
-	if usePrivateSecurityEventCopySource(ctx) {
-		eventRows = newSecurityEventCopySource(pending)
-	}
-	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns, eventRows)
+		}))
 	elapsedEventCopy := time.Since(eventCopyStarted)
 	profile.SecurityBulk.EventCopy += elapsedEventCopy
 	profile.SecurityBulk.EventLatency.observe(elapsedEventCopy)

@@ -5,7 +5,6 @@
 package recordingest
 
 import (
-	"context"
 	"crypto/sha256"
 	"math/big"
 	"reflect"
@@ -145,32 +144,4 @@ func BenchmarkSecurityEventCOPYRowsLegacyVsReusable(b *testing.B) {
 		}
 		securityEventRowBenchmarkSink = result
 	})
-}
-
-func TestSecurityEventCOPYSelectionRestrictedToPrivateP3(t *testing.T) {
-	base := context.Background()
-	ordinaryP3, err := withFixedSecurityBulkProfile(base, "P3")
-	if err != nil { t.Fatal(err) }
-	ordinaryP1, err := withFixedSecurityBulkProfile(base, "P1")
-	if err != nil { t.Fatal(err) }
-
-	cases := []struct {
-		label string
-		ctx context.Context
-		want bool
-	}{
-		{"nil", nil, false},
-		{"default", base, false},
-		{"normal-P1", ordinaryP1, false},
-		{"normal-P3", ordinaryP3, false},
-		{"private-P1", WithPrivateSecurityFieldPartitions(ordinaryP1), false},
-		{"private-P3", WithPrivateSecurityFieldPartitions(ordinaryP3), true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.label, func(t *testing.T) {
-			if got := usePrivateSecurityEventCopySource(tc.ctx); got != tc.want {
-				t.Fatalf("selected=%t want=%t", got, tc.want)
-			}
-		})
-	}
 }
