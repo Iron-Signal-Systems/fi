@@ -67,8 +67,23 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		bytes.Count(body, securityPayloadKey) != 1 {
 		return emptySource, emptySecurity, false, nil
 	}
+	// The two intervening values must be exactly one JSON string each;
+	// otherwise an inserted or reordered envelope member could be mistaken
+	// for the canonical layout.
+	scopeValue := body[len(securityEnvelopePrefix):written]
+	writtenAtValue := body[written+len(securityWrittenAtKey):payload]
+	if len(scopeValue) < 2 || scopeValue[0] != '"' || scopeValue[len(scopeValue)-1] != '"' ||
+		!json.Valid(scopeValue) ||
+		len(writtenAtValue) < 2 || writtenAtValue[0] != '"' || writtenAtValue[len(writtenAtValue)-1] != '"' ||
+		!json.Valid(writtenAtValue) {
+		return emptySource, emptySecurity, false, nil
+	}
 	rawPayload := body[payload+len(securityPayloadKey):len(body)-1]
-	if len(rawPayload) == 0 {
+	// A payload followed by another top-level envelope member is valid
+	// legacy JSON, but not canonical spool layout: decline this fast path.
+	// json.Valid also confirms that the exact zero-copy RawMessage is
+	// independently well-formed, as required by the source-record contract.
+	if len(rawPayload) == 0 || !json.Valid(rawPayload) {
 		return emptySource, emptySecurity, false, nil
 	}
 

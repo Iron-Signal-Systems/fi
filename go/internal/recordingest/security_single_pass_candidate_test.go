@@ -19,7 +19,7 @@ import (
 
 func singlePassSecurityTestRecord(t testing.TB, fields int, rawXMLSize int) []byte {
 	t.Helper()
-	now := time.Date(2026,11,5,11,0,0,0,time.UTC).Format(time.RFC3339Nano)
+	now := time.Date(2026,11,5,11,0,0,0,time.UTC).Format("2006-01-02T15:04:05.000000000Z")
 	v := records.WindowsSecurityEventObservation{
 		ObservedAt: now, CollectionMethod: records.WindowsSecurityCollectionMethod,
 		Channel: "Security", Provider: "Microsoft-Windows-Security-Auditing",
@@ -74,6 +74,7 @@ func TestSinglePassSecurityFallbackAndReject(t *testing.T) {
 		{"normal",raw,true,true},
 		{"non-security",bytes.Replace(raw,[]byte(`"WindowsSecurityEvent"`),[]byte(`"FileObservation"`),1),false,false},
 		{"reordered",bytes.Replace(raw,[]byte(`,"written_at":`),[]byte(`,"alias":123,"written_at":`),1),false,false},
+		{"trailing-member",bytes.Replace(raw,[]byte("}\\n"),[]byte(`,"version":"fi-spool-record/0.1"}`+"\\n"),1),false,false},
 		{"missing-LF",raw[:len(raw)-1],false,false},
 		{"invalid-body",bytes.Replace(raw,[]byte(`"event_id":"4663"`),[]byte(`"event_id":false`),1),true,false},
 	}
