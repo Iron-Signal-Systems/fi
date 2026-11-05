@@ -51,6 +51,7 @@ type ingestStageProfile struct {
 	BatchBulk      sourceBatchBulkProfile
 	CoverageBulk   securityCoverageBulkProfile
 	SecurityBulk   securityBulkTimingCounters
+	SinglePassSecurityRows int64 // private-P3 canonical Security decode only
 	coverageBuffer *securityCoverageBulkState
 }
 
@@ -575,10 +576,22 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		profile.BatchHash += time.Since(hashStarted)
 
 		prepareStarted := time.Now()
-		prepared, err := prepareOwnedSourceRecord(raw)
+		var prepared SourceRecord
+		var singlePassSecurity securityBulkRecord
+		var selectedSinglePass bool
+		var prepareErr error
+		if usePrivateSinglePassSecurity(ctx) {
+			prepared, singlePassSecurity, selectedSinglePass, prepareErr = tryPrepareSinglePassSecurity(raw)
+		}
+		if prepareErr == nil && !selectedSinglePass {
+			prepared, prepareErr = prepareOwnedSourceRecord(raw)
+		}
+		// For canonical Security events the outer envelope and typed payload
+		// are decoded and validated ONCE. This timer includes both operations,
+		// so no second Security preparation time is counted for fast-path rows.
 		profile.Prepare += time.Since(prepareStarted)
-		if err != nil {
-			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
+		if prepareErr != nil {
+			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepareErr)
 		}
 		// PrepareSourceRecord computed this over the exact LF-terminated
 		// signed JSONL bytes. Never decode its hex representation again.
@@ -604,10 +617,18 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				return ordinal, err
 			}
 			securityPrepareStarted := time.Now()
-			securityRecord, err := prepareSecurityBulkRecord(ordinal, prepared, digest)
+			var securityRecord securityBulkRecord
+			var securityErr error
+			if selectedSinglePass {
+				securityRecord = singlePassSecurity
+				securityRecord.ordinal = ordinal
+				profile.SinglePassSecurityRows++
+			} else {
+				securityRecord, securityErr = prepareSecurityBulkRecord(ordinal, prepared, digest)
+			}
 			profile.SecurityBulk.Prepare += time.Since(securityPrepareStarted)
-			if err != nil {
-				return ordinal, fmt.Errorf("%w: batch %s record %d (WindowsSecurityEvent): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
+			if securityErr != nil {
+				return ordinal, fmt.Errorf("%w: batch %s record %d (WindowsSecurityEvent): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, securityErr)
 			}
 			securityRecord.sourceBatchID = sourceBatchID
 			if securityLimits.shouldFlushBefore(

@@ -6,6 +6,7 @@ package recordingest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -109,4 +110,25 @@ func BenchmarkSecuritySourceEnvelopeAndPayloadOnePass(b *testing.B) {
 		}
 		singlePassSecurityBenchmarkSink=sink
 	})
+}
+
+func TestSinglePassSecuritySelectionPrivateP3Only(t *testing.T) {
+	p1,err:=withFixedSecurityBulkProfile(context.Background(),"P1")
+	if err!=nil {t.Fatal(err)}
+	p3,err:=withFixedSecurityBulkProfile(context.Background(),"P3")
+	if err!=nil {t.Fatal(err)}
+	for _,tt:=range []struct{name string;ctx context.Context;allowed bool}{
+		{"nil",nil,false},
+		{"default",context.Background(),false},
+		{"ordinary-P1",p1,false},
+		{"ordinary-P3",p3,false},
+		{"private-P1",WithPrivateSecurityFieldPartitions(p1),false},
+		{"private-P3",WithPrivateSecurityFieldPartitions(p3),true},
+	}{
+		t.Run(tt.name,func(t *testing.T){
+			if got:=usePrivateSinglePassSecurity(tt.ctx);got!=tt.allowed {
+				t.Fatalf("allowed=%t want=%t",got,tt.allowed)
+			}
+		})
+	}
 }

@@ -8,6 +8,7 @@ package recordingest
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -121,4 +122,12 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		eventRecordID: pgtype.Numeric{Int: bigEventRecordID, Exp: 0, Valid: true},
 	}
 	return source, security, true, nil
+}
+
+// usePrivateSinglePassSecurity restricts this CPU optimization to the
+// experimental detached Security-field W128/P3 path. Production P1 and
+// ordinary P3 keep the established two-step strict decoder.
+func usePrivateSinglePassSecurity(ctx context.Context) bool {
+	return ctx != nil && privateSecurityFieldPartitionsEnabled(ctx) &&
+		securityBulkLimitsFromContext(ctx).Name == "P3"
 }
