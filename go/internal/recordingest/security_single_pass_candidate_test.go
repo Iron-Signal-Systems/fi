@@ -70,11 +70,17 @@ func TestSinglePassSecurityCanonicalEquivalence(t *testing.T) {
 
 func TestSinglePassSecurityFallbackAndReject(t *testing.T) {
 	raw:=singlePassSecurityTestRecord(t,3,2048)
+	// Remove the closing envelope brace, append an extra member, then
+	// restore the closing brace and real LF. This must not select the
+	// canonical fast path.
+	trailing := append([]byte(nil), raw[:len(raw)-2]...)
+	trailing = append(trailing, []byte(`,"version":"fi-spool-record/0.1"}`)...)
+	trailing = append(trailing, '\n')
 	cases:=[]struct{name string;data []byte;selected bool;success bool}{
 		{"normal",raw,true,true},
 		{"non-security",bytes.Replace(raw,[]byte(`"WindowsSecurityEvent"`),[]byte(`"FileObservation"`),1),false,false},
 		{"reordered",bytes.Replace(raw,[]byte(`,"written_at":`),[]byte(`,"alias":123,"written_at":`),1),false,false},
-		{"trailing-member",bytes.Replace(raw,[]byte("}\\n"),[]byte(`,"version":"fi-spool-record/0.1"}`+"\\n"),1),false,false},
+		{"trailing-member",trailing,false,false},
 		{"missing-LF",raw[:len(raw)-1],false,false},
 		{"invalid-body",bytes.Replace(raw,[]byte(`"event_id":"4663"`),[]byte(`"event_id":false`),1),true,false},
 	}
