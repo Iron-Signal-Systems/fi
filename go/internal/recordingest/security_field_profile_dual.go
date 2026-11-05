@@ -5,33 +5,17 @@ package recordingest
 
 import "context"
 
-// P3's child-field COPY has an independent row/byte budget.
-// The larger envelope is opt-in ONLY for the private detached-field W128
-// experiment. Its source/event budgets, normal P3 behavior, and production P1
-// limits remain unchanged. This is a measured candidate, not a new default.
-const (
-	privateP3FieldCopyMaxRows  = 65_536
-	privateP3FieldCopyMaxBytes = 16 << 20
-	standardP3FieldCopyMaxRows = 32_768
-	standardP3FieldCopyMaxBytes = 8 << 20
-)
-
+// Only P3's independent field writer uses the larger bounded COPY envelope.
+// Event/source P3 budgets and all production P1 defaults stay unchanged.
 func securityFieldCopyRowsForContext(ctx context.Context) int {
 	if securityBulkLimitsFromContext(ctx).Name == "P3" {
-		if ctx != nil && privateSecurityFieldPartitionsEnabled(ctx) {
-			return privateP3FieldCopyMaxRows
-		}
-		return standardP3FieldCopyMaxRows
+		return 32768
 	}
 	return securityFieldCopyMaxRows
 }
-
 func securityFieldCopyBytesForContext(ctx context.Context) int64 {
 	if securityBulkLimitsFromContext(ctx).Name == "P3" {
-		if ctx != nil && privateSecurityFieldPartitionsEnabled(ctx) {
-			return privateP3FieldCopyMaxBytes
-		}
-		return standardP3FieldCopyMaxBytes
+		return 8 << 20
 	}
 	return securityFieldCopyMaxBytes
 }
