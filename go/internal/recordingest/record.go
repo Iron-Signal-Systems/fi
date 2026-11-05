@@ -83,23 +83,12 @@ func prepareSourceRecord(raw []byte, copyBytes bool) (SourceRecord, error) {
 		return SourceRecord{}, errors.New("FI ingest source record contains embedded LF")
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-
+	// The reader already owns the complete LF-terminated JSONL record.
+	// Reuse the strict one-shot decoder; preserve raw bytes for SHA-256
+	// lineage and the typed projection.
 	var record spool.Record
-	if err := decoder.Decode(&record); err != nil {
+	if err := decodeStrictPayload(json.RawMessage(body), &record); err != nil {
 		return SourceRecord{}, fmt.Errorf("decode FI ingest source record: %w", err)
-	}
-	// Decode strictly once. InputOffset points immediately after the first
-	// complete JSON value; the remaining bytes may contain only RFC 8259
-	// JSON whitespace. This rejects a second object or trailing garbage
-	// without creating a second decoder target for every Security event.
-	for i := decoder.InputOffset(); i < int64(len(body)); i++ {
-		switch body[i] {
-		case ' ', '\t', '\r', '\n':
-		default:
-			return SourceRecord{}, errors.New("FI ingest source record contains trailing JSON")
-		}
 	}
 
 	if record.Version != SpoolRecordVersion {
