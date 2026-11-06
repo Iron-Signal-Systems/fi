@@ -147,6 +147,26 @@ SELECT CASE WHEN
 [ "$(sql K64 "$checkpoint")" = '3|390387|2' ] || die "untouched K64 control changed unexpectedly"
 afterwal=$(sql K32 "SELECT wal_bytes::text || '|' || wal_buffers_full::text FROM pg_stat_wal")
 afterckpt=$(sql K32 "SELECT num_requested::text || '|' || num_timed::text FROM pg_stat_checkpointer")
+# Independent post-run readback; outside the 10-minute performance clock.
+# Compare every published signed data file AND original manifest with the
+# fully authenticated immutable source cache. This does not modify custody.
+expected_batches=$(sql K32 "SELECT coalesce(sum(end_batch-start_batch),0)::text FROM fi_recovery.verified_artifact_window WHERE window_index>=3") || die "signed batch range count unavailable"
+checked_batches=0
+for ready in "$out/K32/private"/receipt-*/window-*;do
+ [ -d "$ready" ] || die "missing newly published window"
+ receipt_name=$(basename "$(dirname "$ready")")
+ for dest in "$ready"/batch-*.data;do
+  [ -f "$dest" ] || die "published signed batch missing"
+  base_name=$(basename "$dest")
+  original="$cache/$receipt_name/$base_name"
+  [ -f "$original" ] || die "original signed batch missing: $base_name"
+  cmp -s "$dest" "$original" || die "published bytes changed: $base_name"
+  cmp -s "${dest%.data}.manifest" "${original%.data}.manifest" || die "signed manifest changed: $base_name"
+  checked_batches=$((checked_batches+1))
+ done
+done
+[ "$checked_batches" -eq "$expected_batches" ] || die "published batch count mismatch: $checked_batches/$expected_batches"
+printf 'FI DEFERRED K32 10M ARTIFACT READBACK PASS original_signed_batches=%s byte_identical=true manifest_identical=true\n' "$checked_batches" | tee -a "$out/SUMMARY.txt"
 printf 'FI DEFERRED K32 10M INTEGRITY PASS checkpoint=%s durable_records=%s windows=%s canonical=0 accepted=0 control_unchanged=true\n' "$state" "$rows" "$windows" | tee -a "$out/SUMMARY.txt"
 printf 'FI DEFERRED K32 10M IO wal_before=%s wal_after=%s ckpt_before=%s ckpt_after=%s\n' "$beforewal" "$afterwal" "$beforeckpt" "$afterckpt" | tee -a "$out/SUMMARY.txt"
 printf 'FI DEFERRED K32 10M COMPLETE output=%s\n' "$out" | tee -a "$out/SUMMARY.txt"
