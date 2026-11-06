@@ -23,7 +23,6 @@ import (
     "syscall"
     "time"
 
-    "golang.org/x/sys/unix"
 )
 
 type manifest struct {
@@ -99,17 +98,30 @@ func shaFile(path string)(string,int64,error){
 // COPY_FILE_RANGE_CLONE is a FreeBSD 15 flag and returns EOPNOTSUPP if the
 // filesystem cannot perform an actual block clone.
 func copyRangeCloneRequired(src,dst *os.File,expected int64) error {
-    // Request to EOF instead of exact (possibly non-block-aligned) length.
-    // All FI signed batch artifacts are far below 2GiB.
-    const toEOF=1<<31-1
+    // FreeBSD 15.1 RELENG definitions:
+    // sys/sys/syscall.h: SYS_copy_file_range=569
+    // sys/sys/unistd.h: COPY_FILE_RANGE_CLONE=0x00800000
+    // The pinned x/sys/unix v0.47.0 does not expose these two symbols.
+    // A nonzero clone-required flag fails closed when ZFS cannot clone.
+    const (
+        freebsdCopyFileRangeTrap = 569
+        freebsdCopyFileRangeClone = 0x00800000
+        toEOF = 1<<31 - 1
+    )
+    // Passing a larger size requests cloning to EOF, permitting a final
+    // partial block. Every signed FI cache batch here is smaller than 2GiB.
     if expected<=0 || expected>=toEOF {return errors.New("out-of-range source size")}
     var got int64
     for got<expected {
-        n,err:=unix.CopyFileRange(int(src.Fd()),nil,int(dst.Fd()),nil,toEOF,unix.COPY_FILE_RANGE_CLONE)
-        if err!=nil{return fmt.Errorf("clone-required copy_file_range: %w",err)}
-        if n==0 {return io.ErrUnexpectedEOF}
+        n,_,errno:=syscall.Syscall6(
+            freebsdCopyFileRangeTrap,
+            src.Fd(),0,dst.Fd(),0,
+            uintptr(toEOF),freebsdCopyFileRangeClone,
+        )
+        if errno!=0{return fmt.Errorf("clone-required copy_file_range: %w",errno)}
+        if n==0{return io.ErrUnexpectedEOF}
         got+=int64(n)
-        if got>expected {return errors.New("clone exceeded expected file size")}
+        if got>expected{return errors.New("clone exceeded expected file size")}
     }
     return nil
 }
