@@ -441,6 +441,14 @@ INSERT INTO fi_recovery.typed_window (
 		if err := deferred.publish(ctx, d, index, privateRoot); err != nil {
 			return fmt.Errorf("FI deferred artifact: durable publication: %w", err)
 		}
+		if privateDeferredFault(ctx) == DeferredFaultAfterPublish {
+			// Deliberately fail after durable rename+dir sync but before tx
+			// commit. Deferral rolls back ALL provisional SQL markers.
+			// Re-running the SAME private root must perform full-hash
+			// verification of the now-published orphaned artifact.
+			fmt.Printf("FI INJECTED PRIVATE DEFERRED AFTER-PUBLISH window=%d sql_commit=prohibited\\n",index)
+			return errors.New("FI injected private after-publication failure before SQL commit")
+		}
 		// The provisional artifact marker now becomes committable, together
 		// with its FK-dependent source records and typed projection marker.
 		fmt.Printf("FI DEFERRED ARTIFACT PUBLISHED window=%d original_signed_batches=%d sql_markers=uncommitted\n",

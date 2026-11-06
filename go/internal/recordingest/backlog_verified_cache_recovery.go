@@ -68,6 +68,12 @@ func recoverBacklogVerifiedCachedWindows(
     return empty,fmt.Errorf("FI cached recovery: window %d unpublished clone: %w",window,err)
    }
   }
+  if deferred!=nil && privateDeferredFault(ctx)==DeferredFaultCorruptClone && window==startWindow {
+   if err=deferred.mutateDeferredCloneForTest();err!=nil{
+    deferred.cleanup()
+    return empty,fmt.Errorf("FI deferred fault injection: %w",err)
+   }
+  }
   if deferred==nil {
    // Existing ready artifacts (including crash recovery) always undergo
    // the original independent full-hash verification and SQL marker flow.

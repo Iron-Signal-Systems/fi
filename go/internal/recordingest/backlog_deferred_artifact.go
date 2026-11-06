@@ -8,6 +8,7 @@
 package recordingest
 
 import (
+ "bytes"
  "context"
  "crypto/sha256"
  "crypto/subtle"
@@ -24,6 +25,27 @@ import (
 
 type privateDeferredCloneKey struct{}
 type privateDeferredWindowKey struct{}
+type privateDeferredFaultKey struct{}
+
+const (
+ DeferredFaultCorruptClone = "corrupt-clone"
+ DeferredFaultAfterPublish = "after-publish"
+)
+
+// Private test-only fault. CLI restricts to the signed W128/K32 fixture.
+func WithPrivateDeferredFault(ctx context.Context,mode string)(context.Context,error){
+ if ctx==nil{return nil,errors.New("deferred fault: context required")}
+ switch mode {
+ case DeferredFaultCorruptClone, DeferredFaultAfterPublish:
+  return context.WithValue(ctx,privateDeferredFaultKey{},mode),nil
+ default:return nil,errors.New("deferred fault: unsupported test mode")
+ }
+}
+func privateDeferredFault(ctx context.Context)string{
+ if ctx==nil{return ""}
+ mode,_:=ctx.Value(privateDeferredFaultKey{}).(string)
+ return mode
+}
 
 func WithPrivateDeferredVerifiedClone(ctx context.Context) context.Context {
  if ctx==nil {return nil}
@@ -150,6 +172,35 @@ func stageDeferredBacklogWindow(ctx context.Context,g *PreparedGeneration,
  if err=syncBacklogStageDir(generationDir);err!=nil{return nil,err}
  success=true
  return p,nil
+}
+
+// mutateDeferredCloneForTest changes ONE timestamp digit in a private CoW
+// clone only. It never opens the signed cache for writes, never changes file
+// size, and preserves valid JSON timestamp syntax. The signed batch SHA256
+// must reject the new bytes (or an earlier semantic gate must fail closed).
+func (p *deferredBacklogWindow) mutateDeferredCloneForTest()error{
+ if p==nil||p.published||len(p.sourceFiles)==0{return errors.New("FI injected corruption: no unpublished staged files")}
+ first:=p.sourceFiles[0].path
+ f,err:=os.OpenFile(first,os.O_RDWR,0)
+ if err!=nil{return err}
+ defer f.Close()
+ b:=make([]byte,64<<10)
+ n,err:=f.Read(b)
+ if err!=nil&&n==0{return err}
+ b=b[:n]
+ key:=[]byte(`"written_at":"`)
+ pos:=bytes.Index(b,key)
+ if pos<0{return errors.New("FI injected corruption: canonical timestamp key not found; abort without mutation")}
+ pos+=len(key)
+ // YYYY-MM-DDTHH:MM:SS. Alter second-unit digit while preserving date format.
+ digit:=pos+18
+ if digit>=len(b)||b[digit]<'0'||b[digit]>'9'{return errors.New("FI injected corruption: timestamp not in expected canonical format")}
+ replacement:=b[digit]
+ if replacement=='9' {replacement='8'} else {replacement++}
+ if _,err=f.WriteAt([]byte{replacement},int64(digit));err!=nil{return err}
+ if err=f.Sync();err!=nil{return err}
+ fmt.Printf("FI INJECTED PRIVATE DEFERRED CLONE CORRUPTION file=%s offset=%d original_cache_untouched=true\\n",filepath.Base(first),digit)
+ return nil
 }
 
 // publish is invoked only after the typed path verified every exact LF-
