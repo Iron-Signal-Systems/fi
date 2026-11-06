@@ -77,6 +77,11 @@ for name in K32 K64;do
 done
 # Exactly one performance variable differs.
 admin K64 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null
+if [ "$experiment" = profile30 ]; then
+ # FI-DEV DISPOSABLE K64 ONLY: pg_ctl -l captures stderr, not syslog.
+ # Keep the jail's and the host's global syslog policy unchanged.
+ admin K64 "ALTER SYSTEM SET log_destination='stderr'" >/dev/null
+fi
 if [ "$experiment" = indexed-count ]; then admin K32 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null; fi
 for name in K32 K64;do
  [ "$(admin "$name" 'SELECT pg_reload_conf()')" = t ] || die "$name config reload rejected"
@@ -92,6 +97,20 @@ for name in K32 K64;do
   [ "$(sql "$name" "SHOW $setting")" = on ] || die "$name durability disabled after reload"
  done
 done
+if [ "$experiment" = profile30 ]; then
+ # Fail BEFORE any timed recovery if RAISE LOG does not reach the exact
+ # file consumed by the finalization-stage parser.
+ [ "$(sql K64 'SHOW log_destination')" = stderr ] ||
+   die "K64 PostgreSQL profile log_destination is not stderr"
+ pglog="$jailroot$root/K64/postgres.log"
+ [ -f "$pglog" ] || die "K64 PostgreSQL stderr log file is missing"
+ smoke="FI_PROFILE_LOG_SMOKE_${stamp}_$$"
+ admin K64 "DO \$fi_profile_smoke\$ BEGIN RAISE LOG '$smoke'; END \$fi_profile_smoke\$;" >/dev/null ||
+   die "K64 PostgreSQL RAISE LOG smoke query failed"
+ grep -Fq "$smoke" "$pglog" ||
+   die "K64 RAISE LOG not captured by postgres.log; refusing 30-minute profile"
+ printf 'FI PROFILE LOG PREFLIGHT PASS cluster=K64 destination=stderr marker=%s\n' "$smoke"
+fi
 mkdir -m 700 "$out"
 for name in K32 K64;do mkdir -m 700 "$out/$name" "$out/$name/private";done
 if [ "$experiment" = profile30 ]; then
@@ -264,43 +283,131 @@ single30|profile30)
  if [ "$experiment" = profile30 ]; then
   pglog="$jailroot$root/K64/postgres.log"
   [ -f "$pglog" ] || die "private PostgreSQL server log missing"
-  grep 'FI_PRIVATE_FIELD_PROFILE window=' "$pglog" |
-    sed -n 's/^.*FI_PRIVATE_FIELD_PROFILE /FI_PRIVATE_FIELD_PROFILE /p' > "$out/K64/field-finalize-stages.log" ||
-    die "private finalizer telemetry unavailable"
-  samples=$(wc -l < "$out/K64/field-finalize-stages.log" | tr -d ' ')
-  committed=$(wc -l < "$out/K64/stages.txt" | tr -d ' ')
-  [ "$samples" -ge "$committed" ] || die "private finalizer telemetry incomplete: samples=$samples committed_windows=$committed file=$out/K64/field-finalize-stages.log pglog=$pglog; ingestion integrity/readback already passed"
+  # Extract only the finalizer's own PostgreSQL RAISE LOG records. The
+  # earlier preflight marker deliberately does not match this prefix.
   awk '
-  function read_value(key, i,x){for(i=1;i<=NF;i++){split($i,x,"=");if(x[1]==key)return x[2]+0}return 0}
-  /^FI_PRIVATE_FIELD_PROFILE / {
-   w=read_value("window")
-   if(w<3 || w>32)next
-   count[w]++
-   if(count[w]>1)bad=1
-   g=(w<=12?1:(w<=22?2:3))
-   n[g]++
-   c[g]+=read_value("count_ms")
-   ca[g]+=read_value("check_add_ms")
-   cv[g]+=read_value("check_validate_ms")
-   fa[g]+=read_value("fk_add_ms")
-   fv[g]+=read_value("fk_validate_ms")
-   ap[g]+=read_value("attach_ms")
-   tt[g]+=read_value("total_ms")
-  }
-  END{
-   print "FI PRIVATE FIELD FINALIZE COHORTS seconds per window"
-   print "COHORT WINDOWS COUNT CHECK_ADD CHECK_VALIDATE FK_ADD FK_VALIDATE ATTACH TOTAL"
-   for(g=1;g<=3;g++){
-    k=(g==1?"EARLY":(g==2?"MIDDLE":"LATE"))
-    if(n[g]){
-     printf "%s %d %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
-      k,n[g],c[g]/n[g]/1000,ca[g]/n[g]/1000,cv[g]/n[g]/1000,
-      fa[g]/n[g]/1000,fv[g]/n[g]/1000,ap[g]/n[g]/1000,tt[g]/n[g]/1000
+    /FI_PRIVATE_FIELD_PROFILE window=/ {
+      line = $0
+      sub(/^.*FI_PRIVATE_FIELD_PROFILE /, "FI_PRIVATE_FIELD_PROFILE ", line)
+      print line
     }
-   }
-   if(bad)exit 1
-  }' "$out/K64/field-finalize-stages.log" | tee "$out/K64/field-finalize-summary.txt" ||
-    die "private finalizer duplicate window telemetry"
+  ' "$pglog" > "$out/K64/field-finalize-stages.log" ||
+    die "private finalizer telemetry extraction failed"
+  committed=$(wc -l < "$out/K64/stages.txt" | tr -d ' ')
+  # Compare explicit window identities against the durable checkpoint
+  # table, not just the number of log lines. A rolled-back attempt can
+  # emit RAISE LOG; its marker must never count as a committed window.
+  # Do not pipe the validator into tee: POSIX /bin/sh cannot pipefail.
+  if ! awk -v committed="$committed" '
+    function reject(message) {
+      printf "FI PROFILE VALIDATION FAIL %s\n", message
+      failures++
+    }
+    function number(x) {
+      return x ~ /^[0-9]+([.][0-9]+)?$/
+    }
+    BEGIN {
+      keys[1]="rows"
+      keys[2]="count_ms"
+      keys[3]="check_add_ms"
+      keys[4]="check_validate_ms"
+      keys[5]="fk_add_ms"
+      keys[6]="fk_validate_ms"
+      keys[7]="attach_ms"
+      keys[8]="total_ms"
+    }
+    FNR == NR {
+      parts_n=split($0, parts, /\|/)
+      if (parts_n != 3 || parts[1] !~ /^[0-9]+$/) {
+        reject("invalid checkpoint row: " $0)
+        next
+      }
+      w=parts[1]+0
+      if (w >= 3) {
+        if (w in expected) reject("duplicate durable checkpoint window=" w)
+        else { expected[w]=1; expected_n++ }
+      }
+      next
+    }
+    {
+      raw_n++
+      if ($1 != "FI_PRIVATE_FIELD_PROFILE") {
+        reject("invalid sample prefix at line=" FNR)
+        next
+      }
+      record_id++
+      for (i=2;i<=NF;i++) {
+        nv=split($i, pair, "=")
+        if (nv != 2 || pair[1] == "" || pair[2] == "") {
+          reject("invalid key=value at profile line=" FNR)
+          continue
+        }
+        if (key_record[pair[1]] == record_id)
+          reject("duplicate field " pair[1] " at profile line=" FNR)
+        key_record[pair[1]]=record_id
+        value[pair[1]]=pair[2]
+      }
+      if (key_record["window"] != record_id ||
+          value["window"] !~ /^[0-9]+$/) {
+        reject("missing or invalid window at profile line=" FNR)
+        next
+      }
+      w=value["window"]+0
+      if (!(w in expected)) {
+        reject("uncommitted or unexpected profiler window=" w)
+        next
+      }
+      sample[w]++
+      if (sample[w] != 1) {
+        reject("duplicate profiler window=" w)
+        next
+      }
+      valid=1
+      for (i=1;i<=8;i++) {
+        k=keys[i]
+        if (key_record[k] != record_id || !number(value[k])) {
+          reject("invalid " k " for window=" w)
+          valid=0
+        }
+      }
+      if (!valid) next
+      if (value["rows"] !~ /^[0-9]+$/)
+        reject("invalid integer rows for window=" w)
+      g=(w<=12 ? 1 : w<=22 ? 2 : 3)
+      n[g]++
+      count[g]+=value["count_ms"]+0
+      check_add[g]+=value["check_add_ms"]+0
+      check[g]+=value["check_validate_ms"]+0
+      fk_add[g]+=value["fk_add_ms"]+0
+      fk[g]+=value["fk_validate_ms"]+0
+      attach[g]+=value["attach_ms"]+0
+      total[g]+=value["total_ms"]+0
+    }
+    END {
+      if (expected_n != committed)
+        reject("durable checkpoint windows=" expected_n " stage profiles=" committed)
+      if (raw_n != committed)
+        reject("captured profiler messages=" raw_n " committed windows=" committed)
+      for (w in expected)
+        if (sample[w] != 1)
+          reject("missing or duplicated committed window=" w " samples=" sample[w]+0)
+      if (failures) exit 1
+      print "FI PRIVATE FIELD FINALIZE COHORTS seconds per window"
+      print "COHORT WINDOWS COUNT CHECK_ADD CHECK_VALIDATE FK_ADD FK_VALIDATE ATTACH TOTAL"
+      for (g=1;g<=3;g++) {
+        cohort=(g==1 ? "EARLY" : g==2 ? "MIDDLE" : "LATE")
+        if (n[g])
+          printf "%s %d %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+            cohort,n[g],count[g]/n[g]/1000,check_add[g]/n[g]/1000,
+            check[g]/n[g]/1000,fk_add[g]/n[g]/1000,
+            fk[g]/n[g]/1000,attach[g]/n[g]/1000,total[g]/n[g]/1000
+      }
+    }
+  ' "$out/K64/checkpoints.tsv" "$out/K64/field-finalize-stages.log" > "$out/K64/field-finalize-summary.txt"; then
+    tail -n 50 "$out/K64/field-finalize-summary.txt" >&2 || :
+    die "private finalizer telemetry does not match committed checkpoints"
+  fi
+  cat "$out/K64/field-finalize-summary.txt"
  fi
  printf 'FI PRIVATE 30M PASS output=%s experiment=%s sql_and_signed_readback=PASS original_count_verifier=true authoritative=0 accepted=0\n' "$out" "$experiment" | tee -a "$out/SUMMARY.txt"
  printf 'FI PRIVATE 30M FILES: %s/K64/{result,stages,windows,pg-waits,iostat,vmstat,process}.txt_or_log\n' "$out" | tee -a "$out/SUMMARY.txt"
