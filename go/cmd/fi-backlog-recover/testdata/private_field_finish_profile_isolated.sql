@@ -89,6 +89,6 @@ BEGIN
     -- Both validations plus attach are inside the caller's ONE W128 TX.
     RETURN total;
 END
-$function$
+$function$;
 
 COMMIT;
