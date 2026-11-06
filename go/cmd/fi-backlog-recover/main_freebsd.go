@@ -75,7 +75,7 @@ func run() error {
 	var optimizedK32 bool
 	var deferredVerifiedClone bool
 	var testDeferredFault string
-	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone or after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
+	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone, after-publish, or kill-after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
 	flag.BoolVar(&deferredVerifiedClone, "deferred-verified-clone", false, "EXPERIMENT ONLY: W128/K32/P3/F3 verified cache; defer artifact marker until signed SHA and typed SQL verification share one private transaction")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
@@ -193,7 +193,7 @@ func run() error {
 		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32/P3/F3 private joined trial starting at window 3")
 	}
 	if testDeferredFault != "" && (!deferredVerifiedClone || startWindow != 3 || testStopAfterWindows != 1 ||
-		(testDeferredFault != recordingest.DeferredFaultCorruptClone && testDeferredFault != recordingest.DeferredFaultAfterPublish)) {
+		(testDeferredFault != recordingest.DeferredFaultCorruptClone && testDeferredFault != recordingest.DeferredFaultAfterPublish && testDeferredFault != recordingest.DeferredFaultKillAfterPublish)) {
 		return errors.New("FI deferred fault injection requires isolated W128/K32 window=3 exact one-window stop")
 	}
 	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 || testStopAfterWindows > 2 || !continuousPrivate ||

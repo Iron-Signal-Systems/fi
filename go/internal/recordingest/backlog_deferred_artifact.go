@@ -30,13 +30,14 @@ type privateDeferredFaultKey struct{}
 const (
  DeferredFaultCorruptClone = "corrupt-clone"
  DeferredFaultAfterPublish = "after-publish"
+ DeferredFaultKillAfterPublish = "kill-after-publish"
 )
 
 // Private test-only fault. CLI restricts to the signed W128/K32 fixture.
 func WithPrivateDeferredFault(ctx context.Context,mode string)(context.Context,error){
  if ctx==nil{return nil,errors.New("deferred fault: context required")}
  switch mode {
- case DeferredFaultCorruptClone, DeferredFaultAfterPublish:
+ case DeferredFaultCorruptClone, DeferredFaultAfterPublish, DeferredFaultKillAfterPublish:
   return context.WithValue(ctx,privateDeferredFaultKey{},mode),nil
  default:return nil,errors.New("deferred fault: unsupported test mode")
  }

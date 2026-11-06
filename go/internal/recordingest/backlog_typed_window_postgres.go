@@ -441,6 +441,17 @@ INSERT INTO fi_recovery.typed_window (
 		if err := deferred.publish(ctx, d, index, privateRoot); err != nil {
 			return fmt.Errorf("FI deferred artifact: durable publication: %w", err)
 		}
+		if privateDeferredFault(ctx) == DeferredFaultKillAfterPublish {
+			// The directory rename and parent fsync have both succeeded.
+			// PostgreSQL has an uncommitted artifact/source/typed transaction.
+			// SIGKILL prevents Go defers/cleanup and aborts its open SQL
+			// connection; on restart, the orphaned artifact MUST be rehashed.
+			fmt.Printf("FI INJECTED PRIVATE DEFERRED SIGKILL AFTER-PUBLISH window=%d sql_commit=prohibited\n",index)
+			if err:=terminateDeferredExperimentForTest();err!=nil {
+				return fmt.Errorf("FI SIGKILL injection failed without reaching kill: %w",err)
+			}
+			return errors.New("FI SIGKILL injection returned without terminating process")
+		}
 		if privateDeferredFault(ctx) == DeferredFaultAfterPublish {
 			// Deliberately fail after durable rename+dir sync but before tx
 			// commit. Deferral rolls back ALL provisional SQL markers.

@@ -46,7 +46,7 @@ func TestPrivateDeferredFaultRequiresExplicitSupportedMode(t *testing.T) {
  if got:=privateDeferredFault(context.Background());got!="" {t.Fatal("default fault injection must be disabled")}
  if _,err:=WithPrivateDeferredFault(context.Background(),"unknown");err==nil {t.Fatal("arbitrary fault injection accepted")}
  if _,err:=WithPrivateDeferredFault(nil,DeferredFaultCorruptClone);err==nil {t.Fatal("nil context accepted")}
- for _,mode:=range []string{DeferredFaultCorruptClone,DeferredFaultAfterPublish} {
+ for _,mode:=range []string{DeferredFaultCorruptClone,DeferredFaultAfterPublish,DeferredFaultKillAfterPublish} {
   ctx,err:=WithPrivateDeferredFault(context.Background(),mode)
   if err!=nil {t.Fatal(err)}
   if got:=privateDeferredFault(ctx);got!=mode {t.Fatalf("requested fault %q became %q",mode,got)}
