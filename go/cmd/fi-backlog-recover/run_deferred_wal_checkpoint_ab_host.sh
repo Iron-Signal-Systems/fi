@@ -199,13 +199,17 @@ run_arm(){
  [ "$count" -gt 390387 ] || die "$name committed no new records"
  printf 'FI WAL AB SQL PASS arm=%s checkpoint=%s new_windows=%s authoritative=0 accepted=0\n' "$name" "$(sql "$name" "$checkpoint")" "$nw" | tee -a "$out/SUMMARY.txt"
  cat "$dir/result.txt" | tee -a "$out/SUMMARY.txt"
- readback "$name"
 }
 : > "$out/SUMMARY.txt"
 # Sequential A/B uses the same binary and independent signed data prefix.
 # If result differs materially, repeat in reverse order with NEW clones.
 run_arm K32
 run_arm K64
+# Readback is deliberately AFTER BOTH timed tests. Reading every source
+# batch after the control but before the candidate would artificially warm
+# the candidate source cache and bias the A/B comparison.
+readback K32
+readback K64
 # Compare the signed descriptor chain for every COMMON completed window,
 # independent of K32/K64's differing completion counts in ten minutes.
 descriptor="SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index"
