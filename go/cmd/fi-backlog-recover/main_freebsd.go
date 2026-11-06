@@ -75,10 +75,12 @@ func run() error {
 	var optimizedK32 bool
 	var deferredVerifiedClone bool
 	var privateIndexedCounts bool
+	var privateThirtyMinuteProbe bool
 	var testDeferredFault string
 	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone, after-publish, or kill-after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
 	flag.BoolVar(&deferredVerifiedClone, "deferred-verified-clone", false, "EXPERIMENT ONLY: W128/K32/P3/F3 verified cache; defer artifact marker until signed SHA and typed SQL verification share one private transaction")
 	flag.BoolVar(&privateIndexedCounts, "private-indexed-count-verify", false, "DEV ONLY: use signed-batch indexed LATERAL count/byte verifier in exact isolated deferred-clone W128 experiment")
+	flag.BoolVar(&privateThirtyMinuteProbe, "private-30m-probe", false, "DEV ONLY: allow exactly 30m with original count SQL in isolated signed W128 deferred clone (normal 10m limit unchanged)")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
@@ -170,8 +172,11 @@ func run() error {
 			return errors.New("FI processing-chunk-records must be 32768,65536,98304,131072")
 		}
 	}
-	if maxRuntime < 0 || maxRuntime > 10*time.Minute {
-		return errors.New("max-runtime must be between 0 and 10m")
+	// The general recovery deadline remains <=10m. The only longer run is
+	// explicitly opted-in, isolated signed-cache W128/K32/P3/F3 validation.
+	if maxRuntime < 0 || (maxRuntime > 10*time.Minute &&
+		!(privateThirtyMinuteProbe && maxRuntime == 30*time.Minute)) {
+		return errors.New("max-runtime must be <=10m except explicit private 30m signed probe")
 	}
 	if preflightOnly && (!indexedPrivate || enable) {
 		return errors.New("preflight-only must use indexed-private WITHOUT private-writes")
@@ -193,6 +198,15 @@ func run() error {
 		verifiedCacheRoot == "" || startWindow != 3 || maxWindows != 0 ||
 		indexedPrivate || streamLoader || preflightOnly) {
 		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32/P3/F3 private joined trial starting at window 3")
+	}
+	if privateThirtyMinuteProbe && (maxRuntime != 30*time.Minute || !deferredVerifiedClone ||
+		!enable || !continuousPrivate || !privateFieldPartitions ||
+		windowProfile != "W128" || processingChunkRecords != 32768 ||
+		securityProfile != "P3" || fileProfile != "F3" ||
+		verifiedCacheRoot == "" || startWindow != 3 || maxWindows != 0 ||
+		indexedPrivate || privateIndexedCounts || streamLoader || preflightOnly ||
+		testDeferredFault != "" || testStopAfterWindows != 0 || testFieldFailWindow != 0) {
+		return errors.New("FI 30m probe requires exclusive private deferred signed W128/K32/P3/F3 original-verifier path")
 	}
 	if privateIndexedCounts && (!deferredVerifiedClone || !enable || !continuousPrivate || startWindow != 3 ||
 		windowProfile != "W128" || processingChunkRecords != 32768 || !privateFieldPartitions ||
@@ -426,8 +440,12 @@ SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 A
 				if completedWindowTime > 0 {
 					windowRate = float64(durableThisRun) / completedWindowTime.Seconds()
 				}
-				fmt.Printf("FI TEN MINUTE STOP elapsed=%s last_window=%d new_durable=%d durable_through=%d throughput=%.1f/sec checkpoint_elapsed=%s checkpoint_rate=%.1f/sec committed_window_time=%s committed_window_rate=%.1f/sec authoritative=0 accepted=0\n",
-					elapsed.Round(time.Millisecond), lastWindow, durableThisRun, durableThrough,
+				stopLabel := "FI TEN MINUTE STOP"
+				if privateThirtyMinuteProbe {
+					stopLabel = "FI THIRTY MINUTE STOP"
+				}
+				fmt.Printf("%s elapsed=%s last_window=%d new_durable=%d durable_through=%d throughput=%.1f/sec checkpoint_elapsed=%s checkpoint_rate=%.1f/sec committed_window_time=%s committed_window_rate=%.1f/sec authoritative=0 accepted=0\n",
+					stopLabel, elapsed.Round(time.Millisecond), lastWindow, durableThisRun, durableThrough,
 					wallRate, lastCheckpointElapsed.Round(time.Millisecond), checkpointRate,
 					completedWindowTime.Round(time.Millisecond), windowRate)
 				return nil

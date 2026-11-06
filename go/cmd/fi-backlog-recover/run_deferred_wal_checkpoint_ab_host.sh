@@ -6,11 +6,14 @@
 set -eu
 umask 077
 die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count]"
+[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30]"
 order=${1:-normal}
 timing=${2:-on}
 experiment=${3:-wal}
-case "$experiment" in wal|indexed-count) ;; *) die "invalid benchmark experiment" ;; esac
+case "$experiment" in wal|indexed-count|single30) ;; *) die "invalid benchmark experiment" ;; esac
+if [ "$experiment" = single30 ]; then
+ [ "$order" = normal ] && [ "$timing" = off ] || die "single30 requires normal off single30"
+fi
 [ "$experiment" != indexed-count ] || [ "$timing" = off ] || die "indexed-count requires I/O timing off"
 case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
 case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
@@ -28,12 +31,12 @@ cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 [ "$(zpool get -H -o value feature@block_cloning zroot)" = active ] || die "ZFS clone feature not active"
 available_kb=$(df -Pk "$jailroot/home/jwood" | awk 'NR==2{print $4}')
 case "$available_kb" in ''|*[!0-9]*) die "cannot establish PostgreSQL filesystem headroom";;esac
-[ "$available_kb" -ge 50331648 ] || die "less than 48 GiB free for two independent PostgreSQL clusters"
+[ "$available_kb" -ge 50331648 ] || die "less than 48 GiB free for private PostgreSQL fixtures"
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 root="/home/jwood/fi-window-bench-optfield-$stamp"
 out="/var/tmp/fi-window-chunks-$experiment-ab-$stamp"
 [ ! -e "$jailroot$root" ] && [ ! -e "$out" ] || die "experiment path already exists"
-printf 'FI WAL AB PROVISION source=real_signed_W128 baseline_max_wal=1GB candidate_max_wal=8GB free_kib=%s\n' "$available_kb"
+printf 'FI PRIVATE BENCH PROVISION experiment=%s source=real_signed_W128 K64_max_wal=8GB free_kib=%s\n' "$experiment" "$available_kb"
 jexec -U jwood fi-dev sh "$provision" "$root" || die "disposable fixture provisioning failed"
 recover="$jailroot$root/fi-optfield-recover"
 relay="$jailroot$root/fi-optfield-relay"
@@ -96,7 +99,8 @@ original_immutable_seed=3|390387|2
 fixture_root=$root
 control=K32 port=55981 max_wal_size=${expected_control_wal}MB
 candidate=K64 port=55982 max_wal_size=8192MB indexed_count_verify_selected=${experiment}
-both=window_W128 chunk_32768 P3 F3, 10m serial, same binary
+both=window_W128 chunk_32768 P3 F3, serial, same binary
+single30=K64_only original_count_sql 30m no_AB
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
 run_order=$order
@@ -186,9 +190,12 @@ run_arm(){
  (while :;do date -u '+UTC %Y-%m-%dT%H:%M:%SZ';ps -axo pid,ppid,%cpu,%mem,rss,comm | awk 'NR==1 || /fi-optfield-recover|postgres|postmaster/' || :;sleep 15;done) > "$dir/process.log" 2>&1 &proc=$!
  (while :;do date -u '+UTC %Y-%m-%dT%H:%M:%SZ';sql "$name" "SELECT pid::text || '|' || coalesce(state,'-') || '|' || coalesce(wait_event_type,'CPU') || ':' || coalesce(wait_event,'-') FROM pg_stat_activity WHERE backend_type='client backend' AND usename='fi_ingest' AND pid<>pg_backend_pid() ORDER BY pid" || :;sleep 15;done) > "$dir/pg-waits.log" 2>&1 &waitmon=$!
  wal=$(sql "$name" "SELECT setting FROM pg_settings WHERE name='max_wal_size'")
- printf 'FI PRIVATE AB START experiment=%s arm=%s max_wal_size_mb=%s duration=10m source=real_signed_cache\n' "$experiment" "$name" "$wal" | tee -a "$out/SUMMARY.txt"
+ duration=10m
+ [ "$experiment" != single30 ] || duration=30m
+ printf 'FI PRIVATE AB START experiment=%s arm=%s max_wal_size_mb=%s duration=%s source=real_signed_cache\n' "$experiment" "$name" "$wal" "$duration" | tee -a "$out/SUMMARY.txt"
  set --
  if [ "$experiment" = indexed-count ] && [ "$name" = K64 ]; then set -- -private-indexed-count-verify; fi
+ if [ "$experiment" = single30 ] && [ "$name" = K64 ]; then set -- -private-30m-probe; fi
  if ! "$recover" \
   -source=iss-fs-22a.iss.local \
   -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
@@ -198,7 +205,7 @@ run_arm(){
   -private-root="$dir/private" -private-writes -private-field-partitions \
   -security-profile=P3 -file-profile=F3 -window-profile=W128 \
   -processing-chunk-records=32768 -continuous-private -start-window=3 \
-  -max-windows=0 -max-runtime=10m -deferred-verified-clone \
+  -max-windows=0 -max-runtime="$duration" -deferred-verified-clone \
   -verified-cache-root="$cache" "$@" > "$dir/recover.log" 2>&1;then
   stopmon;tail -n 65 "$dir/recover.log" >&2 || :;die "$name recovery failed"
  fi
@@ -211,7 +218,9 @@ run_arm(){
    if grep -q '^FI PRIVATE INDEXED COUNT VERIFY ' "$dir/recover.log"; then die "$name legacy verifier unexpectedly changed"; fi
   fi
  fi
- grep '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$dir/recover.log" > "$dir/result.txt" || die "$name 10m result missing"
+ stoplabel='FI TEN MINUTE STOP'
+ [ "$experiment" != single30 ] || stoplabel='FI THIRTY MINUTE STOP'
+ grep "^$stoplabel .*authoritative=0 accepted=0" "$dir/recover.log" > "$dir/result.txt" || die "$name $duration result missing"
  grep '^FI PRIVATE STAGE PROFILE ' "$dir/recover.log" > "$dir/stages.txt" || die "$name no stage profile"
  grep '^FI REAL BACKLOG DURABLE ' "$dir/recover.log" > "$dir/windows.txt" || die "$name no durable windows"
  grep '^FI DEFERRED ARTIFACT PUBLISHED ' "$dir/recover.log" > "$dir/deferred.txt" || die "$name no deferred checkpoint evidence"
@@ -229,6 +238,15 @@ run_arm(){
 # binary, signed cache and K32/P3/F3 W128 settings in both arms.
 # The reverse trial controls for OS cache warming and order effects.
 printf 'FI WAL AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
+if [ "$experiment" = single30 ]; then
+ [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "single30 WAL not 8GB"
+ run_arm K64
+ readback K64
+ sql K64 "SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index" > "$out/K64/checkpoints.tsv"
+ printf 'FI PRIVATE 30M PASS output=%s sql_and_signed_readback=PASS original_count_verifier=true authoritative=0 accepted=0\n' "$out" | tee -a "$out/SUMMARY.txt"
+ printf 'FI PRIVATE 30M FILES: %s/K64/{result,stages,windows,pg-waits,iostat,vmstat,process}.txt_or_log\n' "$out" | tee -a "$out/SUMMARY.txt"
+ exit 0
+fi
 if [ "$order" = reverse ];then
  run_arm K64
  run_arm K32
