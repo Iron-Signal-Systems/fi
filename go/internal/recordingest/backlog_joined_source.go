@@ -114,7 +114,7 @@ func beginJoinedBacklogSource(ctx context.Context, tx pgx.Tx, d BacklogCheckpoin
 	if err != nil {
 		return nil, err
 	}
-	var deferred := deferredWindowFromContext(ctx)
+	deferred := deferredWindowFromContext(ctx)
 	if deferred != nil {
 		// This is the sole isolated-private exception to the usual prior
 		// committed artifact marker. The same transaction will INSERT that
