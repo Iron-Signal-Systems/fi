@@ -16,6 +16,7 @@ func TestDeferredCloneAcceptanceShellSyntax(t *testing.T) {
   "deferred_clone_provision_jail.sh",
   "run_deferred_clone_k32_10m_host.sh",
   "run_deferred_clone_failure_restart_host.sh",
+  "run_deferred_clone_sigkill_restart_host.sh",
  } {
   t.Run(name,func(t *testing.T){
    path,err:=filepath.Abs(name)
