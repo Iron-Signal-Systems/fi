@@ -104,7 +104,7 @@ stopmon(){
  done
  vm=;io=;proc=;waitmon=
 }
-cleanup(){stopmon;kill "$relaypid" 2>/dev/null || :;wait "$relaypid" 2>/dev/null || :;}
+cleanup(){ stopmon; kill "$relaypid" 2>/dev/null || :; wait "$relaypid" 2>/dev/null || :; }
 trap cleanup 0
 trap 'exit 130' 2
 trap 'exit 143' 15
