@@ -199,7 +199,7 @@ func (p *deferredBacklogWindow) mutateDeferredCloneForTest()error{
  if replacement=='9' {replacement='8'} else {replacement++}
  if _,err=f.WriteAt([]byte{replacement},int64(digit));err!=nil{return err}
  if err=f.Sync();err!=nil{return err}
- fmt.Printf("FI INJECTED PRIVATE DEFERRED CLONE CORRUPTION file=%s offset=%d original_cache_untouched=true\\n",filepath.Base(first),digit)
+ fmt.Printf("FI INJECTED PRIVATE DEFERRED CLONE CORRUPTION file=%s offset=%d original_cache_untouched=true\n",filepath.Base(first),digit)
  return nil
 }
 
