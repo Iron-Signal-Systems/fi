@@ -6,14 +6,14 @@
 set -eu
 umask 077
 die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30]"
+[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30]"
 order=${1:-normal}
 timing=${2:-on}
 experiment=${3:-wal}
-case "$experiment" in wal|indexed-count|single30) ;; *) die "invalid benchmark experiment" ;; esac
-if [ "$experiment" = single30 ]; then
- [ "$order" = normal ] && [ "$timing" = off ] || die "single30 requires normal off single30"
-fi
+case "$experiment" in wal|indexed-count|single30|profile30) ;; *) die "invalid benchmark experiment" ;; esac
+case "$experiment" in
+ single30|profile30) [ "$order" = normal ] && [ "$timing" = off ] || die "30m probe requires normal off";;
+esac
 [ "$experiment" != indexed-count ] || [ "$timing" = off ] || die "indexed-count requires I/O timing off"
 case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
 case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
@@ -22,6 +22,10 @@ command -v jexec >/dev/null 2>&1 || die "jexec unavailable"
 jailroot=$(jls -j fi-dev path) || die "fi-dev jail missing"
 work=/home/jwood/fi-deferred-experiment
 provision="$work/go/cmd/fi-backlog-recover/deferred_clone_provision_jail.sh"
+profile_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_finish_profile_isolated.sql"
+if [ "$experiment" = profile30 ]; then
+ [ -f "$jailroot$profile_sql" ] || die "private field profiler source missing"
+fi
 [ -f "$jailroot$provision" ] || die "experiment provisioner absent"
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 [ -d "$cache" ] || die "verified signed cache missing"
@@ -90,6 +94,15 @@ for name in K32 K64;do
 done
 mkdir -m 700 "$out"
 for name in K32 K64;do mkdir -m 700 "$out/$name" "$out/$name/private";done
+if [ "$experiment" = profile30 ]; then
+  # Replace the private finalizer only in this fresh K64 disposable cluster.
+  # The signed three-window seed and canonical fi.* schema are untouched.
+  jexec -U jwood fi-dev psql     "host=$root/K64/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable"     -X -v ON_ERROR_STOP=1 -f "$profile_sql" > "$out/K64/profile-install.log" 2>&1 ||
+    { tail -n 25 "$out/K64/profile-install.log" >&2 || :; die "isolated SQL finalizer profiler installation failed"; }
+  [ "$(sql K64 "SELECT position('FI_PRIVATE_FIELD_PROFILE' in pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))>0")" = t ] ||
+    die "private profile finalizer not installed"
+  printf 'FI PRIVATE FIELD PROFILE INSTALLED cluster=K64 constraints=unchanged duration=30m\n'
+fi
 cat > "$out/RUN_MANIFEST.txt" <<EOF
 FI SIGNED W128 DEFERRED CLONE WAL CHECKPOINT A/B
 source=iss-fs-22a.iss.local
@@ -101,6 +114,8 @@ control=K32 port=55981 max_wal_size=${expected_control_wal}MB
 candidate=K64 port=55982 max_wal_size=8192MB indexed_count_verify_selected=${experiment}
 both=window_W128 chunk_32768 P3 F3, serial, same binary
 single30=K64_only original_count_sql 30m no_AB
+profile30=K64_only isolated_SQL_finalizer_telemetry no_AB
+profile_sql_sha256=$( [ "$experiment" = profile30 ] && sha256 -q "$jailroot$profile_sql" || echo none )
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
 run_order=$order
@@ -191,11 +206,13 @@ run_arm(){
  (while :;do date -u '+UTC %Y-%m-%dT%H:%M:%SZ';sql "$name" "SELECT pid::text || '|' || coalesce(state,'-') || '|' || coalesce(wait_event_type,'CPU') || ':' || coalesce(wait_event,'-') FROM pg_stat_activity WHERE backend_type='client backend' AND usename='fi_ingest' AND pid<>pg_backend_pid() ORDER BY pid" || :;sleep 15;done) > "$dir/pg-waits.log" 2>&1 &waitmon=$!
  wal=$(sql "$name" "SELECT setting FROM pg_settings WHERE name='max_wal_size'")
  duration=10m
- [ "$experiment" != single30 ] || duration=30m
+ case "$experiment" in single30|profile30) duration=30m;; esac
  printf 'FI PRIVATE AB START experiment=%s arm=%s max_wal_size_mb=%s duration=%s source=real_signed_cache\n' "$experiment" "$name" "$wal" "$duration" | tee -a "$out/SUMMARY.txt"
  set --
  if [ "$experiment" = indexed-count ] && [ "$name" = K64 ]; then set -- -private-indexed-count-verify; fi
- if [ "$experiment" = single30 ] && [ "$name" = K64 ]; then set -- -private-30m-probe; fi
+ case "$experiment:$name" in
+  single30:K64|profile30:K64) set -- -private-30m-probe;;
+ esac
  if ! "$recover" \
   -source=iss-fs-22a.iss.local \
   -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
@@ -219,7 +236,7 @@ run_arm(){
   fi
  fi
  stoplabel='FI TEN MINUTE STOP'
- [ "$experiment" != single30 ] || stoplabel='FI THIRTY MINUTE STOP'
+ case "$experiment" in single30|profile30) stoplabel='FI THIRTY MINUTE STOP';; esac
  grep "^$stoplabel .*authoritative=0 accepted=0" "$dir/recover.log" > "$dir/result.txt" || die "$name $duration result missing"
  grep '^FI PRIVATE STAGE PROFILE ' "$dir/recover.log" > "$dir/stages.txt" || die "$name no stage profile"
  grep '^FI REAL BACKLOG DURABLE ' "$dir/recover.log" > "$dir/windows.txt" || die "$name no durable windows"
@@ -238,15 +255,58 @@ run_arm(){
 # binary, signed cache and K32/P3/F3 W128 settings in both arms.
 # The reverse trial controls for OS cache warming and order effects.
 printf 'FI WAL AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
-if [ "$experiment" = single30 ]; then
- [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "single30 WAL not 8GB"
+case "$experiment" in
+single30|profile30)
+ [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "30m WAL not 8GB"
  run_arm K64
  readback K64
  sql K64 "SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index" > "$out/K64/checkpoints.tsv"
- printf 'FI PRIVATE 30M PASS output=%s sql_and_signed_readback=PASS original_count_verifier=true authoritative=0 accepted=0\n' "$out" | tee -a "$out/SUMMARY.txt"
+ if [ "$experiment" = profile30 ]; then
+  pglog="$jailroot$root/K64/postgres.log"
+  [ -f "$pglog" ] || die "private PostgreSQL server log missing"
+  grep 'FI_PRIVATE_FIELD_PROFILE window=' "$pglog" |
+    sed -n 's/^.*FI_PRIVATE_FIELD_PROFILE /FI_PRIVATE_FIELD_PROFILE /p' > "$out/K64/field-finalize-stages.log" ||
+    die "private finalizer telemetry unavailable"
+  samples=$(wc -l < "$out/K64/field-finalize-stages.log" | tr -d ' ')
+  committed=$(wc -l < "$out/K64/stages.txt" | tr -d ' ')
+  [ "$samples" -ge "$committed" ] || die "private finalizer produced fewer samples than committed windows"
+  awk '
+  function read_value(key, i,x){for(i=1;i<=NF;i++){split($i,x,"=");if(x[1]==key)return x[2]+0}return 0}
+  /^FI_PRIVATE_FIELD_PROFILE / {
+   w=read_value("window")
+   if(w<3 || w>30)next
+   count[w]++
+   if(count[w]>1)bad=1
+   g=(w<=12?1:(w<=22?2:3))
+   n[g]++
+   c[g]+=read_value("count_ms")
+   ca[g]+=read_value("check_add_ms")
+   cv[g]+=read_value("check_validate_ms")
+   fa[g]+=read_value("fk_add_ms")
+   fv[g]+=read_value("fk_validate_ms")
+   ap[g]+=read_value("attach_ms")
+   tt[g]+=read_value("total_ms")
+  }
+  END{
+   print "FI PRIVATE FIELD FINALIZE COHORTS seconds per window"
+   print "COHORT WINDOWS COUNT CHECK_ADD CHECK_VALIDATE FK_ADD FK_VALIDATE ATTACH TOTAL"
+   for(g=1;g<=3;g++){
+    k=(g==1?"EARLY":(g==2?"MIDDLE":"LATE"))
+    if(n[g]){
+     printf "%s %d %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+      k,n[g],c[g]/n[g]/1000,ca[g]/n[g]/1000,cv[g]/n[g]/1000,
+      fa[g]/n[g]/1000,fv[g]/n[g]/1000,ap[g]/n[g]/1000,tt[g]/n[g]/1000
+    }
+   }
+   if(bad)exit 1
+  }' "$out/K64/field-finalize-stages.log" | tee "$out/K64/field-finalize-summary.txt" ||
+    die "private finalizer duplicate window telemetry"
+ fi
+ printf 'FI PRIVATE 30M PASS output=%s experiment=%s sql_and_signed_readback=PASS original_count_verifier=true authoritative=0 accepted=0\n' "$out" "$experiment" | tee -a "$out/SUMMARY.txt"
  printf 'FI PRIVATE 30M FILES: %s/K64/{result,stages,windows,pg-waits,iostat,vmstat,process}.txt_or_log\n' "$out" | tee -a "$out/SUMMARY.txt"
  exit 0
-fi
+;;
+esac
 if [ "$order" = reverse ];then
  run_arm K64
  run_arm K32
