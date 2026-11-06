@@ -558,12 +558,19 @@ func verifyBacklogShadowWindowCounts(ctx context.Context, tx pgx.Tx, id int64, b
 		ids[i] = b.BatchID
 	}
 	var gotRecords, gotBytes int64
-	err := tx.QueryRow(ctx, `
+	// Only the explicit PRIVATE verified-cache benchmark may use the indexed
+	// alternative. Canonical and normal private ingestion retain their existing
+	// SELECT verbatim; all count/bytes failure gates remain identical.
+	query := `
 SELECT count(*),coalesce(sum(sr.record_bytes),0)::bigint
 FROM fi.source_record sr
 JOIN fi.source_batch sb ON sb.source_batch_id=sr.source_batch_id
 WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
-`, id, ids).Scan(&gotRecords, &gotBytes)
+`
+	if privateIndexedWindowCountVerifyEnabled(ctx) {
+		query = privateIndexedWindowCountVerifySQL
+	}
+	err := tx.QueryRow(ctx, query, id, ids).Scan(&gotRecords, &gotBytes)
 	if err != nil {
 		return err
 	}
