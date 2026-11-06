@@ -61,17 +61,40 @@ func recoverBacklogVerifiedCachedWindows(
    b.DataPath=backlogCacheBatchData(cacheDir,i)
   }
   tick:=time.Now()
-  if _,err=MaterializeBacklogWindow(ctx,g,limits,window,privateRoot);err!=nil{
-   return empty,fmt.Errorf("FI cached recovery: window %d verified artifact: %w",window,err)
+  var deferred *deferredBacklogWindow
+  if privateDeferredCloneEnabled(ctx) {
+   deferred,err=stageDeferredBacklogWindow(ctx,g,limits,window,privateRoot,cacheDir)
+   if err!=nil{
+    return empty,fmt.Errorf("FI cached recovery: window %d unpublished clone: %w",window,err)
+   }
+  }
+  if deferred==nil {
+   // Existing ready artifacts (including crash recovery) always undergo
+   // the original independent full-hash verification and SQL marker flow.
+   if _,err=MaterializeBacklogWindow(ctx,g,limits,window,privateRoot);err!=nil{
+    return empty,fmt.Errorf("FI cached recovery: window %d verified artifact: %w",window,err)
+   }
   }
   artifactDuration:=time.Since(tick)
   tick=time.Now()
-  if err=RecordVerifiedBacklogArtifactWindow(ctx,writer,g,limits,window,privateRoot);err!=nil{
-   return empty,fmt.Errorf("FI cached recovery: window %d artifact marker: %w",window,err)
+  if deferred==nil {
+   if err=RecordVerifiedBacklogArtifactWindow(ctx,writer,g,limits,window,privateRoot);err!=nil{
+    return empty,fmt.Errorf("FI cached recovery: window %d artifact marker: %w",window,err)
+   }
   }
   ledgerDuration:=time.Since(tick)
   tick=time.Now()
-  if err=StageBacklogSourceAndTypedWindow(ctx,reader,writer,g,limits,window,privateRoot);err!=nil{
+  ingestCtx:=ctx
+  if deferred!=nil {
+   // Cleanup is limited to the unpublished owned temp directory. Once
+   // published it cannot remove an artifact even on a failed SQL commit.
+   ingestCtx=context.WithValue(ctx,privateDeferredWindowKey{},deferred)
+  }
+  err=func()error{
+   if deferred!=nil {defer deferred.cleanup()}
+   return StageBacklogSourceAndTypedWindow(ingestCtx,reader,writer,g,limits,window,privateRoot)
+  }()
+  if err!=nil{
    return empty,fmt.Errorf("FI cached recovery: window %d joined source+typed: %w",window,err)
   }
   typedDuration:=time.Since(tick)

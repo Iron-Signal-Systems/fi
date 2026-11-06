@@ -73,6 +73,8 @@ func run() error {
 	var testStopAfterWindows, testFieldFailWindow int
 	var securityProfile, windowProfile string
 	var optimizedK32 bool
+	var deferredVerifiedClone bool
+	flag.BoolVar(&deferredVerifiedClone, "deferred-verified-clone", false, "EXPERIMENT ONLY: W128/K32/P3/F3 verified cache; defer artifact marker until signed SHA and typed SQL verification share one private transaction")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
@@ -181,6 +183,13 @@ func run() error {
 		securityProfile != "P3" || fileProfile != "F3") {
 		return errors.New("FI private field partitions require isolated cached W128 continuous-private P3/F3 with 32768 processing chunk")
 	}
+	if deferredVerifiedClone && (!enable || !continuousPrivate || !privateFieldPartitions ||
+		windowProfile != "W128" || processingChunkRecords != 32768 ||
+		securityProfile != "P3" || fileProfile != "F3" ||
+		verifiedCacheRoot == "" || startWindow != 3 || maxWindows != 0 ||
+		indexedPrivate || streamLoader || preflightOnly) {
+		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32/P3/F3 private joined trial starting at window 3")
+	}
 	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 || testStopAfterWindows > 2 || !continuousPrivate ||
 		windowProfile != "W128" || verifiedCacheRoot == "" || processingChunkRecords != 32768)) ||
 		(testFieldFailWindow != 0 && (!privateFieldPartitions || testFieldFailWindow < startWindow ||
@@ -197,6 +206,10 @@ func run() error {
 	defer stop()
 	if privateFieldPartitions {
 		ctx = recordingest.WithPrivateSecurityFieldPartitions(ctx)
+	}
+	if deferredVerifiedClone {
+		ctx = recordingest.WithPrivateDeferredVerifiedClone(ctx)
+		fmt.Println("FI DEFERRED VERIFIED CLONE EXPERIMENT on=private-only zfs_clone=required artifact_marker=joined_tx signed_batch_hash=typed_ingest")
 	}
 	if testFieldFailWindow != 0 {
 		var failErr error

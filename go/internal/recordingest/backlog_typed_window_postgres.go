@@ -267,6 +267,16 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	var totalRecords int64
 	var totalBytes int64
 	stageDir := filepath.Join(privateRoot, "receipt-"+d.ReceiptSHA256, fmt.Sprintf("window-%08d", index))
+	deferred := deferredWindowFromContext(ctx)
+	if deferred != nil {
+		if !joined {
+			return errors.New("FI deferred artifact: requires atomic joined source+typed transaction")
+		}
+		if err := deferred.check(ctx, d, index, privateRoot); err != nil {
+			return fmt.Errorf("FI deferred artifact: invalid pending clone: %w", err)
+		}
+		stageDir = deferred.pending
+	}
 	setupElapsed := time.Since(windowStarted)
 	batchStarted := time.Now()
 	// Real typed processing chunks: COPY buffers may span original signed
@@ -404,6 +414,22 @@ INSERT INTO fi_recovery.typed_window (
 `, receipt, index, digest, id, d.StartBatch, d.EndBatch, totalRecords, totalBytes, IngestVersion)
 	if err != nil {
 		return fmt.Errorf("FI typed window: atomic completion marker: %w", err)
+	}
+	if deferred != nil {
+		// All signed batch SHA-256 checks and source/typed coverage checks
+		// have completed, but NO SQL window marker is committed yet.
+		// Publish the fully validated COW files durably, then append the
+		// artifact marker in THIS existing source+typed transaction.
+		// A crash between rename and SQL commit leaves untrusted physical
+		// files with NO checkpoint. Next restart fully rehashes them.
+		if err := deferred.publish(ctx, d, index, privateRoot); err != nil {
+			return fmt.Errorf("FI deferred artifact: durable publication: %w", err)
+		}
+		if err := deferred.appendMarkerTx(ctx, tx, d, index); err != nil {
+			return fmt.Errorf("FI deferred artifact: atomic SQL marker: %w", err)
+		}
+		fmt.Printf("FI DEFERRED ARTIFACT PUBLISHED window=%d original_signed_batches=%d sql_markers=uncommitted\n",
+			index, d.EndBatch-d.StartBatch)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err

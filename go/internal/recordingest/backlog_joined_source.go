@@ -114,15 +114,33 @@ func beginJoinedBacklogSource(ctx context.Context, tx pgx.Tx, d BacklogCheckpoin
 	if err != nil {
 		return nil, err
 	}
-	var artifact []byte
-	err = tx.QueryRow(ctx, `SELECT descriptor_sha256 FROM fi_recovery.verified_artifact_window
+	var deferred := deferredWindowFromContext(ctx)
+	if deferred != nil {
+		// This is the sole isolated-private exception to the usual prior
+		// committed artifact marker. The same transaction will INSERT that
+		// marker only AFTER verifying every signed data batch and SQL row.
+		if err := deferred.check(ctx, d, index, deferred.root); err != nil {
+			return nil, fmt.Errorf("FI joined source: deferred staged artifact invalid: %w", err)
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM fi_recovery.verified_artifact_window
+WHERE receipt_sha256=$1 AND window_index=$2)`, receipt, index).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, errors.New("FI joined source: deferred artifact marker must not preexist")
+		}
+	} else {
+		var artifact []byte
+		err = tx.QueryRow(ctx, `SELECT descriptor_sha256 FROM fi_recovery.verified_artifact_window
 WHERE receipt_sha256=$1 AND window_index=$2 AND source_id=$3 AND generation_id=$4`,
-		receipt, index, d.SourceID, d.GenerationID).Scan(&artifact)
-	if err != nil {
-		return nil, fmt.Errorf("FI joined source: verified artifact marker missing: %w", err)
-	}
-	if subtle.ConstantTimeCompare(artifact, desc) != 1 {
-		return nil, errors.New("FI joined source: verified artifact descriptor mismatch")
+			receipt, index, d.SourceID, d.GenerationID).Scan(&artifact)
+		if err != nil {
+			return nil, fmt.Errorf("FI joined source: verified artifact marker missing: %w", err)
+		}
+		if subtle.ConstantTimeCompare(artifact, desc) != 1 {
+			return nil, errors.New("FI joined source: verified artifact descriptor mismatch")
+		}
 	}
 	var existing bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM fi_recovery.source_window
