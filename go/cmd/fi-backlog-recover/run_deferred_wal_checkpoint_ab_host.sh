@@ -6,9 +6,11 @@
 set -eu
 umask 077
 die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 1 ] || die "usage: $0 [normal|reverse]"
+[ "$#" -le 2 ] || die "usage: $0 [normal|reverse] [on|off]"
 order=${1:-normal}
-case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse]" ;; esac
+timing=${2:-on}
+case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
+case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
 [ "$(id -un)" = root ] || die "FreeBSD host root required"
 command -v jexec >/dev/null 2>&1 || die "jexec unavailable"
 jailroot=$(jls -j fi-dev path) || die "fi-dev jail missing"
@@ -58,9 +60,10 @@ for name in K32 K64;do
   [ "$(sql "$name" "SHOW $setting")" = on ] || die "$name durability $setting not enabled"
  done
  [ "$(sql "$name" "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 1024 ] || die "$name baseline max_wal_size not 1GiB"
- # Enable the same diagnostic timing settings in BOTH A/B arms.
- admin "$name" "ALTER SYSTEM SET track_io_timing='on'" >/dev/null
- admin "$name" "ALTER SYSTEM SET track_wal_io_timing='on'" >/dev/null
+ # Both arms use identical instrumentation; choose off to establish
+ # performance without extra per-I/O time measurements.
+ admin "$name" "ALTER SYSTEM SET track_io_timing='$timing'" >/dev/null
+ admin "$name" "ALTER SYSTEM SET track_wal_io_timing='$timing'" >/dev/null
 done
 # Exactly one performance variable differs.
 admin K64 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null
@@ -71,7 +74,7 @@ sleep 1
 [ "$(sql K32 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 1024 ] || die "baseline WAL changed"
 [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
 for name in K32 K64;do
- [ "$(sql "$name" "SELECT current_setting('track_io_timing') || '|' || current_setting('track_wal_io_timing')")" = 'on|on' ] || die "$name timing instrumentation missing"
+ [ "$(sql "$name" "SELECT current_setting('track_io_timing') || '|' || current_setting('track_wal_io_timing')")" = "$timing|$timing" ] || die "$name timing instrumentation differs"
  for setting in fsync synchronous_commit full_page_writes;do
   [ "$(sql "$name" "SHOW $setting")" = on ] || die "$name durability disabled after reload"
  done
@@ -89,7 +92,7 @@ control=K32 port=55981 max_wal_size=1024MB
 candidate=K64 port=55982 max_wal_size=8192MB
 both=window_W128 chunk_32768 P3 F3, 10m serial, same binary
 both=fsync_on synchronous_commit_on full_page_writes_on
-both=track_io_timing_on track_wal_io_timing_on
+both=track_io_timing_$timing track_wal_io_timing_$timing
 run_order=$order
 wal_buffers=unchanged
 checkpoint_timeout=unchanged
@@ -208,7 +211,7 @@ run_arm(){
 # Explicit trial order: independent fresh database clones and the exact same
 # binary, signed cache and K32/P3/F3 W128 settings in both arms.
 # The reverse trial controls for OS cache warming and order effects.
-printf 'FI WAL AB ORDER %s\n' "$order" | tee -a "$out/SUMMARY.txt"
+printf 'FI WAL AB ORDER %s timing=%s\n' "$order" "$timing" | tee -a "$out/SUMMARY.txt"
 if [ "$order" = reverse ];then
  run_arm K64
  run_arm K32
@@ -268,5 +271,5 @@ END{
 }' "$out/K32/before.stats" "$out/K32/after.stats" \
  "$out/K64/before.stats" "$out/K64/after.stats" | tee "$out/COUNTERS_DELTA.txt"
 grep '^FI TEN MINUTE STOP ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
-printf 'FI WAL AB COMPLETE output=%s order=%s baseline=K32_1GB candidate=K64_8GB signed_data=identical independent_real_db=true\n' "$out" "$order" | tee -a "$out/SUMMARY.txt"
+printf 'FI WAL AB COMPLETE output=%s order=%s timing=%s baseline=K32_1GB candidate=K64_8GB signed_data=identical independent_real_db=true\n' "$out" "$order" "$timing" | tee -a "$out/SUMMARY.txt"
 printf 'FI WAL AB COUNTER FILES: %s/K32/{before,after}.stats and %s/K64/{before,after}.stats\n' "$out" "$out"
