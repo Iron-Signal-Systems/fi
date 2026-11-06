@@ -269,12 +269,12 @@ single30|profile30)
     die "private finalizer telemetry unavailable"
   samples=$(wc -l < "$out/K64/field-finalize-stages.log" | tr -d ' ')
   committed=$(wc -l < "$out/K64/stages.txt" | tr -d ' ')
-  [ "$samples" -ge "$committed" ] || die "private finalizer produced fewer samples than committed windows"
+  [ "$samples" -ge "$committed" ] || die "private finalizer telemetry incomplete: samples=$samples committed_windows=$committed file=$out/K64/field-finalize-stages.log pglog=$pglog; ingestion integrity/readback already passed"
   awk '
   function read_value(key, i,x){for(i=1;i<=NF;i++){split($i,x,"=");if(x[1]==key)return x[2]+0}return 0}
   /^FI_PRIVATE_FIELD_PROFILE / {
    w=read_value("window")
-   if(w<3 || w>30)next
+   if(w<3 || w>32)next
    count[w]++
    if(count[w]>1)bad=1
    g=(w<=12?1:(w<=22?2:3))
