@@ -94,8 +94,8 @@ generation=20261030T000032.061323100Z-3e38b2210771462c
 verified_cache=$cache
 original_immutable_seed=3|390387|2
 fixture_root=$root
-control=K32 port=55981 max_wal_size=1024MB
-candidate=K64 port=55982 max_wal_size=8192MB
+control=K32 port=55981 max_wal_size=${expected_control_wal}MB
+candidate=K64 port=55982 max_wal_size=8192MB indexed_count_verify_selected=${experiment}
 both=window_W128 chunk_32768 P3 F3, 10m serial, same binary
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
@@ -186,7 +186,7 @@ run_arm(){
  (while :;do date -u '+UTC %Y-%m-%dT%H:%M:%SZ';ps -axo pid,ppid,%cpu,%mem,rss,comm | awk 'NR==1 || /fi-optfield-recover|postgres|postmaster/' || :;sleep 15;done) > "$dir/process.log" 2>&1 &proc=$!
  (while :;do date -u '+UTC %Y-%m-%dT%H:%M:%SZ';sql "$name" "SELECT pid::text || '|' || coalesce(state,'-') || '|' || coalesce(wait_event_type,'CPU') || ':' || coalesce(wait_event,'-') FROM pg_stat_activity WHERE backend_type='client backend' AND usename='fi_ingest' AND pid<>pg_backend_pid() ORDER BY pid" || :;sleep 15;done) > "$dir/pg-waits.log" 2>&1 &waitmon=$!
  wal=$(sql "$name" "SELECT setting FROM pg_settings WHERE name='max_wal_size'")
- printf 'FI WAL AB START arm=%s max_wal_size_mb=%s duration=10m source=real_signed_cache\n' "$name" "$wal" | tee -a "$out/SUMMARY.txt"
+ printf 'FI PRIVATE AB START experiment=%s arm=%s max_wal_size_mb=%s duration=10m source=real_signed_cache\n' "$experiment" "$name" "$wal" | tee -a "$out/SUMMARY.txt"
  set --
  if [ "$experiment" = indexed-count ] && [ "$name" = K64 ]; then set -- -private-indexed-count-verify; fi
  if ! "$recover" \
@@ -204,6 +204,13 @@ run_arm(){
  fi
  stopmon
  snapshot "$name" > "$dir/after.stats"
+ if [ "$experiment" = indexed-count ]; then
+  if [ "$name" = K64 ]; then
+   grep -q '^FI PRIVATE INDEXED COUNT VERIFY mode=per_signed_batch_lateral scope=private_only' "$dir/recover.log" || die "$name candidate did not enable indexed count verifier"
+  else
+   if grep -q '^FI PRIVATE INDEXED COUNT VERIFY ' "$dir/recover.log"; then die "$name legacy verifier unexpectedly changed"; fi
+  fi
+ fi
  grep '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$dir/recover.log" > "$dir/result.txt" || die "$name 10m result missing"
  grep '^FI PRIVATE STAGE PROFILE ' "$dir/recover.log" > "$dir/stages.txt" || die "$name no stage profile"
  grep '^FI REAL BACKLOG DURABLE ' "$dir/recover.log" > "$dir/windows.txt" || die "$name no durable windows"
@@ -268,7 +275,7 @@ END{
  names[3,2]="wal_io_write_ms"
  names[3,3]="wal_io_fsyncs"
  names[3,4]="wal_io_fsync_ms"
- print "FI WAL AB COUNTER DELTAS (control=1GB candidate=8GB)"
+ print "FI AB POSTGRES COUNTER DELTAS"
  printf "%-29s %17s %17s %12s\n","METRIC","K32 CONTROL","K64 CANDIDATE","DELTA"
  for(j=1;j<=3;j++){
   count=(j==1?6:j==2?3:4)
