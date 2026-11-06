@@ -13,7 +13,7 @@ case "$root" in *..*|*' '*|*'*'*|*'?'*|*'['*|*']'*) die 'unsafe root';; esac
 [ ! -e "$root" ] || die 'destination exists'
 [ -d /home/jwood/fi-deferred-experiment/.git ] && die 'unexpected nested Git metadata (worktree expected)' || :
 [ -f /home/jwood/fi-deferred-experiment/.git ] || die 'detached experiment worktree required'
-[ -z "$(cd /home/jwood/fi-deferred-experiment && git status --porcelain)" ] || die 'experiment worktree is modified'
+[ -z "$(cd /home/jwood/fi-deferred-experiment && git status --porcelain --untracked-files=no)" ] || die 'experiment tracked source is modified'
 [ -z "$(cd /home/jwood/fi-deferred-experiment && git branch --show-current)" ] || die 'experiment source must be detached'
 
 [ "$(psql --version)" = 'psql (PostgreSQL) 18.6' ] || die 'PostgreSQL version'
