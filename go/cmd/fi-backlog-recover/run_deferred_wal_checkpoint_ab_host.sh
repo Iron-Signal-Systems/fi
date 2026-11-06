@@ -6,9 +6,12 @@
 set -eu
 umask 077
 die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 2 ] || die "usage: $0 [normal|reverse] [on|off]"
+[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count]"
 order=${1:-normal}
 timing=${2:-on}
+experiment=${3:-wal}
+case "$experiment" in wal|indexed-count) ;; *) die "invalid benchmark experiment" ;; esac
+[ "$experiment" != indexed-count ] || [ "$timing" = off ] || die "indexed-count requires I/O timing off"
 case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
 case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
 [ "$(id -un)" = root ] || die "FreeBSD host root required"
@@ -28,7 +31,7 @@ case "$available_kb" in ''|*[!0-9]*) die "cannot establish PostgreSQL filesystem
 [ "$available_kb" -ge 50331648 ] || die "less than 48 GiB free for two independent PostgreSQL clusters"
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 root="/home/jwood/fi-window-bench-optfield-$stamp"
-out="/var/tmp/fi-window-chunks-wal-ab-$stamp"
+out="/var/tmp/fi-window-chunks-$experiment-ab-$stamp"
 [ ! -e "$jailroot$root" ] && [ ! -e "$out" ] || die "experiment path already exists"
 printf 'FI WAL AB PROVISION source=real_signed_W128 baseline_max_wal=1GB candidate_max_wal=8GB free_kib=%s\n' "$available_kb"
 jexec -U jwood fi-dev sh "$provision" "$root" || die "disposable fixture provisioning failed"
@@ -67,11 +70,14 @@ for name in K32 K64;do
 done
 # Exactly one performance variable differs.
 admin K64 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null
+if [ "$experiment" = indexed-count ]; then admin K32 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null; fi
 for name in K32 K64;do
  [ "$(admin "$name" 'SELECT pg_reload_conf()')" = t ] || die "$name config reload rejected"
 done
 sleep 1
-[ "$(sql K32 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 1024 ] || die "baseline WAL changed"
+expected_control_wal=1024
+[ "$experiment" != indexed-count ] || expected_control_wal=8192
+[ "$(sql K32 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = "$expected_control_wal" ] || die "baseline WAL changed"
 [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
 for name in K32 K64;do
  [ "$(sql "$name" "SELECT current_setting('track_io_timing') || '|' || current_setting('track_wal_io_timing')")" = "$timing|$timing" ] || die "$name timing instrumentation differs"
@@ -94,6 +100,8 @@ both=window_W128 chunk_32768 P3 F3, 10m serial, same binary
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
 run_order=$order
+experiment=$experiment
+control_wal_mb=$expected_control_wal
 wal_buffers=unchanged
 checkpoint_timeout=unchanged
 published_and_authoritative_source=prohibited
@@ -179,6 +187,8 @@ run_arm(){
  (while :;do date -u '+UTC %Y-%m-%dT%H:%M:%SZ';sql "$name" "SELECT pid::text || '|' || coalesce(state,'-') || '|' || coalesce(wait_event_type,'CPU') || ':' || coalesce(wait_event,'-') FROM pg_stat_activity WHERE backend_type='client backend' AND usename='fi_ingest' AND pid<>pg_backend_pid() ORDER BY pid" || :;sleep 15;done) > "$dir/pg-waits.log" 2>&1 &waitmon=$!
  wal=$(sql "$name" "SELECT setting FROM pg_settings WHERE name='max_wal_size'")
  printf 'FI WAL AB START arm=%s max_wal_size_mb=%s duration=10m source=real_signed_cache\n' "$name" "$wal" | tee -a "$out/SUMMARY.txt"
+ set --
+ if [ "$experiment" = indexed-count ] && [ "$name" = K64 ]; then set -- -private-indexed-count-verify; fi
  if ! "$recover" \
   -source=iss-fs-22a.iss.local \
   -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
@@ -189,7 +199,7 @@ run_arm(){
   -security-profile=P3 -file-profile=F3 -window-profile=W128 \
   -processing-chunk-records=32768 -continuous-private -start-window=3 \
   -max-windows=0 -max-runtime=10m -deferred-verified-clone \
-  -verified-cache-root="$cache" > "$dir/recover.log" 2>&1;then
+  -verified-cache-root="$cache" "$@" > "$dir/recover.log" 2>&1;then
   stopmon;tail -n 65 "$dir/recover.log" >&2 || :;die "$name recovery failed"
  fi
  stopmon
@@ -211,7 +221,7 @@ run_arm(){
 # Explicit trial order: independent fresh database clones and the exact same
 # binary, signed cache and K32/P3/F3 W128 settings in both arms.
 # The reverse trial controls for OS cache warming and order effects.
-printf 'FI WAL AB ORDER %s timing=%s\n' "$order" "$timing" | tee -a "$out/SUMMARY.txt"
+printf 'FI WAL AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
 if [ "$order" = reverse ];then
  run_arm K64
  run_arm K32
@@ -271,5 +281,5 @@ END{
 }' "$out/K32/before.stats" "$out/K32/after.stats" \
  "$out/K64/before.stats" "$out/K64/after.stats" | tee "$out/COUNTERS_DELTA.txt"
 grep '^FI TEN MINUTE STOP ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
-printf 'FI WAL AB COMPLETE output=%s order=%s timing=%s baseline=K32_1GB candidate=K64_8GB signed_data=identical independent_real_db=true\n' "$out" "$order" "$timing" | tee -a "$out/SUMMARY.txt"
+printf 'FI WAL AB COMPLETE output=%s experiment=%s order=%s timing=%s control_wal_mb=%s candidate_wal_mb=8192 signed_data=identical independent_real_db=true\n' "$out" "$experiment" "$order" "$timing" "$expected_control_wal" | tee -a "$out/SUMMARY.txt"
 printf 'FI WAL AB COUNTER FILES: %s/K32/{before,after}.stats and %s/K64/{before,after}.stats\n' "$out" "$out"
