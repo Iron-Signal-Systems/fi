@@ -11,7 +11,6 @@ import (
  "context"
  "crypto/sha256"
  "crypto/subtle"
- "encoding/binary"
  "encoding/hex"
  "encoding/json"
  "errors"
@@ -181,11 +180,14 @@ func (p *deferredBacklogWindow) publish(ctx context.Context,d BacklogCheckpointD
  return nil
 }
 
-// The typed writer already holds the SAME receipt advisory transaction lock
-// and has verified full source+typed record identities. This SQL marker goes
-// into its transaction, not into an independently committed artifact tx.
-func (p *deferredBacklogWindow) appendMarkerTx(ctx context.Context,tx pgx.Tx,d BacklogCheckpointDescriptor,index int)error{
- if p==nil||!p.published||p.descriptor!=d||tx==nil{return errors.New("deferred clone: cannot mark unverified/unpublished artifact")}
+// The typed writer already holds the receipt-scoped SQL transaction lock.
+// The provisional marker is inserted BEFORE COPY solely to satisfy the
+// existing immediate FK constraints; it is NOT committed/visible yet.
+// The caller may commit this transaction ONLY AFTER all signed data hashes
+// and relational checks pass AND the artifact has been durably published.
+// On ANY failure the rollback removes this provisional marker too.
+func (p *deferredBacklogWindow) insertProvisionalMarkerTx(ctx context.Context,tx pgx.Tx,d BacklogCheckpointDescriptor,index int)error{
+ if p==nil||p.published||p.descriptor!=d||tx==nil{return errors.New("deferred clone: cannot provision marker without unpublished exact signed window")}
  receipt,err:=hex.DecodeString(d.ReceiptSHA256);if err!=nil{return err}
  transfer,err:=hex.DecodeString(d.TransferSHA256);if err!=nil{return err}
  digest,err:=hex.DecodeString(d.DigestSHA256);if err!=nil{return err}
@@ -213,6 +215,3 @@ ORDER BY window_index DESC LIMIT 1`,receipt).Scan(&priorIndex,&priorDigest,&prio
  return err
 }
 
-// The compiler-enforced static type of this lock key must match the existing
-// receipt advisory lock used by StageBacklogTypedWindow.
-var _ = binary.BigEndian

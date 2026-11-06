@@ -117,6 +117,23 @@ SELECT EXISTS (SELECT 1 FROM fi.recorded_generation
 	if authoritative {
 		return errors.New("FI typed window: original generation already authoritative")
 	}
+	deferred := deferredWindowFromContext(ctx)
+	if deferred != nil {
+		if !joined {
+			return errors.New("FI deferred artifact: only atomic joined source+typed path allowed")
+		}
+		if err := deferred.check(ctx, d, index, privateRoot); err != nil {
+			return fmt.Errorf("FI deferred artifact: invalid pending clone: %w", err)
+		}
+		// Foreign keys from pending_source_record and source_window require
+		// the artifact marker to exist INSIDE this SQL transaction before
+		// source COPY. It is UNCOMMITTED and invisible to all other readers.
+		// Failure at ANY subsequent signed-hash/projection/fsync gate causes
+		// PostgreSQL to roll it back with the source and typed records.
+		if err := deferred.insertProvisionalMarkerTx(ctx, tx, d, index); err != nil {
+			return fmt.Errorf("FI deferred artifact: provisional SQL marker: %w", err)
+		}
+	}
 
 	// Require committed exact source-window checkpoint, not merely the
 	// existence of files or a prior attempted ingest.
@@ -267,7 +284,6 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	var totalRecords int64
 	var totalBytes int64
 	stageDir := filepath.Join(privateRoot, "receipt-"+d.ReceiptSHA256, fmt.Sprintf("window-%08d", index))
-	deferred := deferredWindowFromContext(ctx)
 	if deferred != nil {
 		if !joined {
 			return errors.New("FI deferred artifact: requires atomic joined source+typed transaction")
@@ -425,9 +441,8 @@ INSERT INTO fi_recovery.typed_window (
 		if err := deferred.publish(ctx, d, index, privateRoot); err != nil {
 			return fmt.Errorf("FI deferred artifact: durable publication: %w", err)
 		}
-		if err := deferred.appendMarkerTx(ctx, tx, d, index); err != nil {
-			return fmt.Errorf("FI deferred artifact: atomic SQL marker: %w", err)
-		}
+		// The provisional artifact marker now becomes committable, together
+		// with its FK-dependent source records and typed projection marker.
 		fmt.Printf("FI DEFERRED ARTIFACT PUBLISHED window=%d original_signed_batches=%d sql_markers=uncommitted\n",
 			index, d.EndBatch-d.StartBatch)
 	}
