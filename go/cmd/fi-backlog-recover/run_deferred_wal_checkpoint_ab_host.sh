@@ -219,17 +219,39 @@ awk -F '|' -v limit="$common" '$1<=limit' "$out/K32/checkpoints.tsv" > "$out/K32
 awk -F '|' -v limit="$common" '$1<=limit' "$out/K64/checkpoints.tsv" > "$out/K64/common.tsv"
 diff -u "$out/K32/common.tsv" "$out/K64/common.tsv" > "$out/common.diff" || die "common signed source checkpoint chain differs"
 printf 'FI WAL AB COMMON PREFIX PASS through_window=%s descriptors_identical=true\n' "$common" | tee -a "$out/SUMMARY.txt"
+# Calculate exact per-run cumulative PostgreSQL 18 counters.
 awk -F '|' '
-function round(n){return sprintf("%.3f",n)}
-FNR==1 {arm=(FILENAME ~ /K32/ ? "K32" : "K64")}
-{a[arm,FNR]=$0;count[arm]=FNR}
+FNR==1 {
+ arm=(FILENAME ~ /\/K32\// ? "K32" : "K64")
+ sample=(FILENAME ~ /\/before\.stats$/ ? "before" : "after")
+}
+{for(i=1;i<=NF;i++) metric[arm,sample,FNR,i]=$i+0}
 END{
- print "FI WAL AB POSTGRES DELTAS (time_ms, bytes, counts; from before/after counters)"
+ names[1,1]="checkpoints_requested"
+ names[1,2]="checkpoints_timed"
+ names[1,3]="checkpoints_done"
+ names[1,4]="checkpoint_write_ms"
+ names[1,5]="checkpoint_sync_ms"
+ names[1,6]="checkpoint_buffers_written"
+ names[2,1]="wal_bytes"
+ names[2,2]="wal_full_page_images"
+ names[2,3]="wal_buffers_full"
+ names[3,1]="wal_io_writes"
+ names[3,2]="wal_io_write_ms"
+ names[3,3]="wal_io_fsyncs"
+ names[3,4]="wal_io_fsync_ms"
+ print "FI WAL AB COUNTER DELTAS (control=1GB candidate=8GB)"
+ printf "%-29s %17s %17s %12s\n","METRIC","K32 CONTROL","K64 CANDIDATE","DELTA"
  for(j=1;j<=3;j++){
-  n=split(a["K32",j],x,"|")
-  m=split(a["K64",j],y,"|")
-  printf "snapshot_line=%d baseline_fields=%d candidate_fields=%d\n",j,n,m
+  count=(j==1?6:j==2?3:4)
+  for(i=1;i<=count;i++){
+   a=metric["K32","after",j,i]-metric["K32","before",j,i]
+   b=metric["K64","after",j,i]-metric["K64","before",j,i]
+   printf "%-29s %17.0f %17.0f %+12.0f\n",names[j,i],a,b,b-a
+  }
  }
-}' "$out/K32/before.stats" "$out/K64/before.stats" > "$out/COUNTERS_NOTE.txt"
+}' "$out/K32/before.stats" "$out/K32/after.stats" \
+ "$out/K64/before.stats" "$out/K64/after.stats" | tee "$out/COUNTERS_DELTA.txt"
+grep '^FI TEN MINUTE STOP ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
 printf 'FI WAL AB COMPLETE output=%s baseline=K32_1GB candidate=K64_8GB signed_data=identical independent_real_db=true\n' "$out" | tee -a "$out/SUMMARY.txt"
 printf 'FI WAL AB COUNTER FILES: %s/K32/{before,after}.stats and %s/K64/{before,after}.stats\n' "$out" "$out"
