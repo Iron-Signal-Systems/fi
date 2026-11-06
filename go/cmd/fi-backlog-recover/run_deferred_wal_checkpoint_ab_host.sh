@@ -6,6 +6,9 @@
 set -eu
 umask 077
 die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
+[ "$#" -le 1 ] || die "usage: $0 [normal|reverse]"
+order=${1:-normal}
+case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse]" ;; esac
 [ "$(id -un)" = root ] || die "FreeBSD host root required"
 command -v jexec >/dev/null 2>&1 || die "jexec unavailable"
 jailroot=$(jls -j fi-dev path) || die "fi-dev jail missing"
@@ -87,6 +90,7 @@ candidate=K64 port=55982 max_wal_size=8192MB
 both=window_W128 chunk_32768 P3 F3, 10m serial, same binary
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_on track_wal_io_timing_on
+run_order=$order
 wal_buffers=unchanged
 checkpoint_timeout=unchanged
 published_and_authoritative_source=prohibited
@@ -201,10 +205,17 @@ run_arm(){
  cat "$dir/result.txt" | tee -a "$out/SUMMARY.txt"
 }
 : > "$out/SUMMARY.txt"
-# Sequential A/B uses the same binary and independent signed data prefix.
-# If result differs materially, repeat in reverse order with NEW clones.
-run_arm K32
-run_arm K64
+# Explicit trial order: independent fresh database clones and the exact same
+# binary, signed cache and K32/P3/F3 W128 settings in both arms.
+# The reverse trial controls for OS cache warming and order effects.
+printf 'FI WAL AB ORDER %s\n' "$order" | tee -a "$out/SUMMARY.txt"
+if [ "$order" = reverse ];then
+ run_arm K64
+ run_arm K32
+else
+ run_arm K32
+ run_arm K64
+fi
 # Readback is deliberately AFTER BOTH timed tests. Reading every source
 # batch after the control but before the candidate would artificially warm
 # the candidate source cache and bias the A/B comparison.
@@ -257,5 +268,5 @@ END{
 }' "$out/K32/before.stats" "$out/K32/after.stats" \
  "$out/K64/before.stats" "$out/K64/after.stats" | tee "$out/COUNTERS_DELTA.txt"
 grep '^FI TEN MINUTE STOP ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
-printf 'FI WAL AB COMPLETE output=%s baseline=K32_1GB candidate=K64_8GB signed_data=identical independent_real_db=true\n' "$out" | tee -a "$out/SUMMARY.txt"
+printf 'FI WAL AB COMPLETE output=%s order=%s baseline=K32_1GB candidate=K64_8GB signed_data=identical independent_real_db=true\n' "$out" "$order" | tee -a "$out/SUMMARY.txt"
 printf 'FI WAL AB COUNTER FILES: %s/K32/{before,after}.stats and %s/K64/{before,after}.stats\n' "$out" "$out"
