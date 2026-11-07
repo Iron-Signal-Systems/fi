@@ -178,7 +178,9 @@ func usePrivateSinglePassSecurity(ctx context.Context) bool {
 
 type privateSecurityPayloadTailGuardKey struct{}
 
-// This opt-in does not modify production or normal private ingestion.
+// Private W128/P3 signed recovery now uses the verified object-tail guard
+// by default. This retains the old explicit candidate selector for existing
+// isolated experiment scripts; it never enables the path in production.
 func WithPrivateSecurityPayloadTailGuard(ctx context.Context) context.Context {
 	if ctx == nil {
 		return nil
@@ -186,8 +188,17 @@ func WithPrivateSecurityPayloadTailGuard(ctx context.Context) context.Context {
 	return context.WithValue(ctx, privateSecurityPayloadTailGuardKey{}, true)
 }
 
+// WithPrivateSecurityPayloadOriginalGuard opts one isolated trial back into
+// the original full JSON-validity scan. It is an A/B baseline control only:
+// unlike disabling single-pass Security, it preserves all other ingest work.
+func WithPrivateSecurityPayloadOriginalGuard(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, privateSecurityPayloadTailGuardKey{}, false)
+}
+
 func usePrivateSecurityPayloadTailGuard(ctx context.Context) bool {
-	return ctx != nil &&
-		ctx.Value(privateSecurityPayloadTailGuardKey{}) == true &&
-		usePrivateSinglePassSecurity(ctx)
+	return usePrivateSinglePassSecurity(ctx) &&
+		ctx.Value(privateSecurityPayloadTailGuardKey{}) != false
 }
