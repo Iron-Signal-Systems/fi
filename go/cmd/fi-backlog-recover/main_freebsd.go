@@ -78,6 +78,7 @@ func run() error {
 	var privateIndexedCounts bool
 	var privateThirtyMinuteProbe bool
 	var privateReusableEventCopy bool
+	var privateSecurityPayloadTailGuard bool
 	var privateCPUProfile string
 	var testDeferredFault string
 	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone, after-publish, or kill-after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
@@ -85,6 +86,7 @@ func run() error {
 	flag.BoolVar(&privateIndexedCounts, "private-indexed-count-verify", false, "DEV ONLY: use signed-batch indexed LATERAL count/byte verifier in exact isolated deferred-clone W128 experiment")
 	flag.BoolVar(&privateThirtyMinuteProbe, "private-30m-probe", false, "DEV ONLY: allow exactly 30m with original count SQL in isolated signed W128 deferred clone (normal 10m limit unchanged)")
 	flag.BoolVar(&privateReusableEventCopy, "private-reusable-event-copy", false, "DEV ONLY: opt in to reusable 40-column Security-event COPY rows for isolated signed W128/P3 deferred clone; production remains unchanged")
+	flag.BoolVar(&privateSecurityPayloadTailGuard, "private-security-payload-tail", false, "DEV ONLY: use object-tail guard instead of preliminary full JSON payload validation in private 10m W128/P3 signed replay")
 	flag.StringVar(&privateCPUProfile, "private-cpu-profile", "", "DEV ONLY: 10m signed W128 disposable private-clone CPU profile")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
@@ -225,6 +227,15 @@ func run() error {
 		privateThirtyMinuteProbe || testDeferredFault != "" || testFieldFailWindow != 0) {
 		return errors.New("FI reusable Security-event COPY requires isolated, signed-cache W128/K32/P3/F3 deferred-clone private trial")
 	}
+	if privateSecurityPayloadTailGuard && (!deferredVerifiedClone || !enable || !continuousPrivate ||
+		!privateFieldPartitions || startWindow != 3 || windowProfile != "W128" ||
+		processingChunkRecords != 32768 || securityProfile != "P3" || fileProfile != "F3" ||
+		verifiedCacheRoot == "" || indexedPrivate || preflightOnly || streamLoader ||
+		maxRuntime != 10*time.Minute || privateThirtyMinuteProbe || privateReusableEventCopy ||
+		privateCPUProfile != "" || testDeferredFault != "" || testFieldFailWindow != 0 ||
+		testStopAfterWindows != 0) {
+		return errors.New("FI Security payload tail guard requires isolated 10m signed-cache W128/K32/P3/F3 private deferred clone")
+	}
 	if testDeferredFault != "" && (!deferredVerifiedClone || startWindow != 3 || testStopAfterWindows != 1 ||
 		(testDeferredFault != recordingest.DeferredFaultCorruptClone && testDeferredFault != recordingest.DeferredFaultAfterPublish && testDeferredFault != recordingest.DeferredFaultKillAfterPublish)) {
 		return errors.New("FI deferred fault injection requires isolated W128/K32 window=3 exact one-window stop")
@@ -283,6 +294,10 @@ func run() error {
 	if privateReusableEventCopy {
 		ctx = recordingest.WithPrivateSecurityEventCopySource(ctx)
 		fmt.Println("FI PRIVATE SECURITY EVENT COPY SOURCE mode=reusable_40_columns scope=private_only production=unchanged")
+	}
+	if privateSecurityPayloadTailGuard {
+		ctx = recordingest.WithPrivateSecurityPayloadTailGuard(ctx)
+		fmt.Println("FI PRIVATE SECURITY PAYLOAD GUARD mode=object_tail scope=private_only strict_decoder=unchanged")
 	}
 	if testDeferredFault != "" {
 		var faultErr error
