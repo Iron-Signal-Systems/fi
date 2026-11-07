@@ -91,6 +91,83 @@ func TestSinglePassSecurityFallbackAndReject(t *testing.T) {
 	})}
 }
 
+// All accepted records must retain the exact original source bytes, SHA-256,
+// typed Security event, and field ordering. Malformed/noncanonical inputs
+// must preserve the established fallback's accept/reject decision.
+func TestSinglePassSecurityTailGuardDifferential(t *testing.T) {
+	raw := singlePassSecurityTestRecord(t, 24, 8192)
+	prefix := append([]byte(nil), raw[:len(raw)-2]...)
+	extra := func(suffix string) []byte {
+		return append(append([]byte(nil), prefix...), []byte(suffix)...)
+	}
+	cases := []struct {
+		name string
+		raw  []byte
+	}{
+		{"canonical", raw},
+		{"known-member-after-payload", extra(",\"version\":\"fi-spool-record/0.1\"}\n")},
+		{"duplicate-payload", extra(",\"payload\":{}}\n")},
+		{"unknown-object-after-payload", extra(",\"unknown\":{\"x\":1}}\n")},
+		{"empty-scope-after-payload", extra(",\"scope_id\":\"\"}\n")},
+		{"unknown-member-before-payload", bytes.Replace(raw, []byte(`,"written_at":`), []byte(`,"extra":true,"written_at":`), 1)},
+		{"wrong-event-type", bytes.Replace(raw, []byte(`"event_id":"4663"`), []byte(`"event_id":false`), 1)},
+		{"unknown-typed-member", bytes.Replace(raw, []byte(`"raw_xml":`), []byte(`"unknown_xml":true,"raw_xml":`), 1)},
+		{"missing-final-LF", raw[:len(raw)-1]},
+		{"garbage-after-envelope", append(append([]byte(nil), raw[:len(raw)-1]...), []byte("XYZ\n")...)},
+		{"noncanonical-payload-space", bytes.Replace(raw, []byte("}}\n"), []byte("} }\n"), 1)},
+	}
+	prepare := func(input []byte, candidate bool) (SourceRecord, securityBulkRecord, error) {
+		var source SourceRecord
+		var typed securityBulkRecord
+		var selected bool
+		var err error
+		if candidate {
+			source, typed, selected, err = tryPrepareSinglePassSecurityTailGuard(input)
+		} else {
+			source, typed, selected, err = tryPrepareSinglePassSecurity(input)
+		}
+		if !selected && err == nil {
+			source, err = prepareOwnedSourceRecord(input)
+			if err == nil && source.Record.RecordKind == "WindowsSecurityEvent" {
+				typed, err = prepareSecurityBulkRecord(1, source, source.RecordDigest[:])
+			}
+		}
+		return source, typed, err
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseline, typedBase, baseErr := prepare(tc.raw, false)
+			got, typedGot, gotErr := prepare(tc.raw, true)
+			if (baseErr == nil) != (gotErr == nil) {
+				t.Fatalf("accept/reject changed baseline=%v candidate=%v", baseErr, gotErr)
+			}
+			if baseErr == nil && (!reflect.DeepEqual(baseline, got) ||
+				!reflect.DeepEqual(typedBase.value, typedGot.value) ||
+				!bytes.Equal(typedBase.digest, typedGot.digest)) {
+				t.Fatal("accepted source evidence, SHA-256, or typed Security projection changed")
+			}
+		})
+	}
+}
+
+func TestSinglePassSecurityTailGuardCanonicalSizes(t *testing.T) {
+	for _, fields := range []int{0, 1, 24, 96} {
+		for _, rawXMLSize := range []int{0, 8192, 32768} {
+			raw := singlePassSecurityTestRecord(t, fields, rawXMLSize)
+			sourceA, typedA, selectedA, errA := tryPrepareSinglePassSecurity(raw)
+			sourceB, typedB, selectedB, errB := tryPrepareSinglePassSecurityTailGuard(raw)
+			if errA != nil || errB != nil || !selectedA || !selectedB {
+				t.Fatalf("fields=%d xml=%d selected=%t/%t errors=%v/%v", fields, rawXMLSize, selectedA, selectedB, errA, errB)
+			}
+			if !reflect.DeepEqual(sourceA, sourceB) ||
+				!reflect.DeepEqual(typedA.value, typedB.value) ||
+				!bytes.Equal(typedA.digest, typedB.digest) {
+				t.Fatalf("fields=%d xml=%d: source, digest or projection differ", fields, rawXMLSize)
+			}
+		}
+	}
+}
+
 var singlePassSecurityBenchmarkSink int
 
 func BenchmarkSecuritySourceEnvelopeAndPayloadOnePass(b *testing.B) {
@@ -117,6 +194,18 @@ func BenchmarkSecuritySourceEnvelopeAndPayloadOnePass(b *testing.B) {
 		}
 		singlePassSecurityBenchmarkSink=sink
 	})
+	b.Run("candidate-tail-guard", func(b *testing.B) {
+		b.ReportAllocs()
+		var sink int
+		for i := 0; i < b.N; i++ {
+			source, event, selected, err := tryPrepareSinglePassSecurityTailGuard(raw)
+			if err != nil || !selected {
+				b.Fatalf("selected=%t err=%v", selected, err)
+			}
+			sink += source.RecordBytes + len(event.value.Fields)
+		}
+		singlePassSecurityBenchmarkSink = sink
+	})
 }
 
 func TestSinglePassSecuritySelectionPrivateP3Only(t *testing.T) {
@@ -135,6 +224,31 @@ func TestSinglePassSecuritySelectionPrivateP3Only(t *testing.T) {
 		t.Run(tt.name,func(t *testing.T){
 			if got:=usePrivateSinglePassSecurity(tt.ctx);got!=tt.allowed {
 				t.Fatalf("allowed=%t want=%t",got,tt.allowed)
+			}
+		})
+	}
+}
+
+func TestPrivateSecurityPayloadTailGuardSelection(t *testing.T) {
+	p1, err := withFixedSecurityBulkProfile(context.Background(), "P1")
+	if err != nil { t.Fatal(err) }
+	p3, err := withFixedSecurityBulkProfile(context.Background(), "P3")
+	if err != nil { t.Fatal(err) }
+	for _, tc := range []struct {
+		name string
+		ctx context.Context
+		want bool
+	}{
+		{"nil", nil, false},
+		{"default", context.Background(), false},
+		{"ordinary-P3", WithPrivateSecurityPayloadTailGuard(p3), false},
+		{"private-P1", WithPrivateSecurityPayloadTailGuard(WithPrivateSecurityFieldPartitions(p1)), false},
+		{"private-P3-unflagged", WithPrivateSecurityFieldPartitions(p3), false},
+		{"private-P3-flagged", WithPrivateSecurityPayloadTailGuard(WithPrivateSecurityFieldPartitions(p3)), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := usePrivateSecurityPayloadTailGuard(tc.ctx); got != tc.want {
+				t.Fatalf("enabled=%t want=%t", got, tc.want)
 			}
 		})
 	}
