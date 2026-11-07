@@ -484,6 +484,15 @@ INSERT INTO fi_recovery.typed_window (
 			index, fieldPartitionName, profile.SecurityBulk.Fields, fieldPartitionBegin.Round(time.Millisecond), fieldPartitionFinish.Round(time.Millisecond))
 	}
 	fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d families=%s ntfs_identity=%s ntfs_file_copy=%s ntfs_metadata_copy=%s security_events=%d security_fields=%d security_source_copy=%s security_event_copy=%s security_field_copy=%s\n", index, totalRecords, strings.Join(parts, ","), ntfsTiming.Identity, ntfsTiming.FileCopyLatency.String(), ntfsTiming.MetadataCopyLatency.String(), profile.SecurityBulk.Events, profile.SecurityBulk.Fields, profile.SecurityBulk.SourceLatency.String(), profile.SecurityBulk.EventLatency.String(), profile.SecurityBulk.FieldLatency.String())
+	// Existing NTFS timing counters were collected but not printed in the
+	// window-level private experiment. Emit them only after durable commit;
+	// these are nested stage durations and must not be summed with the
+	// broader File projection timer.
+	fmt.Printf("FI PRIVATE FILE STAGES index=%d observations=%d total=%s identity=%s file=%s metadata=%s hashes=%s prefix=%s reparse=%s streams=%s security=%s sacl=%s warnings=%s\n",
+		index, ntfsTiming.Observations, ntfsTiming.Total, ntfsTiming.Identity,
+		ntfsTiming.File, ntfsTiming.Metadata, ntfsTiming.Hashes,
+		ntfsTiming.Prefix, ntfsTiming.Reparse, ntfsTiming.Streams,
+		ntfsTiming.Security, ntfsTiming.SACL, ntfsTiming.Warnings)
 	// Outer wall-clock stages partition the private typed window. The ingest
 	// counters below are nested (some include COPY), so they are NOT additive.
 	// Projection_total retains the historical mixed projection accumulator.
