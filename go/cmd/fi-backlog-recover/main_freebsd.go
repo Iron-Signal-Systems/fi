@@ -322,7 +322,7 @@ func run() error {
 	if privateSecurityPayloadOriginalGuard {
 		ctx = recordingest.WithPrivateSecurityPayloadOriginalGuard(ctx)
 		fmt.Println("FI PRIVATE SECURITY PAYLOAD BASELINE mode=original_json_valid scope=private_only strict_decoder=unchanged")
-	} else if recordingest.PrivateSecurityPayloadTailGuardEnabled(ctx) {
+	} else if privateFieldPartitions && securityProfile == "P3" {
 		// Activating the default never changes production or ordinary P3:
 		// the selector is restricted to isolated private P3 partitions.
 		fmt.Println("FI PRIVATE SECURITY PAYLOAD GUARD mode=object_tail scope=private_only strict_decoder=unchanged")
