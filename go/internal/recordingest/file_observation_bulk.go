@@ -31,6 +31,10 @@ type fileObservationBulkRecord struct {
 	value          ntfs.Observation
 	hashes         *records.ContentHashObservation
 	bytes          int64
+	// Set only after ingestSourceBatch has strictly decoded and validated
+	// this exact value. Only the isolated private W128/P3 path sets it.
+	// Production/direct bulk callers default to false and revalidate.
+	privatePrevalidated bool
 }
 
 type fileObservationBulkPrepared struct {
@@ -185,8 +189,10 @@ func prepareFileObservationBulk(ctx context.Context, tx pgx.Tx, p fileObservatio
 	if v.VolumeIdentity != v.GovernedRoot.VolumeIdentity {
 		return nil, nil, errors.New("FI NTFS observation volume identity does not match governed-root volume")
 	}
-	if err := ntfs.ValidateObservation(v); err != nil {
-		return nil, nil, fmt.Errorf("validate FI NTFS observation: %w", err)
+	if !p.privatePrevalidated {
+		if err := ntfs.ValidateObservation(v); err != nil {
+			return nil, nil, fmt.Errorf("validate FI NTFS observation: %w", err)
+		}
 	}
 
 	volumeID, err := ensureNTFSVolume(ctx, tx, p.sourceID, v.VolumeIdentity)

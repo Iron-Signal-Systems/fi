@@ -45,3 +45,24 @@ func TestFileBulkNumeric(t *testing.T) {
 		}
 	}
 }
+
+func TestFileBulkPrivatePrevalidationDefaultsOff(t *testing.T) {
+	// Direct and production-like bulk callers must not silently skip the
+	// complete observation validator. Only ingestSourceBatch, after its
+	// own successful validation, is authorized to set this private marker.
+	var direct fileObservationBulkRecord
+	if direct.privatePrevalidated {
+		t.Fatal("direct bulk record unexpectedly trusts an unvalidated observation")
+	}
+	ctx, err := withFixedSecurityBulkProfile(context.Background(), "P3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usePrivateSinglePassSecurity(ctx) {
+		t.Fatal("ordinary P3 must retain full bulk validation")
+	}
+	ctx = WithPrivateSecurityFieldPartitions(ctx)
+	if !usePrivateSinglePassSecurity(ctx) {
+		t.Fatal("private P3 batch validation prerequisite must be active")
+	}
+}

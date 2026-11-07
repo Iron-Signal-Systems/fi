@@ -527,6 +527,10 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			if err := fileBulk.add(ctx, tx, fileObservationBulkRecord{
 				sourceID: sourceID, sourceRecordID: item.sourceRecordID, ordinal: item.ordinal,
 				value: value.NTFS, hashes: &value.ContentHashes, bytes: int64(item.prepared.RecordBytes),
+				// The exact observation has just passed ntfs.ValidateObservation.
+				// Preserve production's second check; avoid only the private
+				// W128/P3 double walk of the same decoded immutable value.
+				privatePrevalidated: usePrivateSinglePassSecurity(ctx),
 			}); err != nil {
 				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
 			}
