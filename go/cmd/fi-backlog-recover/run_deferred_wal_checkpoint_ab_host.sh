@@ -1,11 +1,11 @@
 #!/bin/sh
-# FI DEVELOPMENT ONLY: real signed W128 K32/P3/F3 deferred-clone WAL A/B.
-# Control 1 GiB max_wal_size vs candidate 8 GiB, same Go build,
-# same 3-window seed, unchanged durability, independent PostgreSQL clusters.
+# FI DEVELOPMENT ONLY: independent real-signed W128/P3/F3 optimization A/B.
+# CONTROL/CANDIDATE are experiment arms, NOT processing chunk sizes.
+# Both use 32768-record chunks; signed prefix and SQL durability unchanged.
 # Run as root on FreeBSD fi-backend-b. Never touches production SoR.
 set -eu
 umask 077
-die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
+die(){ printf 'FI BENCH AB STOP: %s\n' "$*" >&2;exit 1; }
 [ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30|bulk-index|bulk-event|bulk-full]"
 order=${1:-normal}
 timing=${2:-on}
@@ -46,7 +46,7 @@ stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 root="/home/jwood/fi-window-bench-optfield-$stamp"
 out="/var/tmp/fi-window-chunks-$experiment-ab-$stamp"
 [ ! -e "$jailroot$root" ] && [ ! -e "$out" ] || die "experiment path already exists"
-printf 'FI PRIVATE BENCH PROVISION experiment=%s source=real_signed_W128 K64_max_wal=8GB free_kib=%s\n' "$experiment" "$available_kb"
+printf 'FI PRIVATE BENCH PROVISION experiment=%s source=real_signed_W128 CANDIDATE_max_wal=8GB free_kib=%s\n' "$experiment" "$available_kb"
 jexec -U jwood fi-dev sh "$provision" "$root" || die "disposable fixture provisioning failed"
 recover="$jailroot$root/fi-optfield-recover"
 relay="$jailroot$root/fi-optfield-relay"
@@ -55,18 +55,18 @@ relay="$jailroot$root/fi-optfield-relay"
 [ "$(sha256 -q "$relay")" = "$(cat "$jailroot$root/relay.sha256")" ] || die "relay binary checksum mismatch"
 sql(){
  name=$1; query=$2
- case "$name" in K32) port=55981;;K64) port=55982;;*)die "unknown DB";;esac
+ case "$name" in CONTROL) port=55981;;CANDIDATE) port=55982;;*)die "unknown DB";;esac
  jexec -U jwood fi-dev psql "host=$root/$name/socket port=$port user=fi_ingest dbname=fi sslmode=disable" \
  -X -qAt -v ON_ERROR_STOP=1 -c "$query"
 }
 admin(){
  name=$1; query=$2
- case "$name" in K32) port=55981;;K64) port=55982;;*)die "unknown admin DB";;esac
+ case "$name" in CONTROL) port=55981;;CANDIDATE) port=55982;;*)die "unknown admin DB";;esac
  jexec -U jwood fi-dev psql "host=$root/$name/socket port=$port user=fi_m1_admin dbname=fi sslmode=disable" \
  -X -qAt -v ON_ERROR_STOP=1 -c "$query"
 }
 checkpoint="SELECT count(*)::text || '|' || coalesce(sum(committed_records),0)::text || '|' || max(window_index)::text FROM fi_recovery.typed_window"
-for name in K32 K64;do
+for name in CONTROL CANDIDATE;do
  [ "$(sql "$name" "$checkpoint")" = '3|390387|2' ] || die "$name initial signed checkpoint mismatch"
  [ "$(sql "$name" 'SELECT count(*) FROM fi_recovery_projection.windows_security_event_field')" = 4838850 ] || die "$name seed Security rows mismatch"
  [ "$(sql "$name" 'SELECT count(*) FROM fi_recovery.verified_artifact_window')" = 3 ] || die "$name seed artifact marker mismatch"
@@ -82,22 +82,22 @@ for name in K32 K64;do
  admin "$name" "ALTER SYSTEM SET track_wal_io_timing='$timing'" >/dev/null
 done
 # Exactly one performance variable differs.
-admin K64 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null
+admin CANDIDATE "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null
 if [ "$experiment" = profile30 ]; then
- # FI-DEV DISPOSABLE K64 ONLY: pg_ctl -l captures stderr, not syslog.
+ # FI-DEV DISPOSABLE CANDIDATE ONLY: pg_ctl -l captures stderr, not syslog.
  # Keep the jail's and the host's global syslog policy unchanged.
- admin K64 "ALTER SYSTEM SET log_destination='stderr'" >/dev/null
+ admin CANDIDATE "ALTER SYSTEM SET log_destination='stderr'" >/dev/null
 fi
-case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) admin K32 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
-for name in K32 K64;do
+case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) admin CONTROL "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
+for name in CONTROL CANDIDATE;do
  [ "$(admin "$name" 'SELECT pg_reload_conf()')" = t ] || die "$name config reload rejected"
 done
 sleep 1
-expected_control_wal=1024
-case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) expected_control_wal=8192;; esac
-[ "$(sql K32 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = "$expected_control_wal" ] || die "baseline WAL changed"
-[ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
-for name in K32 K64;do
+expectedControlWal=1024
+case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) expectedControlWal=8192;; esac
+[ "$(sql CONTROL "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = "$expectedControlWal" ] || die "baseline WAL changed"
+[ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
+for name in CONTROL CANDIDATE;do
  [ "$(sql "$name" "SELECT current_setting('track_io_timing') || '|' || current_setting('track_wal_io_timing')")" = "$timing|$timing" ] || die "$name timing instrumentation differs"
  for setting in fsync synchronous_commit full_page_writes;do
   [ "$(sql "$name" "SHOW $setting")" = on ] || die "$name durability disabled after reload"
@@ -106,79 +106,80 @@ done
 if [ "$experiment" = profile30 ]; then
  # Fail BEFORE any timed recovery if RAISE LOG does not reach the exact
  # file consumed by the finalization-stage parser.
- [ "$(sql K64 'SHOW log_destination')" = stderr ] ||
-   die "K64 PostgreSQL profile log_destination is not stderr"
- pglog="$jailroot$root/K64/postgres.log"
- [ -f "$pglog" ] || die "K64 PostgreSQL stderr log file is missing"
+ [ "$(sql CANDIDATE 'SHOW log_destination')" = stderr ] ||
+   die "CANDIDATE PostgreSQL profile log_destination is not stderr"
+ pglog="$jailroot$root/CANDIDATE/postgres.log"
+ [ -f "$pglog" ] || die "CANDIDATE PostgreSQL stderr log file is missing"
  smoke="FI_PROFILE_LOG_SMOKE_${stamp}_$$"
- admin K64 "DO \$fi_profile_smoke\$ BEGIN RAISE LOG '$smoke'; END \$fi_profile_smoke\$;" >/dev/null ||
-   die "K64 PostgreSQL RAISE LOG smoke query failed"
+ admin CANDIDATE "DO \$fi_profile_smoke\$ BEGIN RAISE LOG '$smoke'; END \$fi_profile_smoke\$;" >/dev/null ||
+   die "CANDIDATE PostgreSQL RAISE LOG smoke query failed"
  grep -Fq "$smoke" "$pglog" ||
-   die "K64 RAISE LOG not captured by postgres.log; refusing 30-minute profile"
- printf 'FI PROFILE LOG PREFLIGHT PASS cluster=K64 destination=stderr marker=%s\n' "$smoke"
+   die "CANDIDATE RAISE LOG not captured by postgres.log; refusing 30-minute profile"
+ printf 'FI PROFILE LOG PREFLIGHT PASS cluster=CANDIDATE destination=stderr marker=%s\n' "$smoke"
 fi
 mkdir -m 700 "$out"
-for name in K32 K64;do mkdir -m 700 "$out/$name" "$out/$name/private";done
+for name in CONTROL CANDIDATE;do mkdir -m 700 "$out/$name" "$out/$name/private";done
 case "$experiment" in bulk-index|bulk-event|bulk-full)
- # bulk-index: K32 uses incremental field indexes, K64 deferred.
+ # bulk-index: CONTROL uses incremental field indexes, CANDIDATE deferred.
  # bulk-event: BOTH arms use deferred field indexes; only the event
  # row source differs. Both run independently for the same 10-minute
  # deadline over the real verified signed backlog.
  jexec -U jwood fi-dev psql \
-  "host=$root/K64/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable" \
-  -X -v ON_ERROR_STOP=1 -f "$bulk_sql" > "$out/K64/bulk-index-install.log" 2>&1 ||
-  { tail -n 25 "$out/K64/bulk-index-install.log" >&2 || :; die "K64 bulk-index installation failed"; }
- [ "$(sql K64 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
-  die "K64 bulk-index begin function missing"
+  "host=$root/CANDIDATE/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable" \
+  -X -v ON_ERROR_STOP=1 -f "$bulk_sql" > "$out/CANDIDATE/bulk-index-install.log" 2>&1 ||
+  { tail -n 25 "$out/CANDIDATE/bulk-index-install.log" >&2 || :; die "CANDIDATE bulk-index installation failed"; }
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+  die "CANDIDATE bulk-index begin function missing"
  if [ "$experiment" = bulk-event ]; then
   jexec -U jwood fi-dev psql \
-   "host=$root/K32/socket port=55981 user=fi_m1_admin dbname=fi sslmode=disable" \
-   -X -v ON_ERROR_STOP=1 -f "$bulk_sql" > "$out/K32/bulk-index-install.log" 2>&1 ||
-   { tail -n 25 "$out/K32/bulk-index-install.log" >&2 || :; die "K32 bulk-index installation failed"; }
-  [ "$(sql K32 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
-   die "K32 field-index strategy differs from K64"
-  printf 'FI EVENT COPY AB PRECHECK PASS K32=legacy K64=reusable both=deferred_field_indexes duration=10m_per_arm\n'
+   "host=$root/CONTROL/socket port=55981 user=fi_m1_admin dbname=fi sslmode=disable" \
+   -X -v ON_ERROR_STOP=1 -f "$bulk_sql" > "$out/CONTROL/bulk-index-install.log" 2>&1 ||
+   { tail -n 25 "$out/CONTROL/bulk-index-install.log" >&2 || :; die "CONTROL bulk-index installation failed"; }
+  [ "$(sql CONTROL "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+   die "CONTROL field-index strategy differs from CANDIDATE"
+  printf 'FI EVENT COPY AB PRECHECK PASS CONTROL=legacy CANDIDATE=reusable both=deferred_field_indexes processing_chunk_records=32768 duration=10m_per_arm\n'
  else
-  [ "$(sql K32 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))=0")" = t ] ||
-   die "K32 control begin function changed"
+  [ "$(sql CONTROL "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))=0")" = t ] ||
+   die "CONTROL control begin function changed"
  fi
  if [ "$experiment" = bulk-full ]; then
-   printf 'FI BULK FULL PRECHECK PASS target=K64 mode=full_generation indexed_copy=false all_checks=enabled\n'
+   printf 'FI BULK FULL PRECHECK PASS target=CANDIDATE mode=full_generation indexed_copy=false all_checks=enabled\n'
  elif [ "$experiment" = bulk-index ]; then
-   printf 'FI BULK INDEX INSTALLED K32=incremental_indexes K64=post_COPY_indexes windows=2\n'
+   printf 'FI BULK INDEX INSTALLED CONTROL=incremental_indexes CANDIDATE=post_COPY_indexes windows=2\n'
  fi
 ;; esac
 if [ "$experiment" = profile30 ]; then
-  # Replace the private finalizer only in this fresh K64 disposable cluster.
+  # Replace the private finalizer only in this fresh CANDIDATE disposable cluster.
   # The signed three-window seed and canonical fi.* schema are untouched.
-  jexec -U jwood fi-dev psql     "host=$root/K64/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable"     -X -v ON_ERROR_STOP=1 -f "$profile_sql" > "$out/K64/profile-install.log" 2>&1 ||
-    { tail -n 25 "$out/K64/profile-install.log" >&2 || :; die "isolated SQL finalizer profiler installation failed"; }
-  [ "$(sql K64 "SELECT position('FI_PRIVATE_FIELD_PROFILE' in pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))>0")" = t ] ||
+  jexec -U jwood fi-dev psql     "host=$root/CANDIDATE/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable"     -X -v ON_ERROR_STOP=1 -f "$profile_sql" > "$out/CANDIDATE/profile-install.log" 2>&1 ||
+    { tail -n 25 "$out/CANDIDATE/profile-install.log" >&2 || :; die "isolated SQL finalizer profiler installation failed"; }
+  [ "$(sql CANDIDATE "SELECT position('FI_PRIVATE_FIELD_PROFILE' in pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))>0")" = t ] ||
     die "private profile finalizer not installed"
-  printf 'FI PRIVATE FIELD PROFILE INSTALLED cluster=K64 constraints=unchanged duration=30m\n'
+  printf 'FI PRIVATE FIELD PROFILE INSTALLED cluster=CANDIDATE constraints=unchanged duration=30m\n'
 fi
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI SIGNED W128 DEFERRED CLONE WAL CHECKPOINT A/B
+FI SIGNED W128 DEFERRED CLONE EXPERIMENT A/B
 source=iss-fs-22a.iss.local
 generation=20261030T000032.061323100Z-3e38b2210771462c
 verified_cache=$cache
 original_immutable_seed=3|390387|2
 fixture_root=$root
-control=K32 port=55981 max_wal_size=${expected_control_wal}MB
-candidate=K64 port=55982 max_wal_size=8192MB indexed_count_verify_selected=${experiment}
-both=window_W128 chunk_32768 P3 F3, serial, same binary
-single30=K64_only original_count_sql 30m no_AB
-profile30=K64_only isolated_SQL_finalizer_telemetry no_AB
+control=CONTROL port=55981 max_wal_size=${expectedControlWal}MB
+candidate=CANDIDATE port=55982 max_wal_size=8192MB indexed_count_verify_selected=${experiment}
+both=window_W128 processing_chunk_records_32768 P3 F3, serial, same_binary
+arm_labels=CONTROL,CANDIDATE ports=55981,55982 labels_are_not_chunk_sizes
+single30=CANDIDATE_only original_count_sql 30m no_AB
+profile30=CANDIDATE_only isolated_SQL_finalizer_telemetry no_AB
 profile_sql_sha256=$( [ "$experiment" = profile30 ] && sha256 -q "$jailroot$profile_sql" || echo none )
 bulk_index_sql_sha256=$( case "$experiment" in bulk-index|bulk-event|bulk-full) sha256 -q "$jailroot$bulk_sql";; *) echo none;; esac )
-bulk_full=K64_only full_117_windows_15140785_records no_timeout original_verifier onprem_no_Accepted
-bulk_event_ab=K32_legacy_K64_reusable both_deferred_field_indexes wall_deadline_10m_per_arm
+bulk_full=CANDIDATE_only full_117_windows_15140785_records no_timeout original_verifier onprem_no_Accepted
+bulk_event_ab=CONTROL_legacy_CANDIDATE_reusable both_deferred_field_indexes both_chunk_32768 wall_deadline_10m_per_arm
 bulk_full_event_copy=legacy
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
 run_order=$order
 experiment=$experiment
-control_wal_mb=$expected_control_wal
+control_wal_mb=$expectedControlWal
 wal_buffers=unchanged
 checkpoint_timeout=unchanged
 published_and_authoritative_source=prohibited
@@ -186,7 +187,7 @@ experiment_binary_sha256=$(sha256 -q "$recover")
 relay_sha256=$(sha256 -q "$relay")
 EOF
 "$relay" -cluster-root="$root" -output-root="$out" -base-port=55981 \
- -jail-binary="$root/fi-optfield-relay" > "$out/relay.log" 2>&1 &
+ -profiles=CONTROL,CANDIDATE -jail-binary="$root/fi-optfield-relay" > "$out/relay.log" 2>&1 &
 relaypid=$!
 vm=;io=;proc=;waitmon=
 stopmon(){
@@ -250,11 +251,11 @@ readback(){
   done
  done
  [ "$actual" -eq "$expected" ] || die "$name artifact readback count mismatch $actual/$expected"
- printf 'FI WAL AB ARTIFACT READBACK PASS arm=%s batches=%s identical=true\n' "$name" "$actual" | tee -a "$out/SUMMARY.txt"
+ printf 'FI BENCH AB ARTIFACT READBACK PASS arm=%s batches=%s identical=true\n' "$name" "$actual" | tee -a "$out/SUMMARY.txt"
 }
 run_arm(){
  name=$1
- case "$name" in K32) port=55981;;K64) port=55982;;*)die "unknown trial arm";;esac
+ case "$name" in CONTROL) port=55981;;CANDIDATE) port=55982;;*)die "unknown trial arm";;esac
  dir="$out/$name"
  # Read cumulative counters just before and just after the timed test.
  snapshot "$name" > "$dir/before.stats"
@@ -268,17 +269,17 @@ run_arm(){
   single30|profile30) duration=30m;;
   bulk-full) duration=0s;; # Go uses an unbounded context until entire generation completes.
  esac
- printf 'FI PRIVATE AB START experiment=%s arm=%s max_wal_size_mb=%s duration=%s source=real_signed_cache\n' "$experiment" "$name" "$wal" "$duration" | tee -a "$out/SUMMARY.txt"
+ printf 'FI PRIVATE AB START experiment=%s arm=%s processing_chunk_records=32768 window_profile=W128 max_wal_size_mb=%s duration=%s source=real_signed_cache\n' "$experiment" "$name" "$wal" "$duration" | tee -a "$out/SUMMARY.txt"
  set --
- if [ "$experiment" = indexed-count ] && [ "$name" = K64 ]; then set -- -private-indexed-count-verify; fi
+ if [ "$experiment" = indexed-count ] && [ "$name" = CANDIDATE ]; then set -- -private-indexed-count-verify; fi
  if [ "$experiment" = bulk-index ]; then set -- "$@" -test-stop-after-windows=2; fi
- if [ "$experiment" = bulk-event ] && [ "$name" = K64 ]; then
+ if [ "$experiment" = bulk-event ] && [ "$name" = CANDIDATE ]; then
   set -- "$@" -private-reusable-event-copy
-  printf 'FI PRIVATE EVENT COPY CANDIDATE ARMED arm=K64 mode=reusable_40_columns max_runtime=10m private_only=true\n' |
+  printf 'FI PRIVATE EVENT COPY CANDIDATE ARMED arm=CANDIDATE mode=reusable_40_columns max_runtime=10m private_only=true\n' |
    tee -a "$out/SUMMARY.txt"
  fi
  case "$experiment:$name" in
-  single30:K64|profile30:K64) set -- -private-30m-probe;;
+  single30:CANDIDATE|profile30:CANDIDATE) set -- -private-30m-probe;;
  esac
  if ! "$recover" \
   -source=iss-fs-22a.iss.local \
@@ -295,16 +296,16 @@ run_arm(){
  fi
  stopmon
  if [ "$experiment" = bulk-event ]; then
-  if [ "$name" = K64 ]; then
+  if [ "$name" = CANDIDATE ]; then
    grep -q '^FI PRIVATE SECURITY EVENT COPY SOURCE mode=reusable_40_columns scope=private_only production=unchanged$' "$dir/recover.log" ||
-    die "K64 reusable event COPY was not enabled"
+    die "CANDIDATE reusable event COPY was not enabled"
   elif grep -q '^FI PRIVATE SECURITY EVENT COPY SOURCE ' "$dir/recover.log"; then
-   die "K32 legacy control unexpectedly selected the candidate"
+   die "CONTROL legacy control unexpectedly selected the candidate"
   fi
  fi
  snapshot "$name" > "$dir/after.stats"
  if [ "$experiment" = indexed-count ]; then
-  if [ "$name" = K64 ]; then
+  if [ "$name" = CANDIDATE ]; then
    grep -q '^FI PRIVATE INDEXED COUNT VERIFY mode=per_signed_batch_lateral scope=private_only' "$dir/recover.log" || die "$name candidate did not enable indexed count verifier"
   else
    if grep -q '^FI PRIVATE INDEXED COUNT VERIFY ' "$dir/recover.log"; then die "$name legacy verifier unexpectedly changed"; fi
@@ -328,52 +329,52 @@ run_arm(){
  [ "$nw" = "$(wc -l < "$dir/stages.txt" | tr -d ' ')" ] || die "$name stage count mismatch"
  [ "$nw" = "$(wc -l < "$dir/deferred.txt" | tr -d ' ')" ] || die "$name artifact count mismatch"
  if [ "$experiment" = bulk-full ]; then
-  [ "$name" = K64 ] || die "full-generation run may use only K64"
+  [ "$name" = CANDIDATE ] || die "full-generation run may use only CANDIDATE"
   [ "$nw" = 114 ] || die "full-generation run did not durably commit all 114 new W128 windows: $nw"
-  [ "$(sql K64 "$checkpoint")" = '117|15140785|116' ] ||
+  [ "$(sql CANDIDATE "$checkpoint")" = '117|15140785|116' ] ||
    die "full-generation durable checkpoint is not exactly 117|15140785|116"
  fi
  [ "$(integrity "$name")" = PASS ] || die "$name full SQL integrity failed"
  count=$(sql "$name" "SELECT coalesce(sum(committed_records),0)::text FROM fi_recovery.typed_window")
  [ "$count" -gt 390387 ] || die "$name committed no new records"
- printf 'FI WAL AB SQL PASS arm=%s checkpoint=%s new_windows=%s authoritative=0 accepted=0\n' "$name" "$(sql "$name" "$checkpoint")" "$nw" | tee -a "$out/SUMMARY.txt"
+ printf 'FI BENCH AB SQL PASS arm=%s checkpoint=%s new_windows=%s authoritative=0 accepted=0\n' "$name" "$(sql "$name" "$checkpoint")" "$nw" | tee -a "$out/SUMMARY.txt"
  cat "$dir/result.txt" | tee -a "$out/SUMMARY.txt"
 }
 : > "$out/SUMMARY.txt"
 # Explicit trial order: independent fresh database clones and the exact same
-# binary, signed cache and K32/P3/F3 W128 settings in both arms.
+# binary, signed cache and CONTROL/P3/F3 W128 settings in both arms.
 # The reverse trial controls for OS cache warming and order effects.
-printf 'FI WAL AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
+printf 'FI BENCH AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
 case "$experiment" in
 bulk-full)
- # The K32 cluster is the unchanged three-window source-prefix control.
- # Only K64 processes the complete remainder: 114 real signed W128 windows.
+ # The CONTROL cluster is the unchanged three-window source-prefix control.
+ # Only CANDIDATE processes the complete remainder: 114 real signed W128 windows.
  # A zero runtime is intentional: do not misreport a time-limited partial
  # ingestion as successful full-generation verification.
- [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] ||
-   die "K64 full-generation WAL is not 8 GiB"
- [ "$(sql K64 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
-   die "K64 full-generation optimized begin function is not installed"
- [ "$(sql K64 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))=0")" = t ] ||
-   die "K64 full-generation finalization function changed unexpectedly"
- printf 'FI BULK FULL OPTIMIZATION ACTIVE arm=K64 indexes=built_on_attach event_copy=legacy source_records=15140785 windows=117 wal_mb=8192 runtime=until_complete\n' |
+ [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] ||
+   die "CANDIDATE full-generation WAL is not 8 GiB"
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+   die "CANDIDATE full-generation optimized begin function is not installed"
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))=0")" = t ] ||
+   die "CANDIDATE full-generation finalization function changed unexpectedly"
+ printf 'FI BULK FULL OPTIMIZATION ACTIVE arm=CANDIDATE indexes=built_on_attach event_copy=legacy source_records=15140785 windows=117 wal_mb=8192 runtime=until_complete\n' |
    tee -a "$out/SUMMARY.txt"
- run_arm K64
+ run_arm CANDIDATE
  # Full source, relational, and SQL integrity gates have passed in run_arm.
  # Preserve the entire descriptor chain plus independently check that the
  # signed original three-window prefix is unmodified by the experiment.
  descriptor="SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index"
- sql K64 "$descriptor" > "$out/K64/checkpoints.tsv"
- sql K32 "$descriptor" > "$out/K32/checkpoints.tsv"
- awk -F '|' '$1<3' "$out/K64/checkpoints.tsv" > "$out/K64/seed-prefix.tsv"
- cmp -s "$out/K64/seed-prefix.tsv" "$out/K32/checkpoints.tsv" ||
+ sql CANDIDATE "$descriptor" > "$out/CANDIDATE/checkpoints.tsv"
+ sql CONTROL "$descriptor" > "$out/CONTROL/checkpoints.tsv"
+ awk -F '|' '$1<3' "$out/CANDIDATE/checkpoints.tsv" > "$out/CANDIDATE/seed-prefix.tsv"
+ cmp -s "$out/CANDIDATE/seed-prefix.tsv" "$out/CONTROL/checkpoints.tsv" ||
    die "full-generation original signed three-window prefix changed"
- [ "$(wc -l < "$out/K64/checkpoints.tsv" | tr -d ' ')" = 117 ] ||
+ [ "$(wc -l < "$out/CANDIDATE/checkpoints.tsv" | tr -d ' ')" = 117 ] ||
    die "full-generation descriptor chain length not 117"
  # Confirm all 114 new field partitions retain validated PK, FK, CHECK,
  # plus attached versions of every parent index. This is a metadata query:
  # it never recounts 180+ million Security field rows.
- full_constraints=$(sql K64 "
+ full_constraints=$(sql CANDIDATE "
  WITH expected AS (
   SELECT window_index FROM fi_recovery.typed_window WHERE window_index>=3
  ), child AS (
@@ -411,19 +412,19 @@ bulk-full)
    die "full-generation PK/FK/CHECK/index attachment verification failed"
  printf 'FI BULK FULL CONSTRAINTS PASS new_windows=114 primary_key=validated foreign_key=validated range_check=validated parent_indexes=attached\n' |
    tee -a "$out/SUMMARY.txt"
- readback K64
+ readback CANDIDATE
  # Readback is AFTER the timed processing, so it does not bias throughput.
  printf 'FI BULK FULL PASS output=%s checkpoint=117|15140785|116 sql_integrity=PASS signed_batches=identical source_prefix=unchanged authoritative=0 accepted=0 full_generation_verified=true\n' "$out" |
    tee -a "$out/SUMMARY.txt"
  exit 0
 ;;
 single30|profile30)
- [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "30m WAL not 8GB"
- run_arm K64
- readback K64
- sql K64 "SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index" > "$out/K64/checkpoints.tsv"
+ [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "30m WAL not 8GB"
+ run_arm CANDIDATE
+ readback CANDIDATE
+ sql CANDIDATE "SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index" > "$out/CANDIDATE/checkpoints.tsv"
  if [ "$experiment" = profile30 ]; then
-  pglog="$jailroot$root/K64/postgres.log"
+  pglog="$jailroot$root/CANDIDATE/postgres.log"
   [ -f "$pglog" ] || die "private PostgreSQL server log missing"
   # Extract only the finalizer's own PostgreSQL RAISE LOG records. The
   # earlier preflight marker deliberately does not match this prefix.
@@ -433,9 +434,9 @@ single30|profile30)
       sub(/^.*FI_PRIVATE_FIELD_PROFILE /, "FI_PRIVATE_FIELD_PROFILE ", line)
       print line
     }
-  ' "$pglog" > "$out/K64/field-finalize-stages.log" ||
+  ' "$pglog" > "$out/CANDIDATE/field-finalize-stages.log" ||
     die "private finalizer telemetry extraction failed"
-  committed=$(wc -l < "$out/K64/stages.txt" | tr -d ' ')
+  committed=$(wc -l < "$out/CANDIDATE/stages.txt" | tr -d ' ')
   # Compare explicit window identities against the durable checkpoint
   # table, not just the number of log lines. A rolled-back attempt can
   # emit RAISE LOG; its marker must never count as a committed window.
@@ -545,32 +546,32 @@ single30|profile30)
             fk[g]/n[g]/1000,attach[g]/n[g]/1000,total[g]/n[g]/1000
       }
     }
-  ' "$out/K64/checkpoints.tsv" "$out/K64/field-finalize-stages.log" > "$out/K64/field-finalize-summary.txt"; then
-    tail -n 50 "$out/K64/field-finalize-summary.txt" >&2 || :
+  ' "$out/CANDIDATE/checkpoints.tsv" "$out/CANDIDATE/field-finalize-stages.log" > "$out/CANDIDATE/field-finalize-summary.txt"; then
+    tail -n 50 "$out/CANDIDATE/field-finalize-summary.txt" >&2 || :
     die "private finalizer telemetry does not match committed checkpoints"
   fi
-  cat "$out/K64/field-finalize-summary.txt"
+  cat "$out/CANDIDATE/field-finalize-summary.txt"
  fi
  printf 'FI PRIVATE 30M PASS output=%s experiment=%s sql_and_signed_readback=PASS original_count_verifier=true authoritative=0 accepted=0\n' "$out" "$experiment" | tee -a "$out/SUMMARY.txt"
- printf 'FI PRIVATE 30M FILES: %s/K64/{result,stages,windows,pg-waits,iostat,vmstat,process}.txt_or_log\n' "$out" | tee -a "$out/SUMMARY.txt"
+ printf 'FI PRIVATE 30M FILES: %s/CANDIDATE/{result,stages,windows,pg-waits,iostat,vmstat,process}.txt_or_log\n' "$out" | tee -a "$out/SUMMARY.txt"
  exit 0
 ;;
 esac
 if [ "$order" = reverse ];then
- run_arm K64
- run_arm K32
+ run_arm CANDIDATE
+ run_arm CONTROL
 else
- run_arm K32
- run_arm K64
+ run_arm CONTROL
+ run_arm CANDIDATE
 fi
 # Readback is deliberately AFTER BOTH timed tests. Reading every source
 # batch after the control but before the candidate would artificially warm
 # the candidate source cache and bias the A/B comparison.
-readback K32
-readback K64
+readback CONTROL
+readback CANDIDATE
 case "$experiment" in bulk-index|bulk-event)
  # Confirm no essential DB property vanished when indexes were delayed.
- for arm in K32 K64; do
+ for arm in CONTROL CANDIDATE; do
   for window in 3 4; do
    child=$(printf 'fi_recovery_projection.windows_security_event_field_w%06d' "$window")
    result=$(sql "$arm" "SELECT
@@ -590,25 +591,25 @@ case "$experiment" in bulk-index|bulk-event)
    [ "$result" = t ] || die "$arm window=$window missing validated PK/FK/range or attached parent index"
   done
  done
- printf 'FI BULK INDEX CONSTRAINTS PASS arms=K32,K64 windows=3,4 PK=valid FK=validated range=validated parent_indexes=attached\n' | tee -a "$out/SUMMARY.txt"
+ printf 'FI BULK INDEX CONSTRAINTS PASS arms=CONTROL,CANDIDATE windows=3,4 PK=valid FK=validated range=validated parent_indexes=attached\n' | tee -a "$out/SUMMARY.txt"
 ;; esac
 # Compare the signed descriptor chain for every COMMON completed window,
-# independent of K32/K64's differing completion counts in ten minutes.
+# independent of CONTROL/CANDIDATE's differing completion counts in ten minutes.
 descriptor="SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index"
-sql K32 "$descriptor" > "$out/K32/checkpoints.tsv"
-sql K64 "$descriptor" > "$out/K64/checkpoints.tsv"
-last32=$(tail -n 1 "$out/K32/checkpoints.tsv" | cut -d '|' -f1)
-last64=$(tail -n 1 "$out/K64/checkpoints.tsv" | cut -d '|' -f1)
-common=$last32
-[ "$last64" -lt "$common" ] && common=$last64
-awk -F '|' -v limit="$common" '$1<=limit' "$out/K32/checkpoints.tsv" > "$out/K32/common.tsv"
-awk -F '|' -v limit="$common" '$1<=limit' "$out/K64/checkpoints.tsv" > "$out/K64/common.tsv"
-diff -u "$out/K32/common.tsv" "$out/K64/common.tsv" > "$out/common.diff" || die "common signed source checkpoint chain differs"
-printf 'FI WAL AB COMMON PREFIX PASS through_window=%s descriptors_identical=true\n' "$common" | tee -a "$out/SUMMARY.txt"
+sql CONTROL "$descriptor" > "$out/CONTROL/checkpoints.tsv"
+sql CANDIDATE "$descriptor" > "$out/CANDIDATE/checkpoints.tsv"
+lastControl=$(tail -n 1 "$out/CONTROL/checkpoints.tsv" | cut -d '|' -f1)
+lastCandidate=$(tail -n 1 "$out/CANDIDATE/checkpoints.tsv" | cut -d '|' -f1)
+common=$lastControl
+[ "$lastCandidate" -lt "$common" ] && common=$lastCandidate
+awk -F '|' -v limit="$common" '$1<=limit' "$out/CONTROL/checkpoints.tsv" > "$out/CONTROL/common.tsv"
+awk -F '|' -v limit="$common" '$1<=limit' "$out/CANDIDATE/checkpoints.tsv" > "$out/CANDIDATE/common.tsv"
+diff -u "$out/CONTROL/common.tsv" "$out/CANDIDATE/common.tsv" > "$out/common.diff" || die "common signed source checkpoint chain differs"
+printf 'FI BENCH AB COMMON PREFIX PASS through_window=%s descriptors_identical=true\n' "$common" | tee -a "$out/SUMMARY.txt"
 # Calculate exact per-run cumulative PostgreSQL 18 counters.
 awk -F '|' '
 FNR==1 {
- arm=(FILENAME ~ /\/K32\// ? "K32" : "K64")
+ arm=(FILENAME ~ /\/CONTROL\// ? "CONTROL" : "CANDIDATE")
  sample=(FILENAME ~ /\/before\.stats$/ ? "before" : "after")
 }
 {for(i=1;i<=NF;i++) metric[arm,sample,FNR,i]=$i+0}
@@ -627,29 +628,29 @@ END{
  names[3,3]="wal_io_fsyncs"
  names[3,4]="wal_io_fsync_ms"
  print "FI AB POSTGRES COUNTER DELTAS"
- printf "%-29s %17s %17s %12s\n","METRIC","K32 CONTROL","K64 CANDIDATE","DELTA"
+ printf "%-29s %17s %17s %12s\n","METRIC","CONTROL CONTROL","CANDIDATE CANDIDATE","DELTA"
  for(j=1;j<=3;j++){
   count=(j==1?6:j==2?3:4)
   for(i=1;i<=count;i++){
-   a=metric["K32","after",j,i]-metric["K32","before",j,i]
-   b=metric["K64","after",j,i]-metric["K64","before",j,i]
+   a=metric["CONTROL","after",j,i]-metric["CONTROL","before",j,i]
+   b=metric["CANDIDATE","after",j,i]-metric["CANDIDATE","before",j,i]
    printf "%-29s %17.0f %17.0f %+12.0f\n",names[j,i],a,b,b-a
   }
  }
-}' "$out/K32/before.stats" "$out/K32/after.stats" \
- "$out/K64/before.stats" "$out/K64/after.stats" | tee "$out/COUNTERS_DELTA.txt"
-grep -E '^FI (TEN MINUTE STOP|PRIVATE EXACT WINDOW STOP) ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
+}' "$out/CONTROL/before.stats" "$out/CONTROL/after.stats" \
+ "$out/CANDIDATE/before.stats" "$out/CANDIDATE/after.stats" | tee "$out/COUNTERS_DELTA.txt"
+grep -E '^FI (TEN MINUTE STOP|PRIVATE EXACT WINDOW STOP) ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
 if [ "$experiment" = bulk-event ]; then
  # Ten-minute wall-clock timebox for EACH independent arm. Different
  # committed window counts are expected; only identical common signed
  # prefixes can be compared directly. No partial window counts as durable.
- for name in K32 K64; do
+ for name in CONTROL CANDIDATE; do
   [ "$(wc -l < "$out/$name/windows.txt" | tr -d ' ')" -ge 2 ] ||
    die "$name completed fewer than two durable W128 windows in 10 minutes"
   grep -q '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$out/$name/result.txt" ||
    die "$name did not stop at the 10m deadline with custody preserved"
  done
- for name in K32 K64; do
+ for name in CONTROL CANDIDATE; do
   awk -v arm="$name" '
    /^FI PRIVATE STAGE PROFILE / {
     window=""; records=""; typed=""; envelope=""; event=""
@@ -666,10 +667,10 @@ if [ "$experiment" = bulk-event ]; then
  done | tee "$out/EVENT_COPY_AB_STAGES.txt"
  # The Go stop marker prints durable-wall rate, checkpoint rate, and
  # committed-window rate. Retain all three: no inferred throughput.
- grep '^FI TEN MINUTE STOP ' "$out/K32/result.txt" "$out/K64/result.txt" |
+ grep '^FI TEN MINUTE STOP ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" |
   tee "$out/EVENT_COPY_AB_DURABLE_RATES.txt"
- printf 'FI EVENT COPY AB PASS duration=10m_per_arm common_prefix=identical control=legacy candidate=reusable both=deferred_indexes durability=on accepted=0 authoritative=0 output=%s\n' "$out" |
+ printf 'FI EVENT COPY AB PASS duration=10m_per_arm common_prefix=identical control=legacy candidate=reusable both_chunk=32768 both=deferred_indexes durability=on accepted=0 authoritative=0 output=%s\n' "$out" |
   tee -a "$out/SUMMARY.txt"
 fi
-printf 'FI WAL AB COMPLETE output=%s experiment=%s order=%s timing=%s control_wal_mb=%s candidate_wal_mb=8192 signed_data=identical independent_real_db=true\n' "$out" "$experiment" "$order" "$timing" "$expected_control_wal" | tee -a "$out/SUMMARY.txt"
-printf 'FI WAL AB COUNTER FILES: %s/K32/{before,after}.stats and %s/K64/{before,after}.stats\n' "$out" "$out"
+printf 'FI BENCH AB COMPLETE output=%s experiment=%s order=%s timing=%s control_wal_mb=%s candidate_wal_mb=8192 signed_data=identical independent_real_db=true\n' "$out" "$experiment" "$order" "$timing" "$expectedControlWal" | tee -a "$out/SUMMARY.txt"
+printf 'FI BENCH AB COUNTER FILES: %s/CONTROL/{before,after}.stats and %s/CANDIDATE/{before,after}.stats\n' "$out" "$out"

@@ -29,6 +29,7 @@ const (
 	jailName = "fi-dev"
 	profilePrefix = "pg-"
 )
+// Explicit arm names identify the experiment, not its chunk size.
 var profiles = []string{"K32", "K64"}
 
 func validClusterRoot(p string) bool {
@@ -175,7 +176,14 @@ func main() {
 	flag.StringVar(&outputRoot,"output-root","","fresh HOST result directory")
 	flag.StringVar(&jailBinary,"jail-binary","/home/jwood/fi-w128-chunk-build/fi-backlog-pg-relay","jail-local executable from fi-dev build")
 	flag.IntVar(&basePort,"base-port",0,"first isolated PostgreSQL port")
+	var armNames string
+	flag.StringVar(&armNames,"profiles","K32,K64","two isolated PostgreSQL arm directory names")
 	flag.Parse()
+	if armNames != "K32,K64" && armNames != "CONTROL,CANDIDATE" {
+		fmt.Fprintln(os.Stderr,"FI PG relay: unsupported benchmark arm names")
+		os.Exit(1)
+	}
+	profiles = strings.Split(armNames, ",")
 	var err error
 	if dial!="" {err=dialInJail(dial)} else {
 		err=serve(clusterRoot,outputRoot,jailBinary,basePort)

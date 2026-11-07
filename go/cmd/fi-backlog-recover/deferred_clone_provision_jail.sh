@@ -1,5 +1,5 @@
 #!/bin/sh
-# FI DEV ONLY: single 10-minute candidate, provision two disposable
+# FI DEV ONLY: two identical 32768-row chunk experiment arms,
 # PostgreSQL fixtures for the existing two-endpoint host relay.
 # Real signed source cache; original three-window seed is READ-ONLY.
 # Experimental source worktree: /home/jwood/fi-deferred-experiment.
@@ -36,7 +36,7 @@ cp "$repo/go/cmd/fi-backlog-recover/optfield/relay.go" "$root/relay.go"
 pg_dump "$src" -Fc -Z 1 -f "$root/accepted-prefix.dump" > "$root/dump.log" 2>&1 || die 'source dump'
 [ -s "$root/accepted-prefix.dump" ] || die 'empty dump'
 sha256 -q "$root/accepted-prefix.dump" > "$root/accepted-prefix.sha256"
-for entry in K32:55981 K64:55982; do
+for entry in CONTROL:55981 CANDIDATE:55982; do
  name=${entry%:*};port=${entry#*:};dir="$root/$name";sock="$dir/socket"
  mkdir -m 700 "$dir" "$sock"
  initdb -D "$dir/data" -U fi_m1_admin -A trust --no-instructions > "$dir/initdb.log" 2>&1 || die "$name initdb"
