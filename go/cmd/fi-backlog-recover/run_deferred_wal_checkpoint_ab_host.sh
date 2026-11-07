@@ -6,16 +6,16 @@
 set -eu
 umask 077
 die(){ printf 'FI BENCH AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30|bulk-index|bulk-event|profile10|fk-memory|bulk-full]"
+[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30|bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full]"
 order=${1:-normal}
 timing=${2:-on}
 experiment=${3:-wal}
-case "$experiment" in wal|indexed-count|single30|profile30|bulk-index|bulk-event|profile10|fk-memory|bulk-full) ;; *) die "invalid benchmark experiment" ;; esac
+case "$experiment" in wal|indexed-count|single30|profile30|bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full) ;; *) die "invalid benchmark experiment" ;; esac
 case "$experiment" in
  single30|profile30) [ "$order" = normal ] && [ "$timing" = off ] || die "30m probe requires normal off";;
  profile10) [ "$order" = normal ] && [ "$timing" = off ] || die "profile10 requires normal off";;
 esac
-case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|fk-memory|bulk-full) [ "$timing" = off ] || die "$experiment requires I/O timing off";; esac
+case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full) [ "$timing" = off ] || die "$experiment requires I/O timing off";; esac
 [ "$experiment" != bulk-full ] || { [ "$order" = normal ] || die 'bulk-full requires normal order'; }
 case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
 case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
@@ -27,7 +27,7 @@ provision="$work/go/cmd/fi-backlog-recover/deferred_clone_provision_jail.sh"
 profile_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_finish_profile_isolated.sql"
 bulk_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_bulk_index_isolated.sql"
 case "$experiment" in
- bulk-index|bulk-event|profile10|fk-memory|bulk-full)
+ bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full)
   [ -f "$jailroot$bulk_sql" ] || die "bulk-index SQL missing";;
 esac
 if [ "$experiment" = profile30 ] || [ "$experiment" = profile10 ] || [ "$experiment" = fk-memory ]; then
@@ -92,13 +92,13 @@ fi
 if [ "$experiment" = fk-memory ]; then
  admin CONTROL "ALTER SYSTEM SET log_destination='stderr'" >/dev/null
 fi
-case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|fk-memory|bulk-full) admin CONTROL "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
+case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full) admin CONTROL "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
 for name in CONTROL CANDIDATE;do
  [ "$(admin "$name" 'SELECT pg_reload_conf()')" = t ] || die "$name config reload rejected"
 done
 sleep 1
 expectedControlWal=1024
-case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|fk-memory|bulk-full) expectedControlWal=8192;; esac
+case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full) expectedControlWal=8192;; esac
 [ "$(sql CONTROL "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = "$expectedControlWal" ] || die "baseline WAL changed"
 [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
 for name in CONTROL CANDIDATE;do
@@ -123,7 +123,7 @@ if [ "$experiment" = profile30 ] || [ "$experiment" = profile10 ] || [ "$experim
 fi
 mkdir -m 700 "$out"
 for name in CONTROL CANDIDATE;do mkdir -m 700 "$out/$name" "$out/$name/private";done
-case "$experiment" in bulk-index|bulk-event|profile10|fk-memory|bulk-full)
+case "$experiment" in bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full)
  # bulk-index: CONTROL uses incremental field indexes, CANDIDATE deferred.
  # bulk-event: BOTH arms use deferred field indexes; only the event
  # row source differs. Both run independently for the same 10-minute
@@ -134,7 +134,7 @@ case "$experiment" in bulk-index|bulk-event|profile10|fk-memory|bulk-full)
   { tail -n 25 "$out/CANDIDATE/bulk-index-install.log" >&2 || :; die "CANDIDATE bulk-index installation failed"; }
  [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
   die "CANDIDATE bulk-index begin function missing"
- if [ "$experiment" = bulk-event ] || [ "$experiment" = fk-memory ]; then
+ if [ "$experiment" = bulk-event ] || [ "$experiment" = fk-memory ] || [ "$experiment" = payload-tail ]; then
   jexec -U jwood fi-dev psql \
    "host=$root/CONTROL/socket port=55981 user=fi_m1_admin dbname=fi sslmode=disable" \
    -X -v ON_ERROR_STOP=1 -f "$bulk_sql" > "$out/CONTROL/bulk-index-install.log" 2>&1 ||
@@ -143,6 +143,8 @@ case "$experiment" in bulk-index|bulk-event|profile10|fk-memory|bulk-full)
    die "CONTROL field-index strategy differs from CANDIDATE"
   if [ "$experiment" = bulk-event ]; then
    printf 'FI EVENT COPY AB PRECHECK PASS CONTROL=legacy CANDIDATE=reusable both=deferred_field_indexes processing_chunk_records=32768 duration=10m_per_arm\n'
+  elif [ "$experiment" = payload-tail ]; then
+   printf 'FI PAYLOAD TAIL PRECHECK PASS both=original_event_copy both=deferred_field_indexes\n'
   else
    printf 'FI FK MEMORY PRECHECK both=original_copy both=deferred_field_indexes\n'
   fi
@@ -202,11 +204,12 @@ arm_labels=CONTROL,CANDIDATE ports=55981,55982 labels_are_not_chunk_sizes
 single30=CANDIDATE_only original_count_sql 30m no_AB
 profile30=CANDIDATE_only isolated_SQL_finalizer_telemetry no_AB
 profile_sql_sha256=$( case "$experiment" in profile30|profile10|fk-memory) sha256 -q "$jailroot$profile_sql";; *) echo none;; esac )
-bulk_index_sql_sha256=$( case "$experiment" in bulk-index|bulk-event|profile10|fk-memory|bulk-full) sha256 -q "$jailroot$bulk_sql";; *) echo none;; esac )
+bulk_index_sql_sha256=$( case "$experiment" in bulk-index|bulk-event|profile10|fk-memory|payload-tail|bulk-full) sha256 -q "$jailroot$bulk_sql";; *) echo none;; esac )
 bulk_full=CANDIDATE_only full_117_windows_15140785_records no_timeout original_verifier onprem_no_Accepted
 bulk_event_ab=CONTROL_legacy_CANDIDATE_reusable both_deferred_field_indexes both_chunk_32768 wall_deadline_10m_per_arm
 profile10=CANDIDATE_only ten_minute_signed_backlog Go_CPU_profile PG_SQL_finalizer_phase_profile
 fk_memory_ab=CONTROL_4MB CANDIDATE_64MB work_mem_function_local both_original_copy both_deferred_indexes both_profiled duration_10m_each
+payload_tail_ab=CONTROL_full_json.Valid CANDIDATE_object_tail_guard both_strict_decode both_SHA256 both_deferred_indexes 10m_each
 bulk_full_event_copy=legacy
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
@@ -311,6 +314,10 @@ run_arm(){
   printf 'FI PROFILE10 ARMED 10m_signed_backlog=true event_copy=legacy chunk_records=32768 CPU_profile=true SQL_finalizer_profile=true\n' |
    tee -a "$out/SUMMARY.txt"
  fi
+ if [ "$experiment" = payload-tail ] && [ "$name" = CANDIDATE ]; then
+  set -- "$@" -private-security-payload-tail
+  printf 'FI PAYLOAD TAIL ARMED arm=CANDIDATE guard=object_tail scope=private_only\n' | tee -a "$out/SUMMARY.txt"
+ fi
  if [ "$experiment" = bulk-event ] && [ "$name" = CANDIDATE ]; then
   set -- "$@" -private-reusable-event-copy
   printf 'FI PRIVATE EVENT COPY CANDIDATE ARMED arm=CANDIDATE mode=reusable_40_columns max_runtime=10m private_only=true\n' |
@@ -337,6 +344,14 @@ run_arm(){
   [ -s "$dir/cpu.pprof" ] || die "Go CPU profile missing or empty"
   grep -q '^FI PRIVATE CPU PROFILE START mode=profile10 ' "$dir/recover.log" ||
    die "Go CPU profile was not activated"
+ fi
+ if [ "$experiment" = payload-tail ]; then
+  if [ "$name" = CANDIDATE ]; then
+   grep -q '^FI PRIVATE SECURITY PAYLOAD GUARD mode=object_tail scope=private_only strict_decoder=unchanged$' "$dir/recover.log" ||
+    die "CANDIDATE payload-tail guard did not activate"
+  elif grep -q '^FI PRIVATE SECURITY PAYLOAD GUARD ' "$dir/recover.log"; then
+   die "CONTROL unexpectedly activated payload-tail guard"
+  fi
  fi
  if [ "$experiment" = bulk-event ]; then
   if [ "$name" = CANDIDATE ]; then
@@ -661,7 +676,7 @@ fi
 # the candidate source cache and bias the A/B comparison.
 readback CONTROL
 readback CANDIDATE
-case "$experiment" in bulk-index|bulk-event|fk-memory)
+case "$experiment" in bulk-index|bulk-event|fk-memory|payload-tail)
  # Confirm no essential DB property vanished when indexes were delayed.
  for arm in CONTROL CANDIDATE; do
   for window in 3 4; do
@@ -766,6 +781,35 @@ if [ "$experiment" = fk-memory ]; then
  fi
  cat "$out/FK_MEMORY_COMPARISON.txt"
  printf 'FI FK MEMORY AB PASS duration=10m_per_arm both_integrity=PASS common_signed_prefix=identical control=4MB candidate=64MB authoritative=0 accepted=0 output=%s\n' "$out" | tee -a "$out/SUMMARY.txt"
+fi
+if [ "$experiment" = payload-tail ]; then
+ # Both arms must pass the existing signed source readback, SQL integrity,
+ # deferred-field PK/FK/range/index verification, and common-prefix check
+ # before any timings are compared. No partial windows count as durable.
+ for arm in CONTROL CANDIDATE; do
+  [ "$(wc -l < "$out/$arm/windows.txt" | tr -d ' ')" -ge 2 ] ||
+   die "$arm completed fewer than two durable windows"
+  grep -q '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$out/$arm/result.txt" ||
+   die "$arm did not preserve the 10m private recovery boundary"
+ done
+ awk '
+  /^FI PRIVATE STAGE PROFILE / {
+   window=""; records=""; envelope=""; typed=""
+   for(i=1;i<=NF;i++){
+    split($i,pair,"=")
+    if(pair[1]=="index") window=pair[2]
+    if(pair[1]=="records") records=pair[2]
+    if(pair[1]=="envelope_prepare") envelope=pair[2]
+    if(pair[1]=="typed_total") typed=pair[2]
+   }
+   printf "arm=%s window=%s records=%s envelope_prepare=%s typed_total=%s\n", FILENAME, window, records, envelope, typed
+  }
+ ' "$out/CONTROL/stages.txt" "$out/CANDIDATE/stages.txt" > "$out/PAYLOAD_TAIL_AB_STAGES.txt"
+ cat "$out/PAYLOAD_TAIL_AB_STAGES.txt"
+ grep '^FI TEN MINUTE STOP ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" > "$out/PAYLOAD_TAIL_AB_DURABLE_RATES.txt"
+ cat "$out/PAYLOAD_TAIL_AB_DURABLE_RATES.txt"
+ printf 'FI PAYLOAD TAIL AB PASS duration=10m_each signed_readback=PASS sql_integrity=PASS common_prefix=identical both_deferred_indexes=true source_hashes=unchanged accepted=0 authoritative=0 output=%s\n' "$out" |
+  tee -a "$out/SUMMARY.txt"
 fi
 if [ "$experiment" = bulk-event ]; then
  # Ten-minute wall-clock timebox for EACH independent arm. Different
