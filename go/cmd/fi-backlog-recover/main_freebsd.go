@@ -235,7 +235,7 @@ func run() error {
 			testFieldFailWindow > startWindow+1)) {
 		return errors.New("FI isolated field benchmark: illegal test stop/failure combination")
 	}
-// A single signed-cache 10-minute private trial may record Go CPU
+	// A single signed-cache 10-minute private trial may record Go CPU
 	// samples. Production and unbounded full-generation runs cannot opt in.
 	if privateCPUProfile != "" {
 		parent := filepath.Dir(private)

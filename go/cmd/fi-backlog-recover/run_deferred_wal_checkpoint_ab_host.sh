@@ -374,6 +374,30 @@ profile10)
  [ "$count" -ge 2 ] || die "profile10 committed fewer than two real signed W128 windows"
  [ "$(wc -l < "$out/CANDIDATE/field-finalize-stages.log" | tr -d ' ')" = "$count" ] ||
   die "profile10 finalizer samples mismatch committed window count"
+ # Verify every PostgreSQL RAISE LOG belongs to exactly one durable
+ # checkpoint. A rolled-back finalizer must never masquerade as committed.
+ sql CANDIDATE "SELECT window_index FROM fi_recovery.typed_window WHERE window_index>=3 ORDER BY window_index" > "$out/CANDIDATE/durable-window-ids.txt"
+ if ! awk '
+   FNR==NR {
+     if($1 !~ /^[0-9]+$/ || ($1 in expected)){bad=1;exit 1}
+     expected[$1]=1;total++;next
+   }
+   {
+     id=""
+     if($1!="FI_PRIVATE_FIELD_PROFILE"){bad=1;exit 1}
+     for(i=2;i<=NF;i++){
+       split($i,kv,"=")
+       if(kv[1]=="window")id=kv[2]
+     }
+     if(id !~ /^[0-9]+$/ || !(id in expected) || ++seen[id]!=1){bad=1;exit 1}
+     samples++
+   }
+   END {
+     if(bad || total!=samples)exit 1
+     for(id in expected)if(seen[id]!=1)exit 1
+   }' "$out/CANDIDATE/durable-window-ids.txt" "$out/CANDIDATE/field-finalize-stages.log"; then
+   die "profile10 SQL finalizer samples are not a 1:1 match for durable committed windows"
+ fi
  awk '
   {window="";c="";check="";fk="";attach="";total=""
    for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="window")window=a[2];if(a[1]=="count_ms")c=a[2];if(a[1]=="check_validate_ms")check=a[2];if(a[1]=="fk_validate_ms")fk=a[2];if(a[1]=="attach_ms")attach=a[2];if(a[1]=="total_ms")total=a[2]}
