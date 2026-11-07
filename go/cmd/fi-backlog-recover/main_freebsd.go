@@ -76,11 +76,13 @@ func run() error {
 	var deferredVerifiedClone bool
 	var privateIndexedCounts bool
 	var privateThirtyMinuteProbe bool
+	var privateReusableEventCopy bool
 	var testDeferredFault string
 	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone, after-publish, or kill-after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
 	flag.BoolVar(&deferredVerifiedClone, "deferred-verified-clone", false, "EXPERIMENT ONLY: W128/K32/P3/F3 verified cache; defer artifact marker until signed SHA and typed SQL verification share one private transaction")
 	flag.BoolVar(&privateIndexedCounts, "private-indexed-count-verify", false, "DEV ONLY: use signed-batch indexed LATERAL count/byte verifier in exact isolated deferred-clone W128 experiment")
 	flag.BoolVar(&privateThirtyMinuteProbe, "private-30m-probe", false, "DEV ONLY: allow exactly 30m with original count SQL in isolated signed W128 deferred clone (normal 10m limit unchanged)")
+	flag.BoolVar(&privateReusableEventCopy, "private-reusable-event-copy", false, "DEV ONLY: opt in to reusable 40-column Security-event COPY rows for isolated signed W128/P3 deferred clone; production remains unchanged")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
@@ -213,6 +215,13 @@ func run() error {
 		securityProfile != "P3" || fileProfile != "F3" || indexedPrivate || preflightOnly || streamLoader) {
 		return errors.New("FI indexed count verification requires exact private deferred signed W128/K32/P3/F3 recovery")
 	}
+	if privateReusableEventCopy && (!deferredVerifiedClone || !enable || !continuousPrivate ||
+		!privateFieldPartitions || startWindow != 3 || windowProfile != "W128" ||
+		processingChunkRecords != 32768 || securityProfile != "P3" || fileProfile != "F3" ||
+		verifiedCacheRoot == "" || indexedPrivate || preflightOnly || streamLoader ||
+		privateThirtyMinuteProbe || testDeferredFault != "" || testFieldFailWindow != 0) {
+		return errors.New("FI reusable Security-event COPY requires isolated, signed-cache W128/K32/P3/F3 deferred-clone private trial")
+	}
 	if testDeferredFault != "" && (!deferredVerifiedClone || startWindow != 3 || testStopAfterWindows != 1 ||
 		(testDeferredFault != recordingest.DeferredFaultCorruptClone && testDeferredFault != recordingest.DeferredFaultAfterPublish && testDeferredFault != recordingest.DeferredFaultKillAfterPublish)) {
 		return errors.New("FI deferred fault injection requires isolated W128/K32 window=3 exact one-window stop")
@@ -241,6 +250,10 @@ func run() error {
 	if privateIndexedCounts {
 		ctx = recordingest.WithPrivateIndexedWindowCountVerify(ctx)
 		fmt.Println("FI PRIVATE INDEXED COUNT VERIFY mode=per_signed_batch_lateral scope=private_only")
+	}
+	if privateReusableEventCopy {
+		ctx = recordingest.WithPrivateSecurityEventCopySource(ctx)
+		fmt.Println("FI PRIVATE SECURITY EVENT COPY SOURCE mode=reusable_40_columns scope=private_only production=unchanged")
 	}
 	if testDeferredFault != "" {
 		var faultErr error

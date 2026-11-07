@@ -2,12 +2,13 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
-// EXPERIMENTAL: unconnected Security event COPY row source. Keep the legacy
-// ingestion callback in security_bulk.go until value/SQL correctness and
-// unprofiled W128 throughput justify replacing it.
+// EXPERIMENTAL: reusable Security-event COPY row source. Explicitly gated
+// to isolated, opted-in private W128/P3 recovery. Production and ordinary
+// P3 retain the legacy callback until whole-window acceptance proves a gain.
 package recordingest
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 )
@@ -62,3 +63,24 @@ func (s *securityEventCopySource) Values() ([]any, error) {
 }
 
 func (s *securityEventCopySource) Err() error { return nil }
+
+type privateSecurityEventCopySourceContextKey struct{}
+
+// WithPrivateSecurityEventCopySource arms a candidate for one explicitly
+// isolated private recovery context. The selector below still checks the
+// detached-field partition and P3 guards; this does not change production FI.
+func WithPrivateSecurityEventCopySource(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, privateSecurityEventCopySourceContextKey{}, true)
+}
+
+// usePrivateSecurityEventCopySource rejects production P1, ordinary P3, and
+// unflagged private W128/P3. No environment variables or global mutations.
+func usePrivateSecurityEventCopySource(ctx context.Context) bool {
+	return ctx != nil &&
+		ctx.Value(privateSecurityEventCopySourceContextKey{}) == true &&
+		privateSecurityFieldPartitionsEnabled(ctx) &&
+		securityBulkLimitsFromContext(ctx).Name == "P3"
+}

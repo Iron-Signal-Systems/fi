@@ -5,6 +5,7 @@
 package recordingest
 
 import (
+	"context"
 	"crypto/sha256"
 	"math/big"
 	"reflect"
@@ -144,4 +145,31 @@ func BenchmarkSecurityEventCOPYRowsLegacyVsReusable(b *testing.B) {
 		}
 		securityEventRowBenchmarkSink = result
 	})
+}
+
+func TestPrivateSecurityEventCopySourceExplicitGate(t *testing.T) {
+	p1, err := withFixedSecurityBulkProfile(context.Background(), "P1")
+	if err != nil { t.Fatal(err) }
+	p3, err := withFixedSecurityBulkProfile(context.Background(), "P3")
+	if err != nil { t.Fatal(err) }
+	cases := []struct {
+		name string
+		ctx context.Context
+		want bool
+	}{
+		{name:"nil", ctx:nil, want:false},
+		{name:"production-default", ctx:context.Background(), want:false},
+		{name:"production-P1-flagged", ctx:WithPrivateSecurityEventCopySource(p1), want:false},
+		{name:"ordinary-P3-flagged", ctx:WithPrivateSecurityEventCopySource(p3), want:false},
+		{name:"private-P1-flagged", ctx:WithPrivateSecurityEventCopySource(WithPrivateSecurityFieldPartitions(p1)), want:false},
+		{name:"private-P3-unflagged", ctx:WithPrivateSecurityFieldPartitions(p3), want:false},
+		{name:"private-P3-opted-in", ctx:WithPrivateSecurityEventCopySource(WithPrivateSecurityFieldPartitions(p3)), want:true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name,func(t *testing.T) {
+			if got := usePrivateSecurityEventCopySource(tc.ctx); got != tc.want {
+				t.Fatalf("selected=%v want=%v", got, tc.want)
+			}
+		})
+	}
 }

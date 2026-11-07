@@ -144,9 +144,10 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		"share_name", "share_local_path", "relative_target_name", "old_security_descriptor", "new_security_descriptor", "subcategory_guid", "audit_policy_changes",
 		"raw_xml_bytes", "raw_xml_sha256",
 	}
-	eventCopyStarted := time.Now()
-	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns,
-		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+	// The established callback remains the default for production and
+	// every ordinary P1/P3 operation. The reusable row-buffer candidate
+	// is enabled only by an explicit private W128/P3 experiment flag.
+	var eventRows pgx.CopyFromSource = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			p := pending[i]
 			v := p.value
 			rawXML := []byte(v.RawXML)
@@ -157,7 +158,12 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 				nullString(v.HandleID), nullString(v.ProcessID), nullString(v.ProcessName), nullString(v.AccessMask), nullString(v.AccessList), nullString(v.AccessReason), nullString(v.TransactionID), nullString(v.FileName), nullString(v.LinkName), nullString(v.SourceIP), nullString(v.SourcePort),
 				nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
 			}, nil
-		}))
+		})
+	if usePrivateSecurityEventCopySource(ctx) {
+		eventRows = newSecurityEventCopySource(pending)
+	}
+	eventCopyStarted := time.Now()
+	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns, eventRows)
 	elapsedEventCopy := time.Since(eventCopyStarted)
 	profile.SecurityBulk.EventCopy += elapsedEventCopy
 	profile.SecurityBulk.EventLatency.observe(elapsedEventCopy)
