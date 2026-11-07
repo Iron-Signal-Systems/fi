@@ -6,15 +6,15 @@
 set -eu
 umask 077
 die(){ printf 'FI WAL AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30]"
+[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30|bulk-index]"
 order=${1:-normal}
 timing=${2:-on}
 experiment=${3:-wal}
-case "$experiment" in wal|indexed-count|single30|profile30) ;; *) die "invalid benchmark experiment" ;; esac
+case "$experiment" in wal|indexed-count|single30|profile30|bulk-index) ;; *) die "invalid benchmark experiment" ;; esac
 case "$experiment" in
  single30|profile30) [ "$order" = normal ] && [ "$timing" = off ] || die "30m probe requires normal off";;
 esac
-[ "$experiment" != indexed-count ] || [ "$timing" = off ] || die "indexed-count requires I/O timing off"
+case "$experiment" in indexed-count|bulk-index) [ "$timing" = off ] || die "$experiment requires I/O timing off";; esac
 case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
 case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
 [ "$(id -un)" = root ] || die "FreeBSD host root required"
@@ -23,6 +23,10 @@ jailroot=$(jls -j fi-dev path) || die "fi-dev jail missing"
 work=/home/jwood/fi-deferred-experiment
 provision="$work/go/cmd/fi-backlog-recover/deferred_clone_provision_jail.sh"
 profile_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_finish_profile_isolated.sql"
+bulk_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_bulk_index_isolated.sql"
+if [ "$experiment" = bulk-index ]; then
+ [ -f "$jailroot$bulk_sql" ] || die "bulk-index SQL missing"
+fi
 if [ "$experiment" = profile30 ]; then
  [ -f "$jailroot$profile_sql" ] || die "private field profiler source missing"
 fi
@@ -82,13 +86,13 @@ if [ "$experiment" = profile30 ]; then
  # Keep the jail's and the host's global syslog policy unchanged.
  admin K64 "ALTER SYSTEM SET log_destination='stderr'" >/dev/null
 fi
-if [ "$experiment" = indexed-count ]; then admin K32 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null; fi
+case "$experiment" in indexed-count|bulk-index) admin K32 "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
 for name in K32 K64;do
  [ "$(admin "$name" 'SELECT pg_reload_conf()')" = t ] || die "$name config reload rejected"
 done
 sleep 1
 expected_control_wal=1024
-[ "$experiment" != indexed-count ] || expected_control_wal=8192
+case "$experiment" in indexed-count|bulk-index) expected_control_wal=8192;; esac
 [ "$(sql K32 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = "$expected_control_wal" ] || die "baseline WAL changed"
 [ "$(sql K64 "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
 for name in K32 K64;do
@@ -113,6 +117,18 @@ if [ "$experiment" = profile30 ]; then
 fi
 mkdir -m 700 "$out"
 for name in K32 K64;do mkdir -m 700 "$out/$name" "$out/$name/private";done
+if [ "$experiment" = bulk-index ]; then
+ # Install only in the K64 disposable candidate; K32 retains indexed COPY.
+ jexec -U jwood fi-dev psql \
+  "host=$root/K64/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable" \
+  -X -v ON_ERROR_STOP=1 -f "$bulk_sql" > "$out/K64/bulk-index-install.log" 2>&1 ||
+  { tail -n 25 "$out/K64/bulk-index-install.log" >&2 || :; die "K64 bulk-index installation failed"; }
+ [ "$(sql K64 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+  die "K64 bulk-index begin function missing"
+ [ "$(sql K32 "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))=0")" = t ] ||
+  die "K32 control begin function changed"
+ printf 'FI BULK INDEX INSTALLED K32=incremental_indexes K64=post_COPY_indexes windows=2\n'
+fi
 if [ "$experiment" = profile30 ]; then
   # Replace the private finalizer only in this fresh K64 disposable cluster.
   # The signed three-window seed and canonical fi.* schema are untouched.
@@ -135,6 +151,7 @@ both=window_W128 chunk_32768 P3 F3, serial, same binary
 single30=K64_only original_count_sql 30m no_AB
 profile30=K64_only isolated_SQL_finalizer_telemetry no_AB
 profile_sql_sha256=$( [ "$experiment" = profile30 ] && sha256 -q "$jailroot$profile_sql" || echo none )
+bulk_index_sql_sha256=$( [ "$experiment" = bulk-index ] && sha256 -q "$jailroot$bulk_sql" || echo none )
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
 run_order=$order
@@ -229,6 +246,7 @@ run_arm(){
  printf 'FI PRIVATE AB START experiment=%s arm=%s max_wal_size_mb=%s duration=%s source=real_signed_cache\n' "$experiment" "$name" "$wal" "$duration" | tee -a "$out/SUMMARY.txt"
  set --
  if [ "$experiment" = indexed-count ] && [ "$name" = K64 ]; then set -- -private-indexed-count-verify; fi
+ if [ "$experiment" = bulk-index ]; then set -- "$@" -test-stop-after-windows=2; fi
  case "$experiment:$name" in
   single30:K64|profile30:K64) set -- -private-30m-probe;;
  esac
@@ -255,7 +273,7 @@ run_arm(){
   fi
  fi
  stoplabel='FI TEN MINUTE STOP'
- case "$experiment" in single30|profile30) stoplabel='FI THIRTY MINUTE STOP';; esac
+ case "$experiment" in single30|profile30) stoplabel='FI THIRTY MINUTE STOP';; bulk-index) stoplabel='FI PRIVATE EXACT WINDOW STOP';; esac
  grep "^$stoplabel .*authoritative=0 accepted=0" "$dir/recover.log" > "$dir/result.txt" || die "$name $duration result missing"
  grep '^FI PRIVATE STAGE PROFILE ' "$dir/recover.log" > "$dir/stages.txt" || die "$name no stage profile"
  grep '^FI REAL BACKLOG DURABLE ' "$dir/recover.log" > "$dir/windows.txt" || die "$name no durable windows"
@@ -426,6 +444,30 @@ fi
 # the candidate source cache and bias the A/B comparison.
 readback K32
 readback K64
+if [ "$experiment" = bulk-index ]; then
+ # Confirm no essential DB property vanished when indexes were delayed.
+ for arm in K32 K64; do
+  for window in 3 4; do
+   child=$(printf 'fi_recovery_projection.windows_security_event_field_w%06d' "$window")
+   result=$(sql "$arm" "SELECT
+    EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='$child'::regclass AND contype='p' AND convalidated)
+    AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='$child'::regclass AND contype='f' AND convalidated)
+    AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='$child'::regclass AND contype='c'
+      AND conname LIKE '%_range' AND convalidated)
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_index pi
+      WHERE pi.indrelid='fi_recovery_projection.windows_security_event_field'::regclass
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_index ci JOIN pg_inherits inh ON inh.inhrelid=ci.indexrelid
+        WHERE ci.indrelid='$child'::regclass AND ci.indisvalid AND ci.indisready
+          AND inh.inhparent=pi.indexrelid
+      )
+    )")
+   [ "$result" = t ] || die "$arm window=$window missing validated PK/FK/range or attached parent index"
+  done
+ done
+ printf 'FI BULK INDEX CONSTRAINTS PASS arms=K32,K64 windows=3,4 PK=valid FK=validated range=validated parent_indexes=attached\n' | tee -a "$out/SUMMARY.txt"
+fi
 # Compare the signed descriptor chain for every COMMON completed window,
 # independent of K32/K64's differing completion counts in ten minutes.
 descriptor="SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index"
@@ -472,6 +514,6 @@ END{
  }
 }' "$out/K32/before.stats" "$out/K32/after.stats" \
  "$out/K64/before.stats" "$out/K64/after.stats" | tee "$out/COUNTERS_DELTA.txt"
-grep '^FI TEN MINUTE STOP ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
+grep -E '^FI (TEN MINUTE STOP|PRIVATE EXACT WINDOW STOP) ' "$out/K32/result.txt" "$out/K64/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
 printf 'FI WAL AB COMPLETE output=%s experiment=%s order=%s timing=%s control_wal_mb=%s candidate_wal_mb=8192 signed_data=identical independent_real_db=true\n' "$out" "$experiment" "$order" "$timing" "$expected_control_wal" | tee -a "$out/SUMMARY.txt"
 printf 'FI WAL AB COUNTER FILES: %s/K32/{before,after}.stats and %s/K64/{before,after}.stats\n' "$out" "$out"
