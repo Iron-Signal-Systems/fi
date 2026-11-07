@@ -86,7 +86,7 @@ func run() error {
 	flag.BoolVar(&privateIndexedCounts, "private-indexed-count-verify", false, "DEV ONLY: use signed-batch indexed LATERAL count/byte verifier in exact isolated deferred-clone W128 experiment")
 	flag.BoolVar(&privateThirtyMinuteProbe, "private-30m-probe", false, "DEV ONLY: allow exactly 30m with original count SQL in isolated signed W128 deferred clone (normal 10m limit unchanged)")
 	flag.BoolVar(&privateReusableEventCopy, "private-reusable-event-copy", false, "DEV ONLY: opt in to reusable 40-column Security-event COPY rows for isolated signed W128/P3 deferred clone; production remains unchanged")
-	flag.BoolVar(&privateSecurityPayloadTailGuard, "private-security-payload-tail", false, "DEV ONLY: use object-tail guard instead of preliminary full JSON payload validation in private 10m W128/P3 signed replay")
+	flag.BoolVar(&privateSecurityPayloadTailGuard, "private-security-payload-tail", false, "DEV ONLY: use object-tail guard instead of preliminary JSON validity scan in isolated W128/P3 signed replay")
 	flag.StringVar(&privateCPUProfile, "private-cpu-profile", "", "DEV ONLY: 10m signed W128 disposable private-clone CPU profile")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
@@ -110,7 +110,7 @@ func run() error {
 	flag.IntVar(&maxWindows, "max-windows", 2, "private windows to process per invocation; 0 means to final window")
 	flag.IntVar(&startWindow, "start-window", 0, "original signed window index to resume from")
 	flag.BoolVar(&privateFieldPartitions, "private-field-partitions", false, "DEV ONLY: field COPY into validated detached partitions in an isolated W128 private database")
-	flag.IntVar(&testStopAfterWindows, "test-stop-after-windows", 0, "DEV ONLY: cancel after N durable W128 windows; 0 means normal behavior")
+	flag.IntVar(&testStopAfterWindows, "test-stop-after-windows", 0, "DEV ONLY: cancel after 1-2 durable windows or exactly 10 in the isolated W128/K32/P3/F3 signed replay; 0=normal")
 	flag.IntVar(&testFieldFailWindow, "test-field-fail-window", 0, "DEV ONLY: inject late private-field partition rollback in exact window")
 	flag.Parse()
 	if optimizedK32 {
@@ -231,16 +231,31 @@ func run() error {
 		!privateFieldPartitions || startWindow != 3 || windowProfile != "W128" ||
 		processingChunkRecords != 32768 || securityProfile != "P3" || fileProfile != "F3" ||
 		verifiedCacheRoot == "" || indexedPrivate || preflightOnly || streamLoader ||
-		maxRuntime != 10*time.Minute || privateThirtyMinuteProbe || privateReusableEventCopy ||
-		privateCPUProfile != "" || testDeferredFault != "" || testFieldFailWindow != 0 ||
-		testStopAfterWindows != 0) {
-		return errors.New("FI Security payload tail guard requires isolated 10m signed-cache W128/K32/P3/F3 private deferred clone")
+		!((maxRuntime == 10*time.Minute && testStopAfterWindows == 0) ||
+		(maxRuntime == 0 && testStopAfterWindows == 10)) ||
+		privateThirtyMinuteProbe || privateReusableEventCopy ||
+		privateCPUProfile != "" || testDeferredFault != "" || testFieldFailWindow != 0) {
+		return errors.New("FI Security payload tail guard requires isolated 10m or exact-10-window signed-cache W128/K32/P3/F3 private deferred clone")
 	}
 	if testDeferredFault != "" && (!deferredVerifiedClone || startWindow != 3 || testStopAfterWindows != 1 ||
 		(testDeferredFault != recordingest.DeferredFaultCorruptClone && testDeferredFault != recordingest.DeferredFaultAfterPublish && testDeferredFault != recordingest.DeferredFaultKillAfterPublish)) {
 		return errors.New("FI deferred fault injection requires isolated W128/K32 window=3 exact one-window stop")
 	}
-	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 || testStopAfterWindows > 2 || !continuousPrivate ||
+	// Only the isolated, durable, original-signed W128/K32/P3/F3 replay
+	// may use a count-based 10-window stop with NO wall-clock cutoff.
+	// Established 1-2 window fault tests and 10m/30m modes are unchanged.
+	if testStopAfterWindows == 10 && (!deferredVerifiedClone || !enable ||
+		!continuousPrivate || !privateFieldPartitions || startWindow != 3 ||
+		windowProfile != "W128" || processingChunkRecords != 32768 ||
+		securityProfile != "P3" || fileProfile != "F3" ||
+		verifiedCacheRoot == "" || maxRuntime != 0 ||
+		privateThirtyMinuteProbe || privateIndexedCounts || privateReusableEventCopy ||
+		privateCPUProfile != "" || testDeferredFault != "" ||
+		testFieldFailWindow != 0 || indexedPrivate || preflightOnly || streamLoader) {
+		return errors.New("FI exact 10-window stop requires exclusive unbounded private signed-cache W128/K32/P3/F3 deferred clone")
+	}
+	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 ||
+		(testStopAfterWindows > 2 && testStopAfterWindows != 10) || !continuousPrivate ||
 		windowProfile != "W128" || verifiedCacheRoot == "" || processingChunkRecords != 32768)) ||
 		(testFieldFailWindow != 0 && (!privateFieldPartitions || testFieldFailWindow < startWindow ||
 			testFieldFailWindow > startWindow+1)) {
@@ -478,8 +493,26 @@ SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 A
 				return fmt.Errorf("FI controlled stop: marker/SoR mismatch windows=%d authoritative=%d last=%d err=%v",
 					markerCount, authoritativeCount, lastWindow, checkErr)
 			}
-			fmt.Printf("FI PRIVATE EXACT WINDOW STOP start=%d windows=%d last=%d records=%d committed_window_time=%s authoritative=0 accepted=0\n",
-				startWindow, testStopAfterWindows, lastWindow, durableThisRun, completedWindowTime.Round(time.Millisecond))
+			if testStopAfterWindows == 10 {
+				// Elapsed time is measured to the final durable commit, not a
+				// fixed timer cutoff or a partially processed 11th window.
+				elapsed := time.Since(began)
+				checkpointRate := float64(0)
+				committedWindowRate := float64(0)
+				if lastCheckpointElapsed > 0 {
+					checkpointRate = float64(durableThisRun) / lastCheckpointElapsed.Seconds()
+				}
+				if completedWindowTime > 0 {
+					committedWindowRate = float64(durableThisRun) / completedWindowTime.Seconds()
+				}
+				fmt.Printf("FI PRIVATE EXACT WINDOW STOP start=%d windows=%d last=%d records=%d elapsed=%s checkpoint_elapsed=%s checkpoint_rate=%.1f/sec committed_window_time=%s committed_window_rate=%.1f/sec authoritative=0 accepted=0\n",
+					startWindow, testStopAfterWindows, lastWindow, durableThisRun,
+					elapsed.Round(time.Millisecond), lastCheckpointElapsed.Round(time.Millisecond),
+					checkpointRate, completedWindowTime.Round(time.Millisecond), committedWindowRate)
+			} else {
+				fmt.Printf("FI PRIVATE EXACT WINDOW STOP start=%d windows=%d last=%d records=%d committed_window_time=%s authoritative=0 accepted=0\n",
+					startWindow, testStopAfterWindows, lastWindow, durableThisRun, completedWindowTime.Round(time.Millisecond))
+			}
 			return nil
 		}
 		if err != nil {
