@@ -242,9 +242,12 @@ func TestPrivateSecurityPayloadTailGuardSelection(t *testing.T) {
 		{"nil", nil, false},
 		{"default", context.Background(), false},
 		{"ordinary-P3", WithPrivateSecurityPayloadTailGuard(p3), false},
+		{"ordinary-P3-original", WithPrivateSecurityPayloadOriginalGuard(p3), false},
 		{"private-P1", WithPrivateSecurityPayloadTailGuard(WithPrivateSecurityFieldPartitions(p1)), false},
-		{"private-P3-unflagged", WithPrivateSecurityFieldPartitions(p3), false},
-		{"private-P3-flagged", WithPrivateSecurityPayloadTailGuard(WithPrivateSecurityFieldPartitions(p3)), true},
+		{"private-P3-default", WithPrivateSecurityFieldPartitions(p3), true},
+		{"private-P3-explicit-tail", WithPrivateSecurityPayloadTailGuard(WithPrivateSecurityFieldPartitions(p3)), true},
+		{"private-P3-original-control", WithPrivateSecurityPayloadOriginalGuard(WithPrivateSecurityFieldPartitions(p3)), false},
+		{"private-P3-original-then-tail", WithPrivateSecurityPayloadTailGuard(WithPrivateSecurityPayloadOriginalGuard(WithPrivateSecurityFieldPartitions(p3))), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := usePrivateSecurityPayloadTailGuard(tc.ctx); got != tc.want {
