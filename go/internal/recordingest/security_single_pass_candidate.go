@@ -45,6 +45,15 @@ type singlePassSecurityEnvelope struct {
 // the identical LF-terminated source bytes. Payload is an immutable view of
 // the owned source slice, not another heap copy.
 func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord, bool, error) {
+	return prepareSinglePassSecurityWithGuard(raw, false)
+}
+
+// Candidate mode relies on the same strict typed decoder and SHA-256.
+func tryPrepareSinglePassSecurityTailGuard(raw []byte) (SourceRecord, securityBulkRecord, bool, error) {
+	return prepareSinglePassSecurityWithGuard(raw, true)
+}
+
+func prepareSinglePassSecurityWithGuard(raw []byte, tailGuard bool) (SourceRecord, securityBulkRecord, bool, error) {
 	var emptySource SourceRecord
 	var emptySecurity securityBulkRecord
 	if len(raw) < len(securityEnvelopePrefix)+len(securityPayloadKey)+2 ||
@@ -79,11 +88,15 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		return emptySource, emptySecurity, false, nil
 	}
 	rawPayload := body[payload+len(securityPayloadKey):len(body)-1]
-	// A payload followed by another top-level envelope member is valid
-	// legacy JSON, but not canonical spool layout: decline this fast path.
-	// json.Valid also confirms that the exact zero-copy RawMessage is
-	// independently well-formed, as required by the source-record contract.
-	if len(rawPayload) == 0 || !json.Valid(rawPayload) {
+	// Canonical collector Security payloads are objects ending with '}'.
+	// In candidate mode, a non-object or a known string-valued outer
+	// member appended after payload must use the established fallback.
+	// Duplicate payload keys are rejected by the envelope checks above.
+	// Complete JSON syntax and all typed members remain subject to the
+	// unchanged strict decoder below, preserving accepted evidence bytes.
+	if len(rawPayload) == 0 ||
+		(tailGuard && rawPayload[len(rawPayload)-1] != '}') ||
+		(!tailGuard && !json.Valid(rawPayload)) {
 		return emptySource, emptySecurity, false, nil
 	}
 
@@ -145,4 +158,20 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 func usePrivateSinglePassSecurity(ctx context.Context) bool {
 	return ctx != nil && privateSecurityFieldPartitionsEnabled(ctx) &&
 		securityBulkLimitsFromContext(ctx).Name == "P3"
+}
+
+type privateSecurityPayloadTailGuardKey struct{}
+
+// This opt-in does not modify production or normal private ingestion.
+func WithPrivateSecurityPayloadTailGuard(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, privateSecurityPayloadTailGuardKey{}, true)
+}
+
+func usePrivateSecurityPayloadTailGuard(ctx context.Context) bool {
+	return ctx != nil &&
+		ctx.Value(privateSecurityPayloadTailGuardKey{}) == true &&
+		usePrivateSinglePassSecurity(ctx)
 }
