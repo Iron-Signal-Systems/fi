@@ -6,15 +6,16 @@
 set -eu
 umask 077
 die(){ printf 'FI BENCH AB STOP: %s\n' "$*" >&2;exit 1; }
-[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30|bulk-index|bulk-event|bulk-full]"
+[ "$#" -le 3 ] || die "usage: $0 [normal|reverse] [on|off] [wal|indexed-count|single30|profile30|bulk-index|bulk-event|profile10|bulk-full]"
 order=${1:-normal}
 timing=${2:-on}
 experiment=${3:-wal}
-case "$experiment" in wal|indexed-count|single30|profile30|bulk-index|bulk-event|bulk-full) ;; *) die "invalid benchmark experiment" ;; esac
+case "$experiment" in wal|indexed-count|single30|profile30|bulk-index|bulk-event|profile10|bulk-full) ;; *) die "invalid benchmark experiment" ;; esac
 case "$experiment" in
  single30|profile30) [ "$order" = normal ] && [ "$timing" = off ] || die "30m probe requires normal off";;
+ profile10) [ "$order" = normal ] && [ "$timing" = off ] || die "profile10 requires normal off";;
 esac
-case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) [ "$timing" = off ] || die "$experiment requires I/O timing off";; esac
+case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|bulk-full) [ "$timing" = off ] || die "$experiment requires I/O timing off";; esac
 [ "$experiment" != bulk-full ] || { [ "$order" = normal ] || die 'bulk-full requires normal order'; }
 case "$order" in normal|reverse) ;; *) die "usage: $0 [normal|reverse] [on|off]" ;; esac
 case "$timing" in on|off) ;; *) die "timing must be on or off" ;; esac
@@ -26,10 +27,10 @@ provision="$work/go/cmd/fi-backlog-recover/deferred_clone_provision_jail.sh"
 profile_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_finish_profile_isolated.sql"
 bulk_sql="$work/go/cmd/fi-backlog-recover/testdata/private_field_bulk_index_isolated.sql"
 case "$experiment" in
- bulk-index|bulk-event|bulk-full)
+ bulk-index|bulk-event|profile10|bulk-full)
   [ -f "$jailroot$bulk_sql" ] || die "bulk-index SQL missing";;
 esac
-if [ "$experiment" = profile30 ]; then
+if [ "$experiment" = profile30 ] || [ "$experiment" = profile10 ]; then
  [ -f "$jailroot$profile_sql" ] || die "private field profiler source missing"
 fi
 [ -f "$jailroot$provision" ] || die "experiment provisioner absent"
@@ -83,18 +84,18 @@ for name in CONTROL CANDIDATE;do
 done
 # Exactly one performance variable differs.
 admin CANDIDATE "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null
-if [ "$experiment" = profile30 ]; then
+if [ "$experiment" = profile30 ] || [ "$experiment" = profile10 ]; then
  # FI-DEV DISPOSABLE CANDIDATE ONLY: pg_ctl -l captures stderr, not syslog.
  # Keep the jail's and the host's global syslog policy unchanged.
  admin CANDIDATE "ALTER SYSTEM SET log_destination='stderr'" >/dev/null
 fi
-case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) admin CONTROL "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
+case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|bulk-full) admin CONTROL "ALTER SYSTEM SET max_wal_size='8GB'" >/dev/null;; esac
 for name in CONTROL CANDIDATE;do
  [ "$(admin "$name" 'SELECT pg_reload_conf()')" = t ] || die "$name config reload rejected"
 done
 sleep 1
 expectedControlWal=1024
-case "$experiment" in indexed-count|bulk-index|bulk-event|bulk-full) expectedControlWal=8192;; esac
+case "$experiment" in indexed-count|bulk-index|bulk-event|profile10|bulk-full) expectedControlWal=8192;; esac
 [ "$(sql CONTROL "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = "$expectedControlWal" ] || die "baseline WAL changed"
 [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "candidate WAL did not reach 8GiB"
 for name in CONTROL CANDIDATE;do
@@ -103,7 +104,7 @@ for name in CONTROL CANDIDATE;do
   [ "$(sql "$name" "SHOW $setting")" = on ] || die "$name durability disabled after reload"
  done
 done
-if [ "$experiment" = profile30 ]; then
+if [ "$experiment" = profile30 ] || [ "$experiment" = profile10 ]; then
  # Fail BEFORE any timed recovery if RAISE LOG does not reach the exact
  # file consumed by the finalization-stage parser.
  [ "$(sql CANDIDATE 'SHOW log_destination')" = stderr ] ||
@@ -119,7 +120,7 @@ if [ "$experiment" = profile30 ]; then
 fi
 mkdir -m 700 "$out"
 for name in CONTROL CANDIDATE;do mkdir -m 700 "$out/$name" "$out/$name/private";done
-case "$experiment" in bulk-index|bulk-event|bulk-full)
+case "$experiment" in bulk-index|bulk-event|profile10|bulk-full)
  # bulk-index: CONTROL uses incremental field indexes, CANDIDATE deferred.
  # bulk-event: BOTH arms use deferred field indexes; only the event
  # row source differs. Both run independently for the same 10-minute
@@ -148,14 +149,14 @@ case "$experiment" in bulk-index|bulk-event|bulk-full)
    printf 'FI BULK INDEX INSTALLED CONTROL=incremental_indexes CANDIDATE=post_COPY_indexes windows=2\n'
  fi
 ;; esac
-if [ "$experiment" = profile30 ]; then
+if [ "$experiment" = profile30 ] || [ "$experiment" = profile10 ]; then
   # Replace the private finalizer only in this fresh CANDIDATE disposable cluster.
   # The signed three-window seed and canonical fi.* schema are untouched.
   jexec -U jwood fi-dev psql     "host=$root/CANDIDATE/socket port=55982 user=fi_m1_admin dbname=fi sslmode=disable"     -X -v ON_ERROR_STOP=1 -f "$profile_sql" > "$out/CANDIDATE/profile-install.log" 2>&1 ||
     { tail -n 25 "$out/CANDIDATE/profile-install.log" >&2 || :; die "isolated SQL finalizer profiler installation failed"; }
   [ "$(sql CANDIDATE "SELECT position('FI_PRIVATE_FIELD_PROFILE' in pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))>0")" = t ] ||
     die "private profile finalizer not installed"
-  printf 'FI PRIVATE FIELD PROFILE INSTALLED cluster=CANDIDATE constraints=unchanged duration=30m\n'
+  printf 'FI PRIVATE FIELD PROFILE INSTALLED cluster=CANDIDATE constraints=unchanged experiment=%s\n' "$experiment"
 fi
 cat > "$out/RUN_MANIFEST.txt" <<EOF
 FI SIGNED W128 DEFERRED CLONE EXPERIMENT A/B
@@ -170,10 +171,11 @@ both=window_W128 processing_chunk_records_32768 P3 F3, serial, same_binary
 arm_labels=CONTROL,CANDIDATE ports=55981,55982 labels_are_not_chunk_sizes
 single30=CANDIDATE_only original_count_sql 30m no_AB
 profile30=CANDIDATE_only isolated_SQL_finalizer_telemetry no_AB
-profile_sql_sha256=$( [ "$experiment" = profile30 ] && sha256 -q "$jailroot$profile_sql" || echo none )
-bulk_index_sql_sha256=$( case "$experiment" in bulk-index|bulk-event|bulk-full) sha256 -q "$jailroot$bulk_sql";; *) echo none;; esac )
+profile_sql_sha256=$( case "$experiment" in profile30|profile10) sha256 -q "$jailroot$profile_sql";; *) echo none;; esac )
+bulk_index_sql_sha256=$( case "$experiment" in bulk-index|bulk-event|profile10|bulk-full) sha256 -q "$jailroot$bulk_sql";; *) echo none;; esac )
 bulk_full=CANDIDATE_only full_117_windows_15140785_records no_timeout original_verifier onprem_no_Accepted
 bulk_event_ab=CONTROL_legacy_CANDIDATE_reusable both_deferred_field_indexes both_chunk_32768 wall_deadline_10m_per_arm
+profile10=CANDIDATE_only ten_minute_signed_backlog Go_CPU_profile PG_SQL_finalizer_phase_profile
 bulk_full_event_copy=legacy
 both=fsync_on synchronous_commit_on full_page_writes_on
 both=track_io_timing_$timing track_wal_io_timing_$timing
@@ -273,6 +275,11 @@ run_arm(){
  set --
  if [ "$experiment" = indexed-count ] && [ "$name" = CANDIDATE ]; then set -- -private-indexed-count-verify; fi
  if [ "$experiment" = bulk-index ]; then set -- "$@" -test-stop-after-windows=2; fi
+ if [ "$experiment" = profile10 ] && [ "$name" = CANDIDATE ]; then
+  set -- "$@" "-private-cpu-profile=$dir/cpu.pprof"
+  printf 'FI PROFILE10 ARMED 10m_signed_backlog=true event_copy=legacy chunk_records=32768 CPU_profile=true SQL_finalizer_profile=true\n' |
+   tee -a "$out/SUMMARY.txt"
+ fi
  if [ "$experiment" = bulk-event ] && [ "$name" = CANDIDATE ]; then
   set -- "$@" -private-reusable-event-copy
   printf 'FI PRIVATE EVENT COPY CANDIDATE ARMED arm=CANDIDATE mode=reusable_40_columns max_runtime=10m private_only=true\n' |
@@ -295,6 +302,11 @@ run_arm(){
   stopmon;tail -n 65 "$dir/recover.log" >&2 || :;die "$name recovery failed"
  fi
  stopmon
+ if [ "$experiment" = profile10 ]; then
+  [ -s "$dir/cpu.pprof" ] || die "Go CPU profile missing or empty"
+  grep -q '^FI PRIVATE CPU PROFILE START mode=profile10 ' "$dir/recover.log" ||
+   die "Go CPU profile was not activated"
+ fi
  if [ "$experiment" = bulk-event ]; then
   if [ "$name" = CANDIDATE ]; then
    grep -q '^FI PRIVATE SECURITY EVENT COPY SOURCE mode=reusable_40_columns scope=private_only production=unchanged$' "$dir/recover.log" ||
@@ -346,6 +358,31 @@ run_arm(){
 # The reverse trial controls for OS cache warming and order effects.
 printf 'FI BENCH AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
 case "$experiment" in
+profile10)
+ [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] ||
+  die "profile10 WAL size changed"
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+  die "profile10 deferred-index COPY path missing"
+ [ "$(sql CANDIDATE "SELECT position('FI_PRIVATE_FIELD_PROFILE' in pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))>0")" = t ] ||
+  die "profile10 SQL finalizer profiler missing"
+ run_arm CANDIDATE
+ readback CANDIDATE
+ pglog="$jailroot$root/CANDIDATE/postgres.log"
+ [ -f "$pglog" ] || die "profile10 PostgreSQL stderr log missing"
+ awk '/FI_PRIVATE_FIELD_PROFILE window=/ {v=$0;sub(/^.*FI_PRIVATE_FIELD_PROFILE /,"FI_PRIVATE_FIELD_PROFILE ",v); print v}' "$pglog" > "$out/CANDIDATE/field-finalize-stages.log"
+ count=$(wc -l < "$out/CANDIDATE/stages.txt" | tr -d ' ')
+ [ "$count" -ge 2 ] || die "profile10 committed fewer than two real signed W128 windows"
+ [ "$(wc -l < "$out/CANDIDATE/field-finalize-stages.log" | tr -d ' ')" = "$count" ] ||
+  die "profile10 finalizer samples mismatch committed window count"
+ awk '
+  {window="";c="";check="";fk="";attach="";total=""
+   for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="window")window=a[2];if(a[1]=="count_ms")c=a[2];if(a[1]=="check_validate_ms")check=a[2];if(a[1]=="fk_validate_ms")fk=a[2];if(a[1]=="attach_ms")attach=a[2];if(a[1]=="total_ms")total=a[2]}
+   printf "window=%s count_ms=%s check_validate_ms=%s fk_validate_ms=%s attach_ms=%s total_ms=%s\n",window,c,check,fk,attach,total
+  }' "$out/CANDIDATE/field-finalize-stages.log" | tee "$out/CANDIDATE/FINALIZER_BREAKDOWN.txt"
+ printf 'FI PROFILE10 PASS duration=10m real_signed_backlog=true completed_windows=%s cpu_profile=%s/CANDIDATE/cpu.pprof sql_stages=%s/CANDIDATE/FINALIZER_BREAKDOWN.txt authoritative=0 accepted=0\n' "$count" "$out" "$out" |
+  tee -a "$out/SUMMARY.txt"
+ exit 0
+;;
 bulk-full)
  # The CONTROL cluster is the unchanged three-window source-prefix control.
  # Only CANDIDATE processes the complete remainder: 114 real signed W128 windows.

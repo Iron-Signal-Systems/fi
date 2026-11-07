@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -77,12 +78,14 @@ func run() error {
 	var privateIndexedCounts bool
 	var privateThirtyMinuteProbe bool
 	var privateReusableEventCopy bool
+	var privateCPUProfile string
 	var testDeferredFault string
 	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone, after-publish, or kill-after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
 	flag.BoolVar(&deferredVerifiedClone, "deferred-verified-clone", false, "EXPERIMENT ONLY: W128/K32/P3/F3 verified cache; defer artifact marker until signed SHA and typed SQL verification share one private transaction")
 	flag.BoolVar(&privateIndexedCounts, "private-indexed-count-verify", false, "DEV ONLY: use signed-batch indexed LATERAL count/byte verifier in exact isolated deferred-clone W128 experiment")
 	flag.BoolVar(&privateThirtyMinuteProbe, "private-30m-probe", false, "DEV ONLY: allow exactly 30m with original count SQL in isolated signed W128 deferred clone (normal 10m limit unchanged)")
 	flag.BoolVar(&privateReusableEventCopy, "private-reusable-event-copy", false, "DEV ONLY: opt in to reusable 40-column Security-event COPY rows for isolated signed W128/P3 deferred clone; production remains unchanged")
+	flag.StringVar(&privateCPUProfile, "private-cpu-profile", "", "DEV ONLY: 10m signed W128 disposable private-clone CPU profile")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
@@ -231,6 +234,32 @@ func run() error {
 		(testFieldFailWindow != 0 && (!privateFieldPartitions || testFieldFailWindow < startWindow ||
 			testFieldFailWindow > startWindow+1)) {
 		return errors.New("FI isolated field benchmark: illegal test stop/failure combination")
+	}
+// A single signed-cache 10-minute private trial may record Go CPU
+	// samples. Production and unbounded full-generation runs cannot opt in.
+	if privateCPUProfile != "" {
+		parent := filepath.Dir(private)
+		info, statErr := os.Lstat(parent)
+		if !deferredVerifiedClone || !privateFieldPartitions || !enable ||
+			!continuousPrivate || startWindow != 3 || maxRuntime != 10*time.Minute ||
+			privateThirtyMinuteProbe || privateReusableEventCopy ||
+			!strings.HasPrefix(parent, "/var/tmp/fi-window-chunks-profile10-ab-") ||
+			privateCPUProfile != filepath.Join(parent, "cpu.pprof") ||
+			statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+			info.Mode().Perm() != 0700 {
+			return errors.New("FI CPU profile requires a pre-created 0700 profile10 private clone")
+		}
+		file, err := os.OpenFile(privateCPUProfile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return fmt.Errorf("FI private CPU profile create: %w", err)
+		}
+		if err := pprof.StartCPUProfile(file); err != nil {
+			_ = file.Close()
+			_ = os.Remove(privateCPUProfile)
+			return fmt.Errorf("FI private CPU profile start: %w", err)
+		}
+		defer func() { pprof.StopCPUProfile(); _ = file.Close() }()
+		fmt.Println("FI PRIVATE CPU PROFILE START mode=profile10 path=cpu.pprof source=real_signed_backlog")
 	}
 	ctx := context.Background()
 	var stop context.CancelFunc
