@@ -89,19 +89,35 @@ func prepareSinglePassSecurityWithGuard(raw []byte, tailGuard bool) (SourceRecor
 	}
 	rawPayload := body[payload+len(securityPayloadKey):len(body)-1]
 	// Canonical collector Security payloads are objects ending with '}'.
-	// In candidate mode, a non-object or a known string-valued outer
-	// member appended after payload must use the established fallback.
-	// Duplicate payload keys are rejected by the envelope checks above.
-	// Complete JSON syntax and all typed members remain subject to the
-	// unchanged strict decoder below, preserving accepted evidence bytes.
-	if len(rawPayload) == 0 ||
-		(tailGuard && rawPayload[len(rawPayload)-1] != '}') ||
-		(!tailGuard && !json.Valid(rawPayload)) {
+	// In candidate mode, non-object and whitespace-suffixed payloads
+	// reuse the original single-pass selector, not the generic decoder.
+	// Duplicate payload members are rejected by the envelope checks.
+	// Full JSON syntax and typed members remain checked by the same
+	// strict decoder; decoder failures fall back to the original path.
+	if len(rawPayload) == 0 {
+		return emptySource, emptySecurity, false, nil
+	}
+	if tailGuard && rawPayload[len(rawPayload)-1] != '}' {
+		// The original single-pass selector accepts some valid payloads
+		// with trailing JSON whitespace. Returning selected=false here
+		// instead would send those records to the different two-pass
+		// decoder, changing their decoded RawMessage representation.
+		// Preserve the exact original selection and error contract.
+		return tryPrepareSinglePassSecurity(raw)
+	}
+	if !tailGuard && !json.Valid(rawPayload) {
 		return emptySource, emptySecurity, false, nil
 	}
 
 	var parsed singlePassSecurityEnvelope
 	if err := decodeStrictPayload(json.RawMessage(body), &parsed); err != nil {
+		if tailGuard {
+			// Malformed and noncanonical records retain the exact legacy
+			// rejection path. This slow fallback runs only when strict
+			// decoding failed; well-formed canonical Security events use
+			// the optimized path without a preliminary payload scan.
+			return tryPrepareSinglePassSecurity(raw)
+		}
 		return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
 	}
 	if parsed.Version != SpoolRecordVersion || parsed.RecordKind != "WindowsSecurityEvent" {
