@@ -585,7 +585,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		var selectedSinglePass bool
 		var prepareErr error
 		if usePrivateSinglePassSecurity(ctx) {
-			prepared, singlePassSecurity, selectedSinglePass, prepareErr = tryPrepareSinglePassSecurity(raw)
+			if usePrivateSecurityPayloadTailGuard(ctx) {
+				prepared, singlePassSecurity, selectedSinglePass, prepareErr = tryPrepareSinglePassSecurityTailGuard(raw)
+			} else {
+				prepared, singlePassSecurity, selectedSinglePass, prepareErr = tryPrepareSinglePassSecurity(raw)
+			}
 		}
 		if prepareErr == nil && !selectedSinglePass {
 			prepared, prepareErr = prepareOwnedSourceRecord(raw)
