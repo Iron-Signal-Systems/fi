@@ -316,9 +316,18 @@ run_arm(){
   printf 'FI PROFILE10 ARMED 10m_signed_backlog=true event_copy=legacy chunk_records=32768 CPU_profile=true SQL_finalizer_profile=true\n' |
    tee -a "$out/SUMMARY.txt"
  fi
- if { [ "$experiment" = payload-tail ] || [ "$experiment" = payload-tail-10w ]; } && [ "$name" = CANDIDATE ]; then
-  set -- "$@" -private-security-payload-tail
-  printf 'FI PAYLOAD TAIL ARMED arm=CANDIDATE guard=object_tail scope=private_only\n' | tee -a "$out/SUMMARY.txt"
+ if [ "$experiment" = payload-tail ] || [ "$experiment" = payload-tail-10w ]; then
+  if [ "$name" = CONTROL ]; then
+   # Production is unchanged; this one isolated A/B arm explicitly
+   # selects the former private JSON validity check as a fair baseline.
+   set -- "$@" -private-security-payload-original
+   printf 'FI PAYLOAD TAIL CONTROL arm=CONTROL guard=original_json_valid scope=private_only\n' | tee -a "$out/SUMMARY.txt"
+  else
+   # Tail guard is the new default in the private P3 path. Retain this
+   # explicit flag so the A/B candidate is auditable in source logs.
+   set -- "$@" -private-security-payload-tail
+   printf 'FI PAYLOAD TAIL ARMED arm=CANDIDATE guard=object_tail scope=private_only\n' | tee -a "$out/SUMMARY.txt"
+  fi
  fi
  if [ "$experiment" = bulk-event ] && [ "$name" = CANDIDATE ]; then
   set -- "$@" -private-reusable-event-copy
@@ -351,8 +360,12 @@ run_arm(){
   if [ "$name" = CANDIDATE ]; then
    grep -q '^FI PRIVATE SECURITY PAYLOAD GUARD mode=object_tail scope=private_only strict_decoder=unchanged$' "$dir/recover.log" ||
     die "CANDIDATE payload-tail guard did not activate"
-  elif grep -q '^FI PRIVATE SECURITY PAYLOAD GUARD ' "$dir/recover.log"; then
-   die "CONTROL unexpectedly activated payload-tail guard"
+  else
+   grep -q '^FI PRIVATE SECURITY PAYLOAD BASELINE mode=original_json_valid scope=private_only strict_decoder=unchanged$' "$dir/recover.log" ||
+    die "CONTROL original payload decoder not activated"
+   if grep -q '^FI PRIVATE SECURITY PAYLOAD GUARD ' "$dir/recover.log"; then
+    die "CONTROL unexpectedly activated payload-tail guard"
+   fi
   fi
  fi
  if [ "$experiment" = bulk-event ]; then
