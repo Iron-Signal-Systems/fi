@@ -1,6 +1,6 @@
 # Windows Volume-First Native Installer Work Contract
 
-**Status:** Requirements for active development, NOT implemented.
+**Status:** Partial read-only discovery/preflight implemented in the branch. Volume-first installer apply/reconcile/rollback and native volume authorization are NOT implemented.
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows engineering/test machine:** `adminbox`
 
