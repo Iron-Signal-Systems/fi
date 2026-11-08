@@ -1,5 +1,8 @@
 # File Intelligence (FI) — Product Definition
 
+> **Active Windows development (2026-11-08):** FI is exploring explicitly enrolled NTFS volume-wide *minimal change evidence* with governed roots as deeper-observation policies. This does not make FI a SIEM or authorize automatic whole-disk content/security inspection. The current implementation and tests remain root-centric; see [ADR-0002](architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). The native installer currently supports only **read-only** volume inventory/preflight, not collection under the new architecture.
+
+
 ## Product
 
 **File Intelligence (FI)** is a non-remediating, read-oriented historical file-intelligence platform.
