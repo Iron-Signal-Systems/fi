@@ -309,8 +309,14 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	var chunkSamples []backlogTypedChunkSample
 	w256Memory := privateW256BudgetFromContext(ctx)
 	activeChunkLimit := chunkLimit
-	if w256Memory != nil && (!joined || typedChunk == nil || w256Memory.requested != chunkLimit) {
-		return errors.New("FI W256 memory: adaptive chunk controller requires exact joined typed-chunk mode")
+	if w256Memory != nil {
+		if !joined || typedChunk == nil || w256Memory.requested != chunkLimit {
+			return errors.New("FI W256 memory: adaptive chunk controller requires exact joined typed-chunk mode")
+		}
+		// The governor is shared across committed windows. A smaller
+		// ceiling learned during a previous W256 window must be retained,
+		// not silently reset to the originally requested K32..K128.
+		activeChunkLimit = w256Memory.active
 	}
 	for offset := 0; offset < len(batchIDs); offset++ {
 		globalIndex := d.StartBatch + offset
