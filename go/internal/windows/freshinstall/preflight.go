@@ -57,11 +57,13 @@ type Finding struct {
 }
 
 type Report struct {
-	Version       string    `json:"version"`
-	Mode          string    `json:"mode"`
-	Clean         bool      `json:"clean"`
-	InstallBlocked bool     `json:"install_blocked"`
-	Findings      []Finding `json:"findings"`
+	Version                string    `json:"version"`
+	Mode                   string    `json:"mode"`
+	Action                 string    `json:"action"`
+	Clean                  bool      `json:"clean"`
+	InstallBlocked         bool      `json:"install_blocked"`
+	InstallationAuthorized bool      `json:"installation_authorized"`
+	Findings               []Finding `json:"findings"`
 }
 
 const (
@@ -86,11 +88,13 @@ func Assess(inspector Inspector) (Report, error) {
 		return Report{}, errors.New("FI fresh-install inspector is required")
 	}
 	report := Report{
-		Version:        ReportVersion,
-		Mode:           InstallMode,
-		Clean:          true,
-		InstallBlocked: false,
-		Findings:       make([]Finding, 0, len(serviceNames)+len(ownedPaths)),
+		Version:                ReportVersion,
+		Mode:                   InstallMode,
+		Action:                 "ReadOnlyFreshHostPreflight",
+		Clean:                  true,
+		InstallBlocked:         false,
+		InstallationAuthorized: false,
+		Findings:               make([]Finding, 0, len(serviceNames)+len(ownedPaths)),
 	}
 	for _, name := range serviceNames {
 		presence, err := inspector.Service(name)
