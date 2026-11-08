@@ -1,5 +1,8 @@
 # File Intelligence (FI)
 
+> **Windows architecture under active development (2026-11-08):** This branch proposes explicit NTFS volume enrollment with one USN pipeline per volume and governed roots controlling deeper observation. See [ADR-0002](docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). The implementation, installer, backend schema and tests remain root-centric; this target is **not yet implemented or validated**. FI is an active development project, not release-ready.
+
+
 <p align="center">
   <img src="docs/images/fi.png" alt="FI — File Intelligence" width="100%">
 </p>
