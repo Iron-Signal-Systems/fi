@@ -16,7 +16,6 @@ runner="$jailroot$repo/go/cmd/fi-backlog-recover/run_w256_chunk_arm_host.sh"
 [ -f "$jailroot$provision" ] && [ -f "$runner" ] || fail "matrix source files missing"
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 [ "$(find "$cache" -name 'batch-*.data' -type f | wc -l | tr -d ' ')" = 8399 ] || fail "verified signed cache differs"
-[ "$(sysctl -n kern.racct.enable 2>/dev/null)" = 1 ] || fail "kernel RCTL not enabled"
 space=$(df -Pk "$jailroot/home/jwood" | awk 'NR==2{print $4}')
 [ "$space" -ge 100663296 ] || fail "less than 96GiB free"
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
@@ -77,7 +76,7 @@ for arm in K64 K96 K128; do
  cmp -s "$out/K32/descriptors.tsv" "$out/$arm/descriptors.tsv" ||
  fail "$arm signed checkpoint chain differs from K32"
 done
-printf 'FI W256 CHUNK MATRIX PASS real_signed_backlog=true identical_source_windows=true windows=4_per_arm 4GiB_RSS_guard=mandatory authoritative=0 accepted=0 output=%s\n' "$out"
+printf 'FI W256 CHUNK MATRIX PASS real_signed_backlog=true identical_source_windows=true windows=4_per_arm memory=adaptive_soft_target authoritative=0 accepted=0 output=%s\n' "$out"
 for arm in K32 K64 K96 K128; do
  printf '\n==== %s ===\n' "$arm"
  cat "$out/$arm/result.txt"
