@@ -8,7 +8,6 @@
 package freshinstall
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -24,6 +23,7 @@ const (
 	CreationJournalVersion = "fi-windows-v2-create-journal/1"
 	maxCreationRecordBytes = 2048
 	maxCreationRecords = 2 + len(creationSteps)*2
+	maxCreationJournalBytes = maxCreationRecordBytes * maxCreationRecords
 )
 
 type CreationStep string
@@ -200,13 +200,21 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 	if reader == nil {
 		return CreationStatus{}, fmt.Errorf("%w: reader is required", ErrInvalidCreationJournal)
 	}
-	scan := bufio.NewScanner(reader)
-	scan.Buffer(make([]byte, 4096), maxCreationRecordBytes)
+	// Unlike bufio.Scanner, this refuses a truncated final record with no
+	// newline. The bound prevents an untrusted journal from allocating
+	// arbitrary memory during crash inspection.
+	data, err := io.ReadAll(io.LimitReader(reader, maxCreationJournalBytes+1))
+	if err != nil {
+		return CreationStatus{}, fmt.Errorf("%w: read: %v", ErrInvalidCreationJournal, err)
+	}
+	if len(data) == 0 || len(data) > maxCreationJournalBytes || data[len(data)-1] != '\n' {
+		return CreationStatus{}, fmt.Errorf("%w: empty, oversized or unterminated journal", ErrInvalidCreationJournal)
+	}
+	records := bytes.Split(data[:len(data)-1], []byte{'\n'})
 	var state CreationStatus
 	var expectedStep int
 	var pending bool
-	for scan.Scan() {
-		raw := scan.Bytes()
+	for _, raw := range records {
 		if len(raw) == 0 || len(raw)+1 > maxCreationRecordBytes {
 			return CreationStatus{}, ErrInvalidCreationJournal
 		}
@@ -269,9 +277,6 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 		}
 		state.Records++
 		state.LastSHA256 = hash
-	}
-	if err := scan.Err(); err != nil {
-		return CreationStatus{}, fmt.Errorf("%w: scan: %v", ErrInvalidCreationJournal, err)
 	}
 	if state.Records == 0 {
 		return CreationStatus{}, fmt.Errorf("%w: empty journal", ErrInvalidCreationJournal)
