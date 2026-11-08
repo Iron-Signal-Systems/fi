@@ -401,33 +401,15 @@ func handleConnection(
 			Data:    data,
 		})
 
-	case operationQueryVolume:
-		if volumes == nil {
-			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrolled-volume USN operation is disabled in legacy mode")
+	case operationQueryVolume, operationReadVolume:
+		result, err := dispatchEnrolledUSN(value, volumes, nativeVolumeUSNSource{})
+		if errors.Is(err, ErrVolumeAccessDenied) {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrolled-volume USN access denied")
 		}
-		target, err := volumes.resolve(value.EnrollmentID)
-		if err != nil {
-			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrollment is not authorized for USN query")
-		}
-		journal, err := usnraw.QueryEnrolledVolume(target.VolumeGUID, target.Serial64)
 		if err != nil {
 			return writeFailure(stream, err)
 		}
-		return writeResponse(stream, response{Journal: brokerJournal(journal)})
-
-	case operationReadVolume:
-		if volumes == nil {
-			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrolled-volume USN operation is disabled in legacy mode")
-		}
-		target, err := volumes.resolve(value.EnrollmentID)
-		if err != nil {
-			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrollment is not authorized for USN read")
-		}
-		journal, data, err := usnraw.ReadEnrolledVolume(target.VolumeGUID, target.Serial64, value.StartUSN)
-		if err != nil {
-			return writeFailure(stream, err)
-		}
-		return writeResponse(stream, response{Journal: brokerJournal(journal), Data: data})
+		return writeResponse(stream, result)
 
 	case operationContainment:
 		if legacy == nil {
