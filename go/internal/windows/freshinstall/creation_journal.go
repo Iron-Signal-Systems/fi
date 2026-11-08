@@ -112,6 +112,13 @@ var (
 // write, and that outcome always requires manual recovery: it must NEVER
 // cause a silent new-install retry. This package provides no native sink yet.
 type CreationSink interface {
+	// ReserveNew must atomically create a fresh exclusively owned journal
+	// destination; it must refuse any preexisting journal/transaction. Its
+	// future Windows implementation must use create-new, no-replace
+	// semantics under an independently verified protected parent and must
+	// hold its exclusive ownership until installation ends. Failure may be
+	// partial and is always in-doubt, never permission to retry.
+	ReserveNew(installationID string) error
 	AppendAndSync(record []byte) error
 }
 
@@ -136,6 +143,12 @@ func executeCreation(
 	}
 	if !validCreationIdentity(identity) {
 		return fmt.Errorf("%w: invalid first-install identity or signed/operational evidence digests", ErrInvalidCreationJournal)
+	}
+	// This reservation must happen before the first journal event or native
+	// Create call. A new call cannot restart an already reserved/in-doubt
+	// installation, even if no prior event was durably acknowledged.
+	if err := sink.ReserveNew(identity.InstallationID); err != nil {
+		return fmt.Errorf("%w: exclusive new-journal reservation: %v", ErrCreationInDoubt, err)
 	}
 	var previous string
 	var sequence uint64
