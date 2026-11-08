@@ -329,3 +329,24 @@ func TestInstalledGrantRequiresActualOperationalConfigurationBytes(t *testing.T)
 		t.Fatalf("equal operational bytes rejected: %v", err)
 	}
 }
+
+func TestFreshInstallationRejectsLaterGrantGenerations(t *testing.T) {
+	f := newSignedFixture(t)
+	generationOne := f.sign(t)
+	if err := VerifyFreshInstallation(generationOne, f.trust, f.scope, f.operational); err != nil {
+		t.Fatalf("genuine first installation grant rejected: %v", err)
+	}
+	oldHash := f.trust.GrantSHA256
+	f.manifest.Generation = 2
+	f.manifest.PreviousGrantSHA256 = oldHash
+	f.manifest.CommitID = "1234567890abcdef1234567890abcdef"
+	f.trust.Generation = 2
+	f.trust.PreviousGrantSHA256 = oldHash
+	secondGrant := f.sign(t)
+	if err := Verify(secondGrant, f.trust, f.scope, f.operational); err != nil {
+		t.Fatalf("general signed-grant verifier unexpectedly rejected valid later generation: %v", err)
+	}
+	if err := VerifyFreshInstallation(secondGrant, f.trust, f.scope, f.operational); !errors.Is(err, ErrGrantDrift) {
+		t.Fatalf("upgrade generation accepted as clean install: %v", err)
+	}
+}
