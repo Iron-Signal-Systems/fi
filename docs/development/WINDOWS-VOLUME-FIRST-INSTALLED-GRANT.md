@@ -6,7 +6,7 @@
 
 ## What is new
 
-`go/internal/windows/volumegrant/grant.go` verifies a signed **durable installed scope declaration** against independently trusted installation state and the exact normalized version 2.0 volume/policy configuration. This is deliberately a different artifact from the **short-lived installer transaction intent** checked by `volumeconsent.Verify`.
+`go/internal/windows/volumegrant/grant.go` verifies a signed **durable installed scope declaration** against independently trusted installation state, the exact normalized version 2.0 volume/policy configuration, and the actual installed operational-configuration bytes (bounded to 1 MiB). Until the future complete v2 operational schema is implemented, it verifies the byte digest but **not** semantic correctness of those operational bytes. This is deliberately a different artifact from the **short-lived installer transaction intent** checked by `volumeconsent.Verify`.
 
 The verifier cannot issue grants, write files, select trust keys, authenticate an installer operator or authorize a journal read. It returns an **error only**, not an object that can be passed to the privileged broker as an authority token.
 
