@@ -231,3 +231,31 @@ func TestReviewRejectsMutatedInstalledBaselineAndMalformedSources(t *testing.T) 
 		t.Fatal("malformed fingerprint accepted")
 	}
 }
+
+func TestReviewRejectsModifiedPresentationDespiteCopiedFingerprint(t *testing.T) {
+	original, err := Build(nil, requested(t), native())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*Review){
+		func(r *Review) { r.RequiresExplicitApproval = false },
+		func(r *Review) { r.BlocksMutation = true },
+		func(r *Review) { r.Changes = nil },
+		func(r *Review) { r.NativeIdentities[0].NativeSerial64 = "1234" },
+		func(r *Review) { r.RequestedConfigSHA256 = strings.Repeat("0", 64) },
+	} {
+		// Rebuild each independently because the review's slices are copied
+		// by reference and must not share mutable state between subcases.
+		review, err := Build(nil, requested(t), native())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(&review)
+		if err := Revalidate(review, nil, requested(t), native()); !errors.Is(err, ErrStaleReview) {
+			t.Fatalf("modified review content was accepted: %v", err)
+		}
+	}
+	if err := Revalidate(original, nil, requested(t), native()); err != nil {
+		t.Fatalf("original review invalidated by unrelated copy mutation: %v", err)
+	}
+}
