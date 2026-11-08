@@ -39,6 +39,34 @@ The exact on-handle full-width serial behavior and its equality to `FILE_ID_INFO
 
 Wire round-trips; backward-compatible legacy requests; invalid/mixed/path-based enrollment selectors; bounded requests; immutable volume authority; missing/reformatted/unsupported volume isolation; mock native dispatch proving no raw access after authorization failure; native target validation; full-width serial comparison and malformed FSCTL return rejection.
 
+## Native read-only characterization command on adminbox
+
+A gated test is now available in `go/internal/windows/usnraw/volume_integration_windows_test.go`. It does not run under ordinary CI. Run only after selecting and independently verifying an explicitly approved NTFS test volume on `adminbox` and recording its volume GUID and **full-width FILE_ID_INFO serial**, not the truncated `fsutil volumeinfo` serial.
+
+From the `go` module directory in PowerShell:
+
+```powershell
+$env:FI_TEST_NATIVE_USN_APPROVAL = "APPROVE-READ-ONLY-FI-USN"
+$env:FI_TEST_NATIVE_USN_GUID     = "<approved-volume-GUID-path-with-trailing-backslash>"
+$env:FI_TEST_NATIVE_USN_SERIAL64 = "<approved-full-64-bit-decimal-serial>"
+go test ./internal/windows/usnraw -run '^TestNativeEnrolledVolumeUSNReadOnly
+
+- On `adminbox`, under the intended FIUSNReader service identity, verify GUID-only, drive-letter and mounted-folder NTFS volumes. Compare the native enumerator's 64-bit FILE_ID_INFO serial with FSCTL_GET_NTFS_VOLUME_DATA serial on the actual USN handle.
+- Verify journal query/read under the actual service gMSA/permissions, local pipe SID authentication, denial of unauthorized clients/volume identifiers, and no downgrade to legacy root operations.
+- Verify disappearance/replacement/reformat of an isolated, explicitly approved test volume causes denial or a visible continuity gap, not a guessed continuous cursor.
+- Demonstrate two-volume fault isolation, SCM restart/stop, bounded resource use and failure response semantics.
+- Deliver installer v2 configuration approval, drift revalidation, gMSA/service setup, policy-root authorization and transactional recovery before switching FIUSNReader startup to the new mode.
+- Validate FICollector-owned source and checkpoint custody, backend records, and the full signed transport before describing this as operational.
+
+Keep exact build, SHA, test setup, timestamps, native errors and retests in the acceptance record. No experimental formatting/journal reset is permitted outside explicit test disks. GitHub Windows runner compilation and unit tests are not this native acceptance.
+
+**Unchanged:** Main branch, installed ISS-FS-22A services, stopped FISender, existing root-centric deployments.
+ -count=1 -v
+Remove-Item Env:FI_TEST_NATIVE_USN_APPROVAL,Env:FI_TEST_NATIVE_USN_GUID,Env:FI_TEST_NATIVE_USN_SERIAL64
+```
+
+The test confirms fresh native discovery, 64-bit serial equality on the raw journal handle, journal query and bounded read. A failed native API is a **test failure**; never substitute a 32-bit serial, bypass the identity check, or create/recreate a journal just to pass it. The test does not prove broker service identity or the real local-pipe protocol. Those require separate controlled service tests after installer approval and service wiring. Always record the exact OS build, source SHA, executable identity and observed errors.
+
 ## Native integration and acceptance still required
 
 - On `adminbox`, under the intended FIUSNReader service identity, verify GUID-only, drive-letter and mounted-folder NTFS volumes. Compare the native enumerator's 64-bit FILE_ID_INFO serial with FSCTL_GET_NTFS_VOLUME_DATA serial on the actual USN handle.
