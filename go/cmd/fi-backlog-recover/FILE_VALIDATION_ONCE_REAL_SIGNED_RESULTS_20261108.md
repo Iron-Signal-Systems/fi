@@ -60,3 +60,17 @@ Compare `FI PRIVATE STAGE PROFILE` counters from `recover.log` for original, fir
 ## CI notes
 
 Corrected source `e02a068`: FreeBSD cross-build, Linux Go tests, Go race test, CodeQL, and PostgreSQL 18 isolated acceptance suites passed. Broad Windows CI failed on platform-specific pre-existing Go build/test issues unrelated to this FileObservation change. Security workflow failed `govulncheck` on known `github.com/klauspost/compress@v1.19.0` vulnerability (fixed in 1.20.2); no dependency changes attempted as part of this performance experiment.
+
+## Stage profile deltas from all three actual recover logs
+
+The source of these figures is the user's post-run read-only `FI PRIVATE STAGE PROFILE` aggregation across **exactly ten** windows. In the historical Go source, `file_projection_inclusive`, `security_projection_inclusive`, and `other_projection_inclusive` partition `projection_total`; those stage timings are nested inside the outer window metrics and **must not be summed with `batch_ingest`**.
+
+| Stage | Original | First candidate | Corrected Go | Corrected vs original |
+|---|---:|---:|---:|---:|
+| File projection | 77.676s | 77.736s | 75.498s | **−2.178s (−2.80%)** |
+| Security projection | 120.989s | 129.247s | 129.241s | +8.252s (+6.82%) |
+| Envelope preparation | 120.184s | 118.800s | 120.225s | +0.041s |
+| Batch ingest | 471.680s | 475.881s | 481.364s | +9.684s |
+| Total ten committed windows | 523.424s | 528.153s | 534.312s | +10.888s |
+
+**Evidence-based conclusion:** The corrected actual Go implementation saved 2.178 seconds of File projection elapsed time versus baseline (2.238 seconds vs the first candidate). Thus, the direct File path improved, even though full ingestion did not. Security projection was almost identical in both candidate runs (129.247s vs 129.241s), each roughly 8.25 seconds behind original. There is not yet evidence distinguishing a repeatable environmental difference from candidate-dependent system interaction or an alternate code path. The outer `batch_ingest` increased more than the Security projection, requiring further decomposition (such as `source_sql`, `other_projection_inclusive`, `security_prepare`, `security_child_prepare`, `security_id_lookup`, and COPY timings). Do not attribute the remaining regression to the removed NTFS check or claim unmeasured benefits.
