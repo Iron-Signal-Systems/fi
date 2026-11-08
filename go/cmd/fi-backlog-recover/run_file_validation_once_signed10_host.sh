@@ -1,6 +1,6 @@
 #!/bin/sh
 # FI historical-source single-validation replay (one change; 10 real signed windows).
-# Historical source: 9e0e6e2 (the final commit before the Nov 6 10:22 UTC trial).
+# Candidate source: historical 9e0e6e2 plus Go-only FileObservation validation-once edits.
 # Exactly one private PostgreSQL fixture: clone-11-08-26.
 # The 32,768-record processing chunk is still active. Never touches fi-sor-db.
 set -eu
@@ -14,7 +14,7 @@ for command in jexec jls ps awk grep find wc sha256; do
 done
 
 name=clone-11-08-26
-ref=5c10786ac57b3f9ae198995e83abdff346ebaea1
+ref=e02a06891600d5877bcb5a680f84bcbcdbc7c195
 seed=/home/jwood/fi-window-bench-fieldpart-20261104T091019Z/W64
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
