@@ -149,3 +149,23 @@ Shape includes W128 index, Security buffer flush reason, parent Security event c
 **Causality:** OPT-BASE committed time = -0.490 s (-0.087%); COPY time = -0.051 s; slow calls = +7. These are near-ties; one sequential pair does not establish an optimization gain. The uninstrumented original baseline from earlier in the day had only 27 >=100ms calls and 46.262s of field COPY time, whereas the new instrumented original baseline has 313 and 59.996s. Consequently the slow-call threshold movement **reproduces on unchanged baseline source**. However, the newly enabled per-call diagnostic printing, GODEBUG=gctrace=1, checkpoint logs, freshly initialized logical-restored PostgreSQL clone, and changing host conditions confound direct historical comparison. Inspect retained pg_before.txt / pg_after.txt (PG WAL/checkpointer/I/O), postgres.log checkpoint activity, and recover.log GC trace before asserting a cause. Do not claim instrumentation or PostgreSQL storage caused it without evidence. Avoid modifying the Security flush algorithm.
 
 Acceptance status: private experiment only; no authoritative writes, no public promotion, no new main-branch code. Next study focus is measurement overhead versus database/host variability, plus separately quantifying whether File validation removal reduces CPU and allocations independently of wall time.
+
+### PostgreSQL and GC deltas from retained paired diagnostic logs
+
+Input: user-produced `pg_before.txt` and `pg_after.txt` from private baseline and optimized fixtures, plus original per-window trace output. PostgreSQL 18 view column order verified against official documentation.
+
+| Statistic (after minus before) | BASE | OPT |
+|---|---:|---:|
+| WAL records | 44,621,323 | 44,623,821 |
+| WAL full-page images | 604,418 | 603,282 |
+| WAL bytes | 10,860,054,645 | 10,846,276,631 |
+| WAL buffer-full events | 204,235 | 200,560 |
+| Requested checkpoints | 20 | 20 |
+| Completed checkpoints | 19 | 19 |
+| Scheduled checkpoints | 0 | 0 |
+| Checkpoint write-phase elapsed ms | 475,997 | 476,642 |
+| Checkpoint sync-phase elapsed ms | 2,205 | 1,491 |
+| Checkpointer shared buffers written | 81,673 | 84,386 |
+| GC trace lines (`^gc [0-9]`) | 826 | 809 |
+
+Interpretation: substantial WAL pressure and 20 requested checkpoints were measured **in both** runs; this is a plausible shared constraint, not an established cause of COPY differences. Checkpointer write-phase time measures asynchronous checkpoint processing and must not be added to/reduced from synchronous ingestion duration. The 13.78 MB difference in generated WAL bytes is ~0.13% of 10.86 GB. The 3,675 extra WAL-buffer-full events in BASE do not themselves establish that WAL writes blocked any particular field COPY. Earlier uninstrumented-run metrics lack comparable PG stats; a direct causal comparison is not available. Absence of grep matches for `checkpoint starting|checkpoint complete` in retained `postgres.log` does NOT negate the checkpointer counters. The next read-only review should inspect retained `pg_stat_io` rows, and only if necessary implement bounded per-call server wait sampling or client-vs-Postgres COPY timing.
