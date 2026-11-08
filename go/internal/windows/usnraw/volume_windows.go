@@ -7,6 +7,7 @@
 package usnraw
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -15,29 +16,20 @@ import (
 	"unsafe"
 )
 
-var (
-	errEnrolledVolumeIdentity = errors.New("FI enrolled NTFS volume identity mismatch")
-	procUSNVolumeGetFileInformationByHandleEx = kernel32.NewProc("GetFileInformationByHandleEx")
-	procUSNVolumeGetVolumeInformationByHandleW = kernel32.NewProc("GetVolumeInformationByHandleW")
+const (
+	// FSCTL_GET_NTFS_VOLUME_DATA is a read-only native request that returns
+	// NTFS_VOLUME_DATA_BUFFER, beginning with the 64-bit volume serial.
+	// Using the SAME raw-volume handle for this check and the later USN FSCTLs
+	// prevents a separate path lookup from supplying an unbound identity.
+	fsctlGetNTFSVolumeData = 0x00090064
+	ntfsVolumeDataBufferSize = 96
 )
 
-// FILE_ID_INFO uses the full 64-bit volume serial, not the 32-bit serial
-// returned by GetVolumeInformationByHandleW.
-type enrolledVolumeFileIDInfo struct {
-	VolumeSerial uint64
-	FileID       [16]byte
-}
+var errEnrolledVolumeIdentity = errors.New("FI enrolled NTFS volume identity mismatch")
 
-var (
-	_ [24 - unsafe.Sizeof(enrolledVolumeFileIDInfo{})]byte
-	_ [unsafe.Sizeof(enrolledVolumeFileIDInfo{}) - 24]byte
-)
-
-// QueryEnrolledVolume queries only an explicitly authorized NTFS volume. The
-// caller must be the authenticated broker dispatcher, which resolves an ID
-// against administrator-approved local configuration. This package still
-// validates exact GUID syntax and re-attests the full 64-bit volume identity
-// on the SAME raw-volume handle used for DeviceIoControl.
+// QueryEnrolledVolume accesses only the GUID/serial target selected by the
+// broker's immutable operator-approved enrollment snapshot. The raw-volume
+// handle is re-attested on each request before the USN journal is queried.
 func QueryEnrolledVolume(volumeGUID, expectedSerial string) (Journal, error) {
 	handle, err := openAndVerifyEnrolledVolume(volumeGUID, expectedSerial)
 	if err != nil {
@@ -48,9 +40,9 @@ func QueryEnrolledVolume(volumeGUID, expectedSerial string) (Journal, error) {
 }
 
 // ReadEnrolledVolume is bounded by the existing 1 MiB USN read buffer. It
-// queries the journal ID on the verified volume handle and passes that ID in
-// the native read request. The unprivileged collector owns continuity, record
-// parsing, durability and subsequent checkpoint decisions.
+// queries the current journal ID on the verified raw-volume handle and uses
+// that ID for the same-handle read. Only the collector may later establish
+// historical continuity and advance a verified custody checkpoint.
 func ReadEnrolledVolume(volumeGUID, expectedSerial string, startUSN int64) (Journal, []byte, error) {
 	if startUSN < 0 {
 		return Journal{}, nil, errors.New("volume USN start cursor must not be negative")
@@ -71,9 +63,10 @@ func ReadEnrolledVolume(volumeGUID, expectedSerial string, startUSN int64) (Jour
 	return journal, data, nil
 }
 
-// enrolledVolumeDevicePath returns a Windows native VOLUME device locator,
-// not a drive-letter or caller-provided raw disk path. Removing exactly the
-// final backslash is required to open the volume rather than its root folder.
+// enrolledVolumeDevicePath validates a Windows-managed volume GUID path and
+// its full 64-bit NTFS serial. Removing ONLY the final backslash yields the
+// device path, rather than opening the volume's root directory. It does not
+// accept drive letters, physical drives, UNC paths or arbitrary raw targets.
 func enrolledVolumeDevicePath(guid, serial string) (string, uint64, error) {
 	const prefix = `\\?\Volume{`
 	const suffix = `}\`
@@ -108,6 +101,22 @@ func enrolledVolumeDevicePath(guid, serial string) (string, uint64, error) {
 	return prefix + strings.ToLower(raw) + "}", id, nil
 }
 
+// verifyNTFSVolumeDataBuffer validates an exact native response length before
+// inspecting its 64-bit serial. No 32-bit fallback is permitted. This helper
+// is testable without privileged volume access.
+func verifyNTFSVolumeDataBuffer(data []byte, returned uint32, expected uint64) error {
+	if len(data) < ntfsVolumeDataBufferSize || returned < ntfsVolumeDataBufferSize ||
+		int(returned) > len(data) {
+		return errors.New("FSCTL_GET_NTFS_VOLUME_DATA returned a malformed NTFS_VOLUME_DATA_BUFFER")
+	}
+	observed := binary.LittleEndian.Uint64(data[:8])
+	if observed != expected {
+		return fmt.Errorf("%w: expected full-width serial %d, observed %d",
+			errEnrolledVolumeIdentity, expected, observed)
+	}
+	return nil
+}
+
 func openAndVerifyEnrolledVolume(guid, serial string) (syscall.Handle, error) {
 	rawPath, expected, err := enrolledVolumeDevicePath(guid, serial)
 	if err != nil {
@@ -119,7 +128,7 @@ func openAndVerifyEnrolledVolume(guid, serial string) (syscall.Handle, error) {
 	}
 	handle, err := syscall.CreateFile(
 		units,
-		fileReadData, // same least-tested raw USN access right as root-era path
+		fileReadData, // existing characterized narrow raw-USN access right
 		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,
 		nil,
 		syscall.OPEN_EXISTING,
@@ -129,38 +138,26 @@ func openAndVerifyEnrolledVolume(guid, serial string) (syscall.Handle, error) {
 	if err != nil {
 		return syscall.InvalidHandle, fmt.Errorf("open approved NTFS volume for USN: %w", err)
 	}
-	var fsName [32]uint16
-	ok, _, callErr := procUSNVolumeGetVolumeInformationByHandleW.Call(
+
+	var data [ntfsVolumeDataBufferSize]byte
+	var returned uint32
+	ok, _, callErr := procDeviceIoControl.Call(
 		uintptr(handle),
-		0, 0, 0, 0, 0,
-		uintptr(unsafe.Pointer(&fsName[0])),
-		uintptr(len(fsName)),
+		fsctlGetNTFSVolumeData,
+		0,
+		0,
+		uintptr(unsafe.Pointer(&data[0])),
+		uintptr(len(data)),
+		uintptr(unsafe.Pointer(&returned)),
+		0,
 	)
 	if ok == 0 {
 		syscall.CloseHandle(handle)
-		return syscall.InvalidHandle, fmt.Errorf("attest filesystem on opened USN volume: %w", callErr)
+		return syscall.InvalidHandle, fmt.Errorf("attest NTFS serial on opened USN volume: %w", callErr)
 	}
-	if !strings.EqualFold(syscall.UTF16ToString(fsName[:]), "NTFS") {
+	if err := verifyNTFSVolumeDataBuffer(data[:], returned, expected); err != nil {
 		syscall.CloseHandle(handle)
-		return syscall.InvalidHandle, fmt.Errorf("%w: opened volume is not NTFS", errEnrolledVolumeIdentity)
-	}
-	var info enrolledVolumeFileIDInfo
-	ok, _, callErr = procUSNVolumeGetFileInformationByHandleEx.Call(
-		uintptr(handle),
-		18, // FileIdInfo
-		uintptr(unsafe.Pointer(&info)),
-		unsafe.Sizeof(info),
-	)
-	if ok == 0 {
-		syscall.CloseHandle(handle)
-		// No fallback to the truncated 32-bit serial or a separately
-		// opened directory handle: identity must be attested on the handle
-		// that actually issues the privileged DeviceIoControl request.
-		return syscall.InvalidHandle, fmt.Errorf("attest full-width serial on opened USN volume: %w", callErr)
-	}
-	if info.VolumeSerial != expected {
-		syscall.CloseHandle(handle)
-		return syscall.InvalidHandle, fmt.Errorf("%w: expected serial %d, observed %d", errEnrolledVolumeIdentity, expected, info.VolumeSerial)
+		return syscall.InvalidHandle, err
 	}
 	return handle, nil
 }
