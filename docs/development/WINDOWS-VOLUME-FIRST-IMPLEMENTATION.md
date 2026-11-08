@@ -1,8 +1,15 @@
 # Windows Volume-First Engineering Implementation Inventory
 
-**Status:** Planning inventory — no code, installer or backend refactor complete
+**Status:** Active source development. Volume policy parsing and continuity assessment are implemented as isolated building blocks; no runtime/installer/backend integration is complete
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows work machine:** `adminbox`
+
+## Implemented work as of 2026-11-08
+
+- `go/internal/windows/volumeepoch/continuity.go` and tests: per-enrolled-volume/epoch checkpoint and journal identity assessment; explicit first-baseline, continuity, journal-changed, volume-changed, aged-out, lowest-valid, ahead-of-journal and invalid-input states. Pure validation only; no state creation/advance/reconciliation.
+- `go/internal/config/volume_v2.go` and tests: strict `2.0` scope declarations for one or more volumes, zero or more governed-root policies, 64-bit serial validation, deterministic normalization, duplicate/scope/path rejection. This API is deliberately not wired into legacy `config.Parse` or the installer until full native preflight and approval semantics are implemented. See `docs/development/WINDOWS-VOLUME-FIRST-CONFIGURATION.md`.
+- Development branch security gate corrected to Go `1.27.3` and `github.com/klauspost/compress` `1.20.2`, with CI using the go.mod toolchain. This is branch-local security remediation, not a release statement.
+- All existing five Windows services and the current native installer remain root-centric and unchanged by these isolated packages. Native Windows testing and integration on `adminbox` have not occurred.
 
 ## Dependency order
 
