@@ -8,6 +8,7 @@ package usnbroker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -33,5 +34,15 @@ func TestUSNBrokerRejectsMissingAndCombinedAuthorityModes(t *testing.T) {
 				t.Fatalf("unsafe combined/missing FIUSNReader authority accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestVolumeModeCannotStartWithoutAuthenticatedInstallerReceipt(t *testing.T) {
+	// Even a syntactically valid, accurately discovered v2 scope cannot
+	// authorize a privileged helper. Native install/reconciliation must first
+	// authenticate and persist deliberate approved scope.
+	candidate := approvedVolumeFixture(t)
+	if err := ServeEnrolledVolumes(context.Background(), candidate); !errors.Is(err, ErrVolumeModeRequiresApproval) {
+		t.Fatalf("unapproved privileged volume broker was allowed to start: %v", err)
 	}
 }
