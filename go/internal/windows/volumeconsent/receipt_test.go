@@ -333,3 +333,58 @@ func TestSignedConsentRequiresIndependentlyTrustedP256Key(t *testing.T) {
 		})
 	}
 }
+
+func TestCNGP256NativeSignatureConvertsToVerifiedReceipt(t *testing.T) {
+	f := makeFixture(t)
+	msg, err := message(f.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(msg)
+	r, s, err := ecdsa.Sign(rand.Reader, f.privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var native [64]byte
+	r.FillBytes(native[:32])
+	s.FillBytes(native[32:])
+	der, err := CNGP256SignatureToDER(native[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ecdsa.VerifyASN1(&f.privateKey.PublicKey, digest[:], der) {
+		t.Fatal("CNG P1363-to-DER conversion lost ECDSA signature validity")
+	}
+	encoded, err := json.Marshal(Receipt{
+		Payload: f.payload,
+		SignatureBase64: base64.StdEncoding.EncodeToString(der),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(encoded, f.expected, nil, f.requested, f.review, f.native); err != nil {
+		t.Fatalf("native CNG-formatted signed approval not accepted: %v", err)
+	}
+}
+
+func TestCNGP256RejectsNoncanonicalOrInvalidRawScalars(t *testing.T) {
+	zero := make([]byte, 64)
+	rOnly := make([]byte, 64)
+	rOnly[31] = 1
+	sOnly := make([]byte, 64)
+	sOnly[63] = 1
+	rTooLarge := make([]byte, 64)
+	elliptic.P256().Params().N.FillBytes(rTooLarge[:32])
+	rTooLarge[63] = 1
+	sTooLarge := make([]byte, 64)
+	sTooLarge[31] = 1
+	elliptic.P256().Params().N.FillBytes(sTooLarge[32:])
+	for _, raw := range [][]byte{
+		nil, zero[:63], make([]byte, 65),
+		zero, rOnly, sOnly, rTooLarge, sTooLarge,
+	} {
+		if encoded, err := CNGP256SignatureToDER(raw); !errors.Is(err, ErrInvalidReceipt) || encoded != nil {
+			t.Fatalf("unsafe CNG ECDSA raw signature accepted: len=%d der=%x error=%v", len(raw), encoded, err)
+		}
+	}
+}
