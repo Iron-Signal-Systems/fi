@@ -17,6 +17,29 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/freshinstall"
 )
 
+// rejectDisabledReadOnlySelectors runs immediately after parsing flags and
+// before any legacy installer operation. A caller who explicitly selects a
+// read-only flag with =false must NOT silently fall into default -apply=true.
+func rejectDisabledReadOnlySelectors(flags *flag.FlagSet) error {
+	if flags == nil {
+		return errors.New("FI installer flags are required")
+	}
+	var rejected []string
+	flags.Visit(func(item *flag.Flag) {
+		switch item.Name {
+		case "check-clean-install", "list-volumes":
+			if item.Value.String() != "true" {
+				rejected = append(rejected, "-"+item.Name)
+			}
+		}
+	})
+	if len(rejected) != 0 {
+		sort.Strings(rejected)
+		return fmt.Errorf("explicit read-only selector disabled; refusing legacy apply fallback: %v", rejected)
+	}
+	return nil
+}
+
 // freshInstallCLI ensures the read-only check never accidentally falls
 // through to the old installer's default -apply=true path. Explicitly given
 // flags are rejected even when they repeat their default value.
