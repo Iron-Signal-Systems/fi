@@ -55,20 +55,20 @@ const (
 // Match is a report, not an authorization token. Operator approval and fresh
 // native rediscovery remain mandatory before any runtime or installer action.
 type Match struct {
-	EnrollmentID string
-	GUID         string
-	Status       MatchStatus
-	Detail       string
+	EnrollmentID string      `json:"enrollment_id"`
+	GUID         string      `json:"volume_guid"`
+	Status       MatchStatus `json:"status"`
+	Detail       string      `json:"detail,omitempty"`
 }
 
 // Preflight deliberately has no "Approved" field. All policy roots still need
 // separate native object-identity/reparse verification and consent.
 type Preflight struct {
-	Matches          []Match
-	Unenrolled       []Snapshot
-	AllVolumesMatch  bool
-	PolicyCount      int
-	ObservationOnly  bool
+	Matches         []Match    `json:"matches"`
+	Unenrolled      []Snapshot `json:"unenrolled_volumes"`
+	AllVolumesMatch bool       `json:"all_volumes_match"`
+	PolicyCount     int        `json:"declared_policy_count"`
+	ObservationOnly bool       `json:"observation_only"`
 }
 
 // AssessEnrollment compares a canonical requested configuration with a
