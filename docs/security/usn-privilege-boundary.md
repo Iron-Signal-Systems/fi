@@ -1,5 +1,8 @@
 # FI NTFS USN Privilege Boundary, Authentication, and Containment Model
 
+> **Proposed privilege-boundary change (2026-11-08):** Current root-authorized USN broker behavior remains as described below. The volume-first development target must authorize only explicitly enrolled-volume journal access and keep protected-object observation scoped to approved governed-root policies. No new broker authority or behavior has been implemented. See [ADR-0002](../architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md).
+
+
 ## Purpose
 
 This document defines the current Windows privilege boundary between
