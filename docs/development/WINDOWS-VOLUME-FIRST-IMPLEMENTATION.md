@@ -15,7 +15,14 @@
 - `go/internal/windows/usnraw/volume_windows.go` now validates the entire 64-bit NTFS serial using read-only `FSCTL_GET_NTFS_VOLUME_DATA` on the same raw handle used for bounded journal query/read. Mock-dispatch and malformed/unauthorized input regression tests are included. See `docs/development/WINDOWS-VOLUME-FIRST-USN-BROKER.md`.
 - The five installed Windows services and native installer apply/reconciliation code remain root-centric. `go/cmd/fi-usn/main_windows.go` still starts the v1.1 broker. Real privileged native integration on `adminbox` has not occurred; Windows-latest CI does not prove that acceptance.
 
-## Dependency order
+## Read-only installer scope-review progress (2026-11-08)
+
+- `go/internal/windows/volumereview/` now produces a deterministic **non-authorizing** scope review and snapshot fingerprint. Its typed changes distinguish volume additions/removals, full-width volume identity replacement, root-policy additions/removals, and any policy alteration. The review is order-independent and excludes drive-letter aliases from identity binding.
+- `volumereview.Revalidate` refuses stale/mismatched native observations, changed proposed/old configurations, and modified review fields. SHA-256 provides a deterministic reference only; it is **not a signature or a protected approval receipt**.
+- Branch-only `fi-install.exe -list-volumes -volume-config <path>` now includes `requested_scope_review` in its non-mutating JSON report. Existing `1.1` installation/service startup is untouched. See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
+- Still not implemented: authenticating an administrator's approval, protected host-bound v2 config/receipt installation, native root object identity and audit/SACL approval, transactional rollback, broker selection at service startup, volume worker custody, and backend changes.
+
+
 
 1. Define explicit volume enrollment, volume/epoch identity, minimal USN change record, policy membership and discontinuity contracts.
 2. Add strict normalized operational configuration, volume enumeration, mount/GUID resolution and approval semantics without enabling capture until enrollment.
