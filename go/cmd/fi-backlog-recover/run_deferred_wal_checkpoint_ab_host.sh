@@ -404,6 +404,519 @@ run_arm(){
  nw=$(wc -l < "$dir/windows.txt" | tr -d ' ')
  [ "$nw" = "$(wc -l < "$dir/stages.txt" | tr -d ' ')" ] || die "$name stage count mismatch"
  [ "$nw" = "$(wc -l < "$dir/deferred.txt" | tr -d ' ')" ] || die "$name artifact count mismatch"
+ if [ "$experiment" = payload-tail ] || [ "$experiment" = payload-tail-10w ]; then
+  # Exactly one private flush profile per durably committed W128 window.
+  # A profile is never proof of acceptance unless every COPY cause was
+  # accounted for and the event/byte totals agree with the COPY writer.
+  grep '^FI PRIVATE SECURITY FLUSH PROFILE ' "$dir/recover.log" > "$dir/security-flush.txt" ||
+   die "$name missing Security flush diagnostic"
+  [ "$(wc -l < "$dir/security-flush.txt" | tr -d ' ')" = "$nw" ] ||
+   die "$name Security flush profile and durable-window counts differ"
+  if grep -v ' consistent=true
+  [ "$name" = CANDIDATE ] || die "full-generation run may use only CANDIDATE"
+  [ "$nw" = 114 ] || die "full-generation run did not durably commit all 114 new W128 windows: $nw"
+  [ "$(sql CANDIDATE "$checkpoint")" = '117|15140785|116' ] ||
+   die "full-generation durable checkpoint is not exactly 117|15140785|116"
+ fi
+ if [ "$experiment" = payload-tail-10w ]; then
+  [ "$nw" = 10 ] || die "$name completed $nw windows instead of exactly 10"
+  [ "$(sql "$name" "$checkpoint")" = '13|1688152|12' ] ||
+   die "$name signed checkpoint not exact W128 window 12"
+  grep -q '^FI PRIVATE EXACT WINDOW STOP start=3 windows=10 last=12 records=1297765 elapsed=.*authoritative=0 accepted=0$' "$dir/result.txt" ||
+   die "$name exact ten-window stop marker or measured duration absent"
+ fi
+ [ "$(integrity "$name")" = PASS ] || die "$name full SQL integrity failed"
+ count=$(sql "$name" "SELECT coalesce(sum(committed_records),0)::text FROM fi_recovery.typed_window")
+ [ "$count" -gt 390387 ] || die "$name committed no new records"
+ printf 'FI BENCH AB SQL PASS arm=%s checkpoint=%s new_windows=%s authoritative=0 accepted=0\n' "$name" "$(sql "$name" "$checkpoint")" "$nw" | tee -a "$out/SUMMARY.txt"
+ cat "$dir/result.txt" | tee -a "$out/SUMMARY.txt"
+}
+: > "$out/SUMMARY.txt"
+# Explicit trial order: independent fresh database clones and the exact same
+# binary, signed cache and CONTROL/P3/F3 W128 settings in both arms.
+# The reverse trial controls for OS cache warming and order effects.
+printf 'FI BENCH AB ORDER %s timing=%s experiment=%s\n' "$order" "$timing" "$experiment" | tee -a "$out/SUMMARY.txt"
+case "$experiment" in
+profile10)
+ [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] ||
+  die "profile10 WAL size changed"
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+  die "profile10 deferred-index COPY path missing"
+ [ "$(sql CANDIDATE "SELECT position('FI_PRIVATE_FIELD_PROFILE' in pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))>0")" = t ] ||
+  die "profile10 SQL finalizer profiler missing"
+ run_arm CANDIDATE
+ readback CANDIDATE
+ pglog="$jailroot$root/CANDIDATE/postgres.log"
+ [ -f "$pglog" ] || die "profile10 PostgreSQL stderr log missing"
+ awk '/FI_PRIVATE_FIELD_PROFILE window=/ {v=$0;sub(/^.*FI_PRIVATE_FIELD_PROFILE /,"FI_PRIVATE_FIELD_PROFILE ",v); print v}' "$pglog" > "$out/CANDIDATE/field-finalize-stages.log"
+ count=$(wc -l < "$out/CANDIDATE/stages.txt" | tr -d ' ')
+ [ "$count" -ge 2 ] || die "profile10 committed fewer than two real signed W128 windows"
+ [ "$(wc -l < "$out/CANDIDATE/field-finalize-stages.log" | tr -d ' ')" = "$count" ] ||
+  die "profile10 finalizer samples mismatch committed window count"
+ # Verify every PostgreSQL RAISE LOG belongs to exactly one durable
+ # checkpoint. A rolled-back finalizer must never masquerade as committed.
+ sql CANDIDATE "SELECT window_index FROM fi_recovery.typed_window WHERE window_index>=3 ORDER BY window_index" > "$out/CANDIDATE/durable-window-ids.txt"
+ if ! awk '
+   FNR==NR {
+     if($1 !~ /^[0-9]+$/ || ($1 in expected)){bad=1;exit 1}
+     expected[$1]=1;total++;next
+   }
+   {
+     id=""
+     if($1!="FI_PRIVATE_FIELD_PROFILE"){bad=1;exit 1}
+     for(i=2;i<=NF;i++){
+       split($i,kv,"=")
+       if(kv[1]=="window")id=kv[2]
+     }
+     if(id !~ /^[0-9]+$/ || !(id in expected) || ++seen[id]!=1){bad=1;exit 1}
+     samples++
+   }
+   END {
+     if(bad || total!=samples)exit 1
+     for(id in expected)if(seen[id]!=1)exit 1
+   }' "$out/CANDIDATE/durable-window-ids.txt" "$out/CANDIDATE/field-finalize-stages.log"; then
+   die "profile10 SQL finalizer samples are not a 1:1 match for durable committed windows"
+ fi
+ awk '
+  {window="";c="";check="";fk="";attach="";total=""
+   for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]=="window")window=a[2];if(a[1]=="count_ms")c=a[2];if(a[1]=="check_validate_ms")check=a[2];if(a[1]=="fk_validate_ms")fk=a[2];if(a[1]=="attach_ms")attach=a[2];if(a[1]=="total_ms")total=a[2]}
+   printf "window=%s count_ms=%s check_validate_ms=%s fk_validate_ms=%s attach_ms=%s total_ms=%s\n",window,c,check,fk,attach,total
+  }' "$out/CANDIDATE/field-finalize-stages.log" | tee "$out/CANDIDATE/FINALIZER_BREAKDOWN.txt"
+ printf 'FI PROFILE10 PASS duration=10m real_signed_backlog=true completed_windows=%s cpu_profile=%s/CANDIDATE/cpu.pprof sql_stages=%s/CANDIDATE/FINALIZER_BREAKDOWN.txt authoritative=0 accepted=0\n' "$count" "$out" "$out" |
+  tee -a "$out/SUMMARY.txt"
+ exit 0
+;;
+bulk-full)
+ # The CONTROL cluster is the unchanged three-window source-prefix control.
+ # Only CANDIDATE processes the complete remainder: 114 real signed W128 windows.
+ # A zero runtime is intentional: do not misreport a time-limited partial
+ # ingestion as successful full-generation verification.
+ [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] ||
+   die "CANDIDATE full-generation WAL is not 8 GiB"
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
+   die "CANDIDATE full-generation optimized begin function is not installed"
+ [ "$(sql CANDIDATE "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure))=0")" = t ] ||
+   die "CANDIDATE full-generation finalization function changed unexpectedly"
+ printf 'FI BULK FULL OPTIMIZATION ACTIVE arm=CANDIDATE indexes=built_on_attach event_copy=legacy source_records=15140785 windows=117 wal_mb=8192 runtime=until_complete\n' |
+   tee -a "$out/SUMMARY.txt"
+ run_arm CANDIDATE
+ # Full source, relational, and SQL integrity gates have passed in run_arm.
+ # Preserve the entire descriptor chain plus independently check that the
+ # signed original three-window prefix is unmodified by the experiment.
+ descriptor="SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index"
+ sql CANDIDATE "$descriptor" > "$out/CANDIDATE/checkpoints.tsv"
+ sql CONTROL "$descriptor" > "$out/CONTROL/checkpoints.tsv"
+ awk -F '|' '$1<3' "$out/CANDIDATE/checkpoints.tsv" > "$out/CANDIDATE/seed-prefix.tsv"
+ cmp -s "$out/CANDIDATE/seed-prefix.tsv" "$out/CONTROL/checkpoints.tsv" ||
+   die "full-generation original signed three-window prefix changed"
+ [ "$(wc -l < "$out/CANDIDATE/checkpoints.tsv" | tr -d ' ')" = 117 ] ||
+   die "full-generation descriptor chain length not 117"
+ # Confirm all 114 new field partitions retain validated PK, FK, CHECK,
+ # plus attached versions of every parent index. This is a metadata query:
+ # it never recounts 180+ million Security field rows.
+ full_constraints=$(sql CANDIDATE "
+ WITH expected AS (
+  SELECT window_index FROM fi_recovery.typed_window WHERE window_index>=3
+ ), child AS (
+  SELECT e.window_index, i.inhrelid AS relid
+  FROM expected e
+  LEFT JOIN pg_class c
+    ON c.relname='windows_security_event_field_w'||lpad(e.window_index::text,6,'0')
+   AND c.relnamespace='fi_recovery_projection'::regnamespace
+  LEFT JOIN pg_inherits i ON i.inhrelid=c.oid
+   AND i.inhparent='fi_recovery_projection.windows_security_event_field'::regclass
+ )
+ SELECT CASE WHEN (SELECT count(*) FROM expected)=114
+  AND NOT EXISTS (
+   SELECT 1 FROM child
+   WHERE relid IS NULL
+    OR NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid=child.relid AND contype='p' AND convalidated)
+    OR NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid=child.relid AND contype='f' AND convalidated)
+    OR NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid=child.relid AND contype='c'
+       AND conname LIKE '%_range' AND convalidated)
+    OR EXISTS (
+     SELECT 1 FROM pg_index parentidx
+     WHERE parentidx.indrelid='fi_recovery_projection.windows_security_event_field'::regclass
+       AND NOT EXISTS (
+        SELECT 1 FROM pg_index childidx
+        JOIN pg_inherits idxattach ON idxattach.inhrelid=childidx.indexrelid
+        WHERE childidx.indrelid=child.relid
+          AND childidx.indisvalid AND childidx.indisready
+          AND idxattach.inhparent=parentidx.indexrelid))
+  )
+ THEN 'PASS' ELSE 'FAIL' END")
+ [ "$full_constraints" = PASS ] ||
+   die "full-generation PK/FK/CHECK/index attachment verification failed"
+ printf 'FI BULK FULL CONSTRAINTS PASS new_windows=114 primary_key=validated foreign_key=validated range_check=validated parent_indexes=attached\n' |
+   tee -a "$out/SUMMARY.txt"
+ readback CANDIDATE
+ # Readback is AFTER the timed processing, so it does not bias throughput.
+ printf 'FI BULK FULL PASS output=%s checkpoint=117|15140785|116 sql_integrity=PASS signed_batches=identical source_prefix=unchanged authoritative=0 accepted=0 full_generation_verified=true\n' "$out" |
+   tee -a "$out/SUMMARY.txt"
+ exit 0
+;;
+single30|profile30)
+ [ "$(sql CANDIDATE "SELECT setting FROM pg_settings WHERE name='max_wal_size'")" = 8192 ] || die "30m WAL not 8GB"
+ run_arm CANDIDATE
+ readback CANDIDATE
+ sql CANDIDATE "SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index" > "$out/CANDIDATE/checkpoints.tsv"
+ if [ "$experiment" = profile30 ]; then
+  pglog="$jailroot$root/CANDIDATE/postgres.log"
+  [ -f "$pglog" ] || die "private PostgreSQL server log missing"
+  # Extract only the finalizer's own PostgreSQL RAISE LOG records. The
+  # earlier preflight marker deliberately does not match this prefix.
+  awk '
+    /FI_PRIVATE_FIELD_PROFILE window=/ {
+      line = $0
+      sub(/^.*FI_PRIVATE_FIELD_PROFILE /, "FI_PRIVATE_FIELD_PROFILE ", line)
+      print line
+    }
+  ' "$pglog" > "$out/CANDIDATE/field-finalize-stages.log" ||
+    die "private finalizer telemetry extraction failed"
+  committed=$(wc -l < "$out/CANDIDATE/stages.txt" | tr -d ' ')
+  # Compare explicit window identities against the durable checkpoint
+  # table, not just the number of log lines. A rolled-back attempt can
+  # emit RAISE LOG; its marker must never count as a committed window.
+  # Do not pipe the validator into tee: POSIX /bin/sh cannot pipefail.
+  if ! awk -v committed="$committed" '
+    function reject(message) {
+      printf "FI PROFILE VALIDATION FAIL %s\n", message
+      failures++
+    }
+    function number(x) {
+      return x ~ /^[0-9]+([.][0-9]+)?$/
+    }
+    BEGIN {
+      keys[1]="rows"
+      keys[2]="count_ms"
+      keys[3]="check_add_ms"
+      keys[4]="check_validate_ms"
+      keys[5]="fk_add_ms"
+      keys[6]="fk_validate_ms"
+      keys[7]="attach_ms"
+      keys[8]="total_ms"
+    }
+    FNR == NR {
+      parts_n=split($0, parts, /\|/)
+      if (parts_n != 3 || parts[1] !~ /^[0-9]+$/) {
+        reject("invalid checkpoint row: " $0)
+        next
+      }
+      w=parts[1]+0
+      if (w >= 3) {
+        if (w in expected) reject("duplicate durable checkpoint window=" w)
+        else { expected[w]=1; expected_n++ }
+      }
+      next
+    }
+    {
+      raw_n++
+      if ($1 != "FI_PRIVATE_FIELD_PROFILE") {
+        reject("invalid sample prefix at line=" FNR)
+        next
+      }
+      record_id++
+      for (i=2;i<=NF;i++) {
+        nv=split($i, pair, "=")
+        if (nv != 2 || pair[1] == "" || pair[2] == "") {
+          reject("invalid key=value at profile line=" FNR)
+          continue
+        }
+        if (key_record[pair[1]] == record_id)
+          reject("duplicate field " pair[1] " at profile line=" FNR)
+        key_record[pair[1]]=record_id
+        value[pair[1]]=pair[2]
+      }
+      if (key_record["window"] != record_id ||
+          value["window"] !~ /^[0-9]+$/) {
+        reject("missing or invalid window at profile line=" FNR)
+        next
+      }
+      w=value["window"]+0
+      if (!(w in expected)) {
+        reject("uncommitted or unexpected profiler window=" w)
+        next
+      }
+      sample[w]++
+      if (sample[w] != 1) {
+        reject("duplicate profiler window=" w)
+        next
+      }
+      valid=1
+      for (i=1;i<=8;i++) {
+        k=keys[i]
+        if (key_record[k] != record_id || !number(value[k])) {
+          reject("invalid " k " for window=" w)
+          valid=0
+        }
+      }
+      if (!valid) next
+      if (value["rows"] !~ /^[0-9]+$/)
+        reject("invalid integer rows for window=" w)
+      g=(w<=12 ? 1 : w<=22 ? 2 : 3)
+      n[g]++
+      count[g]+=value["count_ms"]+0
+      check_add[g]+=value["check_add_ms"]+0
+      check[g]+=value["check_validate_ms"]+0
+      fk_add[g]+=value["fk_add_ms"]+0
+      fk[g]+=value["fk_validate_ms"]+0
+      attach[g]+=value["attach_ms"]+0
+      total[g]+=value["total_ms"]+0
+    }
+    END {
+      if (expected_n != committed)
+        reject("durable checkpoint windows=" expected_n " stage profiles=" committed)
+      if (raw_n != committed)
+        reject("captured profiler messages=" raw_n " committed windows=" committed)
+      for (w in expected)
+        if (sample[w] != 1)
+          reject("missing or duplicated committed window=" w " samples=" sample[w]+0)
+      if (failures) exit 1
+      print "FI PRIVATE FIELD FINALIZE COHORTS seconds per window"
+      print "COHORT WINDOWS COUNT CHECK_ADD CHECK_VALIDATE FK_ADD FK_VALIDATE ATTACH TOTAL"
+      for (g=1;g<=3;g++) {
+        cohort=(g==1 ? "EARLY" : g==2 ? "MIDDLE" : "LATE")
+        if (n[g])
+          printf "%s %d %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+            cohort,n[g],count[g]/n[g]/1000,check_add[g]/n[g]/1000,
+            check[g]/n[g]/1000,fk_add[g]/n[g]/1000,
+            fk[g]/n[g]/1000,attach[g]/n[g]/1000,total[g]/n[g]/1000
+      }
+    }
+  ' "$out/CANDIDATE/checkpoints.tsv" "$out/CANDIDATE/field-finalize-stages.log" > "$out/CANDIDATE/field-finalize-summary.txt"; then
+    tail -n 50 "$out/CANDIDATE/field-finalize-summary.txt" >&2 || :
+    die "private finalizer telemetry does not match committed checkpoints"
+  fi
+  cat "$out/CANDIDATE/field-finalize-summary.txt"
+ fi
+ printf 'FI PRIVATE 30M PASS output=%s experiment=%s sql_and_signed_readback=PASS original_count_verifier=true authoritative=0 accepted=0\n' "$out" "$experiment" | tee -a "$out/SUMMARY.txt"
+ printf 'FI PRIVATE 30M FILES: %s/CANDIDATE/{result,stages,windows,pg-waits,iostat,vmstat,process}.txt_or_log\n' "$out" | tee -a "$out/SUMMARY.txt"
+ exit 0
+;;
+esac
+if [ "$order" = reverse ];then
+ run_arm CANDIDATE
+ run_arm CONTROL
+else
+ run_arm CONTROL
+ run_arm CANDIDATE
+fi
+# Readback is deliberately AFTER BOTH timed tests. Reading every source
+# batch after the control but before the candidate would artificially warm
+# the candidate source cache and bias the A/B comparison.
+readback CONTROL
+readback CANDIDATE
+case "$experiment" in bulk-index|bulk-event|fk-memory|payload-tail|payload-tail-10w)
+ # Confirm no essential DB property vanished when indexes were delayed.
+ for arm in CONTROL CANDIDATE; do
+  for window in 3 4; do
+   child=$(printf 'fi_recovery_projection.windows_security_event_field_w%06d' "$window")
+   result=$(sql "$arm" "SELECT
+    EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='$child'::regclass AND contype='p' AND convalidated)
+    AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='$child'::regclass AND contype='f' AND convalidated)
+    AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='$child'::regclass AND contype='c'
+      AND conname LIKE '%_range' AND convalidated)
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_index pi
+      WHERE pi.indrelid='fi_recovery_projection.windows_security_event_field'::regclass
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_index ci JOIN pg_inherits inh ON inh.inhrelid=ci.indexrelid
+        WHERE ci.indrelid='$child'::regclass AND ci.indisvalid AND ci.indisready
+          AND inh.inhparent=pi.indexrelid
+      )
+    )")
+   [ "$result" = t ] || die "$arm window=$window missing validated PK/FK/range or attached parent index"
+  done
+ done
+ printf 'FI BULK INDEX CONSTRAINTS PASS arms=CONTROL,CANDIDATE windows=3,4 PK=valid FK=validated range=validated parent_indexes=attached\n' | tee -a "$out/SUMMARY.txt"
+;; esac
+# Compare the signed descriptor chain for every COMMON completed window,
+# independent of CONTROL/CANDIDATE's differing completion counts in ten minutes.
+descriptor="SELECT window_index::text || '|' || encode(descriptor_sha256,'hex') || '|' || committed_records::text FROM fi_recovery.typed_window ORDER BY window_index"
+sql CONTROL "$descriptor" > "$out/CONTROL/checkpoints.tsv"
+sql CANDIDATE "$descriptor" > "$out/CANDIDATE/checkpoints.tsv"
+lastControl=$(tail -n 1 "$out/CONTROL/checkpoints.tsv" | cut -d '|' -f1)
+lastCandidate=$(tail -n 1 "$out/CANDIDATE/checkpoints.tsv" | cut -d '|' -f1)
+common=$lastControl
+[ "$lastCandidate" -lt "$common" ] && common=$lastCandidate
+awk -F '|' -v limit="$common" '$1<=limit' "$out/CONTROL/checkpoints.tsv" > "$out/CONTROL/common.tsv"
+awk -F '|' -v limit="$common" '$1<=limit' "$out/CANDIDATE/checkpoints.tsv" > "$out/CANDIDATE/common.tsv"
+diff -u "$out/CONTROL/common.tsv" "$out/CANDIDATE/common.tsv" > "$out/common.diff" || die "common signed source checkpoint chain differs"
+printf 'FI BENCH AB COMMON PREFIX PASS through_window=%s descriptors_identical=true\n' "$common" | tee -a "$out/SUMMARY.txt"
+# Calculate exact per-run cumulative PostgreSQL 18 counters.
+awk -F '|' '
+FNR==1 {
+ arm=(FILENAME ~ /\/CONTROL\// ? "CONTROL" : "CANDIDATE")
+ sample=(FILENAME ~ /\/before\.stats$/ ? "before" : "after")
+}
+{for(i=1;i<=NF;i++) metric[arm,sample,FNR,i]=$i+0}
+END{
+ names[1,1]="checkpoints_requested"
+ names[1,2]="checkpoints_timed"
+ names[1,3]="checkpoints_done"
+ names[1,4]="checkpoint_write_ms"
+ names[1,5]="checkpoint_sync_ms"
+ names[1,6]="checkpoint_buffers_written"
+ names[2,1]="wal_bytes"
+ names[2,2]="wal_full_page_images"
+ names[2,3]="wal_buffers_full"
+ names[3,1]="wal_io_writes"
+ names[3,2]="wal_io_write_ms"
+ names[3,3]="wal_io_fsyncs"
+ names[3,4]="wal_io_fsync_ms"
+ print "FI AB POSTGRES COUNTER DELTAS"
+ printf "%-29s %17s %17s %12s\n","METRIC","CONTROL CONTROL","CANDIDATE CANDIDATE","DELTA"
+ for(j=1;j<=3;j++){
+  count=(j==1?6:j==2?3:4)
+  for(i=1;i<=count;i++){
+   a=metric["CONTROL","after",j,i]-metric["CONTROL","before",j,i]
+   b=metric["CANDIDATE","after",j,i]-metric["CANDIDATE","before",j,i]
+   printf "%-29s %17.0f %17.0f %+12.0f\n",names[j,i],a,b,b-a
+  }
+ }
+}' "$out/CONTROL/before.stats" "$out/CONTROL/after.stats" \
+ "$out/CANDIDATE/before.stats" "$out/CANDIDATE/after.stats" | tee "$out/COUNTERS_DELTA.txt"
+grep -E '^FI (TEN MINUTE STOP|PRIVATE EXACT WINDOW STOP) ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" | tee "$out/THROUGHPUT_COMPARISON.txt"
+if [ "$experiment" = fk-memory ]; then
+ for arm in CONTROL CANDIDATE; do
+  pglog="$jailroot$root/$arm/postgres.log"
+  [ -f "$pglog" ] || die "$arm SQL profiler log missing"
+  awk '/FI_PRIVATE_FIELD_PROFILE window=/ {line=$0;sub(/^.*FI_PRIVATE_FIELD_PROFILE /,"FI_PRIVATE_FIELD_PROFILE ",line);print line}' "$pglog" > "$out/$arm/field-profiler.log"
+  sql "$arm" "SELECT window_index FROM fi_recovery.typed_window WHERE window_index>=3 ORDER BY window_index" > "$out/$arm/committed-windows.txt"
+  if ! awk '
+   function value(k,  i,a){for(i=1;i<=NF;i++){split($i,a,"=");if(a[1]==k)return a[2]}return ""}
+   FNR==NR{if($1!~/^[0-9]+$/||($1 in expected)){bad=1;exit 1};expected[$1]=1;committed++;next}
+   {
+    w=value("window");fk=value("fk_validate_ms")
+    if($1!="FI_PRIVATE_FIELD_PROFILE"||w!~/^[0-9]+$/||!(w in expected)||++seen[w]!=1||fk!~/^[0-9]+([.][0-9]+)?$/){bad=1;exit 1}
+    samples++
+   }
+   END{if(bad||committed<2||committed!=samples)exit 1;for(w in expected)if(seen[w]!=1)exit 1}
+  ' "$out/$arm/committed-windows.txt" "$out/$arm/field-profiler.log"; then
+   die "$arm profile is not 1:1 with committed signed windows"
+  fi
+  printf 'FI FK MEMORY LOG PASS arm=%s committed_windows=%s\n' "$arm" "$(wc -l < "$out/$arm/committed-windows.txt" | tr -d ' ')" | tee -a "$out/SUMMARY.txt"
+ done
+ if ! awk '
+  function value(k,  i,a){for(i=1;i<=NF;i++){split($i,a,"=");if(a[1]==k)return a[2]}return ""}
+  FNR==NR{w=value("window");ref[w]=value("fk_validate_ms")+0;next}
+  {w=value("window");if(w in ref){
+   a=ref[w];b=value("fk_validate_ms")+0
+   printf "window=%s control_fk_ms=%.3f candidate_fk_ms=%.3f difference_ms=%+.3f\n",w,a,b,b-a
+   matches++;sumA+=a;sumB+=b
+  }}
+  END{if(matches<2)exit 1;printf "MATCHED=%d CONTROL_FK_MS=%.3f CANDIDATE_FK_MS=%.3f DIFFERENCE_MS=%+.3f\n",matches,sumA,sumB,sumB-sumA}
+ ' "$out/CONTROL/field-profiler.log" "$out/CANDIDATE/field-profiler.log" > "$out/FK_MEMORY_COMPARISON.txt"; then
+  die "FK memory A/B comparison failed"
+ fi
+ cat "$out/FK_MEMORY_COMPARISON.txt"
+ printf 'FI FK MEMORY AB PASS duration=10m_per_arm both_integrity=PASS common_signed_prefix=identical control=4MB candidate=64MB authoritative=0 accepted=0 output=%s\n' "$out" | tee -a "$out/SUMMARY.txt"
+fi
+if [ "$experiment" = payload-tail-10w ]; then
+ # Both runs must share all 13 descriptors, including seed windows 0-2.
+ # The existing artifact readback, SQL integrity, and FK/PK/index gates
+ # have already succeeded before this comparison.
+ cmp -s "$out/CONTROL/checkpoints.tsv" "$out/CANDIDATE/checkpoints.tsv" ||
+  die "exact-ten-window signed descriptor chains do not match"
+ : > "$out/PAYLOAD_TAIL_10W_STAGES.txt"
+ for arm in CONTROL CANDIDATE; do
+  [ "$(wc -l < "$out/$arm/windows.txt" | tr -d ' ')" = 10 ] ||
+   die "$arm exact-ten-window count differs"
+  [ "$(wc -l < "$out/$arm/checkpoints.tsv" | tr -d ' ')" = 13 ] ||
+   die "$arm seed plus ten signed descriptor count differs"
+  grep -q '^FI PRIVATE EXACT WINDOW STOP start=3 windows=10 last=12 records=1297765 elapsed=' "$out/$arm/result.txt" ||
+   die "$arm exact durable commit timing missing"
+  awk -v arm="$arm" '
+   /^FI PRIVATE STAGE PROFILE / {
+    index="";rows="";prepare="";typed=""
+    for(i=1;i<=NF;i++) {
+     split($i,pair,"=")
+     if(pair[1]=="index") index=pair[2]
+     if(pair[1]=="records") rows=pair[2]
+     if(pair[1]=="envelope_prepare") prepare=pair[2]
+     if(pair[1]=="typed_total") typed=pair[2]
+    }
+    if(index==""||rows==""||prepare==""||typed=="") exit 1
+    printf "arm=%s window=%s records=%s envelope_prepare=%s typed_total=%s\n",arm,index,rows,prepare,typed
+   }' "$out/$arm/stages.txt" >> "$out/PAYLOAD_TAIL_10W_STAGES.txt" ||
+    die "$arm stage parsing failed"
+ done
+ grep '^FI PRIVATE EXACT WINDOW STOP ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" |
+  tee "$out/PAYLOAD_TAIL_10W_RATES.txt"
+ cat "$out/PAYLOAD_TAIL_10W_STAGES.txt"
+ printf 'FI PAYLOAD TAIL TEN WINDOW AB PASS each_arm=10_committed_W128 windows=3..12 records=1297765 no_timer=TRUE signed_readback=PASS sql_integrity=PASS descriptors=identical accepted=0 authoritative=0 output=%s\n' "$out" |
+  tee -a "$out/SUMMARY.txt"
+fi
+if [ "$experiment" = payload-tail ]; then
+ # Both arms must pass the existing signed source readback, SQL integrity,
+ # deferred-field PK/FK/range/index verification, and common-prefix check
+ # before any timings are compared. No partial windows count as durable.
+ for arm in CONTROL CANDIDATE; do
+  [ "$(wc -l < "$out/$arm/windows.txt" | tr -d ' ')" -ge 2 ] ||
+   die "$arm completed fewer than two durable windows"
+  grep -q '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$out/$arm/result.txt" ||
+   die "$arm did not preserve the 10m private recovery boundary"
+ done
+ awk '
+  /^FI PRIVATE STAGE PROFILE / {
+   window=""; records=""; envelope=""; typed=""
+   for(i=1;i<=NF;i++){
+    split($i,pair,"=")
+    if(pair[1]=="index") window=pair[2]
+    if(pair[1]=="records") records=pair[2]
+    if(pair[1]=="envelope_prepare") envelope=pair[2]
+    if(pair[1]=="typed_total") typed=pair[2]
+   }
+   printf "arm=%s window=%s records=%s envelope_prepare=%s typed_total=%s\n", FILENAME, window, records, envelope, typed
+  }
+ ' "$out/CONTROL/stages.txt" "$out/CANDIDATE/stages.txt" > "$out/PAYLOAD_TAIL_AB_STAGES.txt"
+ cat "$out/PAYLOAD_TAIL_AB_STAGES.txt"
+ grep '^FI TEN MINUTE STOP ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" > "$out/PAYLOAD_TAIL_AB_DURABLE_RATES.txt"
+ cat "$out/PAYLOAD_TAIL_AB_DURABLE_RATES.txt"
+ printf 'FI PAYLOAD TAIL AB PASS duration=10m_each signed_readback=PASS sql_integrity=PASS common_prefix=identical both_deferred_indexes=true source_hashes=unchanged accepted=0 authoritative=0 output=%s\n' "$out" |
+  tee -a "$out/SUMMARY.txt"
+fi
+if [ "$experiment" = bulk-event ]; then
+ # Ten-minute wall-clock timebox for EACH independent arm. Different
+ # committed window counts are expected; only identical common signed
+ # prefixes can be compared directly. No partial window counts as durable.
+ for name in CONTROL CANDIDATE; do
+  [ "$(wc -l < "$out/$name/windows.txt" | tr -d ' ')" -ge 2 ] ||
+   die "$name completed fewer than two durable W128 windows in 10 minutes"
+  grep -q '^FI TEN MINUTE STOP .*authoritative=0 accepted=0' "$out/$name/result.txt" ||
+   die "$name did not stop at the 10m deadline with custody preserved"
+ done
+ for name in CONTROL CANDIDATE; do
+  awk -v arm="$name" '
+   /^FI PRIVATE STAGE PROFILE / {
+    window=""; records=""; typed=""; envelope=""; event=""
+    for (i=1;i<=NF;i++) {
+     split($i,kv,"=")
+     if(kv[1]=="index") window=kv[2]
+     if(kv[1]=="records") records=kv[2]
+     if(kv[1]=="typed_total") typed=kv[2]
+     if(kv[1]=="envelope_prepare") envelope=kv[2]
+     if(kv[1]=="security_event_copy") event=kv[2]
+    }
+    printf "arm=%s window=%s records=%s typed_total=%s envelope_prepare=%s security_event_copy=%s\n",arm,window,records,typed,envelope,event
+   }' "$out/$name/stages.txt"
+ done | tee "$out/EVENT_COPY_AB_STAGES.txt"
+ # The Go stop marker prints durable-wall rate, checkpoint rate, and
+ # committed-window rate. Retain all three: no inferred throughput.
+ grep '^FI TEN MINUTE STOP ' "$out/CONTROL/result.txt" "$out/CANDIDATE/result.txt" |
+  tee "$out/EVENT_COPY_AB_DURABLE_RATES.txt"
+ printf 'FI EVENT COPY AB PASS duration=10m_per_arm common_prefix=identical control=legacy candidate=reusable both_chunk=32768 both=deferred_indexes durability=on accepted=0 authoritative=0 output=%s\n' "$out" |
+  tee -a "$out/SUMMARY.txt"
+fi
+printf 'FI BENCH AB COMPLETE output=%s experiment=%s order=%s timing=%s control_wal_mb=%s candidate_wal_mb=8192 signed_data=identical independent_real_db=true\n' "$out" "$experiment" "$order" "$timing" "$expectedControlWal" | tee -a "$out/SUMMARY.txt"
+printf 'FI BENCH AB COUNTER FILES: %s/CONTROL/{before,after}.stats and %s/CANDIDATE/{before,after}.stats\n' "$out" "$out"
+ "$dir/security-flush.txt" > "$dir/security-flush-invalid.txt"; then
+   die "$name Security flush cause accounting did not reconcile"
+  fi
+ fi
  if [ "$experiment" = bulk-full ]; then
   [ "$name" = CANDIDATE ] || die "full-generation run may use only CANDIDATE"
   [ "$nw" = 114 ] || die "full-generation run did not durably commit all 114 new W128 windows: $nw"
