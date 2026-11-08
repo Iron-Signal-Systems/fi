@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // VolumeConfigVersion is deliberately separate from Config.Version11: the
@@ -326,6 +327,14 @@ func canonicalNonzeroDecimal(s string) error {
 }
 
 func canonicalRelativeRoot(root string) (string, error) {
+	if !utf8.ValidString(root) {
+		return "", errors.New("policy root must be valid UTF-8")
+	}
+	for _, char := range root {
+		if char < 0x20 || char == 0x7f {
+			return "", errors.New("policy root contains a control character")
+		}
+	}
 	if root == `\` {
 		return root, nil
 	}
