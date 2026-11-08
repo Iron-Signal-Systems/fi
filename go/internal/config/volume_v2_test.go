@@ -76,6 +76,9 @@ func TestParseVolumeV2RejectsUnsafeScope(t *testing.T) {
 		{"same volume twice", strings.Replace(approvedData, `\\?\Volume{f21d9dd4-8111-4be8-83e9-a1429a261cdf}\`, `\\?\Volume{18fed846-4275-4251-b698-f268192100f2}\`, 1), "share the same"},
 		{"same root twice", approvedData + `policy.second.volume = data` + "\n" + `policy.second.root = \Shares\Finance` + "\n" + `policy.second.depth = content` + "\n", "same root"},
 		{"root missing depth", strings.Replace(approvedData, "policy.finance.depth = security\n", "", 1), "requires"},
+		{"nul in root", strings.Replace(approvedData, `\Shares\Finance`, "\\Shares\\Finance"+string(rune(0)), 1), "control character"},
+		{"tab in path", strings.Replace(approvedData, `\Shares\Finance`, "\\Shares\\Fin\tance", 1), "control character"},
+		{"invalid UTF-8 path", strings.Replace(approvedData, `\Shares\Finance`, "\\Shares\\Fin"+string([]byte{0xff}), 1), "valid UTF-8"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
