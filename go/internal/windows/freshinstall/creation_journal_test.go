@@ -18,6 +18,14 @@ const (
 	testScopeSHA   = "f1302266d212324eef10ab70ea4c09cb86151de3130d6b9485d4bd60f38a018e"
 )
 
+var testCreationIdentity = CreationIdentity{
+	InstallationID: testInstallID,
+	ScopeSHA256: testScopeSHA,
+	OperationalSHA256: strings.Repeat("a", 64),
+	ApprovalReceiptSHA256: strings.Repeat("b", 64),
+	SignedGrantSHA256: strings.Repeat("c", 64),
+}
+
 type recordingSink struct {
 	data bytes.Buffer
 	calls int
@@ -54,7 +62,7 @@ func validJournal(t *testing.T) ([]byte, []CreationStep) {
 	t.Helper()
 	var journal recordingSink
 	var backend recordingCreator
-	if err := executeCreation(&journal, &backend, testInstallID, testScopeSHA); err != nil {
+	if err := executeCreation(&journal, &backend, testCreationIdentity); err != nil {
 		t.Fatal(err)
 	}
 	return append([]byte(nil), journal.data.Bytes()...), backend.steps
@@ -77,7 +85,7 @@ func TestCreationJournalCompletePlanRequiresEveryDurableAcknowledgement(t *testi
 	if !status.Complete || status.InDoubt || status.NextStep != "" ||
 		status.CreatedSteps != len(creationSteps) ||
 		status.Records != uint64(maxCreationRecords) ||
-		status.InstallationID != testInstallID || status.ScopeSHA256 != testScopeSHA {
+		status.CreationIdentity != testCreationIdentity {
 		t.Fatalf("incorrect completed journal: %+v", status)
 	}
 	// This is audit evidence ONLY. It must not be usable as an authorization
@@ -89,7 +97,7 @@ func TestCreationNeverMutatesBeforeDurableIntent(t *testing.T) {
 		t.Run(fmt.Sprintf("record%d", failAt), func(t *testing.T) {
 			sink := &recordingSink{failAt: failAt}
 			backend := &recordingCreator{}
-			err := executeCreation(sink, backend, testInstallID, testScopeSHA)
+			err := executeCreation(sink, backend, testCreationIdentity)
 			if !errors.Is(err, ErrCreationInDoubt) {
 				t.Fatalf("journal write error did not fail closed: %v", err)
 			}
@@ -114,7 +122,7 @@ func TestCreationFailureLeavesExplicitUnknownOwnership(t *testing.T) {
 	for _, failAt := range []int{1, 3, len(creationSteps)} {
 		sink := &recordingSink{}
 		backend := &recordingCreator{failAt: failAt}
-		err := executeCreation(sink, backend, testInstallID, testScopeSHA)
+		err := executeCreation(sink, backend, testCreationIdentity)
 		if !errors.Is(err, ErrCreationInDoubt) {
 			t.Fatalf("native mutation failed without uncertain-state error: %v", err)
 		}
@@ -219,6 +227,9 @@ func TestCreationJournalRejectsRehashedButOutOfOrderOrCrossInstallEvents(t *test
 	test("duplicate begin", func(r *CreationRecord) { r.Event = CreationBegin; r.Step = "" })
 	test("wrong step", func(r *CreationRecord) { r.Step = CommitProtectedState })
 	test("cross installation", func(r *CreationRecord) { r.InstallationID = "abcdef01234567890abcdef012345678" })
+	test("different signed approval", func(r *CreationRecord) { r.ApprovalReceiptSHA256 = strings.Repeat("d", 64) })
+	test("different signed grant", func(r *CreationRecord) { r.SignedGrantSHA256 = strings.Repeat("e", 64) })
+	test("different operational config", func(r *CreationRecord) { r.OperationalSHA256 = strings.Repeat("f", 64) })
 	test("incorrect sequence", func(r *CreationRecord) { r.Sequence = 101 })
 	test("missing matching intent", func(r *CreationRecord) { r.Event = CreationObserved })
 }
@@ -227,16 +238,28 @@ func TestCreationJournalRefusesInvalidInputsAndNoBackend(t *testing.T) {
 	cases := []struct {
 		sink CreationSink
 		backend CreationBackend
-		id string
-		digest string
+		identity CreationIdentity
 	}{
-		{nil, &recordingCreator{}, testInstallID, testScopeSHA},
-		{&recordingSink{}, nil, testInstallID, testScopeSHA},
-		{&recordingSink{}, &recordingCreator{}, "not-an-id", testScopeSHA},
-		{&recordingSink{}, &recordingCreator{}, testInstallID, strings.Repeat("0", 63)},
+		{nil, &recordingCreator{}, testCreationIdentity},
+		{&recordingSink{}, nil, testCreationIdentity},
+	}
+	for _, mutate := range []func(*CreationIdentity){
+		func(x *CreationIdentity) { x.InstallationID = "not-an-id" },
+		func(x *CreationIdentity) { x.ScopeSHA256 = strings.Repeat("0", 63) },
+		func(x *CreationIdentity) { x.OperationalSHA256 = "" },
+		func(x *CreationIdentity) { x.ApprovalReceiptSHA256 = strings.Repeat("A", 64) },
+		func(x *CreationIdentity) { x.SignedGrantSHA256 = strings.Repeat("0", 65) },
+	} {
+		identity := testCreationIdentity
+		mutate(&identity)
+		cases = append(cases, struct {
+			sink CreationSink
+			backend CreationBackend
+			identity CreationIdentity
+		}{&recordingSink{}, &recordingCreator{}, identity})
 	}
 	for _, tc := range cases {
-		if err := executeCreation(tc.sink, tc.backend, tc.id, tc.digest); !errors.Is(err, ErrInvalidCreationJournal) {
+		if err := executeCreation(tc.sink, tc.backend, tc.identity); !errors.Is(err, ErrInvalidCreationJournal) {
 			t.Fatalf("invalid create-only caller accepted: %v", err)
 		}
 	}
@@ -245,7 +268,7 @@ func TestCreationJournalRefusesInvalidInputsAndNoBackend(t *testing.T) {
 func TestCreationJournalSinkCanFailAfterPartialDurableWrite(t *testing.T) {
 	sink := &recordingSink{failAt: 6, partial: true}
 	backend := &recordingCreator{}
-	err := executeCreation(sink, backend, testInstallID, testScopeSHA)
+	err := executeCreation(sink, backend, testCreationIdentity)
 	if !errors.Is(err, ErrCreationInDoubt) {
 		t.Fatalf("ambiguous partial durable append must block recovery: %v", err)
 	}
