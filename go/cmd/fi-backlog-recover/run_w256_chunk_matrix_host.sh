@@ -103,7 +103,7 @@ done
 # rates include only completed durable W256 windows, never uncommitted work.
 printf 'arm\trecords\tcheckpoint_rate_records_sec\tcommitted_window_rate_records_sec\tpeak_rss_bytes\tmemory_pressure_cuts\n' > "$out/COMPARISON.tsv"
 for arm in K32 K64 K96 K128; do
- awk -v name="$arm" '{
+ awk -v name="$arm" '/^FI PRIVATE EXACT WINDOW STOP / {
   for(i=1;i<=NF;i++){split($i,x,"=");if(x[1]=="records")n=x[2];
    if(x[1]=="checkpoint_rate")rate=x[2];
    if(x[1]=="committed_window_rate")windowrate=x[2]}
