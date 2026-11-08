@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"runtime/pprof"
@@ -64,6 +65,24 @@ func validatePrivateWindowMode(profile string, enable, streamLoader, continuousP
 		return nil
 	}
 	return errors.New("FI non-W32 windows require stream-loader start-window=0 max-windows=1, or continuous-private start-window>=1 max-windows=0")
+}
+
+// requirePrivateW256RSSCap rejects a W256 experiment unless a FreeBSD kernel
+// rule applies to THIS process before it starts reading signed evidence.
+// GOMEMLIMIT and runtime high-water checks are insufficient for a hard cap.
+func requirePrivateW256RSSCap() error {
+	out, err := exec.Command("rctl", "-l", fmt.Sprintf("process:%d", os.Getpid())).Output()
+	if err != nil {
+		return fmt.Errorf("FI W256 requires FreeBSD RCTL process RSS enforcement: %w", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, ":memoryuse:deny=4G") ||
+			strings.Contains(line, ":memoryuse:deny=4294967296") ||
+			strings.Contains(line, ":memoryuse:deny=4g") {
+			return nil
+		}
+	}
+	return errors.New("FI W256 refuses to start without an applicable RCTL memoryuse:deny=4G process rule")
 }
 
 func run() error {
@@ -331,6 +350,9 @@ func run() error {
 		fmt.Println("FI PRIVATE CPU PROFILE START mode=profile10 path=cpu.pprof source=real_signed_backlog")
 	}
 	if privateW256Memory4G {
+		if err := requirePrivateW256RSSCap(); err != nil {
+			return err
+		}
 		// The kernel RCTL limit is still mandatory: GOMEMLIMIT excludes
 		// native mappings and is a SOFT garbage-collector target, not a cap.
 		const goSoftBytes int64 = 3 << 30
