@@ -309,3 +309,25 @@ volume.data.serial = 15172277115761558407
 		t.Fatalf("zero governed roots does not remove enrollment consent requirement: %+v", review)
 	}
 }
+
+func TestFreshInstallReviewCannotAdoptExistingBaseline(t *testing.T) {
+	desired := requested(t)
+	review, err := BuildFreshInstall(desired, native())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.Changes) != len(desired.Volumes)+len(desired.Policies) ||
+		review.CurrentConfigSHA256 != "" || !review.RequiresExplicitApproval {
+		t.Fatalf("fresh-only review did not classify all requested scope as new: %+v", review)
+	}
+	if err := RevalidateFreshInstall(review, desired, native()); err != nil {
+		t.Fatal(err)
+	}
+	// An old-scope review can still exist in general-purpose review tests,
+	// but it must NEVER satisfy a new-install-only approval call.
+	existingReview, err := Build(&desired, desired, native())
+	if err != nil { t.Fatal(err) }
+	if err := RevalidateFreshInstall(existingReview, desired, native()); !errors.Is(err, ErrStaleReview) {
+		t.Fatalf("pre-existing FI scope accepted as fresh install: %v", err)
+	}
+}
