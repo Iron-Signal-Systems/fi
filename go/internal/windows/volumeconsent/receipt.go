@@ -11,7 +11,8 @@ package volumeconsent
 
 import (
 	"bytes"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -63,7 +64,7 @@ type Payload struct {
 	ExpiresAtUTC string `json:"expires_at_utc"`
 }
 
-// Receipt uses strict, canonical JSON. Ed25519 is an offline signature over a
+// Receipt uses strict, canonical JSON. ECDSA P-256 with SHA-256 is an offline signature over a
 // domain-separated canonical payload, not over a free-form display string.
 // No private keys, generated credentials, or self-described trust anchors
 // reside in this envelope.
@@ -81,7 +82,7 @@ type Expected struct {
 	InstallationID string
 	Sequence uint64
 	PreviousConfigSHA256 string
-	TrustedPublicKey ed25519.PublicKey
+	TrustedPublicKey *ecdsa.PublicKey
 	Now time.Time
 }
 
@@ -124,15 +125,16 @@ func Verify(
 		return err
 	}
 	rawSignature, err := base64.StdEncoding.Strict().DecodeString(receipt.SignatureBase64)
-	if err != nil || len(rawSignature) != ed25519.SignatureSize ||
+	if err != nil || len(rawSignature) == 0 || len(rawSignature) > 80 ||
 		base64.StdEncoding.EncodeToString(rawSignature) != receipt.SignatureBase64 {
-		return fmt.Errorf("%w: malformed Ed25519 signature encoding", ErrInvalidReceipt)
+		return fmt.Errorf("%w: malformed ECDSA P-256 DER signature encoding", ErrInvalidReceipt)
 	}
 	signable, err := message(receipt.Payload)
 	if err != nil {
 		return err
 	}
-	if !ed25519.Verify(expected.TrustedPublicKey, signable, rawSignature) {
+	digest := sha256.Sum256(signable)
+	if !ecdsa.VerifyASN1(expected.TrustedPublicKey, digest[:], rawSignature) {
 		return ErrUnauthorizedReceipt
 	}
 	// Authenticate the payload first, then compare to independently observed
@@ -162,10 +164,10 @@ func Verify(
 	return nil
 }
 
-// EncodeSignedTestEnvelope is intentionally NOT exported. Test fixtures sign
-// canonical receipts using test-only in-memory keys, with no repository key.
-// Production signing must be integrated with a protected Windows signer and
-// authenticated administrator consent in the future installer.
+// Test fixtures sign canonical receipts using test-only in-memory keys.
+// Production signing must use a protected Windows CNG ECDSA P-256 signer and
+// authenticated administrator consent. CNG's raw signature output must be
+// converted into a strict ASN.1 DER ECDSA signature at the issuing boundary.
 func message(payload Payload) ([]byte, error) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -204,10 +206,20 @@ func validatePayload(p Payload) error {
 func validateExpected(e Expected) error {
 	if !validSID(e.MachineSID) || !validInstallationID(e.InstallationID) ||
 		e.Sequence == 0 || !validDigest(e.PreviousConfigSHA256, true) ||
-		len(e.TrustedPublicKey) != ed25519.PublicKeySize || e.Now.IsZero() {
+		!validTrustedP256Key(e.TrustedPublicKey) || e.Now.IsZero() {
 		return fmt.Errorf("%w: trusted host, sequence, key, clock or baseline missing", ErrUnauthorizedReceipt)
 	}
 	return nil
+}
+
+// Reject nil, malformed and alternative-curve keys even when a caller
+// mistakenly supplies an untrusted key from the receipt itself. Keys must
+// originate in independently protected installer trust.
+func validTrustedP256Key(key *ecdsa.PublicKey) bool {
+	return key != nil &&
+		key.Curve == elliptic.P256() &&
+		key.X != nil && key.Y != nil &&
+		key.Curve.IsOnCurve(key.X, key.Y)
 }
 
 func validInstallationID(id string) bool {
