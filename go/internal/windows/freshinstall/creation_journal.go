@@ -68,20 +68,29 @@ const (
 // accidental modifications and gaps; because there is no secret this does
 // NOT authenticate the writer or prevent malicious record replacement.
 // A future installer must establish ACL/protected-storage provenance separately.
+// CreationIdentity ties the journal to the exact prepared installer evidence.
+// These hashes are audit bindings only. Their presence never proves that the
+// configuration, transaction consent or installed grant was authenticated.
+type CreationIdentity struct {
+	InstallationID         string `json:"installation_id"`
+	ScopeSHA256            string `json:"scope_sha256"`
+	OperationalSHA256      string `json:"operational_sha256"`
+	ApprovalReceiptSHA256  string `json:"approval_receipt_sha256"`
+	SignedGrantSHA256      string `json:"signed_grant_sha256"`
+}
+
 type CreationRecord struct {
 	Version        string        `json:"version"`
 	Sequence       uint64        `json:"sequence"`
 	Event          CreationEvent `json:"event"`
-	InstallationID string        `json:"installation_id"`
-	ScopeSHA256    string        `json:"scope_sha256"`
+	CreationIdentity
 	Step           CreationStep  `json:"step,omitempty"`
 	PreviousSHA256 string        `json:"previous_sha256,omitempty"`
 	RecordSHA256   string        `json:"record_sha256"`
 }
 
 type CreationStatus struct {
-	InstallationID string
-	ScopeSHA256    string
+	CreationIdentity
 	LastSHA256     string
 	Records        uint64
 	CreatedSteps   int
@@ -120,13 +129,13 @@ type CreationBackend interface {
 func executeCreation(
 	sink CreationSink,
 	backend CreationBackend,
-	installationID, scopeSHA256 string,
+	identity CreationIdentity,
 ) error {
 	if sink == nil || backend == nil {
 		return fmt.Errorf("%w: sink and backend are required", ErrInvalidCreationJournal)
 	}
-	if !validInstallHex128(installationID) || !validLowerSHA256(scopeSHA256) {
-		return fmt.Errorf("%w: invalid first-install identity or canonical scope", ErrInvalidCreationJournal)
+	if !validCreationIdentity(identity) {
+		return fmt.Errorf("%w: invalid first-install identity or signed/operational evidence digests", ErrInvalidCreationJournal)
 	}
 	var previous string
 	var sequence uint64
@@ -136,8 +145,7 @@ func executeCreation(
 			Version: CreationJournalVersion,
 			Sequence: sequence,
 			Event: event,
-			InstallationID: installationID,
-			ScopeSHA256: scopeSHA256,
+			CreationIdentity: identity,
 			Step: step,
 			PreviousSHA256: previous,
 		}
@@ -238,7 +246,7 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 			return CreationStatus{}, fmt.Errorf("%w: noncanonical or altered record", ErrInvalidCreationJournal)
 		}
 		if event.Version != CreationJournalVersion ||
-			!validInstallHex128(event.InstallationID) || !validLowerSHA256(event.ScopeSHA256) ||
+			!validCreationIdentity(event.CreationIdentity) ||
 			event.Sequence != state.Records+1 || event.PreviousSHA256 != state.LastSHA256 ||
 			state.Complete {
 			return CreationStatus{}, fmt.Errorf("%w: invalid journal identity or sequence", ErrInvalidCreationJournal)
@@ -247,9 +255,8 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 			if event.Event != CreationBegin || event.Step != "" || event.PreviousSHA256 != "" {
 				return CreationStatus{}, fmt.Errorf("%w: first record must begin new installation", ErrInvalidCreationJournal)
 			}
-			state.InstallationID = event.InstallationID
-			state.ScopeSHA256 = event.ScopeSHA256
-		} else if event.InstallationID != state.InstallationID || event.ScopeSHA256 != state.ScopeSHA256 {
+			state.CreationIdentity = event.CreationIdentity
+		} else if event.CreationIdentity != state.CreationIdentity {
 			return CreationStatus{}, fmt.Errorf("%w: cross-installation record substitution", ErrInvalidCreationJournal)
 		} else {
 			switch event.Event {
@@ -290,6 +297,14 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 		return state, ErrCreationInDoubt
 	}
 	return state, nil
+}
+
+func validCreationIdentity(value CreationIdentity) bool {
+	return validInstallHex128(value.InstallationID) &&
+		validLowerSHA256(value.ScopeSHA256) &&
+		validLowerSHA256(value.OperationalSHA256) &&
+		validLowerSHA256(value.ApprovalReceiptSHA256) &&
+		validLowerSHA256(value.SignedGrantSHA256)
 }
 
 func validInstallHex128(value string) bool {
