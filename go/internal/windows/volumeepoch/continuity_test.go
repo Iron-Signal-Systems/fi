@@ -138,3 +138,19 @@ func TestAssessIndependentVolumes(t *testing.T) {
 		t.Fatalf("volume isolation first=(%+v,%v) second=(%+v,%v)", firstResult, firstErr, secondResult, secondErr)
 	}
 }
+
+// A volume enrollment ID may later become part of a state namespace. Reject
+// path traversal, casing ambiguity and unbounded IDs even with no checkpoint.
+func TestAssessRejectsUnsafeEnrollmentIDs(t *testing.T) {
+	cp, journal := fixture()
+	for _, id := range []string{"", "../root", "a/b", "MixedCase", "spaces present", "a\nb", strings.Repeat("x", 65)} {
+		t.Run(id, func(t *testing.T) {
+			if _, err := Assess(id, nil, journal); err == nil {
+				t.Fatal("untrusted enrollment ID accepted")
+			}
+			if _, err := Assess(id, &cp, journal); err == nil {
+				t.Fatal("untrusted checkpoint enrollment ID accepted")
+			}
+		})
+	}
+}
