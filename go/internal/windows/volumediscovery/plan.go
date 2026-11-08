@@ -33,12 +33,13 @@ const (
 // Serial64 is FILE_ID_INFO.VolumeSerialNumber, not GetVolumeInformationW's
 // truncated 32-bit serial.
 type Snapshot struct {
-	GUID       string
-	Serial64   string
-	FileSystem string
-	MountPaths []string
-	Status     Status
-	Detail     string
+	GUID           string
+	Serial64       string
+	FileSystem     string
+	MountPaths     []string
+	MountPathError string // informational; never an enrollment/identity input
+	Status         Status
+	Detail         string
 }
 
 // MatchStatus describes an enrollment's read-only preflight result.
