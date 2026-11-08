@@ -8,6 +8,8 @@ The branch now has a signed short-lived installer-intent verification package (`
 
 The branch now includes a read-only `freshinstall` SCM/path preflight and first-install-only verification wrappers. The supported v2 deployment starts with no FI, first approval sequence 1 and initial grant generation 1; no in-place update or migration is intended. The branch also includes a pure-Go signed installed-grant verifier with replay/tamper/scope/host/sequence regression tests. **The protected native grant commitment store, signer, transactional installation, privileged service handoff, and actual Windows acceptance are NOT RUN/NOT IMPLEMENTED.** See `WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
 
+The branch now includes a bounded creation-only **journal protocol and in-memory fault-injection tests**; it does not persist journal entries to a protected Windows file, create v2 resources or prove crash-consistent native rollback. Acceptance must explicitly test failure between durable intent, native creation and durable acknowledgement, and refuse auto-retry or deletion when ownership is ambiguous. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`. All native transaction and power-loss tests remain **NOT RUN**.
+
 ## Rules of evidence
 
 The branch includes an opt-in read-only `TestNativeEnrolledVolumeUSNReadOnly` test for `adminbox`, described in `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Its existence is NOT a PASS. All native acceptance rows remain NOT RUN until actual evidence is recorded.
