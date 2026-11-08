@@ -1,6 +1,6 @@
 # FI NTFS USN Privilege Boundary, Authentication, and Containment Model
 
-> **Proposed privilege-boundary change (2026-11-08):** Current root-authorized USN broker behavior remains as described below. The volume-first development target must authorize only explicitly enrolled-volume journal access and keep protected-object observation scoped to approved governed-root policies. No new broker authority or behavior has been implemented. See [ADR-0002](../architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md).
+> **Volume-first broker development (2026-11-08):** Current installed FIUSNReader remains root-centric as documented below. A separate, **not activated**, volume-ID broker mode implements enrolled-volume USN query/read, immutable native identity scope and same-handle full-width NTFS serial attestation. Native tests on `adminbox` and installer-approved v2 startup are outstanding. Root-scoped SACL/containment operations are **disabled in volume mode**, not widened. See [broker security contract](../development/WINDOWS-VOLUME-FIRST-USN-BROKER.md) and [ADR-0002](../architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md).
 
 
 ## Purpose
