@@ -33,6 +33,12 @@ These are **preflight inputs**, not an authenticated approval. Future Approval 2
 
 The verifier also includes a bounded conversion of native Windows CNG P-256 raw signature bytes into canonical DER. This verifier cannot authenticate an actual administrator, issue signatures, install protected config or grant access to FIUSNReader. The future CNG signing key, PKI/trust provisioning, user-token checks, atomic durable installed grant and restart verifier are still required. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
 
+## Installed-scope grant verification exists; protected installer persistence does not
+
+The branch now includes `go/internal/windows/volumegrant/` for verifying a long-lived **installed** P-256 signed scope grant against a separately trusted exact signed-grant digest and committed generation. Unlike the short-lived `volumeconsent` transaction receipt, this durable declaration is designed for future restart-time verification and binds both the canonical scope declaration and the full future v2 operational-config digest.
+
+The code cannot issue or persist grants, authenticate Windows tokens, validate file/registry ACLs, select trust roots, advance durable state, or enable the broker. Installer source remains root-centric for mutations. No `adminbox` privileged acceptance exists. See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
+
 ## Required behavior
 
 1. Read-only `-plan-only` reports volumes and policy changes accurately without writes.
