@@ -6,7 +6,7 @@
 
 The branch now has a signed short-lived installer-intent verification package (`go/internal/windows/volumeconsent`) with unit tests. **It is not an installed v2 authority**: native signer, administrator approval token, protected installation state, transactional apply/rollback and privileged service startup remain NOT RUN/NOT IMPLEMENTED.
 
-The branch now also includes a pure-Go signed installed-grant verifier with replay/tamper/scope/host/sequence regression tests. **The protected native grant commitment store, signer, transactional installation, privileged service handoff, and actual Windows acceptance are NOT RUN/NOT IMPLEMENTED.** See `WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
+The branch now includes a read-only `freshinstall` SCM/path preflight and first-install-only verification wrappers. The supported v2 deployment starts with no FI, first approval sequence 1 and initial grant generation 1; no in-place update or migration is intended. The branch also includes a pure-Go signed installed-grant verifier with replay/tamper/scope/host/sequence regression tests. **The protected native grant commitment store, signer, transactional installation, privileged service handoff, and actual Windows acceptance are NOT RUN/NOT IMPLEMENTED.** See `WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
 
 ## Rules of evidence
 
@@ -33,7 +33,7 @@ Each test must record the exact source SHA, signed artifact and executable hashe
 | V13 | Resource limits, multi-volume fairness, spool pressure and large 10M-object workload; measure every stage separately | NOT RUN |
 | V14 | Native installer read-only discovery, scope approval, normalized config, duplicate rejection and plan-only non-mutation | NOT RUN |
 | V15 | Installer stale approval, unauthorized volume addition, scope widening, audit change and volume identity drift fail closed | NOT RUN |
-| V16 | Native installer transaction failure, rollback, idempotent rerun, update, restart, removal and all five SCM identities | NOT RUN |
+| V16 | Fresh installation on an FI-free host, rejection if any of the five services/two FI-owned trees exist or cannot be inspected, stale-check race handling, rollback only of new transaction artifacts, service restart, no-update refusal | NOT RUN |
 | V17 | New source records retained across verified spool, signing, sender/receiver retry, replay, duplicate handling and generation-size boundary | NOT RUN |
 | V18 | Fresh PostgreSQL schema and Go ingest/projectors preserve epoch/gap lineage and governed policy associations | NOT RUN |
 | V19 | Current docs, installer operator guides, schemas and test artifacts match observed implementation; historical tests remain unaltered | NOT RUN |
