@@ -49,8 +49,23 @@ sql="$repo/go/cmd/fi-backlog-recover/testdata/private_w256_deferred_index_isolat
 # The first W256 window is durably committed before converting its sole
 # DEFAULT child into an exact W0 RANGE partition. Later W1..W4 field
 # partitions can then attach without rescan of the large W0 dataset.
-psql "$src" -X -v ON_ERROR_STOP=1 -f "$finalize" > "$seed/w256-seed-finalize.log" 2>&1 ||
- { tail -n 25 "$seed/w256-seed-finalize.log" >&2; die "signed W256 W0 partition finalization failed"; }
+# The W0 finalizer may already have committed in a prior provisioning
+# attempt that failed while installing the functions. Do not replay it or
+# force another signed-seed verification; accept only a genuine bounded W0.
+w0_bound=$(q "SELECT pg_get_expr(c.relpartbound,c.oid) FROM pg_class c WHERE c.oid='fi_recovery_projection.windows_security_event_field_w000000'::regclass") ||
+ die "cannot read signed W256 W0 Security-field partition bound"
+case "$w0_bound" in
+ DEFAULT)
+  psql "$src" -X -v ON_ERROR_STOP=1 -f "$finalize" > "$seed/w256-seed-finalize.log" 2>&1 ||
+   { tail -n 25 "$seed/w256-seed-finalize.log" >&2; die "signed W256 W0 partition finalization failed"; }
+  ;;
+ "FOR VALUES FROM "*)
+  printf 'FI W256 SEED RESUME existing W0 bounded partition; skip finalizer\n'
+  ;;
+ *)
+  die "unrecognized W0 partition bound: $w0_bound"
+  ;;
+esac
 [ "$(q "SELECT pg_get_expr(c.relpartbound,c.oid) LIKE 'FOR VALUES FROM%' FROM pg_class c WHERE c.oid='fi_recovery_projection.windows_security_event_field_w000000'::regclass")" = t ] ||
  die "W256 W0 field partition did not become a bounded RANGE"
 # The existing validated finish function is retained unchanged; the W256
