@@ -69,3 +69,22 @@ Reported `FI PRIVATE STAGE PROFILE` stage durations were summed across matching 
 **Interpretation:** The repeated FileObservation validator was removed in the private candidate, but the measured File projection total was effectively unchanged. Security projection was slower in **every** candidate window despite no intended Security-path code change. This is evidence of broader run-to-run effects (such as workload timing, runtime scheduling, PostgreSQL I/O or cache state), **not** proof of their exact cause. The 0.9% overall slowdown therefore cannot be attributed confidently to the File optimization. No demonstrated File-stage speedup; no grounds to reject a safe redundancy removal solely for lacking a throughput gain.
 
 **Next acceptance gate:** Before considering promotion, prove that the first validated `ntfs.Observation` remains semantically unchanged until bulk use, including its pointer/slice children and any references retained by the buffered batch; test malicious inputs, failed-validation paths, error ordering and rollback. A standalone `privatePrevalidated` boolean is not an adequate trust/provenance guarantee. Do not alter the baseline runner or the existing recorded output. A later Security initial-decode/conversion candidate must remain an independent experiment.
+
+## Direct Go CPU experiment on real signed FileObservation records (2026-11-08)
+
+A follow-up test specifically addressed the ambiguity of full-window elapsed time. It compiled a Go 1.27.3 test binary against the original historical source `9e0e6e2`, staged the test itself from experiment commit `f12fd6d`, and read the previously verified signed artifacts from the successful baseline under `.../20261108T150115Z/clone-11-08-26/private`. No PostgreSQL was started or contacted.
+
+**Input:** 4,096 genuine FileObservation records found in 18 original signed batches. SHA-256 of their concatenated LF-terminated original JSONL records: `90446f449f33f8c4ea64adee27e5ea979604d8e2ade2ab30e66c340384795341`. Executed one `ntfs.ValidateObservation` vs. two on precisely the same observation in ABBA order, `GOMAXPROCS=1`, with repeated measurements of process CPU via `getrusage`, wall time, allocations and GC. Data were decoded and strictly validated on initial load before either arm. For a second stage, both arms re-ran the exact historical envelope/payload decoding before the validator(s).
+
+Results (medians per arm, not sums):
+
+| Stage | One validator | Two validators | Delta two − one | Extra CPU per omitted call |
+|---|---:|---:|---:|---:|
+| Validator only: 49,152 vs. 98,304 calls | 1.624196 CPU s | 3.182494 CPU s | +1.558297 CPU s | **31.704 microseconds** |
+| Full envelope decode + validator: 8,192 vs. 16,384 calls | 1.160626 CPU s | 1.473206 CPU s | +0.312580 CPU s | **38.157 microseconds** |
+
+Validator-only median allocation count: one = **4,316,420**, two = **8,632,838** (difference ~4,316,418 allocations per 49,152 extra validation calls, approximately **87.8 allocations per added validator**). Typical allocated bytes difference: ~414,123,000 bytes per 49,152 added calls, about **8.43 KB allocated per additional validation**. This measures cumulative allocation, not live heap retained. Both stages completed successfully: `FI REAL VALIDATION COMPLETE status=PASS no_sql=true signed_input_readonly=true`. Log: `/var/tmp/fi-validator-cpu-20261108T163534Z/measurements.log`.
+
+**Conservative extrapolation if that 4,096-record sample is representative:** the ten windows contain 137,777 FileObservation records, implying 4.37–5.26 CPU seconds, approximately 12.1 million allocations, and ~1.16 GB of cumulative allocation attributable to a second validator pass. These extrapolations are **not** measurements of savings within PostgreSQL-ingest wall time. The earlier 10-window experiment's File stage was approximately unchanged, so the actual candidate path should be instrumented for calls executed/skipped (per window), and compared under the same CPU-level method before interpreting its full-run throughput delta.
+
+This direct isolated evidence establishes **non-zero, material duplicate-validation CPU and allocation cost** for the sampled real records. It does not prove that the boolean fast-path is safe to merge, that all records on the live candidate path skipped the call, or that elapsed time across independent full-PostgreSQL runs must fall by the sum of CPU costs. The immutable-provenance/aliasing review remains mandatory.
