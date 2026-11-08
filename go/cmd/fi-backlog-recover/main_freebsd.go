@@ -12,7 +12,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"runtime/pprof"
@@ -67,24 +66,6 @@ func validatePrivateWindowMode(profile string, enable, streamLoader, continuousP
 	return errors.New("FI non-W32 windows require stream-loader start-window=0 max-windows=1, or continuous-private start-window>=1 max-windows=0")
 }
 
-// requirePrivateW256RSSCap rejects a W256 experiment unless a FreeBSD kernel
-// rule applies to THIS process before it starts reading signed evidence.
-// GOMEMLIMIT and runtime high-water checks are insufficient for a hard cap.
-func requirePrivateW256RSSCap() error {
-	out, err := exec.Command("rctl", "-l", fmt.Sprintf("process:%d", os.Getpid())).Output()
-	if err != nil {
-		return fmt.Errorf("FI W256 requires FreeBSD RCTL process RSS enforcement: %w", err)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, ":memoryuse:deny=4G") ||
-			strings.Contains(line, ":memoryuse:deny=4294967296") ||
-			strings.Contains(line, ":memoryuse:deny=4g") {
-			return nil
-		}
-	}
-	return errors.New("FI W256 refuses to start without an applicable RCTL memoryuse:deny=4G process rule")
-}
-
 func run() error {
 	var fileProfile string
 
@@ -112,7 +93,7 @@ func run() error {
 	flag.BoolVar(&privateReusableEventCopy, "private-reusable-event-copy", false, "DEV ONLY: opt in to reusable 40-column Security-event COPY rows for isolated signed W128/P3 deferred clone; production remains unchanged")
 	flag.BoolVar(&privateSecurityPayloadTailGuard, "private-security-payload-tail", false, "DEV ONLY: explicit request for the default object-tail guard in isolated W128/P3 signed replay")
 	flag.BoolVar(&privateSecurityPayloadOriginalGuard, "private-security-payload-original", false, "DEV ONLY: original full JSON-validity scan for CONTROL arm in isolated signed W128/P3 A/B replay")
-	flag.BoolVar(&privateW256Memory4G, "private-w256-memory4g", false, "DEV ONLY: isolated W256 signed-cache experiment with 3GiB Go soft limit, RSS sampling and required host RCTL hard cap")
+	flag.BoolVar(&privateW256Memory4G, "private-w256-memory4g", false, "DEV ONLY: isolated W256 signed-cache experiment with 3GiB Go soft limit, adaptive chunk size and RSS telemetry; no host RCTL required")
 	flag.StringVar(&privateCPUProfile, "private-cpu-profile", "", "DEV ONLY: 10m signed W128 disposable private-clone CPU profile")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32/W64/W96/W128; isolated W256=262144 records/2GiB (requires private-w256-memory4g); checkpoints cannot be mixed")
@@ -350,11 +331,9 @@ func run() error {
 		fmt.Println("FI PRIVATE CPU PROFILE START mode=profile10 path=cpu.pprof source=real_signed_backlog")
 	}
 	if privateW256Memory4G {
-		if err := requirePrivateW256RSSCap(); err != nil {
-			return err
-		}
-		// The kernel RCTL limit is still mandatory: GOMEMLIMIT excludes
-		// native mappings and is a SOFT garbage-collector target, not a cap.
+		// The process can exceed this SOFT Go runtime target: this controls
+		// garbage collection, not all native/OS memory, and does not require
+		// any FreeBSD host tunables or resource accounting.
 		const goSoftBytes int64 = 3 << 30
 		previous := debug.SetMemoryLimit(-1)
 		effective := goSoftBytes
@@ -363,7 +342,7 @@ func run() error {
 		}
 		debug.SetMemoryLimit(effective)
 		defer debug.SetMemoryLimit(previous)
-		fmt.Printf("FI PRIVATE W256 MEMORY CONFIG kernel_rss_limit_required=%d go_soft_limit=%d source=real_signed\n", uint64(4)<<30, effective)
+		fmt.Printf("FI PRIVATE W256 MEMORY CONFIG go_soft_limit=%d rss_target_bytes=%d enforcement=advisory source=real_signed\n", effective, uint64(4)<<30)
 	}
 	ctx := context.Background()
 	var stop context.CancelFunc
