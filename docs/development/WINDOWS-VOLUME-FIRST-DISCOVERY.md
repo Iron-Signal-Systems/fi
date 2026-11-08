@@ -48,7 +48,7 @@ The original `fi-install.exe` apply/plan/install/reconcile flow remains root-cen
 - Windows-only tests exercise native GUID enumeration, mount-path MULTI_SZ handling and early cancellation on the GitHub Windows runner. A failure caused by an embedded-NUL test fixture was corrected without weakening the test.
 - Installer tests cover stand-alone flag conflicts, non-mutating JSON output, configuration parsing bounds, precise drift failure and output failures.
 - GitHub Windows-latest is not a supported exact Server 2016/2019/2022/2025 validation campaign. `adminbox` native validation is still required.
-- Current discovery is a preflight snapshot, **not** a persisted permission or proof of continuity after reformat. Subsequent privileged I/O must establish the same enrolled native volume atomically enough to prevent identity substitution, and that code is not yet implemented.
+- Current discovery is a preflight snapshot, **not** a persisted permission or proof of continuity after reformat. A separately implemented, not activated USN broker mode now validates full-width native serials on the raw-volume handle before journal operations; this still requires installer approval wiring and native adminbox tests.
 
 ## Next integration boundary
 
