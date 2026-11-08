@@ -94,6 +94,22 @@ type TrustedState struct {
 	Now time.Time
 }
 
+// VerifyFreshInstallation is the only intended installed-grant verifier for
+// the version-2 clean-install design. A newly installed host starts at grant
+// generation 1 with no predecessor. A separate protected native state reader
+// is still required; nothing in this package provisions that trusted state.
+func VerifyFreshInstallation(
+	encoded []byte,
+	state TrustedState,
+	scope config.VolumeConfig,
+	installedOperationalConfig []byte,
+) error {
+	if state.Generation != 1 || state.PreviousGrantSHA256 != "" {
+		return ErrGrantDrift
+	}
+	return Verify(encoded, state, scope, installedOperationalConfig)
+}
+
 // Verify validates the signed durable declaration against independently
 // trusted state, exact current normalized scope, and the actual installed
 // operational config bytes (not merely a caller-asserted hash).
