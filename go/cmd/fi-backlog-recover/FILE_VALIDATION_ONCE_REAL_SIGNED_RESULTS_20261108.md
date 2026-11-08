@@ -74,3 +74,46 @@ The source of these figures is the user's post-run read-only `FI PRIVATE STAGE P
 | Total ten committed windows | 523.424s | 528.153s | 534.312s | +10.888s |
 
 **Evidence-based conclusion:** The corrected actual Go implementation saved 2.178 seconds of File projection elapsed time versus baseline (2.238 seconds vs the first candidate). Thus, the direct File path improved, even though full ingestion did not. Security projection was almost identical in both candidate runs (129.247s vs 129.241s), each roughly 8.25 seconds behind original. There is not yet evidence distinguishing a repeatable environmental difference from candidate-dependent system interaction or an alternate code path. The outer `batch_ingest` increased more than the Security projection, requiring further decomposition (such as `source_sql`, `other_projection_inclusive`, `security_prepare`, `security_child_prepare`, `security_id_lookup`, and COPY timings). Do not attribute the remaining regression to the removed NTFS check or claim unmeasured benefits.
+
+## Timer reconciliation and attribution correction (2026-11-08)
+
+These are **three sequential experiments, not a paired randomized A/B trial**. Relative timing is an observation, not proof that any individual Go change caused a difference. `pgx.Tx.CopyFrom` is timed end-to-end and includes client Go row generation/encoding, relay I/O, server execution and scheduling. Its elapsed time **cannot be classified as PostgreSQL storage latency** without separate measurements. The Security bulk source file itself is byte-for-byte identical between baseline `9e0e6e2` and corrected `e02a068`, but this does not rule out changes in external or process-wide contention.
+
+### Baseline vs. corrected total time (seconds)
+
+```text
+File projection                             -2.178
+Security projection                         +8.252
+Other projection                            +0.111
+Projection counter remainder                +0.040
+  = total projection                        +6.225
+Source SQL                                  +0.448
+Envelope prepare                            +0.041
+Remaining batch work                        +2.970
+  = batch ingest                            +9.684
+Remaining outer-window work (net)           +1.204
+  = ten-window committed total             +10.888
+```
+
+Security field COPY +6.713s is *nested within* Security projection +8.252s, not an additional contribution. Outer-work and other-batch residuals include measured counters omitted from this compact comparison; they are not necessarily uninstrumented idle time.
+
+### First candidate vs. corrected implementation
+
+```text
+File projection                             -2.238
+Security projection                         -0.006
+Other parts of projection                   -0.147
+  = total projection                        -2.391
+Source SQL                                  +0.040
+Envelope prepare                            +1.425
+Remaining batch work                        +6.409
+  = batch ingest                            +5.483
+Remaining outer-window work                 +0.676
+  = ten-window committed total              +6.159
+```
+
+A real File-stage time reduction occurred between the first and corrected candidate **without** a Security-stage change (+0.006s faster). The separate 6.409s difference elsewhere in batch work is a better target for finer profiling than claiming that the new NTFS validation proof caused the previously observed Security COPY slowdown.
+
+**What is proven:** 137,777 redundant NTFS validations were eliminated and existing SQL/readback integrity gates passed. **What is unproven:** the size of any causal File-stage speedup and the reason for a 10.888-second wall-time difference. Prior isolated `GOMAXPROCS=1` validation microbenchmarks quantify CPU work, not expected wall-clock benefits under concurrent runtime, DB, ZFS and relay activity. Do not promote an optimization based on a single unpaired baseline.
+
+Next step: record Go CPU/alloc/GC, PostgreSQL WAL/checkpoint/I/O, ARC/vdev I/O **during** controlled alternating identical-source runs (ABBA), from the same logical SQL checkpoint and with same profile and durability settings. Sequential windows 13–22 alone cannot distinguish a code change from differences in record composition or database size.
