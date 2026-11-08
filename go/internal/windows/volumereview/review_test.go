@@ -259,3 +259,53 @@ func TestReviewRejectsModifiedPresentationDespiteCopiedFingerprint(t *testing.T)
 		t.Fatalf("original review invalidated by unrelated copy mutation: %v", err)
 	}
 }
+
+func TestReviewOverlappingGovernedPoliciesOnOneVolume(t *testing.T) {
+	raw := `version_id: 2.0
+volume.data.guid = \\?\Volume{18fed846-4275-4251-b698-f268192100f2}\
+volume.data.serial = 15172277115761558407
+policy.department.volume = data
+policy.department.root = \Shares
+policy.department.depth = metadata
+policy.finance.volume = data
+policy.finance.root = \Shares\Finance
+policy.finance.depth = security
+`
+	declared, err := config.ParseVolumeV2(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := Build(nil, declared, native())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.BlocksMutation || !review.RequiresExplicitApproval ||
+		len(review.NativeIdentities) != 1 || len(review.Changes) != 3 {
+		t.Fatalf("overlapping root scope must produce one volume review and two policy changes: %+v", review)
+	}
+	for _, change := range review.Changes {
+		if change.Kind != VolumeAdded && change.Kind != PolicyAdded {
+			t.Fatalf("unexpected policy overlap change: %+v", change)
+		}
+	}
+}
+
+func TestReviewAllowsZeroGovernedPoliciesWithoutImplicitEnrollment(t *testing.T) {
+	raw := `version_id: 2.0
+volume.data.guid = \\?\Volume{18fed846-4275-4251-b698-f268192100f2}\
+volume.data.serial = 15172277115761558407
+`
+	declared, err := config.ParseVolumeV2(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := Build(nil, declared, native())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.BlocksMutation || !review.RequiresExplicitApproval ||
+		len(review.Changes) != 1 || review.Changes[0].Kind != VolumeAdded ||
+		len(review.NativeIdentities) != 1 {
+		t.Fatalf("zero governed roots does not remove enrollment consent requirement: %+v", review)
+	}
+}
