@@ -505,6 +505,20 @@ INSERT INTO fi_recovery.typed_window (
 		profile.SecurityBulk.IDLookup, profile.SecurityBulk.SourceCopy,
 		profile.SecurityBulk.EventCopy, profile.SecurityBulk.ScopeCopy, profile.SecurityBulk.FieldCopy,
 		profile.SinglePassSecurityRows)
+	// Private-only, one line per durable W128 window. The counters identify
+	// existing COPY flush triggers without logging signed payloads, changing
+	// record order, or adding any PostgreSQL operations to the ingest path.
+	if usePrivateSinglePassSecurity(ctx) {
+		flush := profile.SecurityBulk.PrivateFlush
+		reasons := flush.RecordLimit + flush.ByteLimit + flush.BothLimits +
+			flush.Coverage + flush.OtherKind + flush.ChunkEnd + flush.BatchEnd
+		consistent := reasons == flush.Calls && flush.Calls == profile.SecurityBulk.Batches &&
+			flush.Events == profile.SecurityBulk.Events &&
+			flush.SourceBytes == profile.SecurityBulk.SourceBytes
+		limits := securityBulkLimitsFromContext(ctx)
+		fmt.Printf("FI PRIVATE SECURITY FLUSH PROFILE index=%d profile=%s max_records=%d max_source_bytes=%d %s consistent=%t\n",
+			index, limits.Name, limits.MaxRecords, limits.MaxBytes, flush.summary(), consistent)
+	}
 	if joinedSource != nil {
 		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d copy_time=%s sql_verify_time=%s\n",
 			index, joinedSource.chunkRows, joinedSource.copyCalls, joinedSource.records,
