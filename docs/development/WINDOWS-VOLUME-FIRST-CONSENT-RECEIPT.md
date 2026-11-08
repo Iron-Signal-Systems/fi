@@ -35,6 +35,10 @@ Successful verification establishes only that **this signed intent matches the s
 
 The source and tests use Go's standard `crypto/ecdsa` and `crypto/sha256`; test keys are generated solely **in memory** and are never committed. There is no FI signing private key, symmetric secret, certificate authority, customer hostname, or installed identity in the repository.
 
+## Durable installed-grant verification foundation
+
+The separately implemented `go/internal/windows/volumegrant` package verifies a **long-lived signed installed scope** against a pinned signed-envelope digest, independently protected generation/previous hash, host/installation identity and both scope and full operational-config digests. This is intentionally distinct from the short-lived `volumeconsent` receipt. **Neither package provisions trusted keys, authenticates a real operator, or installs protected state**; see `WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
+
 ## Production work not yet implemented
 
 1. Bind installer to **trusted and pinned local/site signer public key** via a protected trust/PKI chain, including permitted key use, rotation, expiry and revocation policy. A public key supplied alongside a receipt by its submitter is untrusted. Define issuer role separation from FICollector and FIUSNReader.
