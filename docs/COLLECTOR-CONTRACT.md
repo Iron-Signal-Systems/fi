@@ -1,5 +1,8 @@
 # FI Windows Collector Contract
 
+> **Proposed redesign, not implemented (2026-11-08):** Current code below remains root-owned. The development target uses one USN capture/checkpoint per explicitly enrolled NTFS volume and governed roots as deeper-observation policy boundaries; see [ADR-0002](architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md) and [validation matrix](development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md). Source and installer code must change before this becomes a runtime contract.
+
+
 The Windows collector is a source-observation component.
 
 It collects and preserves source facts from explicitly governed Windows/NTFS
