@@ -1,5 +1,8 @@
 # Phase 1 — Windows File & Identity Intelligence
 
+> **Active development direction (2026-11-08):** The root-centric implementation summarized here is historical/current, not the final proposed model. Branch `dev/windows-volume-first-20261108` proposes enrolled-volume USN acquisition and multiple policy roots per volume. See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md` and `docs/development/WINDOWS-VOLUME-FIRST-IMPLEMENTATION.md` at the repository root. No implementation, acceptance or release status is asserted by this note.
+
+
 ## Purpose
 
 Establish and continuously maintain source-side historical intelligence for each
