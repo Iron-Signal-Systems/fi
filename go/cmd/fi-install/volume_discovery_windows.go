@@ -9,8 +9,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,6 +21,7 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumediscovery"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumereview"
 )
 
 const (
@@ -101,6 +100,7 @@ type volumeInventoryReport struct {
 	Volumes                    []volumediscovery.Snapshot `json:"volumes"`
 	RequestedConfigSHA256      string                     `json:"requested_config_sha256,omitempty"`
 	RequestedVolumePreflight   *volumediscovery.Preflight  `json:"requested_volume_preflight,omitempty"`
+	RequestedScopeReview       *volumereview.Review         `json:"requested_scope_review,omitempty"`
 }
 
 // writeVolumeInventory is deliberately dependency-injected for failure-path
@@ -118,11 +118,8 @@ func writeVolumeInventory(
 	if ctx == nil || output == nil || discover == nil || clock == nil {
 		return errors.New("volume inventory requires context, writer, discovery source and clock")
 	}
-	var canonical []byte
 	if requested != nil {
-		var err error
-		canonical, err = config.CanonicalVolumeV2(*requested)
-		if err != nil {
+		if _, err := config.CanonicalVolumeV2(*requested); err != nil {
 			return fmt.Errorf("invalid volume declaration: %w", err)
 		}
 	}
@@ -146,11 +143,15 @@ func writeVolumeInventory(
 		if err != nil {
 			return fmt.Errorf("read-only enrollment assessment failed: %w", err)
 		}
-		digest := sha256.Sum256(canonical)
-		report.RequestedConfigSHA256 = hex.EncodeToString(digest[:])
+		review, err := volumereview.Build(nil, *requested, volumes)
+		if err != nil {
+			return fmt.Errorf("read-only scope review failed: %w", err)
+		}
+		report.RequestedConfigSHA256 = review.RequestedConfigSHA256
 		report.RequestedVolumePreflight = &preflight
+		report.RequestedScopeReview = &review
 		report.Action = "DiscoveryAndScopePreflightOnly"
-		mismatch = !preflight.AllVolumesMatch
+		mismatch = review.BlocksMutation
 	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
