@@ -92,7 +92,8 @@ func TestFreshInstallJSONNeverClaimsInstallationAuthority(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if !result.Clean || result.InstallBlocked ||
+	if !result.Clean || result.InstallBlocked || result.InstallationAuthorized ||
+		result.Action != "ReadOnlyFreshHostPreflight" ||
 		result.Mode != freshinstall.InstallMode ||
 		result.Version != freshinstall.ReportVersion ||
 		len(result.Findings) != 7 {
