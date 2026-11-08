@@ -17,9 +17,9 @@ func TestPrivateW256MemoryPressureThresholds(t *testing.T) {
 		{"low", 1 << 30, 1 << 30, false, false},
 		{"managed pressure", 1 << 30, privateW256ManagedPressure, true, false},
 		{"rss pressure", privateW256RSSPressure, 1 << 30, true, false},
-		{"rss abort", privateW256RSSAbort, 1 << 30, false, true},
-		{"managed abort", 1 << 30, privateW256RSSAbort, false, true},
-		{"below abort", privateW256RSSAbort - 1, 1 << 30, true, false},
+		{"rss exceeds goal", 5 << 30, 1 << 30, true, false},
+		{"managed exceeds goal", 1 << 30, 5 << 30, true, false},
+		{"below 4GiB soft target", (4 << 30) - 1, 1 << 30, true, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
