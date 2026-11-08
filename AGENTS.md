@@ -1,5 +1,8 @@
 # FI Agent and Contributor Rules
 
+> **Volume-first development branch notice (2026-11-08):** The rules below describe currently implemented root-centric collection and its historical proof. [ADR-0002](docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md) proposes a different explicitly enrolled-volume source model while preserving privilege, custody and non-remediating boundaries. Do not mistake proposed behavior for running code. All Windows development and native tests are on `adminbox`; `main` and the installed `ISS-FS-22A` services are not modified by branch staging.
+
+
 ## Purpose
 
 This file defines how contributors, coding agents, automation, and review agents
