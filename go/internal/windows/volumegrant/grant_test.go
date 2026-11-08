@@ -25,6 +25,7 @@ type signedFixture struct {
 	key *ecdsa.PrivateKey
 	manifest Manifest
 	scope config.VolumeConfig
+	operational []byte
 	trust TrustedState
 }
 
@@ -47,7 +48,8 @@ policy.finance.depth = security
 		t.Fatal(err)
 	}
 	scopeDigest := sha256.Sum256(normalized)
-	operationalDigest := sha256.Sum256([]byte("only a test, not a deployable operational configuration"))
+	operational := []byte("only a test, not a deployable operational configuration")
+	operationalDigest := sha256.Sum256(operational)
 	approvalDigest := sha256.Sum256([]byte("fixture: previously verified signed installer approval"))
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -70,6 +72,7 @@ policy.finance.depth = security
 		key: key,
 		manifest: manifest,
 		scope: scope,
+		operational: operational,
 		trust: TrustedState{
 			MachineSID: manifest.MachineSID,
 			InstallationID: manifest.InstallationID,
@@ -111,7 +114,7 @@ func (f *signedFixture) sign(t *testing.T) []byte {
 func TestInstalledGrantAcceptsExactSignedPinnedScope(t *testing.T) {
 	fixture := newSignedFixture(t)
 	data := fixture.sign(t)
-	if err := Verify(data, fixture.trust, fixture.scope); err != nil {
+	if err := Verify(data, fixture.trust, fixture.scope, fixture.operational); err != nil {
 		t.Fatalf("correct durable installed grant rejected: %v", err)
 	}
 	if len(data) > maxGrantBytes {
@@ -148,7 +151,7 @@ func TestInstalledGrantRequiresProtectedIndependentTrust(t *testing.T) {
 			data := fixture.sign(t)
 			e := fixture.trust
 			tc.change(&e)
-			err := Verify(data, e, fixture.scope)
+			err := Verify(data, e, fixture.scope, fixture.operational)
 			if err == nil {
 				t.Fatal("untrusted/changed protected installation state was accepted")
 			}
@@ -169,10 +172,10 @@ func TestInstalledGrantRejectsSignedButUncommittedScope(t *testing.T) {
 	}
 	pinned := sha256.Sum256(good)
 	f.trust.GrantSHA256 = hex.EncodeToString(pinned[:])
-	if err := Verify(other, f.trust, f.scope); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(other, f.trust, f.scope, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("new signed but uncommitted grant was accepted: %v", err)
 	}
-	if err := Verify(good, f.trust, f.scope); err != nil {
+	if err := Verify(good, f.trust, f.scope, f.operational); err != nil {
 		t.Fatalf("previously committed grant was rejected: %v", err)
 	}
 }
@@ -208,7 +211,7 @@ func TestInstalledGrantRejectsTamperAndUnknownJSON(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			data := tc.modify(append([]byte(nil), good...))
-			if err := Verify(data, f.trust, f.scope); err == nil {
+			if err := Verify(data, f.trust, f.scope, f.operational); err == nil {
 				t.Fatal("forged or malformed grant was accepted")
 			}
 		})
@@ -221,19 +224,19 @@ func TestInstalledGrantRejectsChangedSourcePolicy(t *testing.T) {
 	changed := f.scope
 	changed.Policies = append([]config.RootPolicy(nil), f.scope.Policies...)
 	changed.Policies[0].Depth = config.DepthContent
-	if err := Verify(grant, f.trust, changed); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(grant, f.trust, changed, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("governed policy widening accepted: %v", err)
 	}
 	changed = f.scope
 	changed.Volumes = append([]config.VolumeEnrollment(nil), f.scope.Volumes...)
 	changed.Volumes[0].Serial = "15172277115761558408"
-	if err := Verify(grant, f.trust, changed); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(grant, f.trust, changed, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("changed volume identity accepted: %v", err)
 	}
 	changed = f.scope
 	changed.Volumes = changed.Volumes[:1]
 	changed.Policies = nil
-	if err := Verify(grant, f.trust, changed); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(grant, f.trust, changed, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("missing approved volume accepted: %v", err)
 	}
 }
@@ -248,14 +251,14 @@ func TestInstalledGrantGenerationChainAndRollback(t *testing.T) {
 	f.trust.Generation = 2
 	f.trust.PreviousGrantSHA256 = gen1Digest
 	generation2 := f.sign(t)
-	if err := Verify(generation2, f.trust, f.scope); err != nil {
+	if err := Verify(generation2, f.trust, f.scope, f.operational); err != nil {
 		t.Fatalf("correct committed generation 2 rejected: %v", err)
 	}
-	if err := Verify(generation1, f.trust, f.scope); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(generation1, f.trust, f.scope, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("rollback to generation 1 accepted: %v", err)
 	}
 	f.trust.PreviousGrantSHA256 = strings.Repeat("0", 64)
-	if err := Verify(generation2, f.trust, f.scope); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(generation2, f.trust, f.scope, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("mismatched predecessor chain accepted: %v", err)
 	}
 }
@@ -281,7 +284,7 @@ func TestInstalledGrantRejectsImpossibleManifestAndTime(t *testing.T) {
 			f := newSignedFixture(t)
 			tc.change(&f.manifest)
 			grant := f.sign(t)
-			if err := Verify(grant, f.trust, f.scope); !errors.Is(err, ErrInvalidGrant) {
+			if err := Verify(grant, f.trust, f.scope, f.operational); !errors.Is(err, ErrInvalidGrant) {
 				t.Fatalf("invalid signed manifest accepted: %v", err)
 			}
 		})
@@ -289,7 +292,7 @@ func TestInstalledGrantRejectsImpossibleManifestAndTime(t *testing.T) {
 	f := newSignedFixture(t)
 	f.manifest.CommittedAtUTC = f.trust.Now.Add(4*time.Minute).Format(time.RFC3339Nano)
 	grant := f.sign(t)
-	if err := Verify(grant, f.trust, f.scope); !errors.Is(err, ErrGrantDrift) {
+	if err := Verify(grant, f.trust, f.scope, f.operational); !errors.Is(err, ErrGrantDrift) {
 		t.Fatalf("future committed time beyond tolerance accepted: %v", err)
 	}
 }
@@ -300,7 +303,29 @@ func TestInstalledGrantRejectsUntrustedSignerEvenWithMatchingPin(t *testing.T) {
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil { t.Fatal(err) }
 	f.trust.TrustedPublicKey = &other.PublicKey
-	if err := Verify(grant, f.trust, f.scope); !errors.Is(err, ErrUntrustedGrant) {
+	if err := Verify(grant, f.trust, f.scope, f.operational); !errors.Is(err, ErrUntrustedGrant) {
 		t.Fatalf("correct pin but untrusted signature accepted: %v", err)
+	}
+}
+
+func TestInstalledGrantRequiresActualOperationalConfigurationBytes(t *testing.T) {
+	f := newSignedFixture(t)
+	encoded := f.sign(t)
+	for _, tc := range []struct {
+		name string
+		operational []byte
+	}{
+		{"empty operational configuration", nil},
+		{"edited runtime configuration", []byte("an edited operational configuration")},
+		{"bounded capacity exceeded", bytes.Repeat([]byte{'a'}, maxOperationalConfigBytes+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := Verify(encoded, f.trust, f.scope, tc.operational); !errors.Is(err, ErrGrantDrift) {
+				t.Fatalf("unbound operational configuration accepted: %v", err)
+			}
+		})
+	}
+	if err := Verify(encoded, f.trust, f.scope, append([]byte(nil), f.operational...)); err != nil {
+		t.Fatalf("equal operational bytes rejected: %v", err)
 	}
 }
