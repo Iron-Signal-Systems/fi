@@ -21,7 +21,7 @@ The read-only command:
 .\fi-install.exe -check-clean-install
 ```
 
-is isolated from all legacy installer operations, including the existing default `-apply=true`. It rejects any additional installer flags, including `-apply=false`, `-plan-only`, `-list-volumes`, `-volume-config`, `-config`, or positional arguments.
+is isolated from all legacy installer operations, including the existing default `-apply=true`. It rejects any additional installer flags, including `-apply=false`, `-plan-only`, `-list-volumes`, `-volume-config`, `-config`, or positional arguments. Explicitly disabled read-only selectors (`-check-clean-install=false` or `-list-volumes=false`) also fail before the old default apply path.
 
 The underlying `go/internal/windows/freshinstall` package queries these exact local Windows SCM service names: `FICollector`, `FIUSNReader`, `FIObjReader`, `FICRLRefresher`, `FISender`. It also checks `C:\Program Files\FI` and `C:\ProgramData\FI` with `Lstat`, treating directories, files and reparse points as existing artifacts. Every result is `Absent`, `Present` or `Unknown`, with a reason for uncertainty. Any `Present` or `Unknown` causes `install_blocked=true` and a nonzero exit. All checks run to completion to report every collision. No cleanup, reconfiguration, service start or SACL change occurs.
 
