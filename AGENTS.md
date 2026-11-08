@@ -1,6 +1,6 @@
 # FI Agent and Contributor Rules
 
-> **Volume-first development branch notice (2026-11-08):** The rules below describe currently implemented root-centric collection and its historical proof. [ADR-0002](docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md) proposes a different explicitly enrolled-volume source model while preserving privilege, custody and non-remediating boundaries. Do not mistake proposed behavior for running code. All Windows development and native tests are on `adminbox`; `main` and the installed `ISS-FS-22A` services are not modified by branch staging.
+> **Volume-first development branch notice (2026-11-08):** The rules below describe currently implemented root-centric collection and its historical proof. [ADR-0002](docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md) proposes a different explicitly enrolled-volume source model while preserving privilege, custody and non-remediating boundaries. Do not mistake proposed behavior for running code. Branch-only `volumeconsent.Verify` checks a P-256-signed short-lived installer intent, but signing trust, protected installed authorization, and v2 service startup remain deliberately unimplemented/blocked; see [consent receipt contract](docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md). All Windows development and native tests are on `adminbox`; `main` and the installed `ISS-FS-22A` services are not modified by branch staging.
 
 
 ## Purpose
