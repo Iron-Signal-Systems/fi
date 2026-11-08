@@ -15,7 +15,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/jackc/pgx/v5"
 )
 
