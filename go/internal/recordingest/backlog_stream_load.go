@@ -108,7 +108,7 @@ func loadRecordedGenerationSelectedWindowsWithTrustAndCache(
 		return nil, errors.New("FI stream loader: nonnegative start and 1..8 selected windows required")
 	}
 	if limits.MaxRecords == 0 || limits.MaxDataBytes == 0 ||
-		limits.MaxDataBytes > 1<<30 || limits.MaxDataBytes > math.MaxInt64-1 {
+		limits.MaxRecords > 262144 || limits.MaxDataBytes > 2<<30 || limits.MaxDataBytes > math.MaxInt64-1 {
 		return nil, errors.New("FI stream loader: invalid bounded window limits")
 	}
 	receiptRoot := config.RecordedRoot
