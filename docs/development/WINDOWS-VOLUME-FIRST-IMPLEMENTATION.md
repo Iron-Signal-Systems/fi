@@ -32,7 +32,7 @@
 
 ## Durable installed-grant verification (2026-11-08)
 
-- `go/internal/windows/volumegrant/` independently verifies a domain-separated ECDSA P-256 signed durable v2 scope grant against a separately pinned exact-envelope digest, committed generation and predecessor, native host/installation identity inputs, canonical scope digest and a distinct full-operational-configuration digest. Tests prove that a correctly signed but uncommitted grant is rejected and old signed grants cannot substitute for a later protected generation.
+- `go/internal/windows/volumegrant/` independently verifies a domain-separated ECDSA P-256 signed durable v2 scope grant against a separately pinned exact-envelope digest, committed generation and predecessor, native host/installation identity inputs, canonical scope digest and a distinct full-operational-configuration digest. It additionally hashes the **actual provided operational bytes**, rejecting empty, oversized or changed runtime configuration content; future complete v2 semantic validation is still required. Tests prove that a correctly signed but uncommitted grant is rejected and old signed grants cannot substitute for a later protected generation.
 - The new verifier is **only a pure verification component**. No trusted Windows state storage, key provisioning, native signing/administrator consent, transactional installer mutation, service-startup verifier or durable authority handoff is implemented. Installed FIUSNReader remains root-centric and the exported volume-mode broker startup refuses activation.
 - See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md` and `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
 
