@@ -307,6 +307,11 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	chunkFirst := d.StartBatch
 	chunkStarted := time.Now()
 	var chunkSamples []backlogTypedChunkSample
+	w256Memory := privateW256BudgetFromContext(ctx)
+	activeChunkLimit := chunkLimit
+	if w256Memory != nil && (!joined || typedChunk == nil || w256Memory.requested != chunkLimit) {
+		return errors.New("FI W256 memory: adaptive chunk controller requires exact joined typed-chunk mode")
+	}
 	for offset := 0; offset < len(batchIDs); offset++ {
 		globalIndex := d.StartBatch + offset
 		batch := generation.Batches[globalIndex]
@@ -319,9 +324,18 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		}
 		batchCtx := ctx
 		finishChunk := false
+		memoryPressure := false
 		if typedChunk != nil {
+			// Inspect at a WHOLE signed-batch boundary. No batch is ever
+			// split and no memory governor introduces an SQL commit.
+			if w256Memory != nil {
+				memoryPressure, err = w256Memory.sample()
+				if err != nil {
+					return fmt.Errorf("FI W256 memory before signed batch %d: %w", globalIndex, err)
+				}
+			}
 			count := batch.Manifest.RecordCount
-			if count <= 0 || count > chunkLimit-chunkRows {
+			if count <= 0 || count > activeChunkLimit-chunkRows {
 				return fmt.Errorf("FI typed chunk: invalid signed batch size at %d", globalIndex)
 			}
 			chunkRows += count
@@ -329,9 +343,14 @@ WHERE receipt_sha256=$1 AND window_index=$2
 			if offset+1 < len(batchIDs) {
 				next = generation.Batches[globalIndex+1].Manifest.RecordCount
 			}
-			finishChunk, err = shouldFinishBacklogTypedChunk(chunkRows, next, chunkLimit)
+			finishChunk, err = shouldFinishBacklogTypedChunk(chunkRows, next, activeChunkLimit)
 			if err != nil {
 				return err
+			}
+			if w256Memory != nil && memoryPressure {
+				// End this bounded chunk after its current intact batch.
+				// The next chunk's ceiling will shrink, down to K32.
+				finishChunk = true
 			}
 			batchCtx = context.WithValue(ctx, backlogTypedChunkContextKey{},
 				backlogTypedChunkDirective{state: typedChunk, finish: finishChunk})
@@ -346,6 +365,18 @@ WHERE receipt_sha256=$1 AND window_index=$2
 			if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
 				len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
 				return errors.New("FI typed chunk: buffers remained after required flush")
+			}
+			if w256Memory != nil {
+				// Bound the joined-source ledger too. It shares this exact
+				// transaction, preserving signed batch and source ordinal.
+				if err := joinedSource.flush(ctx); err != nil {
+					return fmt.Errorf("FI W256 joined source early COPY: %w", err)
+				}
+				w256Memory.afterChunk(memoryPressure)
+				activeChunkLimit = w256Memory.active
+				if _, err := w256Memory.sample(); err != nil {
+					return fmt.Errorf("FI W256 memory after COPY boundary: %w", err)
+				}
 			}
 			chunkSamples = append(chunkSamples, backlogTypedChunkSample{
 				firstBatch: chunkFirst, endBatch: globalIndex + 1,
@@ -518,6 +549,9 @@ INSERT INTO fi_recovery.typed_window (
 		limits := securityBulkLimitsFromContext(ctx)
 		fmt.Printf("FI PRIVATE SECURITY FLUSH PROFILE index=%d profile=%s max_records=%d max_source_bytes=%d %s consistent=%t\n",
 			index, limits.Name, limits.MaxRecords, limits.MaxBytes, flush.summary(), consistent)
+	}
+	if w256Memory != nil {
+		fmt.Printf("FI PRIVATE W256 MEMORY COMMITTED index=%d %s\n", index, w256Memory.summary())
 	}
 	if joinedSource != nil {
 		fmt.Printf("FI JOINED SOURCE COPY CHUNKS COMMITTED window=%d chunk_limit=%d calls=%d records=%d copy_time=%s sql_verify_time=%s\n",
