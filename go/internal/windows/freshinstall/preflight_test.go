@@ -40,7 +40,8 @@ func TestFreshInstallAcceptsOnlyCompleteObservedAbsence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !report.Clean || report.InstallBlocked || report.Mode != InstallMode ||
+	if !report.Clean || report.InstallBlocked || report.InstallationAuthorized ||
+		report.Action != "ReadOnlyFreshHostPreflight" || report.Mode != InstallMode ||
 		report.Version != ReportVersion || len(report.Findings) != 7 {
 		t.Fatalf("incorrect new-install preflight report: %+v", report)
 	}
