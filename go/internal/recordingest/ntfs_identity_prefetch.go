@@ -60,13 +60,14 @@ func prefetchNTFSObjectIdentities(ctx context.Context, tx pgx.Tx, pending []file
 	requests := make([]*ntfsIdentityPrefetchRequest, 0, len(pending)*2)
 	byKey := make(map[ntfsIdentityPrefetchKey]*ntfsIdentityPrefetchRequest, len(pending)*2)
 	for _, p := range pending {
-		volumeID, err := ensureNTFSVolume(ctx, tx, p.sourceID, p.value.VolumeIdentity)
+		observation := p.observation()
+		volumeID, err := ensureNTFSVolume(ctx, tx, p.sourceID, observation.VolumeIdentity)
 		if err != nil {
 			return fmt.Errorf("FI NTFS identity prefetch source record %d volume: %w", p.sourceRecordID, err)
 		}
-		objects := []records.NTFSObjectIdentity{p.value.ObjectIdentity, p.value.GovernedRoot.ObjectIdentity}
-		if p.value.ParentBinding.ObjectIdentity != nil {
-			objects = append(objects, *p.value.ParentBinding.ObjectIdentity)
+		objects := []records.NTFSObjectIdentity{observation.ObjectIdentity, observation.GovernedRoot.ObjectIdentity}
+		if observation.ParentBinding.ObjectIdentity != nil {
+			objects = append(objects, *observation.ParentBinding.ObjectIdentity)
 		}
 		for _, object := range objects {
 			rawKey := ntfsObjectCacheKey{volumeID: volumeID, fileReferenceNumber: object.FileReferenceNumber, sequenceNumber: object.SequenceNumber}

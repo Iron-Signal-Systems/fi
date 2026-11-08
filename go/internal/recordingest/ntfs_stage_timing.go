@@ -13,6 +13,12 @@ type ntfsNestedStageContextKey struct{}
 type ntfsStageTimingContextKey struct{}
 
 type ntfsStageTimingCounters struct {
+	// Successful source checks and post-source bulk reuse. Integer-only
+	// counters deliberately avoid per-record time.Now/allocations.
+	FileSourceValidated      int64
+	FileBulkValidationReused int64
+	FileBulkValidated        int64
+
 	Observations int64
 	Total        time.Duration
 	Identity     time.Duration

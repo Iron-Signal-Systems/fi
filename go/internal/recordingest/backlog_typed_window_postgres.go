@@ -394,6 +394,13 @@ WHERE receipt_sha256=$1 AND window_index=$2
 			return fmt.Errorf("FI INJECTED PRIVATE FIELD PARTITION LATE FAILURE window=%d: rollback required", index)
 		}
 	}
+	// Require a complete one-to-one match before the atomic private commit:
+	// every FileObservation was validated at source and consumed unchanged.
+	if ntfsTiming.FileSourceValidated != int64(familyCounts["FileObservation"]) ||
+		ntfsTiming.FileBulkValidationReused != ntfsTiming.FileSourceValidated {
+		return fmt.Errorf("FI typed window: FileObservation validation count mismatch source=%d reused=%d expected=%d",
+			ntfsTiming.FileSourceValidated, ntfsTiming.FileBulkValidationReused, familyCounts["FileObservation"])
+	}
 	verifyStarted := time.Now()
 	if totalRecords != int64(summary.RecordCount) || totalBytes != int64(summary.DataBytes) {
 		return errors.New("FI typed window: processed counts differ from signed receipt")
@@ -464,6 +471,8 @@ INSERT INTO fi_recovery.typed_window (
 		fmt.Printf("FI PRIVATE FIELD PARTITION COMMITTED window=%d table=%s rows=%d begin=%s validate_attach=%s\n",
 			index, fieldPartitionName, profile.SecurityBulk.Fields, fieldPartitionBegin.Round(time.Millisecond), fieldPartitionFinish.Round(time.Millisecond))
 	}
+	fmt.Printf("FI FILE VALIDATION WINDOW index=%d source_validated=%d bulk_reused=%d bulk_validated=%d\n",
+		index, ntfsTiming.FileSourceValidated, ntfsTiming.FileBulkValidationReused, ntfsTiming.FileBulkValidated)
 	fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d families=%s ntfs_identity=%s ntfs_file_copy=%s ntfs_metadata_copy=%s security_events=%d security_fields=%d security_source_copy=%s security_event_copy=%s security_field_copy=%s\n", index, totalRecords, strings.Join(parts, ","), ntfsTiming.Identity, ntfsTiming.FileCopyLatency.String(), ntfsTiming.MetadataCopyLatency.String(), profile.SecurityBulk.Events, profile.SecurityBulk.Fields, profile.SecurityBulk.SourceLatency.String(), profile.SecurityBulk.EventLatency.String(), profile.SecurityBulk.FieldLatency.String())
 	// Outer wall-clock stages partition the private typed window. The ingest
 	// counters below are nested (some include COPY), so they are NOT additive.

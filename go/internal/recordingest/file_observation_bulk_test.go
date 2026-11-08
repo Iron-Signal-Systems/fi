@@ -6,8 +6,10 @@ package recordingest
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5"
 	"testing"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/jackc/pgx/v5"
 )
 
 type noSQLFileObservationBulkTx struct{ pgx.Tx }
@@ -43,5 +45,40 @@ func TestFileBulkNumeric(t *testing.T) {
 		if _, err := fileBulkNumeric(value); err == nil {
 			t.Fatalf("accepted invalid numeric %q", value)
 		}
+	}
+}
+
+func TestFileValidationSourceRejectsMalformedAndDirectDoesNotBypass(t *testing.T) {
+	checked, err := validateSourceFileObservation(ntfs.Observation{})
+	if err == nil || checked != nil {
+		t.Fatal("malformed observation received a validated source value")
+	}
+	direct := fileObservationBulkRecord{
+		sourceID: "source-A", sourceRecordID: 7, bytes: 80,
+		value: ntfs.Observation{},
+	}
+	if direct.validatedSource != nil {
+		t.Fatal("direct record may not bypass validation")
+	}
+	_, _, err = prepareFileObservationBulk(context.Background(), noSQLFileObservationBulkTx{}, direct)
+	if err == nil {
+		t.Fatal("invalid direct bulk input reached SQL without validation")
+	}
+}
+
+func TestFileBulkValidatedValueIsTheBulkReadSource(t *testing.T) {
+	checked := &validatedSourceFileObservation{
+		observation: ntfs.Observation{ObservedAt: "2026-11-08T00:00:00.000000000Z"},
+	}
+	p := fileObservationBulkRecord{
+		value: ntfs.Observation{ObservedAt: "untrusted"},
+		validatedSource: checked,
+	}
+	if got := p.observation().ObservedAt; got != checked.observation.ObservedAt {
+		t.Fatalf("bulk used different value from validated source: %q", got)
+	}
+	direct := fileObservationBulkRecord{value: ntfs.Observation{ObservedAt: "direct"}}
+	if direct.observation().ObservedAt != "direct" {
+		t.Fatal("direct record no longer reads its own observation")
 	}
 }

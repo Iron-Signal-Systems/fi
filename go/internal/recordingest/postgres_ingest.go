@@ -518,15 +518,21 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, projectionDecodeError("FileObservation", err))
 			}
 			value.NTFS.ContentHashes = &value.ContentHashes
-			if err := ntfs.ValidateObservation(value.NTFS); err != nil {
+			// Initial Go decode performs the complete NTFS check once, then
+			// hands the exact checked observation to the bounded bulk stage.
+			validated, err := validateSourceFileObservation(value.NTFS)
+			if err != nil {
 				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, projectionValidationError("FileObservation", err))
 			}
-			if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {
+			if validated.observation.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {
 				return fmt.Errorf("%w: batch %s record %d (FileObservation): governed-root scope does not match source envelope", ErrSourceRecordRejected, batch.BatchID, item.ordinal)
+			}
+			if counters, _ := ctx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters); counters != nil {
+				counters.FileSourceValidated++
 			}
 			if err := fileBulk.add(ctx, tx, fileObservationBulkRecord{
 				sourceID: sourceID, sourceRecordID: item.sourceRecordID, ordinal: item.ordinal,
-				value: value.NTFS, hashes: &value.ContentHashes, bytes: int64(item.prepared.RecordBytes),
+				validatedSource: validated, hashes: &value.ContentHashes, bytes: int64(item.prepared.RecordBytes),
 			}); err != nil {
 				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
 			}

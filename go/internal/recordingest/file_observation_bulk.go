@@ -31,6 +31,30 @@ type fileObservationBulkRecord struct {
 	value          ntfs.Observation
 	hashes         *records.ContentHashObservation
 	bytes          int64
+	// A typed value produced by the first successful source validation.
+	// Direct/other bulk records leave this nil and require full validation.
+	validatedSource *validatedSourceFileObservation
+}
+
+// Ingest owns the original decoded object through bounded source and typed
+// buffers. No caller mutates it after validation. The exact checked value is
+// used for prefetch, parent, metadata and child projection.
+type validatedSourceFileObservation struct {
+	observation ntfs.Observation
+}
+
+func validateSourceFileObservation(value ntfs.Observation) (*validatedSourceFileObservation, error) {
+	if err := ntfs.ValidateObservation(value); err != nil {
+		return nil, err
+	}
+	return &validatedSourceFileObservation{observation: value}, nil
+}
+
+func (p fileObservationBulkRecord) observation() ntfs.Observation {
+	if p.validatedSource != nil {
+		return p.validatedSource.observation
+	}
+	return p.value
 }
 
 type fileObservationBulkPrepared struct {
@@ -181,12 +205,23 @@ func prepareFileObservationBulk(ctx context.Context, tx pgx.Tx, p fileObservatio
 	if p.sourceID == "" || p.sourceRecordID <= 0 {
 		return nil, nil, errors.New("FI file observation identity missing")
 	}
-	v := p.value
+	v := p.observation()
 	if v.VolumeIdentity != v.GovernedRoot.VolumeIdentity {
 		return nil, nil, errors.New("FI NTFS observation volume identity does not match governed-root volume")
 	}
-	if err := ntfs.ValidateObservation(v); err != nil {
-		return nil, nil, fmt.Errorf("validate FI NTFS observation: %w", err)
+	if p.validatedSource == nil {
+		if err := ntfs.ValidateObservation(v); err != nil {
+			return nil, nil, fmt.Errorf("validate FI NTFS observation: %w", err)
+		}
+	}
+	if ctx != nil {
+		if counters, _ := ctx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters); counters != nil {
+			if p.validatedSource != nil {
+				counters.FileBulkValidationReused++
+			} else {
+				counters.FileBulkValidated++
+			}
+		}
 	}
 
 	volumeID, err := ensureNTFSVolume(ctx, tx, p.sourceID, v.VolumeIdentity)
@@ -270,7 +305,7 @@ func fileBulkNumeric(value string) (pgtype.Numeric, error) {
 
 func projectFileObservationBulkChildren(ctx context.Context, tx pgx.Tx, p fileObservationBulkRecord) error {
 	sourceRecordID := p.sourceRecordID
-	v := p.value
+	v := p.observation()
 	stages := beginNTFSStage(ctx)
 	defer stages.finish()
 	// The normal projector always includes these child calls. Preserve their
