@@ -1,59 +1,62 @@
-# Windows Volume-First Native Installer Work Contract
+# FI Windows Volume-First — Fresh Installation Contract
 
-**Status:** Branch-only read-only inventory/preflight implemented. A separate volume-ID USN broker path exists, but the exported `ServeEnrolledVolumes` is **fail-closed** until authenticated protected consent is implemented, and FIUSNReader's v1.1 startup remains root-centric. Full v2 installer approval/apply/reconciliation/rollback, secure configuration handoff, protected-object policy authority and native `adminbox` tests are outstanding.
-**Branch:** `dev/windows-volume-first-20261108`
-**Windows engineering/test machine:** `adminbox`
+**Status:** Development only. Read-only discovery, fresh-host inspection, scope review, signed-intent verification and signed installed-grant verification are partial foundations. No volume-first installer apply, native signed state installation or end-to-end source acceptance exists.  
+**Branch:** `dev/windows-volume-first-20261108`  
+**Windows engineering and test host:** `adminbox`  
+**Deployment model:** **NEW INSTALL ONLY. No FI present. No in-place update, repair, migration, adoption or reconfiguration.**
 
-The native `fi-install.exe` is a first-class part of the refactor. Do not ship or report the source collector change as working if install/reconcile, privileges, configuration, rollback, and documentation still assume root-owned USN.
+## Nonnegotiable installation model
 
-## Mandatory implementation surfaces
+The volume-first release **replaces** the legacy root-centric Windows FI code after development acceptance. It is not installed over existing FI. There is no supported v1.1-to-v2 upgrade, legacy checkpoint reuse, inherited spool custody, configuration conversion or auto-reconciliation.
 
-| Area | Existing source area | Change required |
-| --- | --- | --- |
-| Strict configuration | `go/internal/config/config.go` | Versioned, normalized, explicitly enrolled volumes and zero+ root policies per volume; no implicit all-volume mode |
-| Discovery and approval | `go/internal/windows/install/deployment_config_windows.go` | Separate eligible/discovered volumes from deliberate enrollment; revalidate identity and approval hash before mutation |
-| Root validation | `go/internal/windows/install/governed_root_validation_windows.go` | Prove root-to-approved-volume binding and mount/reparse boundaries; handle GUID/mount-only volumes |
-| Approval 2 reconciliation | `go/internal/windows/install/approval2_config_windows.go` and related files | Bind policy/audit/SCM/identity mutation to approved exact normalized configuration and fresh rediscovery |
-| Privileged broker | `go/internal/windows/usn/` | Restrict volume journal requests to enrolled volume identity and authenticated service, without arbitrary device access |
-| Audit policy and SACL | `go/internal/windows/install/` | No blanket SACL rollout on enrolled volumes; changes only on approved policy scope with explicit administrator consent |
-| Service lifecycle | `go/internal/windows/install/` SCM and recovery paths | Preserve the separate five-service and gMSA security model, transactional rollback, staged recovery, and idempotent repeat runs |
-| Install configuration authority | `go/cmd/fi/config_authority_windows.go` | Fail closed on unsupported/deprecated versions and unknown/unenrolled volumes |
-| Operator docs | `docs/WINDOWS-INSTALLER.md`, `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`, `docs/WINDOWS-SERVER-VALIDATION.md` | Keep examples and exact-build evidence aligned with code actually tested |
+Before the new installer starts any mutation, the machine must have **no locally installed FI services or FI-owned installation/state trees**. An operator handles disposal of prior development hosts/artifacts **outside** the new installer, after making any intended evidence-retention decision. The installer must neither silently delete that evidence nor assume an old source can be resumed.
 
-## Read-only scope-change contract implemented; no authority granted
+A successful initial installation creates a new installation identity, generation 1, a new signed grant with **no predecessor**, new per-volume journal epochs and fresh checkpoints. An explicitly approved previously deployed shared AD/PKI issuer may be used if compatible, but that is a separate credential/trust decision; it does not turn a local FI installation into a supported update.
 
-The new `go/internal/windows/volumereview/` package and branch-only `-list-volumes -volume-config` inventory command now report a canonical requested-v2 scope hash, each enrollment's current native match, typed authorization-relevant changes, and a deterministic review fingerprint. Proposed changes **always require explicit approval**; a mismatch blocks the operation. Revalidation compares the entire review against freshly discovered identities and rejects stale or modified evidence.
+## Implemented branch-only clean-host preflight
 
-These are **preflight inputs**, not an authenticated approval. Future Approval 2 work must still bind a trusted installed baseline, host identity, approved policy effects, exact native object roots, and operator consent to a protected and verifiable receipt, then recheck state at the write boundary. No current `1.1` install plan or runtime begins collecting volumes as a result of this code. See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
+The read-only command:
 
+```powershell
+.\fi-install.exe -check-clean-install
+```
 
-## Short-lived signed approval verifier (foundation only)
+is isolated from all legacy installer operations, including the existing default `-apply=true`. It rejects any additional installer flags, including `-apply=false`, `-plan-only`, `-list-volumes`, `-volume-config`, `-config`, or positional arguments.
 
-`go/internal/windows/volumeconsent` now verifies a canonical P-256/SHA-256 signed transaction approval against independently sourced host SID, installation ID, approval generation, existing v2 config digest, full scope-review fingerprint and freshly discovered NTFS identity. It uses a trusted public-key input, **not** a key supplied by the receipt.
+The underlying `go/internal/windows/freshinstall` package queries these exact local Windows SCM service names: `FICollector`, `FIUSNReader`, `FIObjReader`, `FICRLRefresher`, `FISender`. It also checks `C:\Program Files\FI` and `C:\ProgramData\FI` with `Lstat`, treating directories, files and reparse points as existing artifacts. Every result is `Absent`, `Present` or `Unknown`, with a reason for uncertainty. Any `Present` or `Unknown` causes `install_blocked=true` and a nonzero exit. All checks run to completion to report every collision. No cleanup, reconfiguration, service start or SACL change occurs.
 
-The verifier also includes a bounded conversion of native Windows CNG P-256 raw signature bytes into canonical DER. This verifier cannot authenticate an actual administrator, issue signatures, install protected config or grant access to FIUSNReader. The future CNG signing key, PKI/trust provisioning, user-token checks, atomic durable installed grant and restart verifier are still required. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+A passing preflight is only a **point-in-time observation**. The future native installer must revalidate this on the actual write boundary, prevent concurrent installation from racing that check, and additionally validate v2 policy and native volume identity before any privileged operations.
 
-## Installed-scope grant verification exists; protected installer persistence does not
+The separate branch-only `-list-volumes [-volume-config <scope-v2.conf>]` command remains read-only and is **not** an installation action.
 
-The branch now includes `go/internal/windows/volumegrant/` for verifying a long-lived **installed** P-256 signed scope grant against a separately trusted exact signed-grant digest and committed generation. Unlike the short-lived `volumeconsent` transaction receipt, this durable declaration is designed for future restart-time verification and binds both the canonical scope declaration and the full future v2 operational-config digest. The verifier checks **actual installed operational configuration bytes**, not merely two matching asserted hashes; parsing/validating a complete v2 operational schema remains future work.
+## Implementation surfaces required for the future fresh installer
 
-The code cannot issue or persist grants, authenticate Windows tokens, validate file/registry ACLs, select trust roots, advance durable state, or enable the broker. Installer source remains root-centric for mutations. No `adminbox` privileged acceptance exists. See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
+| Area | Required fresh-only behavior |
+| --- | --- |
+| Entrypoint | New v2 install path must **never** fall through to legacy `BuildPlanWithInputs`, `UPDATE / RECONCILE`, local repair, migration or update logic |
+| Read-only checks | Strict absence of all fixed FI services, program directory and ProgramData FI tree; fail closed on SCM/filesystem ambiguity; no silent cleanup |
+| Scope | Explicit NTFS volume GUID + full 64-bit volume serial enrollment; zero or more governed roots controlling deeper policy; no automatic all-volume selection |
+| Approval | First-install scope review from an empty baseline; all requested volumes/policies are additions requiring consent, even a volume with zero governed roots |
+| Consent | Verify a fresh-install signed transaction intent with sequence 1, empty prior-config digest and no trusted old FI baseline; authenticate the real Windows administrator and issuer |
+| Windows privileges | Least-privileged gMSAs, bounded service-SID pipe authentication, correct signed binaries, AD/PKI trust and native volume authorization |
+| Protected state | Create-only identity, protected issuer public key and configuration; new generation-one signed installed grant and independent immutable commitment; no old-state adoption |
+| Write transaction | Install only newly created FI artifacts; failure reverses **only this transaction's new effects**, never erases prior FI evidence to converge |
+| Service startup | Verify committed installed authority, operational config, exact enrolled volume identity and journal lifecycle before enabling volume-wide collector/broker |
+| Validation | Native `adminbox` test matrix including clean install, refusal on remnants/uncertainty, mid-install failure, restart, two-volume faults and end-to-end signed custody |
 
-## Required behavior
+**Important:** Installer rollback during a failed **fresh** installation is necessary. That is unrelated to an upgrade rollback. Recovery must be explicit and evidence-preserving, and the installer must not erase preexisting FI to appear clean.
 
-1. Read-only `-plan-only` reports volumes and policy changes accurately without writes.
-2. A discovered volume is not enrolled by default. Addition of any volume, system-volume enrollment, policy widening or new audit/SACL authority requires explicit new approval.
-3. Reformat, drive-letter change, volume replacement, root move, mounted-folder alias and policy removal are distinguished.
-4. Configuration parse/normalize/round-trip is deterministic and rejects duplicates and unknown settings; approval digest binds intended volume identities, policies and configuration bytes.
-5. Existing root-only configurations cannot silently trigger wider monitoring. A clean development installation is permitted, but migration cannot be guessed or hidden.
-6. Fail closed on stale approval, missing privilege, unavailable AD/PKI, trust error, volume drift and unsupported filesystem.
-7. Interruptions mid-install/upgrade preserve journal and spool custody and produce recoverable, explicit partial-application/rollback evidence.
-8. Identical reruns are idempotent; removal and reconfiguration must not erase source history to make the installer converge.
-9. Signed artifacts, constrained service privileges, safe ACLs and existing CRL trust remain mandatory.
-10. All installer behavior requires native Windows tests on `adminbox`, not only a Go cross-compile.
+## Source/test status
 
-## Evidence before declaring installer functionality complete
+- `go/internal/windows/freshinstall/`: pure policy and Windows-native SCM/filesystem read-only preflight, with collision/unknown failure tests.
+- `go/cmd/fi-install/`: isolated `-check-clean-install` action, blocked mixed flags, JSON report, nonzero on existing or uncertain local FI.
+- `go/internal/windows/volumereview/`: `BuildFreshInstall` and `RevalidateFreshInstall` disallow an installed baseline.
+- `go/internal/windows/volumeconsent/`: `VerifyFreshInstall` refuses a previous generation/config.
+- `go/internal/windows/volumegrant/`: `VerifyFreshInstallation` refuses grant generations greater than one and predecessor grants.
+- **Not yet integrated:** native production signer, protected Windows commitment and ACLs, complete v2 operational config, the transactional installer, the FIUSNReader startup handoff, FICollector pipeline and backend ingestion.
 
-Record source commit, package/executable hashes, exact Windows build, configuration digest, plan, approved actions, failed actions, rollback/reconciliation state, service states and test logs. Test fresh install, rerun, update, decline, stale approval, multi-volume install, policy edits, reformat/replacement, outage/reboot and uninstall. Retain failures and later passes in separate evidence records.
+This remains **development work**, not accepted installation functionality. Read-only preflight and pure cryptographic verification do not authorize source reads. `ServeEnrolledVolumes` remains explicitly disabled until a complete protected fresh-install transaction and native acceptance are proved.
 
-**Current status:** Branch-only read-only inventory, native identity preflight, and deterministic scope-change review exist. Full v2 installer apply/approval/reconcile/rollback, protected manifest handoff, FIUSNReader startup selection, and native `adminbox` acceptance remain unimplemented. These partial preflight features do not satisfy installation acceptance.
+See `WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md`, `WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`, `WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`, `WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md` and `WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`.
+
+**Noninterference:** Keep all changes in the development branch. Do not modify `main` or the installed `ISS-FS-22A` source; do not start FISender.
