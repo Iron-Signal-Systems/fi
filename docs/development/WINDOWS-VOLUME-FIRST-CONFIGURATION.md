@@ -54,4 +54,4 @@ The future installer must create an approval digest over both normalized request
 - Not implemented: complete v2 operational installer approval, application of v2 configuration to FICollector or FIUSNReader's service startup, per-volume scheduler/custody, governed policy/SACL enforcement, installation reconciliation/rollback, new source records, and FreeBSD database/projector changes.
 - No automatic edits, service changes or FISender start on `ISS-FS-22A`. All actual Windows engineering/integration and native host tests are assigned to `adminbox`.
 
-See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md`, `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md` and `docs/development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`. This document is not a deployment guide.
+See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md`, `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md`, `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md` (read-only change review and stale-plan checks), and `docs/development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`. This document is not a deployment guide.
