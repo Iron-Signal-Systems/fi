@@ -7,37 +7,47 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumediscovery"
 )
 
-const volumeDiscoveryReportVersion = "fi-volume-discovery/1"
+const (
+	volumeDiscoveryReportVersion = "fi-volume-discovery/1"
+	maxVolumeDeclarationBytes    = 1024 * 1024
+)
 
-// volumeInventoryCLI validates that the stand-alone inventory operation cannot
+var ErrVolumePreflightMismatch = errors.New("one or more declared volumes did not match native discovery")
+
+// volumeInventoryCLI validates that the stand-alone read-only operation cannot
 // be combined with installer flags that ask for planning or mutation. The
-// default value of -apply is true in the existing installer; -list-volumes is
-// intercepted *before* that behavior, but an explicitly supplied -apply flag
-// is rejected to prevent an ambiguous administrator request.
+// default -apply=true is intercepted before old installer behavior; explicitly
+// specifying -apply (even false) is rejected as ambiguous.
 func volumeInventoryCLI(flags *flag.FlagSet) error {
 	if flags == nil {
 		return errors.New("installer flag set is required")
 	}
 	var conflicting []string
 	flags.Visit(func(item *flag.Flag) {
-		if item.Name != "list-volumes" {
+		if item.Name != "list-volumes" && item.Name != "volume-config" {
 			conflicting = append(conflicting, "-"+item.Name)
 		}
 	})
 	if flags.NArg() > 0 {
-		return fmt.Errorf("-list-volumes does not accept positional arguments")
+		return errors.New("-list-volumes does not accept positional arguments")
 	}
 	if len(conflicting) > 0 {
 		sort.Strings(conflicting)
@@ -46,26 +56,75 @@ func volumeInventoryCLI(flags *flag.FlagSet) error {
 	return nil
 }
 
-type volumeInventoryReport struct {
-	Version              string                        `json:"version"`
-	ObservedAtUTC        string                        `json:"observed_at_utc"`
-	Action               string                        `json:"action"`
-	CollectionAuthorized bool                          `json:"collection_authorized"`
-	Volumes              []volumediscovery.Snapshot    `json:"volumes"`
+// loadVolumeDeclaration only reads an operator-supplied regular file. It is
+// neither a legacy operational config nor an approved installer transaction.
+// Limiting size protects the read-only native discovery console path.
+func loadVolumeDeclaration(path string) (config.VolumeConfig, error) {
+	if path == "" {
+		return config.VolumeConfig{}, errors.New("volume declaration path is required")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return config.VolumeConfig{}, fmt.Errorf("resolve volume declaration path: %w", err)
+	}
+	info, err := os.Lstat(absolute)
+	if err != nil {
+		return config.VolumeConfig{}, fmt.Errorf("inspect volume declaration: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxVolumeDeclarationBytes {
+		return config.VolumeConfig{}, errors.New("volume declaration must be a regular file of at most 1 MiB")
+	}
+	file, err := os.Open(absolute)
+	if err != nil {
+		return config.VolumeConfig{}, fmt.Errorf("read volume declaration: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxVolumeDeclarationBytes+1))
+	if err != nil {
+		return config.VolumeConfig{}, fmt.Errorf("read bounded volume declaration: %w", err)
+	}
+	if len(data) > maxVolumeDeclarationBytes {
+		return config.VolumeConfig{}, errors.New("volume declaration changed beyond 1 MiB while reading")
+	}
+	parsed, err := config.ParseVolumeV2(bytes.NewReader(data))
+	if err != nil {
+		return config.VolumeConfig{}, fmt.Errorf("validate volume declaration: %w", err)
+	}
+	return parsed, nil
 }
 
-// writeVolumeInventory is intentionally injected with a native enumerator for
-// deterministic failure-path tests. It performs no installer preflight,
-// config load, AD/PKI access, service management, approval or USN read.
-// Publishing a report does not authorize collection on any volume.
+type volumeInventoryReport struct {
+	Version                    string                     `json:"version"`
+	ObservedAtUTC              string                     `json:"observed_at_utc"`
+	Action                     string                     `json:"action"`
+	CollectionAuthorized       bool                       `json:"collection_authorized"`
+	Volumes                    []volumediscovery.Snapshot `json:"volumes"`
+	RequestedConfigSHA256      string                     `json:"requested_config_sha256,omitempty"`
+	RequestedVolumePreflight   *volumediscovery.Preflight  `json:"requested_volume_preflight,omitempty"`
+}
+
+// writeVolumeInventory is deliberately dependency-injected for failure-path
+// tests. It never loads installed config, invokes the existing installer,
+// changes a service, modifies SACLs/audit policy or reads a USN journal.
+// A matching declaration is still only a *preflight*, never authority to
+// perform privileged reads or to mutate Windows configuration.
 func writeVolumeInventory(
 	ctx context.Context,
 	output io.Writer,
 	discover func(context.Context) ([]volumediscovery.Snapshot, error),
 	clock func() time.Time,
+	requested *config.VolumeConfig,
 ) error {
 	if ctx == nil || output == nil || discover == nil || clock == nil {
 		return errors.New("volume inventory requires context, writer, discovery source and clock")
+	}
+	var canonical []byte
+	if requested != nil {
+		var err error
+		canonical, err = config.CanonicalVolumeV2(*requested)
+		if err != nil {
+			return fmt.Errorf("invalid volume declaration: %w", err)
+		}
 	}
 	volumes, err := discover(ctx)
 	if err != nil {
@@ -74,9 +133,6 @@ func writeVolumeInventory(
 	if len(volumes) == 0 {
 		return errors.New("read-only Windows volume discovery returned no volumes")
 	}
-	// A successful discovery contains only read-only observations. The
-	// enrollment approval, native rediscovery and policy checks are still
-	// separately required. Do not infer that Status=Eligible means approved.
 	report := volumeInventoryReport{
 		Version:              volumeDiscoveryReportVersion,
 		ObservedAtUTC:        clock().UTC().Format(time.RFC3339Nano),
@@ -84,10 +140,25 @@ func writeVolumeInventory(
 		CollectionAuthorized: false,
 		Volumes:              volumes,
 	}
+	var mismatch bool
+	if requested != nil {
+		preflight, err := volumediscovery.AssessEnrollment(*requested, volumes)
+		if err != nil {
+			return fmt.Errorf("read-only enrollment assessment failed: %w", err)
+		}
+		digest := sha256.Sum256(canonical)
+		report.RequestedConfigSHA256 = hex.EncodeToString(digest[:])
+		report.RequestedVolumePreflight = &preflight
+		report.Action = "DiscoveryAndScopePreflightOnly"
+		mismatch = !preflight.AllVolumesMatch
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(report); err != nil {
 		return fmt.Errorf("write read-only volume discovery report: %w", err)
+	}
+	if mismatch {
+		return ErrVolumePreflightMismatch
 	}
 	return nil
 }
