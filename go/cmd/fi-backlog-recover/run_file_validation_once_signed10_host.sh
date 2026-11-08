@@ -18,7 +18,7 @@ ref=e02a06891600d5877bcb5a680f84bcbcdbc7c195
 seed=/home/jwood/fi-window-bench-fieldpart-20261104T091019Z/W64
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-root=/home/jwood/fi-file-validation-once-$stamp
+root=/home/jwood/fi-window-bench-optfield-file-once-$stamp
 out=/var/tmp/fi-window-chunks-file-once-$stamp
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
@@ -33,6 +33,18 @@ existing=$(ps -axww -o pid,jid,user,rss,command | awk -v jid="$devjid" '
 [ "$existing" -eq 0 ] || fail "$existing PostgreSQL postmasters already running in fi-dev; no benchmark started"
 
 jexec fi-sor-db service postgresql status >/dev/null 2>&1 || fail 'real SoR PostgreSQL not running'
+
+# The unchanged historical relay permits only its original isolated fixture
+# path family. Verify BOTH its cluster-root and jailed-binary guard BEFORE
+# any PostgreSQL seed/dump/clone work begins. Do not relax relay restrictions.
+case "$root" in
+  /home/jwood/fi-window-bench-optfield-*) ;;
+  *) fail 'relay-compatible private cluster root required' ;;
+esac
+case "$out" in
+  /var/tmp/fi-window-chunks-*) ;;
+  *) fail 'relay-compatible private output root required' ;;
+esac
 [ -d "$jailroot$seed/data" ] && [ -d "$jailroot$seed/socket" ] || fail 'original validated seed missing'
 [ ! -e "$jailroot$root" ] && [ ! -e "$out" ] || fail 'disposable output collision'
 [ -d "$cache" ] && [ ! -L "$cache" ] || fail 'verified signed cache missing or symlink'
