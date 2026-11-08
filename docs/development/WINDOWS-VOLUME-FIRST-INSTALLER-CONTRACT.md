@@ -48,7 +48,7 @@ The separate branch-only `-list-volumes [-volume-config <scope-v2.conf>]` comman
 
 ## Creation-only transaction journal foundation
 
-A package-private, **not activated** transaction engine now exists in `go/internal/windows/freshinstall/creation_journal.go`. Its eight fixed creation phases have write-ahead intent/verified-creation events and bounded replay. A crash between intent and acknowledgement yields **in-doubt**, not permission to repeat or delete an artifact. Journal SHA-256 links detect sequence corruption, **not** privileged writer identity; a native protected append-and-sync sink, ownership-limited rollback and exclusive Windows create-only backend remain to be implemented and accepted. No service may be started based solely on this journal. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.
+A package-private, **not activated** transaction engine now exists in `go/internal/windows/freshinstall/creation_journal.go`. Its eight fixed creation phases have write-ahead intent/verified-creation events and bounded replay. All records bind the same installation ID and the exact prepared scope, operational configuration, signed approval and signed installed-grant digests. A crash between intent and acknowledgement yields **in-doubt**, not permission to repeat or delete an artifact. Journal SHA-256 links detect sequence corruption, **not** privileged writer identity; a native protected append-and-sync sink, ownership-limited rollback and exclusive Windows create-only backend remain to be implemented and accepted. No service may be started based solely on this journal. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.
 
 ## Source/test status
 
