@@ -144,6 +144,24 @@ func Build(existing *config.VolumeConfig, requested config.VolumeConfig, native 
 	return out, nil
 }
 
+// BuildFreshInstall deliberately has no prior-configuration argument.
+// There is no volume-first update or migration operation in this development
+// release. Every requested volume and governed policy is an addition that
+// must receive new approval before the first FI installation on this host.
+func BuildFreshInstall(requested config.VolumeConfig, native []volumediscovery.Snapshot) (Review, error) {
+	return Build(nil, requested, native)
+}
+
+// RevalidateFreshInstall checks only an initial enrollment proposal. It
+// refuses a review that carries an installed baseline: it may not be used to
+// silently adopt or alter an existing FI instance.
+func RevalidateFreshInstall(previous Review, requested config.VolumeConfig, freshNative []volumediscovery.Snapshot) error {
+	if previous.CurrentConfigSHA256 != "" {
+		return ErrStaleReview
+	}
+	return Revalidate(previous, nil, requested, freshNative)
+}
+
 // Revalidate recomputes the exact review against a FRESH native discovery.
 // The caller must obtain that discovery immediately before any future
 // mutation and must also validate a separate protected approval receipt.
