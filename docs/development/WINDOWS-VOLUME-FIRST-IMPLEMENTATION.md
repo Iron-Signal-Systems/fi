@@ -23,6 +23,14 @@
 - Still not implemented: authenticating an administrator's approval, protected host-bound v2 config/receipt installation, native root object identity and audit/SACL approval, transactional rollback, broker selection at service startup, volume worker custody, and backend changes.
 
 
+## Signed installer transaction-intent verification (2026-11-08)
+
+- `go/internal/windows/volumeconsent/receipt.go` now verifies short-lived, host-bound signed **installer intent** using CNG-compatible ECDSA P-256/SHA-256. It checks a separately trusted public key, native machine SID, protected installation ID/approval generation, old/new scope digest and an exact fresh `volumereview` comparison.
+- Tests cover valid signatures, incorrect trusted key/curve, malformed/duplicate JSON, changed host/installation/sequence, stale installed configuration, expiration, tampered policy and changed native volume. Test-only signing keys are ephemeral in-memory values; none are stored in this repository.
+- **Not implemented:** production CNG signer/issuer trust, native operator authentication, protected instance/generation state, transactional v2 config/receipt installation, durable installed grant and service handoff. Exported volume broker startup remains blocked by `ErrVolumeModeRequiresApproval`.
+- See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+
+## Dependency order
 
 1. Define explicit volume enrollment, volume/epoch identity, minimal USN change record, policy membership and discontinuity contracts.
 2. Add strict normalized operational configuration, volume enumeration, mount/GUID resolution and approval semantics without enabling capture until enrollment.
