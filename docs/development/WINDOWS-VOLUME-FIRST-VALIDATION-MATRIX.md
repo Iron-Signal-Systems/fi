@@ -6,6 +6,10 @@
 
 ## Rules of evidence
 
+The branch includes an opt-in read-only `TestNativeEnrolledVolumeUSNReadOnly` test for `adminbox`, described in `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Its existence is NOT a PASS. All native acceptance rows remain NOT RUN until actual evidence is recorded.
+
+
+
 Each test must record the exact source SHA, signed artifact and executable hashes, Windows build, source topology, starting configuration and custody, procedure, expected and observed outcomes, failure details and final state. Never count historical root-centric test results as proof of the redesigned implementation. Never treat compilation, unit tests or a benchmark as native Windows failure-path acceptance.
 
 | ID | Required demonstration | Initial state |
