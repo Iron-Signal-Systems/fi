@@ -42,7 +42,13 @@ The original `fi-install.exe` apply/plan/install/reconcile flow remains root-cen
 5. No customer content is read; no USN journal is queried; no audit policy, ACL, service or FI state is changed.
 6. The `ISS-FS-22A` FISender stays stopped and no existing host is modified by branch work.
 
-## Testing and limitations
+## New proposed-scope review fields (read-only only)
+
+With `-volume-config`, JSON now additionally contains `requested_scope_review` with `version`, `requested_config_sha256`, `review_fingerprint_sha256`, `changes`, `native_identities`, `blocks_mutation`, and `requires_explicit_approval`. An ordinary first-time v2 scope comparison has no trusted existing v2 baseline, so **every proposed enrollment and policy is reported as an addition**. A matching review is not an approval receipt and never enables USN access.
+
+See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
+
+
 
 - Deterministic pure-Go tests cover explicit matching, extra volumes, missing/reformatted/offline volumes, unsupported filesystems, duplicate/malformed sources, and unsafe declarations.
 - Windows-only tests exercise native GUID enumeration, mount-path MULTI_SZ handling and early cancellation on the GitHub Windows runner. A failure caused by an embedded-NUL test fixture was corrected without weakening the test.
