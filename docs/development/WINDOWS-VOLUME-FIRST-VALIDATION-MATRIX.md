@@ -4,6 +4,8 @@
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows development/test machine:** `adminbox`
 
+The branch now has a signed short-lived installer-intent verification package (`go/internal/windows/volumeconsent`) with unit tests. **It is not an installed v2 authority**: native signer, administrator approval token, protected installation state, transactional apply/rollback and privileged service startup remain NOT RUN/NOT IMPLEMENTED.
+
 ## Rules of evidence
 
 The branch includes an opt-in read-only `TestNativeEnrolledVolumeUSNReadOnly` test for `adminbox`, described in `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Its existence is NOT a PASS. All native acceptance rows remain NOT RUN until actual evidence is recorded.
