@@ -43,4 +43,4 @@ These are **preflight inputs**, not an authenticated approval. Future Approval 2
 
 Record source commit, package/executable hashes, exact Windows build, configuration digest, plan, approved actions, failed actions, rollback/reconciliation state, service states and test logs. Test fresh install, rerun, update, decline, stale approval, multi-volume install, policy edits, reformat/replacement, outage/reboot and uninstall. Retain failures and later passes in separate evidence records.
 
-**Current status:** No volume-first installer implementation or acceptance exists. A design-only change does not satisfy these requirements.
+**Current status:** Branch-only read-only inventory, native identity preflight, and deterministic scope-change review exist. Full v2 installer apply/approval/reconcile/rollback, protected manifest handoff, FIUSNReader startup selection, and native `adminbox` acceptance remain unimplemented. These partial preflight features do not satisfy installation acceptance.
