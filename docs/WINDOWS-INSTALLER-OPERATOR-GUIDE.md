@@ -1,6 +1,6 @@
 # FI Windows Native Installer â€” Operator Guide
 
-> **Existing-installer procedures remain root-centric (2026-11-08):** New branch-only `-list-volumes` inventory and optional `-list-volumes -volume-config <path>` comparison are read-only, not volume enrollment or an approved install plan. The proposed volume-first installer and collector are not integrated or validated on `adminbox`. See [read-only inventory contract](development/WINDOWS-VOLUME-FIRST-DISCOVERY.md) and [installer engineering contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md).
+> **Existing-installer procedures remain root-centric (2026-11-08):** New branch-only `-list-volumes` inventory and optional `-list-volumes -volume-config <path>` comparison are read-only, not volume enrollment or an approved install plan. The proposed volume-first installer and collector are not integrated or validated on `adminbox`. See [read-only inventory contract](development/WINDOWS-VOLUME-FIRST-DISCOVERY.md), [scope-change review contract](development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md), and [installer engineering contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md). The branch inventory now adds `requested_scope_review`; it is not an approved installation receipt.
 
 
 ## Scope
