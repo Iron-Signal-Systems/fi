@@ -48,7 +48,7 @@ FISender: authenticated transport, independent service
 
 - Preserve the five Windows services, gMSA split, FICollector non-admin identity, authenticated local pipes, FIUSNReader narrow raw-volume journal authority, and FIObjReader narrow protected-object authority. A volume-level USN query is never an arbitrary disk, file, FSCTL or privilege proxy.
 - Runtime collection remains read-oriented/non-remediating. Installer actions are explicitly approved administrative mutations, never a property of the collector's ordinary execution identity.
-- Installer configuration, volume discovery, scope approval digests, broker authorization, SACL/audit planning, service reconciliation and rollback must be updated **together with** the collector. No implicit conversion of root-only `1.1` configuration into blanket volume monitoring. See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md`.
+- The new volume-first installer is **fresh-install only on a machine with no FI**. Configuration, discovery, scope approval, native broker authorization, SACL/audit planning, new service creation and failed-new-install rollback must be engineered **together with** the collector. There is **no** in-place conversion, service reconciliation, update or migration of root-only `1.1` state. See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md` and `docs/development/WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md`.
 - A verified immutable spool publication and safe ownership transition precede USN checkpoint advancement. A retry must not erase a failure or double-retire durable records.
 - Preserve current signed generation transport/receiver custody principles; update their record-validation contracts only as required by the new source model.
 
