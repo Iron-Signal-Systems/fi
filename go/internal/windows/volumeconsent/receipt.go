@@ -88,6 +88,26 @@ type Expected struct {
 	Now time.Time
 }
 
+// VerifyFreshInstall is the ONLY intended v2 installer authorization
+// verification entry point. FI v2 is installed on an FI-free host; it does
+// not update, repair, adopt, or migrate any existing FI installation.
+// Its first consent sequence is 1 and no prior v2 scope is permitted.
+// Host-wide absence is checked separately using the native freshinstall
+// inspector, immediately before the future installer write boundary.
+func VerifyFreshInstall(
+	encoded []byte,
+	expected Expected,
+	requested config.VolumeConfig,
+	review volumereview.Review,
+	freshNative []volumediscovery.Snapshot,
+) error {
+	if expected.Sequence != 1 || expected.PreviousConfigSHA256 != "" ||
+		review.CurrentConfigSHA256 != "" {
+		return ErrStaleApproval
+	}
+	return Verify(encoded, expected, nil, requested, review, freshNative)
+}
+
 // Verify requires a trusted signer, correct host/install/sequence binding,
 // unexpired short-lived intent, and an unchanged, freshly rediscovered native
 // volume review. A successful result is only a VERIFIED INSTALLER INTENT;
