@@ -388,3 +388,27 @@ func TestCNGP256RejectsNoncanonicalOrInvalidRawScalars(t *testing.T) {
 		}
 	}
 }
+
+func TestFreshInstallApprovalRequiresFirstSequenceWithoutPriorConfiguration(t *testing.T) {
+	f := makeFixture(t)
+	f.expected.Sequence = 1
+	f.payload.Sequence = 1
+	encoded := f.signed(t)
+	if err := VerifyFreshInstall(encoded, f.expected, f.requested, f.review, f.native); err != nil {
+		t.Fatalf("fresh install consent with no prior scope was rejected: %v", err)
+	}
+	f.expected.Sequence = 2
+	if err := VerifyFreshInstall(encoded, f.expected, f.requested, f.review, f.native); !errors.Is(err, ErrStaleApproval) {
+		t.Fatalf("prior approval generation accepted as clean installation: %v", err)
+	}
+	f.expected.Sequence = 1
+	f.expected.PreviousConfigSHA256 = strings.Repeat("a", 64)
+	if err := VerifyFreshInstall(encoded, f.expected, f.requested, f.review, f.native); !errors.Is(err, ErrStaleApproval) {
+		t.Fatalf("installed prior FI configuration accepted: %v", err)
+	}
+	f.expected.PreviousConfigSHA256 = ""
+	f.review.CurrentConfigSHA256 = strings.Repeat("b", 64)
+	if err := VerifyFreshInstall(encoded, f.expected, f.requested, f.review, f.native); !errors.Is(err, ErrStaleApproval) {
+		t.Fatalf("old FI review baseline accepted: %v", err)
+	}
+}
