@@ -169,3 +169,20 @@ Input: user-produced `pg_before.txt` and `pg_after.txt` from private baseline an
 | GC trace lines (`^gc [0-9]`) | 826 | 809 |
 
 Interpretation: substantial WAL pressure and 20 requested checkpoints were measured **in both** runs; this is a plausible shared constraint, not an established cause of COPY differences. Checkpointer write-phase time measures asynchronous checkpoint processing and must not be added to/reduced from synchronous ingestion duration. The 13.78 MB difference in generated WAL bytes is ~0.13% of 10.86 GB. The 3,675 extra WAL-buffer-full events in BASE do not themselves establish that WAL writes blocked any particular field COPY. Earlier uninstrumented-run metrics lack comparable PG stats; a direct causal comparison is not available. Absence of grep matches for `checkpoint starting|checkpoint complete` in retained `postgres.log` does NOT negate the checkpointer counters. The next read-only review should inspect retained `pg_stat_io` rows, and only if necessary implement bounded per-call server wait sampling or client-vs-Postgres COPY timing.
+
+### Private PostgreSQL pg_stat_io comparison (user-measured)
+
+The private PostgreSQL 18 `pg_stat_io` deltas for both instrumented 10-window replays show:
+
+| Statistic | BASE | OPT |
+|---|---:|---:|
+| Client backend WAL normal writes | 184,336 (1442.4 MiB) | 179,699 (1405.0 MiB) |
+| Client backend relation bulkwrite writes (COPY-context) | 131,327 (1026.0 MiB) | 129,884 (1014.7 MiB) |
+| Client backend relation normal writes | 219,843 (1717.5 MiB) | 218,825 (1709.6 MiB) |
+| Background writer relation normal writes | 225,749 (1763.7 MiB) | 223,601 (1746.9 MiB) |
+| Checkpointer relation normal writes | 81,672 (638.1 MiB) | 84,386 (659.3 MiB) |
+| WAL writer WAL normal writes | 2,270 (3576.4 MiB) | 2,208 (3526.1 MiB) |
+| Client backend WAL fsyncs | 65 | 82 |
+| Checkpointer relation fsyncs | 2,624 | 2,607 |
+
+All reported `write_time` and `fsync_time` values are 0.0 ms. Per PostgreSQL 18 official docs, these values are **zero when `track_io_timing` (relation) and `track_wal_io_timing` (WAL) are disabled**, their respective defaults. Therefore these counters do not presently quantify server I/O waiting or explain individual COPY latency. Verify the actual settings before assuming they were off. File `pg_before.txt` and `pg_after.txt` contains `evictions` at pipe-separated column 16 and `reuses` at column 17, not yet inspected. Those can help assess client-backend buffer churn without rerunning. More generally, the close A/B counters do not establish that WAL pressure caused the previously observed differences from historical uninstrumented runs. No PostgreSQL tuning changed.
