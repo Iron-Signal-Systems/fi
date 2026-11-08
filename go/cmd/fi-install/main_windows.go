@@ -100,6 +100,11 @@ func main() {
 		"new-install deployment input: governed root; repeat for multiple roots",
 	)
 
+	checkCleanInstall := flag.Bool(
+		"check-clean-install",
+		false,
+		"read-only fresh v2 installation preflight; reject any existing FI services or owned directories; no cleanup or installation",
+	)
 	listVolumes := flag.Bool(
 		"list-volumes",
 		false,
@@ -118,6 +123,21 @@ func main() {
 			volumeConfigFlagProvided = true
 		}
 	})
+
+	// Fresh v2 installation is NOT an update or an in-place migration. This
+	// standalone read-only check returns before the legacy installer's
+	// mutation-capable default -apply=true path. It cannot erase or adopt FI.
+	if *checkCleanInstall {
+		if err := freshInstallCLI(flag.CommandLine); err != nil {
+			fmt.Fprintf(os.Stderr, "\nFI FRESH INSTALL INPUT BLOCKED: %v\n", err)
+			os.Exit(2)
+		}
+		if err := runNativeFreshInstallPreflight(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "\nFI FRESH INSTALL BLOCKED: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Both read-only inventory and its optional v2 comparison return before
 	// SACL rollback recovery, signing trust, AD/PKI discovery, SCM changes or
