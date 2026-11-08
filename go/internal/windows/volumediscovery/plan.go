@@ -33,13 +33,13 @@ const (
 // Serial64 is FILE_ID_INFO.VolumeSerialNumber, not GetVolumeInformationW's
 // truncated 32-bit serial.
 type Snapshot struct {
-	GUID           string
-	Serial64       string
-	FileSystem     string
-	MountPaths     []string
-	MountPathError string // informational; never an enrollment/identity input
-	Status         Status
-	Detail         string
+	GUID           string   `json:"volume_guid"`
+	Serial64       string   `json:"file_id_info_volume_serial,omitempty"`
+	FileSystem     string   `json:"file_system,omitempty"`
+	MountPaths     []string `json:"mount_paths,omitempty"`
+	MountPathError string   `json:"mount_path_error,omitempty"` // informational, not identity
+	Status         Status   `json:"status"`
+	Detail         string   `json:"detail,omitempty"`
 }
 
 // MatchStatus describes an enrollment's read-only preflight result.
