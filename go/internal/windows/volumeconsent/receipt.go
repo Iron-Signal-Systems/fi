@@ -15,12 +15,14 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -215,6 +217,32 @@ func validateExpected(e Expected) error {
 // Reject nil, malformed and alternative-curve keys even when a caller
 // mistakenly supplies an untrusted key from the receipt itself. Keys must
 // originate in independently protected installer trust.
+// CNGP256SignatureToDER converts Windows CNG's fixed-width P1363 ECDSA
+// signature output (32-byte R || 32-byte S) into the canonical ASN.1 DER
+// representation required by Receipt.SignatureBase64. It neither signs nor
+// authorizes anything. The future native CNG signer must first authenticate
+// operator consent and isolate the non-exportable private key.
+func CNGP256SignatureToDER(raw []byte) ([]byte, error) {
+	if len(raw) != 64 {
+		return nil, fmt.Errorf("%w: CNG ECDSA P-256 signature must contain exactly 64 bytes", ErrInvalidReceipt)
+	}
+	r := new(big.Int).SetBytes(raw[:32])
+	s := new(big.Int).SetBytes(raw[32:])
+	order := elliptic.P256().Params().N
+	if r.Sign() <= 0 || s.Sign() <= 0 ||
+		r.Cmp(order) >= 0 || s.Cmp(order) >= 0 {
+		return nil, fmt.Errorf("%w: CNG ECDSA P-256 signature scalar out of range", ErrInvalidReceipt)
+	}
+	der, err := asn1.Marshal(struct {
+		R *big.Int
+		S *big.Int
+	}{R: r, S: s})
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode CNG ECDSA P-256 signature: %v", ErrInvalidReceipt, err)
+	}
+	return der, nil
+}
+
 func validTrustedP256Key(key *ecdsa.PublicKey) bool {
 	return key != nil &&
 		key.Curve == elliptic.P256() &&
