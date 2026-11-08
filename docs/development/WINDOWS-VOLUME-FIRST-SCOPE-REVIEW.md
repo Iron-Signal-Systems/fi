@@ -16,7 +16,7 @@ The separate branch-only `fi-install.exe -list-volumes -volume-config <file>` co
 
 - `version = fi-windows-volume-scope-review/1`;
 - SHA-256 of the **canonical requested v2 scope**;
-- optional SHA-256 of a **trusted old v2 baseline** if one is supplied by future installer code; ordinary CLI preflight has no installed v2 baseline and therefore represents all requested volumes and policies as additions;
+- the general-purpose pure review API can compare an old v2 baseline for isolated tests, but **the new v2 installer never supplies an old baseline**: `BuildFreshInstall` reports every requested volume and policy as a first-install addition;
 - typed changes: `VolumeAdded`, `VolumeRemoved`, `VolumeIdentityChanged`, `PolicyAdded`, `PolicyRemoved`, and `PolicyChanged`;
 - the independently observed current status and full-width NTFS serial for **each specifically requested volume**;
 - `blocks_mutation` on any requested volume mismatch, and `requires_explicit_approval` on any proposed scope/policy change;
@@ -28,7 +28,7 @@ All policy changes — including `metadata` to `security`, `security` to `metada
 
 ## Revalidation and security limitations
 
-`volumereview.Build(existing, requested, native)` demands canonical v2 declarations and validates a complete native snapshot. `volumereview.Revalidate(previous, existing, requested, freshNative)` recomputes the entire review and refuses changes in the presented review body, installed baseline, proposed scope, native eligibility, full-width serial or volume identity. Missing/unsupported/offline/replaced requested volumes block revalidation even if the prior review already showed them missing.
+`volumereview.BuildFreshInstall(requested, native)` creates the new v2 installation review without any existing-FI input. `volumereview.RevalidateFreshInstall(previous, requested, freshNative)` refuses a review bearing an existing-FI baseline and recomputes the review against native eligibility, full-width serial and volume identity. The older generic `Build`/`Revalidate` remain pure comparison helpers for tests, **not v2 installer update authority**. Missing/unsupported/offline/replaced requested volumes block revalidation even if the prior review already showed them missing.
 
 **Important: SHA-256 is not an approval signature.** A digest can detect stale data against an independently retained expected value; it cannot prove that an administrator authorized scope. The future installer must obtain and authenticate explicit operator consent, bind the review to host identity and approved installation state, persist an appropriately protected receipt, verify ACLs and signature/trust as required, perform fresh native discovery before each mutation, and recover transactionally on failure. Neither a `requested_scope_review` nor a successful `Revalidate` grants the broker access.
 
@@ -36,7 +36,7 @@ The standalone preflight continues to run before the legacy installer's default 
 
 ## Signed consent verifier remains separate from scope review
 
-`go/internal/windows/volumeconsent` verifies a short-lived ECDSA P-256/SHA-256 signed installer intent bound to this exact review, native volume observation, trusted old/new configuration, host/installation identity and an independently maintained approval sequence. The signer and trust-anchor provisioning are **not implemented**. This does not issue operator consent, persist an installed grant or enable volume-mode USN. See `WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+`go/internal/windows/volumeconsent` verifies a short-lived ECDSA P-256/SHA-256 signed installer intent bound to this exact review, native volume observation, the new requested configuration, host/installation identity and first approval sequence (1), with no prior FI scope. The signer and trust-anchor provisioning are **not implemented**. This does not issue operator consent, persist an installed grant or enable volume-mode USN. See `WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
 
 ## Test coverage
 
@@ -49,6 +49,6 @@ The standalone preflight continues to run before the legacy installer's default 
 - A tampered review body with its previous fingerprint retained does not pass revalidation.
 - The installer JSON test requires `collection_authorized=false`, the matching scope-review fingerprint, and nonzero exit status on native mismatch.
 
-**Not tested / not implemented:** Signed approved receipt, host-bound authorization, protected v2 config installation, installer rollback, broker startup selection, FICollector volume workers, and end-to-end source custody. Native Windows Server acceptance on `adminbox` has not occurred.
+**Not tested / not implemented:** production signed approval issuance, native host-bound trust storage, protected fresh v2 config creation, rollback of partially created new artifacts, broker startup selection, FICollector volume workers, and end-to-end source custody. Native Windows Server acceptance on `adminbox` has not occurred.
 
 See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md`, `docs/development/WINDOWS-VOLUME-FIRST-DISCOVERY.md`, and `docs/development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`.
