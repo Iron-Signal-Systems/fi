@@ -1,5 +1,8 @@
 # FI Windows Native Installer â€” Operator Guide
 
+> **Existing-installer procedures only (2026-11-08):** This is a historical/current root-centric workflow. No volume-first package has been installed or native-tested. See [installer development contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md) before implementing new installation/configuration procedures. Windows development/testing is performed on `adminbox`.
+
+
 ## Scope
 
 This is the current administrator workflow for the native signed FI Windows
