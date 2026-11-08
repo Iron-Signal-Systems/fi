@@ -31,9 +31,22 @@ type recordingSink struct {
 	calls int
 	failAt int
 	partial bool
+	reserved bool
+	failReserve bool
+}
+
+func (sink *recordingSink) ReserveNew(installationID string) error {
+	if sink.failReserve || sink.reserved || installationID == "" {
+		return errors.New("journal exclusive create-new reservation refused")
+	}
+	sink.reserved = true
+	return nil
 }
 
 func (sink *recordingSink) AppendAndSync(frame []byte) error {
+	if !sink.reserved {
+		return errors.New("journal has not been exclusively reserved")
+	}
 	sink.calls++
 	if sink.failAt == sink.calls {
 		if sink.partial {
@@ -274,5 +287,46 @@ func TestCreationJournalSinkCanFailAfterPartialDurableWrite(t *testing.T) {
 	}
 	if _, err := InspectCreationJournal(bytes.NewReader(sink.data.Bytes())); !errors.Is(err, ErrInvalidCreationJournal) {
 		t.Fatalf("partial tail treated as a complete recorded state: %v", err)
+	}
+}
+
+func TestCreationMustReserveNewJournalBeforeFirstRecordOrMutation(t *testing.T) {
+	sink := &recordingSink{failReserve: true}
+	creator := &recordingCreator{}
+	if err := executeCreation(sink, creator, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("rejected journal reservation did not fail closed: %v", err)
+	}
+	if len(creator.steps) != 0 || sink.calls != 0 || sink.data.Len() != 0 {
+		t.Fatal("mutation or journal append occurred before exclusive reservation")
+	}
+}
+
+func TestCreationCannotRestartExistingOrIncompleteJournal(t *testing.T) {
+	sink := &recordingSink{}
+	creator := &recordingCreator{}
+	if err := executeCreation(sink, creator, testCreationIdentity); err != nil {
+		t.Fatal(err)
+	}
+	beforeSteps, beforeRecords := len(creator.steps), sink.calls
+	if err := executeCreation(sink, creator, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("completed installation was silently restarted: %v", err)
+	}
+	if len(creator.steps) != beforeSteps || sink.calls != beforeRecords {
+		t.Fatal("repeat installation wrote records or invoked native creation")
+	}
+
+	// A failed native step is even less safe to re-run, as the failed step
+	// may have partly created resources without a durable acknowledgement.
+	incomplete := &recordingSink{}
+	partialCreator := &recordingCreator{failAt: 3}
+	if err := executeCreation(incomplete, partialCreator, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("incomplete native create unexpectedly succeeded: %v", err)
+	}
+	count := len(partialCreator.steps)
+	if err := executeCreation(incomplete, partialCreator, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("in-doubt installation automatically retried: %v", err)
+	}
+	if len(partialCreator.steps) != count {
+		t.Fatal("second installation reached native backend after an in-doubt creation")
 	}
 }
