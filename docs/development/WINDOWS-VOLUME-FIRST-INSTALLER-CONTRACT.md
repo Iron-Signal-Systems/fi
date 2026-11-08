@@ -31,7 +31,7 @@ These are **preflight inputs**, not an authenticated approval. Future Approval 2
 
 `go/internal/windows/volumeconsent` now verifies a canonical P-256/SHA-256 signed transaction approval against independently sourced host SID, installation ID, approval generation, existing v2 config digest, full scope-review fingerprint and freshly discovered NTFS identity. It uses a trusted public-key input, **not** a key supplied by the receipt.
 
-This verifier cannot authenticate an actual administrator, issue signatures, install protected config or grant access to FIUSNReader. The future CNG signing key, PKI/trust provisioning, user-token checks, atomic durable installed grant and restart verifier are still required. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+The verifier also includes a bounded conversion of native Windows CNG P-256 raw signature bytes into canonical DER. This verifier cannot authenticate an actual administrator, issue signatures, install protected config or grant access to FIUSNReader. The future CNG signing key, PKI/trust provisioning, user-token checks, atomic durable installed grant and restart verifier are still required. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
 
 ## Required behavior
 
