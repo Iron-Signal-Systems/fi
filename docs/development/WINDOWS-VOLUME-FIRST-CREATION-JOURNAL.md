@@ -39,7 +39,7 @@ CreatedAndSynced(CommitProtectedState)
 CreationComplete
 ```
 
-The future `CreationSink.AppendAndSync` must durably write and sync the **complete** journal event before returning success. Each `CreateIntent` must reach durable custody **before** the matching native mutation. `CreatedAndSynced` is emitted only after native creation, verification and persistence complete. If writing an intent, native creation, or writing the acknowledgement fails, the transaction stops.
+The future `CreationSink.ReserveNew` must first **atomically and exclusively create a previously absent journal under a verified protected Windows parent**; an existing or in-doubt journal must refuse a second installation attempt. Only after that reservation may `CreationSink.AppendAndSync` durably write and sync the **complete** journal event before returning success. Each `CreateIntent` must reach durable custody **before** the matching native mutation. `CreatedAndSynced` is emitted only after native creation, verification and persistence complete. If writing an intent, native creation, or writing the acknowledgement fails, the transaction stops.
 
 A crash or write failure can leave the underlying native artifact partially or completely created even if the last recorded state says only `CreateIntent`. Such a transaction must be **quarantined for explicit manual recovery**. The new installer must not guess that an artifact can be deleted, silently roll it back, automatically restart the transaction, or call `CreationComplete`. Completion is never equivalent to signed configuration authorization or permission to start FI services.
 
