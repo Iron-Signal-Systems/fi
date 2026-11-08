@@ -152,6 +152,16 @@ func Revalidate(previous Review, existing *config.VolumeConfig, requested config
 	if previous.Version != ReviewVersion || len(previous.ReviewFingerprintSHA256) != 64 {
 		return ErrStaleReview
 	}
+	// The presented review body must still correspond to its fingerprint.
+	// This detects accidental/tampered fields, but is NOT a signature; the
+	// installer must separately authenticate the approved receipt and file.
+	previousFingerprint, err := reviewFingerprint(previous)
+	if err != nil || subtle.ConstantTimeCompare(
+		[]byte(previous.ReviewFingerprintSHA256),
+		[]byte(previousFingerprint),
+	) != 1 {
+		return ErrStaleReview
+	}
 	current, err := Build(existing, requested, freshNative)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrStaleReview, err)
