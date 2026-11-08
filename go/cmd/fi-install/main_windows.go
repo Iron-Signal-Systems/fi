@@ -117,6 +117,12 @@ func main() {
 	)
 
 	flag.Parse()
+	// An explicitly passed disabled read-only selector is not permission to
+	// proceed with the legacy installer's default -apply=true operation.
+	if err := rejectDisabledReadOnlySelectors(flag.CommandLine); err != nil {
+		fmt.Fprintf(os.Stderr, "\nFI READ-ONLY INPUT BLOCKED: %v\n", err)
+		os.Exit(2)
+	}
 	var volumeConfigFlagProvided bool
 	flag.Visit(func(item *flag.Flag) {
 		if item.Name == "volume-config" {
