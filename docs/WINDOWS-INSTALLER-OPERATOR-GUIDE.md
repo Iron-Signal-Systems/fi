@@ -1,6 +1,6 @@
 # FI Windows Native Installer â€” Operator Guide
 
-> **Existing-installer procedures only (2026-11-08):** This is a historical/current root-centric workflow. No volume-first package has been installed or native-tested. See [installer development contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md) before implementing new installation/configuration procedures. Windows development/testing is performed on `adminbox`.
+> **Existing-installer procedures remain root-centric (2026-11-08):** New branch-only `-list-volumes` inventory and optional `-list-volumes -volume-config <path>` comparison are read-only, not volume enrollment or an approved install plan. The proposed volume-first installer and collector are not integrated or validated on `adminbox`. See [read-only inventory contract](development/WINDOWS-VOLUME-FIRST-DISCOVERY.md) and [installer engineering contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md).
 
 
 ## Scope
