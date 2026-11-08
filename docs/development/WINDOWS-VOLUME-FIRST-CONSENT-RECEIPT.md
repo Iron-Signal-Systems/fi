@@ -19,11 +19,13 @@ The signed payload has fixed `version = fi-windows-volume-approval/1` and `actio
 - **MachineSID:** The native Windows machine identity that the installer will independently validate. Signed text alone cannot prove its OS origin or protect against an improperly cloned computer.
 - **InstallationID:** A nonzero, random 128-bit installation identity represented as 32 lowercase hexadecimal characters. It must be created and persisted under the future protected installer authority; it is not derived from a filename, host name or receipt.
 - **ApproverSID:** The approving operator's Windows SID for audit evidence. The installer must authenticate the operator's **actual Windows token and administrative role** at consent time. A SID string inside the signed receipt is not proof that the person approved anything.
-- **Sequence:** Nonzero approval generation compared against independently protected current installation state; replay must be blocked by the installer's durable generation and rollback rules.
-- **PreviousConfigSHA256:** Canonical digest of the *independently trusted installed v2 configuration*, or empty only for a genuine fresh v2 installation.
+- **Sequence:** Must be exactly **1** through `volumeconsent.VerifyFreshInstall`. There is no existing source to update; any previous approval generation is rejected in the new installer.
+- **PreviousConfigSHA256:** **Empty** in the supported fresh-only v2 install. A nonempty prior configuration digest blocks it, not a request to migrate or reconcile.
 - **RequestedConfigSHA256:** Canonical digest of the proposed new volume enrollment and governed-root policy declaration.
 - **ReviewFingerprintSHA256:** Fingerprint of the exact `volumereview.Review` the operator examined, including policy changes and live NTFS identity/eligibility evidence.
 - **IssuedAtUTC / ExpiresAtUTC:** Canonical UTC times. Maximum approval lifetime 15 minutes; no issue time more than two minutes in the future.
+
+The future fresh-only installer must invoke `VerifyFreshInstall`, which has no existing-FI config parameter and rejects prior scope/sequence. The lower-level `Verify` is a general signed-intent validation primitive, **not** an upgrade entry point. Before any new installation is authorized, the separately implemented `freshinstall` native check must prove the host contains no installed FI services or owned directories. See `WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md`.
 
 The verifier receives `Expected` separately, comprising a **trusted** P-256 public key, OS-observed machine SID, protected installation ID, protected approval sequence, protected existing-config digest and trustworthy current time. `Expected` must **never** be populated from the receipt's claimed values.
 
@@ -44,10 +46,10 @@ The separately implemented `go/internal/windows/volumegrant` package verifies a 
 1. Bind installer to **trusted and pinned local/site signer public key** via a protected trust/PKI chain, including permitted key use, rotation, expiry and revocation policy. A public key supplied alongside a receipt by its submitter is untrusted. Define issuer role separation from FICollector and FIUSNReader.
 2. Implement a non-exportable CNG P-256 private signing key accessible **only** to the authorized installation/approval actor, with explicitly audited key ACL and certificate/key lifecycle. Do not generate ephemeral private keys and then automatically trust their public halves.
 3. Obtain genuine Windows machine identity and authenticated approver SID through native security APIs; verify role and avoid writable/reparse-contaminated sources. Do not treat the on-disk receipt as a source of trusted host facts.
-4. Establish a protected, random installation ID, atomic durable approval sequence and trustworthy installed v2 baseline. Define crash/retry/rollback semantics that never permit reuse of a retired approval generation or silent narrowing/widening.
+4. Establish a new protected, random installation ID and **initial** approval sequence 1, with no existing FI baseline. Define crash/retry/rollback semantics for artifacts created by the attempted fresh install, never in-place conversion or deletion of previous FI custody.
 5. Display the exact canonical configuration, **minimal whole-volume capture outside roots**, higher-depth policies, Windows Security prerequisites and native identity evidence to an operator; obtain explicit consent before signing.
 6. At the actual installer write boundary, rediscover volumes, revalidate the signed receipt, verify root-to-volume object identity and SACL/audit plan, then apply the approved changes transactionally. The existing v1.1 installer implementation must not be silently repurposed.
-7. After a successfully committed installation, produce a separate **durable installed authority** with protected ACL/trust validation. Only then design a service startup verifier and remove the fail-closed volume broker startup block in a reviewed change.
+7. After a successfully committed **fresh** installation, produce a separate **generation-one durable installed authority** with protected ACL/trust validation. Only then design a service startup verifier and remove the fail-closed volume broker startup block in a reviewed change.
 8. Complete native on-prem `adminbox` tests, supported Windows Server matrix, fault-injection/rollback, service-SID/gMSA tests, and the independent FICollector per-volume source custody and backend records.
 
 ## Current test evidence boundaries
