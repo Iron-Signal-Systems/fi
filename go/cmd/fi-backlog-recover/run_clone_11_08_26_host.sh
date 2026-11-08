@@ -86,6 +86,9 @@ port=55981
 [ "$(id -un)" = jwood ] || fail 'expected jwood in fi-dev'
 [ "$(sysctl -n security.jail.jailed)" -eq 1 ] || fail 'not jailed'
 [ "$(psql --version)" = 'psql (PostgreSQL) 18.6' ] || fail 'unexpected PostgreSQL version'
+# Respect the source go.mod (Go 1.27.3); permit the jailed jwood Go toolchain
+# to select a version via the configured Go proxy, before touching seed or clone.
+(cd "$repo/go" && GOTOOLCHAIN=auto go version) || fail 'Go 1.27.3 toolchain is unavailable in fi-dev'
 [ ! -e "$root" ] || fail 'fixture path already exists'
 git -C "$repo" cat-file -e "$ref^{commit}" || fail 'historical source commit is not available locally'
 mkdir -m 700 "$root" "$src" "$pgroot" "$socket"
@@ -109,8 +112,8 @@ sed 's/var profiles = \[\]string{"K32", "K64"}/var profiles = []string{"clone-11
 mv "$relay.new" "$relay"
 grep -Fq 'var profiles = []string{"clone-11-08-26"}' "$relay" || fail 'relay single-cluster patch missing'
 
-(cd "$src/go" && GOPROXY=off GOTOOLCHAIN=local go build -o "$root/fi-optfield-recover" ./cmd/fi-backlog-recover) || fail 'historical Go build failed'
-(cd "$src/go/cmd/fi-backlog-recover/optfield" && GOPROXY=off GOTOOLCHAIN=local go build -o "$root/fi-optfield-relay" ./relay.go) || fail 'single-fixture relay build failed'
+(cd "$src/go" && GOTOOLCHAIN=auto go build -o "$root/fi-optfield-recover" ./cmd/fi-backlog-recover) || fail 'historical Go build failed'
+(cd "$src/go/cmd/fi-backlog-recover/optfield" && GOTOOLCHAIN=auto go build -o "$root/fi-optfield-relay" ./relay.go) || fail 'single-fixture relay build failed'
 sha256 -q "$root/fi-optfield-recover" > "$root/recover.sha256"
 sha256 -q "$root/fi-optfield-relay" > "$root/relay.sha256"
 printf '%s\n' "$ref" > "$root/SOURCE_COMMIT"
