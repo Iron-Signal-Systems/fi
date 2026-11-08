@@ -1,7 +1,7 @@
 # ADR-0002 — Windows Volume-First Source Observation and Governed-Root Policies
 
 **Date:** 2026-11-08
-**Status:** Proposed architecture; NOT implemented, tested, or accepted
+**Status:** Proposed full architecture; isolated volume discovery, configuration, continuity and USN broker foundations partially implemented/tested. NO integrated volume-first runtime or acceptance.
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows engineering/test machine:** `adminbox`
 
