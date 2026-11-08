@@ -52,6 +52,26 @@ for arm in K32 K64 K96 K128; do
   AND EXISTS(SELECT 1 FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype='p' AND k.convalidated)")
  [ "$constraints" = 4 ] || fail "$arm PK/FK validated field partition attachments missing ($constraints)"
  sql "$arm" "SELECT window_index::text||'|'||encode(descriptor_sha256,'hex')||'|'||committed_records::text||'|'||committed_bytes::text FROM fi_recovery.typed_window ORDER BY window_index" > "$out/$arm/descriptors.tsv"
+ # Reopen every published immutable artifact and compare its exact signed
+ # payload AND manifest bytes with the already authenticated source cache.
+ expected=$(sql "$arm" "SELECT coalesce(sum(end_batch-start_batch),0) FROM fi_recovery.verified_artifact_window WHERE window_index BETWEEN 1 AND 4")
+ actual=0
+ for ready in "$out/$arm/private"/receipt-*/window-*; do
+  [ -d "$ready" ] || fail "$arm missing published signed artifact"
+  receipt=$(basename "$(dirname "$ready")")
+  for dest in "$ready"/batch-*.data; do
+   [ -f "$dest" ] || fail "$arm no signed artifact payload"
+   base=$(basename "$dest")
+   original="$cache/$receipt/$base"
+   [ -f "$original" ] || fail "$arm original cache batch missing"
+   cmp -s "$dest" "$original" || fail "$arm signed data differs from original ($base)"
+   cmp -s "${dest%.data}.manifest" "${original%.data}.manifest" ||
+    fail "$arm signed manifest differs from original ($base)"
+   actual=$((actual+1))
+  done
+ done
+ [ "$actual" -eq "$expected" ] || fail "$arm artifact byte-readback count differs ($actual/$expected)"
+ printf 'FI W256 ARTIFACT READBACK PASS arm=%s signed_batches=%s\n' "$arm" "$actual" >> "$out/$arm/result.txt"
 done
 for arm in K64 K96 K128; do
  cmp -s "$out/K32/descriptors.tsv" "$out/$arm/descriptors.tsv" ||
