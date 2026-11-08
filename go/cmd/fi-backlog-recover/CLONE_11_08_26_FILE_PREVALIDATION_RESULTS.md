@@ -54,3 +54,18 @@ Five windows improved and five regressed. These are two chronological executions
 ## Interpretive conclusion
 
 The private candidate has passed the currently reported data-integrity checks and removes a duplicate validator invocation. It has **not demonstrated a committed-window throughput improvement**, but that does not alone justify rejecting genuinely redundant work. Whether it is safe to retain depends on a validated immutable-data/provenance argument and stronger differential tests. Do not merge/promote on throughput evidence alone.
+
+## Measured internal stage profiles (from both completed recover.log files)
+
+Reported `FI PRIVATE STAGE PROFILE` stage durations were summed across matching windows 3–12. The counters include nested measurements and **must not be summed to derive total elapsed time**.
+
+| Counter | Baseline 10-window sum | File-prevalidation candidate sum | Delta candidate − baseline | Candidate faster windows |
+|---|---:|---:|---:|---:|
+| `file_projection_inclusive` | 77.676s | 77.736s | +0.060s (+0.08%) | 4/10 |
+| `security_projection_inclusive` | 120.989s | 129.247s | +8.258s (+6.83%) | 0/10 |
+| `envelope_prepare` | 120.184s | 118.800s | −1.384s (−1.15%) | 8/10 |
+| `batch_ingest` | 471.680s | 475.881s | +4.201s (+0.89%) | 3/10 |
+
+**Interpretation:** The repeated FileObservation validator was removed in the private candidate, but the measured File projection total was effectively unchanged. Security projection was slower in **every** candidate window despite no intended Security-path code change. This is evidence of broader run-to-run effects (such as workload timing, runtime scheduling, PostgreSQL I/O or cache state), **not** proof of their exact cause. The 0.9% overall slowdown therefore cannot be attributed confidently to the File optimization. No demonstrated File-stage speedup; no grounds to reject a safe redundancy removal solely for lacking a throughput gain.
+
+**Next acceptance gate:** Before considering promotion, prove that the first validated `ntfs.Observation` remains semantically unchanged until bulk use, including its pointer/slice children and any references retained by the buffered batch; test malicious inputs, failed-validation paths, error ordering and rollback. A standalone `privatePrevalidated` boolean is not an adequate trust/provenance guarantee. Do not alter the baseline runner or the existing recorded output. A later Security initial-decode/conversion candidate must remain an independent experiment.
