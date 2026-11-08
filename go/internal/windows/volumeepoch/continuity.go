@@ -90,8 +90,8 @@ func Assess(enrollmentID string, saved *Checkpoint, current Journal) (Assessment
 	if err := validateJournal(current); err != nil {
 		return Assessment{}, err
 	}
-	if enrollmentID == "" || strings.TrimSpace(enrollmentID) != enrollmentID {
-		return Assessment{}, errors.New("nonempty canonical enrollment identity required")
+	if !validEnrollmentID(enrollmentID) {
+		return Assessment{}, errors.New("invalid canonical volume enrollment identity")
 	}
 	if saved == nil {
 		return Assessment{State: BaselineRequired, Reason: NoCheckpoint}, nil
@@ -212,4 +212,20 @@ func parseDecimal(value string) (uint64, error) {
 		}
 	}
 	return strconv.ParseUint(value, 10, 64)
+}
+
+// validEnrollmentID restricts the stable key used for later volume-owned state
+// filenames. It deliberately does not accept a path, arbitrary Unicode or an
+// unbounded identifier. This is not a substitute for enrolled-volume consent.
+func validEnrollmentID(id string) bool {
+	if len(id) == 0 || len(id) > 64 || id[0] < 'a' || id[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(id); i++ {
+		c := id[i]
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
