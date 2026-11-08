@@ -12,6 +12,10 @@ The installed FIUSNReader still loads root-centric `version_id: 1.1` configurati
 
 This is NOT an install or configuration authority. Future installer code must first prove fresh explicit administrator approval, configuration integrity and permitted audit/policy changes before the service may select the new mode.
 
+## Transaction consent does not remove the startup block
+
+A separately implemented `volumeconsent.Verify` primitive checks short-lived signed *installer intent*. No production signer, key/host trust provisioning, protected installed grant, or service authority handoff exists yet. Even a valid test-signed receipt is not a durable service authorization. The exported volume-mode broker entry point remains **fail-closed**. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+
 ## Protocol isolation
 
 The same bounded local pipe framing gains two operation codes:
