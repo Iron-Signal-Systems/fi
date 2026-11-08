@@ -103,6 +103,54 @@ func Read(ctx context.Context, governedRoot string, startUSN int64) (Journal, []
 	return result.Journal, result.Data, nil
 }
 
+// QueryEnrolledVolume requests a journal for one administrator-enrolled logical
+// volume. The caller passes only the enrollment ID, never a native path or
+// device name. FIUSNReader independently selects the approved GUID/serial
+// and re-attests the opened native handle. Legacy helpers deny this operation.
+func QueryEnrolledVolume(ctx context.Context, enrollmentID string) (Journal, error) {
+	if !validVolumeEnrollmentID(enrollmentID) {
+		return Journal{}, errors.New("invalid FI enrolled-volume ID")
+	}
+	result, err := roundTrip(ctx, request{
+		Operation:    operationQueryVolume,
+		EnrollmentID: enrollmentID,
+	})
+	if err != nil {
+		return Journal{}, err
+	}
+	if len(result.Data) != 0 {
+		return Journal{}, errors.New("FIUSNReader volume query unexpectedly returned raw data")
+	}
+	if err := validateJournal(result.Journal); err != nil {
+		return Journal{}, err
+	}
+	return result.Journal, nil
+}
+
+// ReadEnrolledVolume returns one bounded native USN buffer for the enrolled
+// volume. The collector still owns parsing, journal continuity, volume epoch,
+// spool custody and checkpoint advancement; no raw disk access escapes.
+func ReadEnrolledVolume(ctx context.Context, enrollmentID string, startUSN int64) (Journal, []byte, error) {
+	if !validVolumeEnrollmentID(enrollmentID) || startUSN < 0 {
+		return Journal{}, nil, errors.New("invalid FI enrolled-volume selector or USN cursor")
+	}
+	result, err := roundTrip(ctx, request{
+		Operation:    operationReadVolume,
+		EnrollmentID: enrollmentID,
+		StartUSN:     startUSN,
+	})
+	if err != nil {
+		return Journal{}, nil, err
+	}
+	if err := validateJournal(result.Journal); err != nil {
+		return Journal{}, nil, err
+	}
+	if len(result.Data) < 8 || len(result.Data) > MaxUSNDataBytes {
+		return Journal{}, nil, errors.New("FIUSNReader returned an invalid enrolled-volume USN buffer")
+	}
+	return result.Journal, result.Data, nil
+}
+
 // QueryAuditPolicies requests the fixed FI effective audit-policy observations.
 // No arbitrary GUID, root, mask or policy-mutation parameter is accepted.
 func QueryAuditPolicies(ctx context.Context) ([]uint32, error) {
