@@ -203,7 +203,7 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 	// Unlike bufio.Scanner, this refuses a truncated final record with no
 	// newline. The bound prevents an untrusted journal from allocating
 	// arbitrary memory during crash inspection.
-	data, err := io.ReadAll(io.LimitReader(reader, maxCreationJournalBytes+1))
+	data, err := io.ReadAll(io.LimitReader(reader, int64(maxCreationJournalBytes)+1))
 	if err != nil {
 		return CreationStatus{}, fmt.Errorf("%w: read: %v", ErrInvalidCreationJournal, err)
 	}
@@ -218,7 +218,7 @@ func InspectCreationJournal(reader io.Reader) (CreationStatus, error) {
 		if len(raw) == 0 || len(raw)+1 > maxCreationRecordBytes {
 			return CreationStatus{}, ErrInvalidCreationJournal
 		}
-		if state.Records >= maxCreationRecords {
+		if state.Records >= uint64(maxCreationRecords) {
 			return CreationStatus{}, fmt.Errorf("%w: excessive record count", ErrInvalidCreationJournal)
 		}
 		dec := json.NewDecoder(bytes.NewReader(raw))
