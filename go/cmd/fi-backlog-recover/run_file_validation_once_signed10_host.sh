@@ -249,14 +249,14 @@ grep '^FI FILE VALIDATION WINDOW ' "$log" > "$out/$name/file_validation.txt" || 
 [ "$(wc -l < "$out/$name/file_validation.txt" | tr -d ' ')" -eq 10 ] || fail 'not exactly 10 File validation counter reports'
 awk '
 /^FI FILE VALIDATION WINDOW / {
-    source=-1; reused=-1; index=-1
+    source=-1; reused=-1; winidx=-1
     for (i=1; i<=NF; i++) {
         split($i, v, "=")
-        if (v[1]=="index") index=v[2]+0
+        if (v[1]=="index") winidx=v[2]+0
         if (v[1]=="source_validated") source=v[2]+0
         if (v[1]=="bulk_reused") reused=v[2]+0
     }
-    if (index != count+3 || source <= 0 || reused != source) exit 2
+    if (winidx != count+3 || source <= 0 || reused != source) exit 2
     count++
     sum+=source
 }
