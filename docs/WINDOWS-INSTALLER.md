@@ -3,6 +3,8 @@
 > **Volume-first installer development (2026-11-08):** The existing installer still deploys the old root-centric collector. The branch now adds **read-only** `-list-volumes` and optional `-list-volumes -volume-config <path>` inventory/preflight, which return *before* mutation-capable paths. They do not install, enroll, authorize, or configure volume monitoring. Full volume-first installation, native helper authorization, approved policy/SACL changes and rollback are NOT implemented; see [installer contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md). Do not deploy the development design using the existing install workflow.
 
 
+> **Additional read-only review (Windows branch, 2026-11-08):** `fi-install.exe -list-volumes -volume-config <scope-v2-file>` now reports an explicit `requested_scope_review` with typed enrollment/policy changes and a deterministic stale-plan fingerprint. It does **not** authenticate consent or install an approved v2 scope. See [volume scope review](development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md).
+
 ## Status and authority
 
 `fi-install.exe` is the native FI Windows source installer and desired-state
