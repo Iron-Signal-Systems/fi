@@ -34,6 +34,7 @@ const (
 	Version = "fi-windows-installed-volume-grant/1"
 	Mode = "VolumeFirst"
 	maxGrantBytes = 8 * 1024
+	maxOperationalConfigBytes = 1024 * 1024 // bounded until complete v2 schema exists
 	maxFutureSkew = 2 * time.Minute
 )
 
@@ -94,11 +95,12 @@ type TrustedState struct {
 }
 
 // Verify validates the signed durable declaration against independently
-// trusted state and the exact current normalized scope configuration.
+// trusted state, exact current normalized scope, and the actual installed
+// operational config bytes (not merely a caller-asserted hash).
 // It returns only an error, never a capability or authorization token.
 // A future service must additionally validate native volume identity,
 // authorized object policies and the installed *operational* configuration.
-func Verify(encoded []byte, state TrustedState, scope config.VolumeConfig) error {
+func Verify(encoded []byte, state TrustedState, scope config.VolumeConfig, installedOperationalConfig []byte) error {
 	if len(encoded) == 0 || len(encoded) > maxGrantBytes {
 		return fmt.Errorf("%w: signed envelope size outside limits", ErrInvalidGrant)
 	}
@@ -159,6 +161,19 @@ func Verify(encoded []byte, state TrustedState, scope config.VolumeConfig) error
 	}
 	observed := sha256.Sum256(normalized)
 	if !hashEqual(manifest.ScopeConfigSHA256, hex.EncodeToString(observed[:])) {
+		return ErrGrantDrift
+	}
+	// Compare against the ACTUAL installed operational bytes as well as the
+	// independently protected expected digest. Comparing only two hashes
+	// supplied by the caller would not detect edited operational files.
+	// Future source integration must separately parse/validate the complete
+	// v2 operational schema; byte equality is necessary, not sufficient.
+	if len(installedOperationalConfig) == 0 ||
+		len(installedOperationalConfig) > maxOperationalConfigBytes {
+		return fmt.Errorf("%w: operational configuration is empty or exceeds size limit", ErrGrantDrift)
+	}
+	operationalDigest := sha256.Sum256(installedOperationalConfig)
+	if !hashEqual(manifest.OperationalConfigSHA256, hex.EncodeToString(operationalDigest[:])) {
 		return ErrGrantDrift
 	}
 	committed, _ := time.Parse(time.RFC3339Nano, manifest.CommittedAtUTC)
