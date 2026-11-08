@@ -160,3 +160,38 @@ func TestBacklogWindows32K64K96K128KSeparatePlans(t *testing.T) {
 		}
 	}
 }
+// W256 is a separate immutable checkpoint plan, never a relabelled W128
+// prefix. Signed batches must remain intact under both independent budgets.
+func TestBacklogWindowsW256TwoGiBBounds(t *testing.T) {
+	counts := make([]int, 35)
+	for i := range counts {
+		counts[i] = 8192
+	}
+	g := backlogWindowFixture(counts, 32<<20)
+	before := g.Receipt
+	lim := BacklogWindowLimits{MaxRecords: 262144, MaxDataBytes: 2 << 30}
+	got, err := PlanBacklogWindows(g, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []BacklogWindow{
+		{StartBatch: 0, EndBatch: 32, StartRecord: 0, EndRecord: 262144, DataBytes: 1 << 30},
+		{StartBatch: 32, EndBatch: 35, StartRecord: 262144, EndRecord: 286720, DataBytes: 96 << 20},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("W256 record cap: got=%+v want=%+v", got, want)
+	}
+	if !reflect.DeepEqual(before, g.Receipt) {
+		t.Fatal("W256 plan modified signed receipt")
+	}
+	byBytes := backlogWindowFixture(counts[:12], 192<<20)
+	got, err = PlanBacklogWindows(byBytes, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].EndBatch != 10 ||
+		got[0].DataBytes != 1920<<20 || got[1].DataBytes != 384<<20 {
+		t.Fatalf("W256 2GiB byte ceiling not enforced at intact batch: %+v", got)
+	}
+}
+
