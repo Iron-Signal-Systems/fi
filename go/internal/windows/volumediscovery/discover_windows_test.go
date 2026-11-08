@@ -19,7 +19,7 @@ func TestNativeMountPathListDecoder(t *testing.T) {
 		want  int
 		bad   bool
 	}{
-		{"lettered", syscall.StringToUTF16(`C:\` + "\x00"), 1, false},
+		{"lettered", append(syscall.StringToUTF16(`C:\`), 0), 1, false},
 		{"unmounted", []uint16{0}, 0, false},
 		{"unterminated", []uint16{'C', ':', '\\'}, 0, true},
 		{"empty buffer", nil, 0, true},
