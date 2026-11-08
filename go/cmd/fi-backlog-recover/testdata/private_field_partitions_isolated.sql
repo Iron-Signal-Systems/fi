@@ -23,7 +23,7 @@ BEGIN
     EXECUTE format('GRANT INSERT, SELECT ON %s TO fi_ingest',fq_name);
     RETURN rel_name;
 END
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION fi_recovery_projection.finish_security_field_window(p_index integer, p_expected bigint)
  RETURNS bigint
@@ -69,5 +69,5 @@ BEGIN
     -- Both validations plus attach are inside the caller's ONE W128 TX.
     RETURN total;
 END
-$function$
+$function$;
 
