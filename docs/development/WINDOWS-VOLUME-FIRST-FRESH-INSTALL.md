@@ -46,6 +46,10 @@ The new v2 installer must use:
 
 The installer must recheck clean-host absence at the actual write boundary, in addition to approved root/volume identity and native privilege checks. Because service creation, directory creation and authorization changes can fail halfway, **rollback of only artifacts created by that attempted fresh installation** and explicit crash-recovery evidence remain required. Such rollback must not be implemented as unconditional deletion of preexisting FI footprints.
 
+## Transaction journal protocol — development only
+
+The branch defines a fixed first-install event chain in `go/internal/windows/freshinstall/creation_journal.go`, covering new FI roots, protected ACLs, signed executables/configuration, initial signed grant, **disabled** SCM services and the independently protected installation commit. Every native mutation must follow a durable `CreateIntent` and be followed by an acknowledged, durable `CreatedAndSynced`. An ambiguous or incomplete transaction is placed into **manual recovery**; the installer may not silently retry, delete a presumed owned file, or adopt old FI. The source currently has a mock-only runner and replay tests — **no actual Windows transaction applies these steps**. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.
+
 ## Tests and limitations
 
 The new pure policy tests enumerate all five service blockers and two FI path blockers. They cover absence, present collisions, SCM access failures, file read failures, explicit unknown/native-invalid status, complete deterministic reporting and nil preflight. The Windows CLI tests cover standalone flag isolation, JSON evidence, nonzero blocking and unknown errors. Separate fresh-only review, signed transaction and signed installed-grant tests reject an old trusted baseline or a later approval generation.
