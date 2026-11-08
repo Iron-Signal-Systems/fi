@@ -123,12 +123,25 @@ func Serve(ctx context.Context, governedRoots []string) error {
 	return serveWithAuthority(ctx, &authority, nil)
 }
 
-// ServeEnrolledVolumes is the proposed volume-first broker mode. It is not
-// used by the currently deployed root-centric FIUSNReader startup. It must
-// only be selected after the native installer has authenticated and approved
-// the v2 configuration. It captures immutable enrollment authority from
-// native discovery; missing/replaced volumes are blocked individually.
-func ServeEnrolledVolumes(ctx context.Context, approved config.VolumeConfig) error {
+// ErrVolumeModeRequiresApproval explicitly blocks a service author from
+// starting an enrollment-ID broker using only an untrusted v2 config. The
+// installer must first implement and verify a protected, host-bound consent
+// receipt and pass that authority through a separately reviewed entry point.
+var ErrVolumeModeRequiresApproval = errors.New("FIUSNReader volume mode requires installed authenticated approval")
+
+// ServeEnrolledVolumes is intentionally fail-closed. A canonical v2 config
+// and current native discovery are NOT proof of operator authorization, even
+// when all volume identities match. No callable public API can activate the
+// new privileged mode until the installer/service authorization work is done.
+func ServeEnrolledVolumes(_ context.Context, _ config.VolumeConfig) error {
+	return ErrVolumeModeRequiresApproval
+}
+
+// serveEnrolledVolumesWithVerifiedConsent contains the tested volume broker
+// mechanics but is not exported to service startup. Only a future protected
+// and authenticated installer-consent verifier may expose this capability.
+// It captures immutable native identities; unavailable volumes are denied.
+func serveEnrolledVolumesWithVerifiedConsent(ctx context.Context, approved config.VolumeConfig) error {
 	if ctx == nil {
 		return errors.New("enrolled-volume broker requires a context")
 	}
