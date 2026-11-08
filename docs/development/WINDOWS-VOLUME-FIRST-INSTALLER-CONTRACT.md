@@ -1,6 +1,6 @@
 # Windows Volume-First Native Installer Work Contract
 
-**Status:** Branch-only read-only inventory/preflight implemented. A separate volume-ID USN broker path exists but is **not enabled by FIUSNReader's v1.1 startup**. Full v2 installer approval/apply/reconciliation/rollback, secure configuration handoff, protected-object policy authority and native `adminbox` tests are outstanding.
+**Status:** Branch-only read-only inventory/preflight implemented. A separate volume-ID USN broker path exists, but the exported `ServeEnrolledVolumes` is **fail-closed** until authenticated protected consent is implemented, and FIUSNReader's v1.1 startup remains root-centric. Full v2 installer approval/apply/reconciliation/rollback, secure configuration handoff, protected-object policy authority and native `adminbox` tests are outstanding.
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows engineering/test machine:** `adminbox`
 
