@@ -14,16 +14,24 @@ for command in jexec jls ps awk grep find wc sha256; do
 done
 
 case "${1:-}" in
-  baseline) mode=baseline; ref=9e0e6e236c95d9af91bc67a065efb47ce2318579 ;;
-  optimized) mode=optimized; ref=e02a06891600d5877bcb5a680f84bcbcdbc7c195 ;;
+  baseline) mode=baseline; short=b; ref=9e0e6e236c95d9af91bc67a065efb47ce2318579 ;;
+  optimized) mode=optimized; short=o; ref=e02a06891600d5877bcb5a680f84bcbcdbc7c195 ;;
   *) fail 'usage: sh run_field_copy_diagnostic_host.sh baseline|optimized' ;;
 esac
 name=clone-11-08-26
 seed=/home/jwood/fi-window-bench-fieldpart-20261104T091019Z/W64
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-root=/home/jwood/fi-window-bench-optfield-fielddiag-$mode-$stamp
+root=/home/jwood/fi-window-bench-optfield-fd-$short-$stamp
 out=/var/tmp/fi-window-chunks-fielddiag-$mode-$stamp
+# FreeBSD sockaddr_un.sun_path holds 104 bytes, including the NUL.
+# Both PostgreSQL's jailed socket and the host-side relay socket must fit.
+# Keep the original relay allowlist unchanged; shorten only experiment paths.
+private_socket="$root/$name/socket/.s.PGSQL.55981"
+relay_socket="$out/pg-$name/.s.PGSQL.55981"
+[ "${#private_socket}" -le 103 ] || fail "private socket path exceeds FreeBSD sun_path: ${#private_socket} bytes"
+[ "${#relay_socket}" -le 103 ] || fail "relay socket path exceeds FreeBSD sun_path: ${#relay_socket} bytes"
+printf 'FI FIELD DIAG SOCKET PATH PASS private_bytes=%s relay_bytes=%s\n' "${#private_socket}" "${#relay_socket}"
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor-db jid) || fail 'fi-sor-db missing'
