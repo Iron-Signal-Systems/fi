@@ -99,9 +99,28 @@ for arm in K64 K96 K128; do
  cmp -s "$out/K32/descriptors.tsv" "$out/$arm/descriptors.tsv" ||
  fail "$arm signed checkpoint chain differs from K32"
 done
-printf 'FI W256 CHUNK MATRIX PASS real_signed_backlog=true identical_source_windows=true windows=4_per_arm memory=adaptive_soft_target authoritative=0 accepted=0 output=%s\n' "$out"
+# Produce one comparable, machine-readable result for each arm. These
+# rates include only completed durable W256 windows, never uncommitted work.
+printf 'arm\trecords\tcheckpoint_rate_records_sec\tcommitted_window_rate_records_sec\tpeak_rss_bytes\tmemory_pressure_cuts\n' > "$out/COMPARISON.tsv"
 for arm in K32 K64 K96 K128; do
- printf '\n==== %s ===\n' "$arm"
- cat "$out/$arm/result.txt"
- tail -1 "$out/$arm/memory.txt"
+ awk -v name="$arm" '{
+  for(i=1;i<=NF;i++){split($i,x,"=");if(x[1]=="records")n=x[2];
+   if(x[1]=="checkpoint_rate")rate=x[2];
+   if(x[1]=="committed_window_rate")windowrate=x[2]}
+  if(n+0<1||rate+0<=0||windowrate+0<=0)exit 1
+  printf "%s\t%s\t%s\t%s\t",name,n,rate,windowrate
+ }' "$out/$arm/result.txt" >> "$out/COMPARISON.tsv" ||
+  fail "$arm durable-rate telemetry invalid"
+ tail -1 "$out/$arm/memory.txt" | awk '{
+  for(i=1;i<=NF;i++){split($i,x,"=");
+   if(x[1]=="peak_rss_bytes")rss=x[2];
+   if(x[1]=="memory_pressure_cuts")cuts=x[2]}
+  if(rss+0<=0)exit 1
+  printf "%s\t%s\n",rss,cuts
+ }' >> "$out/COMPARISON.tsv" || fail "$arm memory telemetry invalid"
 done
+[ "$(wc -l < "$out/COMPARISON.tsv" | tr -d ' ')" = 5 ] ||
+ fail "W256 comparison rows missing"
+printf 'FI W256 CHUNK MATRIX PASS real_signed_backlog=true identical_source_windows=true windows=4_per_arm memory=adaptive_soft_target authoritative=0 accepted=0 output=%s\n' "$out"
+cat "$out/COMPARISON.tsv"
+
