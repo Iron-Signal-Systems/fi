@@ -23,6 +23,10 @@ const (
 	operationContainment uint16 = 3
 	operationSACL        uint16 = 4
 	operationAuditPolicy uint16 = 5
+	// New operations select an enrollment ID, never a caller-supplied path.
+	// They are denied unless FIUSNReader started in explicit volume mode.
+	operationQueryVolume uint16 = 6
+	operationReadVolume  uint16 = 7
 
 	requestHeaderSize  = 24
 	responseHeaderSize = 76
@@ -71,6 +75,7 @@ func (err *remoteError) Error() string {
 type request struct {
 	Operation           uint16
 	GovernedRoot        string
+	EnrollmentID        string
 	StartUSN            int64
 	FileReferenceNumber uint64
 	SequenceNumber      uint16
@@ -81,6 +86,13 @@ type response struct {
 	Data      []byte
 	ErrorCode uint32
 	Error     string
+}
+
+// isVolumeOperation separates the new path-free enrollment selector from
+// legacy governed-root wire arguments. The framing remains bounded and
+// compatible with the existing version-1 local pipe protocol.
+func isVolumeOperation(op uint16) bool {
+	return op == operationQueryVolume || op == operationReadVolume
 }
 
 func readRequest(reader io.Reader) (request, error) {
@@ -100,16 +112,19 @@ func readRequest(reader io.Reader) (request, error) {
 	payload := binary.LittleEndian.Uint64(header[12:20])
 	auxiliary := binary.LittleEndian.Uint32(header[20:24])
 	if rootLength > maxRootBytes || (rootLength == 0 && operation != operationAuditPolicy) {
-		return request{}, errors.New("invalid FI USN governed-root length")
+		return request{}, errors.New("invalid FI USN request scope length")
+	}
+	if isVolumeOperation(operation) && rootLength > 64 {
+		return request{}, errors.New("FI volume enrollment ID exceeds 64 bytes")
 	}
 
 	value := request{Operation: operation}
 	switch operation {
-	case operationQuery:
+	case operationQuery, operationQueryVolume:
 		if payload != 0 || auxiliary != 0 {
 			return request{}, errors.New("FI USN query request contains unexpected fields")
 		}
-	case operationRead:
+	case operationRead, operationReadVolume:
 		value.StartUSN = int64(payload)
 		if value.StartUSN < 0 {
 			return request{}, errors.New("FI USN start USN must not be negative")
@@ -141,24 +156,40 @@ func readRequest(reader io.Reader) (request, error) {
 	if !utf8.Valid(rootBytes) {
 		return request{}, errors.New("FI USN governed root is not valid UTF-8")
 	}
-	value.GovernedRoot = string(rootBytes)
+	if isVolumeOperation(operation) {
+		value.EnrollmentID = string(rootBytes)
+		if !validVolumeEnrollmentID(value.EnrollmentID) {
+			return request{}, errors.New("FI volume enrollment ID is invalid")
+		}
+	} else {
+		value.GovernedRoot = string(rootBytes)
+	}
 	return value, nil
 }
 
 func writeRequest(writer io.Writer, value request) error {
-	rootBytes := []byte(value.GovernedRoot)
+	scope := value.GovernedRoot
+	if isVolumeOperation(value.Operation) {
+		if value.GovernedRoot != "" || !validVolumeEnrollmentID(value.EnrollmentID) {
+			return errors.New("FI volume request must contain only a canonical enrollment ID")
+		}
+		scope = value.EnrollmentID
+	} else if value.EnrollmentID != "" {
+		return errors.New("legacy FI USN request cannot specify a volume enrollment ID")
+	}
+	rootBytes := []byte(scope)
 	if len(rootBytes) > maxRootBytes || (len(rootBytes) == 0 && value.Operation != operationAuditPolicy) || !utf8.Valid(rootBytes) {
-		return errors.New("invalid FI USN governed root")
+		return errors.New("invalid FI USN request scope")
 	}
 
 	var payload uint64
 	var auxiliary uint32
 	switch value.Operation {
-	case operationQuery:
+	case operationQuery, operationQueryVolume:
 		if value.StartUSN != 0 || value.FileReferenceNumber != 0 || value.SequenceNumber != 0 {
 			return errors.New("FI USN query request contains unexpected fields")
 		}
-	case operationRead:
+	case operationRead, operationReadVolume:
 		if value.StartUSN < 0 {
 			return errors.New("FI USN start USN must not be negative")
 		}
