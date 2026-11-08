@@ -473,6 +473,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		pendingSecurityBytes = chunk.state.securityBytes
 	}
 	securityLimits := securityBulkLimitsFromContext(ctx)
+	// The private W128/P3 diagnostic aggregates only successful COPY calls,
+	// even when one buffer spans multiple intact signed source batches.
+	privateSecurityFlushProbe := usePrivateSinglePassSecurity(ctx)
 	// This run counter is local to ONE signed source batch, even when the
 	// pending Security COPY buffer flushes several times within that batch.
 	var contiguousSecurity int
@@ -542,7 +545,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		pendingFileBytes = 0
 		return nil
 	}
-	flushSecurity := func() error {
+	flushSecurity := func(reason securityBulkFlushReason) error {
 		if len(pendingSecurity) == 0 {
 			return nil
 		}
@@ -550,6 +553,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		last := pendingSecurity[len(pendingSecurity)-1].ordinal
 		if err := copySecurityBulk(ctx, tx, sourceBatchID, pendingSecurity, profile); err != nil {
 			return fmt.Errorf("%w: batch %s Security records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		// The COPY has succeeded, but remains part of the SAME enclosing
+		// W128 transaction. Emit the accumulated diagnostic only after COMMIT.
+		if privateSecurityFlushProbe {
+			profile.SecurityBulk.PrivateFlush.note(reason, len(pendingSecurity), pendingSecurityBytes)
 		}
 		profile.SecurityBulk.SourceBytes += pendingSecurityBytes
 		pendingSecurity = nil
@@ -642,7 +650,10 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			if securityLimits.shouldFlushBefore(
 				len(pendingSecurity), pendingSecurityBytes, int64(prepared.RecordBytes),
 			) {
-				if err := flushSecurity(); err != nil {
+				// Do not alter the original size-triggered flush decision.
+				reason := securityLimits.limitReason(len(pendingSecurity),
+					pendingSecurityBytes, int64(prepared.RecordBytes))
+				if err := flushSecurity(reason); err != nil {
 					return ordinal, err
 				}
 			}
@@ -657,7 +668,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			continue
 		}
 		contiguousSecurity = 0
-		if err := flushSecurity(); err != nil {
+		reason := securityFlushOtherKind
+		if prepared.Record.RecordKind == "WindowsSecurityCoverage" {
+			reason = securityFlushCoverage
+		}
+		if err := flushSecurity(reason); err != nil {
 			return ordinal, err
 		}
 		if prepared.Record.RecordKind == "FileObservation" || prepared.Record.RecordKind == "USNObjectObservation" {
@@ -726,7 +741,11 @@ RETURNING source_record_id
 		if err := flushFiles(); err != nil {
 			return ordinal, err
 		}
-		if err := flushSecurity(); err != nil {
+		reason := securityFlushBatchEnd
+		if hasChunk {
+			reason = securityFlushChunkEnd
+		}
+		if err := flushSecurity(reason); err != nil {
 			return ordinal, err
 		}
 		fileFlushStarted := time.Now()
