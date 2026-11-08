@@ -43,6 +43,10 @@ jobs:
           sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
           sh -n ./cmd/fi-backlog-recover/run_cached_wal_benchmarks.sh
           sh -n ./cmd/fi-backlog-recover/provision_four_benchmark_clusters.sh
+          sh -n ./cmd/fi-backlog-recover/run_w256_seed_host.sh
+          sh -n ./cmd/fi-backlog-recover/provision_w256_chunk_matrix_jail.sh
+          sh -n ./cmd/fi-backlog-recover/run_w256_chunk_arm_host.sh
+          sh -n ./cmd/fi-backlog-recover/run_w256_chunk_matrix_host.sh
           go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
           go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
           go build -o /tmp/fi-crl-publish-freebsd ./cmd/fi-crl-publish
