@@ -22,6 +22,7 @@ const (
 	fileReadAttributes  = 0x0080
 	maxVolumeNameUnits  = 1024
 	maxMountPathUnits   = 65536
+	maxDiscoveredVolumes = 1024 // discovery must have a bounded inventory
 	errorNoMoreFiles    = syscall.Errno(18)
 	errorMoreData       = syscall.Errno(234)
 	errorBufferTooSmall = syscall.Errno(122)
@@ -85,6 +86,9 @@ func Enumerate(ctx context.Context) ([]Snapshot, error) {
 		}
 		if _, exists := seen[guid]; exists {
 			return nil, fmt.Errorf("native volume enumerator returned duplicate GUID %q", guid)
+		}
+		if len(seen) >= maxDiscoveredVolumes {
+			return nil, fmt.Errorf("native volume inventory exceeds the safe limit of %d volumes", maxDiscoveredVolumes)
 		}
 		seen[guid] = struct{}{}
 		found = append(found, probeVolume(ctx, guid))
