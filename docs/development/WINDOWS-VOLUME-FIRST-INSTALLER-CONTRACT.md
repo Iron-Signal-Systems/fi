@@ -1,6 +1,6 @@
 # Windows Volume-First Native Installer Work Contract
 
-**Status:** Partial read-only discovery/preflight implemented in the branch. Volume-first installer apply/reconcile/rollback and native volume authorization are NOT implemented.
+**Status:** Branch-only read-only inventory/preflight implemented. A separate volume-ID USN broker path exists but is **not enabled by FIUSNReader's v1.1 startup**. Full v2 installer approval/apply/reconciliation/rollback, secure configuration handoff, protected-object policy authority and native `adminbox` tests are outstanding.
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows engineering/test machine:** `adminbox`
 
