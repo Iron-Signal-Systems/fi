@@ -1,5 +1,8 @@
 # FI Windows Server Validation
 
+> **Historical tests, not volume-first acceptance (2026-11-08):** The existing results below apply only to the tested root-centric source/installers and exact builds, not the proposed volume-first refactor. See [the new development validation matrix](development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md). No new native Windows acceptance is claimed.
+
+
 This document records Windows Server release/build characterization for the FI
 Phase 1 Windows File & Identity Intelligence runtime and separately tracks exact
 Gate 1 acceptance.
