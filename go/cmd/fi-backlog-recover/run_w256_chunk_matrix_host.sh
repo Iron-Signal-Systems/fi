@@ -4,7 +4,30 @@
 set -eu
 umask 077
 fail(){ echo "FI W256 MATRIX STOP: $*" >&2;exit 1; }
-[ "$#" = 2 ] || fail "usage: $0 /home/jwood/fi-w256-seed 55870"
+# With no arguments, create the empty W256 fixture, verify the complete
+# original signed transfer, commit W0, and launch the four K32..K128 arms.
+# The explicit two-argument path remains for rerunning from an accepted seed.
+if [ "$#" = 0 ]; then
+ [ "$(id -un)" = root ] || fail "host root required"
+ jailroot=$(jls -j fi-dev path) || fail "fi-dev missing"
+ repo=/home/jwood/fi-deferred-experiment
+ provision="$repo/go/cmd/fi-backlog-recover/provision_w256_fresh_seed_jail.sh"
+ seed_runner="$jailroot$repo/go/cmd/fi-backlog-recover/run_w256_seed_host.sh"
+ [ -f "$jailroot$provision" ] && [ -f "$seed_runner" ] || fail "W256 seed scripts missing"
+ available=$(df -Pk "$jailroot/home/jwood" | awk 'NR==2{print $4}')
+ case "$available" in ''|*[!0-9]*) fail "cannot determine free disk";; esac
+ [ "$available" -ge 100663296 ] || fail "less than 96GiB free for W256 matrix"
+ stamp=$(date -u '+%Y%m%dT%H%M%SZ')
+ fresh="/home/jwood/fi-w256-seed-$stamp"
+ [ ! -e "$jailroot$fresh" ] || fail "W256 fresh seed directory collision"
+ printf 'FI W256 AUTO START new_seed=%s matrix=K32,K64,K96,K128 source=real_signed_backlog\n' "$fresh"
+ jexec -U jwood fi-dev sh "$provision" "$fresh" 55870 ||
+  fail "automatic empty W256 PostgreSQL provisioning failed"
+ sh "$seed_runner" "$fresh" 55870 ||
+  fail "automatic original signed W256 window-zero seed failed"
+ exec sh "$0" "$fresh" 55870
+fi
+[ "$#" = 2 ] || fail "usage: $0 [no arguments for automatic fresh seed and four-arm test | /home/jwood/fi-w256-seed-TIMESTAMP 55870]"
 seed=$1;seedport=$2
 case "$seed" in /home/jwood/*) ;; *) fail "seed must be inside fi-dev";; esac
 case "$seedport" in ''|*[!0-9]*) fail "seed port invalid";; esac
