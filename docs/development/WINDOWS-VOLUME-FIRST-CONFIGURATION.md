@@ -50,7 +50,8 @@ The future installer must create an approval digest over both normalized request
 
 - Pure-Go parser, validation and canonicalization are implemented under `go/internal/config/volume_v2.go`; tests are under `go/internal/config/volume_v2_test.go`.
 - Local isolated-module unit tests, race detector, repeated test runs and vet ran on Linux; these establish parser behavior only. Repository GitHub CI validation is recorded separately by the actual workflow outcomes.
-- Not implemented: full native Windows volume enumeration, installer enrollment approval, application of config to FICollector/FIUSNReader, per-volume scheduler, native object policy enforcement, installation reconciliation/rollback, new source records, and FreeBSD database/projector changes.
+- Implemented separately: read-only Windows GUID/NTFS discovery, branch-only installer inventory/preflight, and a new path-free enrollment-ID USN broker mode with same-handle full-width NTFS serial checking. See `WINDOWS-VOLUME-FIRST-DISCOVERY.md` and `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. These features do **not** activate volume-wide collection.
+- Not implemented: complete v2 operational installer approval, application of v2 configuration to FICollector or FIUSNReader's service startup, per-volume scheduler/custody, governed policy/SACL enforcement, installation reconciliation/rollback, new source records, and FreeBSD database/projector changes.
 - No automatic edits, service changes or FISender start on `ISS-FS-22A`. All actual Windows engineering/integration and native host tests are assigned to `adminbox`.
 
 See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md`, `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md` and `docs/development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`. This document is not a deployment guide.
