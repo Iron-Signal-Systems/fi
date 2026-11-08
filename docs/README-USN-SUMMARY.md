@@ -1,5 +1,8 @@
 # FI USN Architecture Summary
 
+> **Volume-first redesign pending (2026-11-08):** This describes the existing root-authorized USN broker and root-owned checkpoints. Proposed behavior uses a single independently checkpointed USN stream per approved NTFS volume, with governed roots as policy boundaries. See [ADR-0002](architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). No volume-first native Windows test has passed or been run.
+
+
 FI uses the NTFS USN Journal to discover filesystem changes efficiently and to
 maintain continuity between observations.
 
