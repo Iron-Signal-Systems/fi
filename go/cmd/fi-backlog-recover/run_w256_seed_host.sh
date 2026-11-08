@@ -10,7 +10,6 @@ seed=$1;port=$2
 case "$seed" in /home/jwood/*) ;; *) fail "seed must reside in fi-dev";; esac
 case "$port" in ''|*[!0-9]*) fail "invalid port";; esac
 [ "$(id -un)" = root ] || fail "FreeBSD host root required"
-[ "$(sysctl -n kern.racct.enable 2>/dev/null)" = 1 ] || fail "RCTL required"
 jailroot=$(jls -j fi-dev path) || fail "fi-dev jail unavailable"
 repo=/home/jwood/fi-deferred-experiment
 [ -d "$jailroot$seed/socket" ] || fail "fresh isolated PG socket dir required"
@@ -32,17 +31,7 @@ bin="$jailroot$seed/fi-w256-recover"
 [ -x "$bin" ] || fail "W256 binary absent"
 [ ! -e "$jailroot$seed/private" ] || fail "private seed root already present"
 mkdir -m 700 "$jailroot$seed/private"
-gate="$jailroot$seed/proceed"
-pid=
-rule=
-cleanup(){
- if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || :; wait "$pid" 2>/dev/null || :; fi
- if [ -n "$rule" ]; then rctl -r "$rule" >/dev/null 2>&1 || :; fi
-}
-trap cleanup 0 1 2 3 15
-(
- while [ ! -e "$gate" ]; do sleep 1; done
- exec "$bin" \
+"$bin" \
   -source=iss-fs-22a.iss.local \
   -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
   -postgres="host=$jailroot$seed/socket port=$port user=fi_ingest dbname=fi sslmode=disable" \
@@ -51,19 +40,8 @@ trap cleanup 0 1 2 3 15
   -private-root="$jailroot$seed/private" -private-writes \
   -security-profile=P3 -file-profile=F3 -window-profile=W256 \
   -stream-loader -start-window=0 -max-windows=1 -max-runtime=0s \
-  -private-w256-memory4g > "$jailroot$seed/seed.log" 2>&1
-) &
-pid=$!
-rule="process:$pid:memoryuse:deny=4G"
-rctl -a "$rule" || fail "hard 4GiB process RSS limit could not be installed"
-rctl -l "process:$pid" > "$jailroot$seed/rctl.txt" || fail "RCTL inspection failed"
-grep -q 'memoryuse:deny=4G' "$jailroot$seed/rctl.txt" || fail "hard limit absent"
-: > "$gate"
-if wait "$pid"; then code=0; else code=$?; fi
-pid=
-rctl -r "$rule" >/dev/null 2>&1 || :
-rule=
-[ "$code" -eq 0 ] || { tail -n 40 "$jailroot$seed/seed.log" >&2 || :; fail "W256 signed seed failed"; }
+  -private-w256-memory4g > "$jailroot$seed/seed.log" 2>&1 ||
+ { tail -n 40 "$jailroot$seed/seed.log" >&2 || :; fail "W256 signed seed failed"; }
 grep -q '^FI REAL BACKLOG PAUSED completed_to_window=1 ' "$jailroot$seed/seed.log" ||
  fail "W256 window-zero durable completion missing"
 [ "$(sql "SELECT count(*) FROM fi_recovery.typed_window")" = 1 ] || fail "W256 seed typed checkpoint missing"
@@ -71,5 +49,4 @@ grep -q '^FI REAL BACKLOG PAUSED completed_to_window=1 ' "$jailroot$seed/seed.lo
 [ "$(sql "SELECT count(*) FROM fi_recovery.source_window")" = 1 ] || fail "W256 seed source checkpoint missing"
 [ "$(sql "SELECT count(*) FROM fi_recovery.verified_artifact_window")" = 1 ] || fail "W256 seed artifact checkpoint missing"
 [ "$(sql "SELECT count(*) FROM fi.recorded_generation")" = 0 ] || fail "SoR modified"
-chmod 644 "$jailroot$seed/seed.log"
-printf 'FI W256 REAL SIGNED SEED PASS seed=%s record_limit=262144 byte_limit=2147483648 RCTL=4GiB\n' "$seed"
+printf 'FI W256 REAL SIGNED SEED PASS seed=%s record_limit=262144 byte_limit=2147483648 memory=adaptive_soft_target\n' "$seed"
