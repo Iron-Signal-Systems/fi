@@ -132,3 +132,28 @@ func TestFreshInstallJSONBlocksNativeUncertainty(t *testing.T) {
 		t.Fatal("nil output accepted")
 	}
 }
+
+func TestExplicitlyDisabledReadOnlySelectorsNeverFallIntoDefaultApply(t *testing.T) {
+	for _, args := range [][]string{
+		{"-check-clean-install=false"},
+		{"-list-volumes=false"},
+		{"-check-clean-install", "-list-volumes=false"},
+		{"-list-volumes", "-check-clean-install=false"},
+	} {
+		if err := rejectDisabledReadOnlySelectors(freshFlags(t, args...)); err == nil {
+			t.Fatalf("legacy installer apply could be reached by disabled read-only flag %v", args)
+		}
+	}
+	for _, args := range [][]string{
+		nil,
+		{"-check-clean-install"},
+		{"-list-volumes"},
+	} {
+		if err := rejectDisabledReadOnlySelectors(freshFlags(t, args...)); err != nil {
+			t.Fatalf("valid presence/default of read-only selectors rejected: %v: %v", args, err)
+		}
+	}
+	if err := rejectDisabledReadOnlySelectors(nil); err == nil {
+		t.Fatal("nil installer flag set accepted")
+	}
+}
