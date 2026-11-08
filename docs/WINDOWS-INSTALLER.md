@@ -5,6 +5,8 @@
 
 > **Additional read-only review (Windows branch, 2026-11-08):** `fi-install.exe -list-volumes -volume-config <scope-v2-file>` now reports an explicit `requested_scope_review` with typed enrollment/policy changes and a deterministic stale-plan fingerprint. It does **not** authenticate consent or install an approved v2 scope. See [volume scope review](development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md).
 
+> **Installed-grant security boundary (branch-only):** `volumeconsent` verifies signed short-lived installer intent and `volumegrant` verifies a signed durable grant against **independently trusted state**. Neither is wired into the legacy installer, creates a protected grant, supplies real operator approval or starts volume-wide capture. See [transaction consent](development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md) and [installed grant](development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md).
+
 ## Status and authority
 
 `fi-install.exe` is the native FI Windows source installer and desired-state
