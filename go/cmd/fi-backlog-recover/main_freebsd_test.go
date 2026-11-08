@@ -21,6 +21,7 @@ func TestPrivateWindowProfileLimits(t *testing.T) {
 		{"W64", recordingest.BacklogWindowLimits{MaxRecords: 65536, MaxDataBytes: 1 << 30}},
 		{"W96", recordingest.BacklogWindowLimits{MaxRecords: 98304, MaxDataBytes: 1 << 30}},
 		{"W128", recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}},
+		{"W256", recordingest.BacklogWindowLimits{MaxRecords: 262144, MaxDataBytes: 2 << 30}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,7 +31,7 @@ func TestPrivateWindowProfileLimits(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"", "W8", "W256", "W128K"} {
+	for _, name := range []string{"", "W8", "W512", "W128K"} {
 		if _, err := privateWindowLimits(name); err == nil {
 			t.Fatalf("unexpected window profile %q accepted", name)
 		}
@@ -38,7 +39,7 @@ func TestPrivateWindowProfileLimits(t *testing.T) {
 }
 
 func TestExperimentalWindowModesFailClosed(t *testing.T) {
-	for _, profile := range []string{"W64", "W96", "W128"} {
+	for _, profile := range []string{"W64", "W96", "W128", "W256"} {
 		if err := validatePrivateWindowMode(profile, true, true, false, false, false, 0, 1); err != nil {
 			t.Fatalf("%s new isolated first window: %v", profile, err)
 		}
