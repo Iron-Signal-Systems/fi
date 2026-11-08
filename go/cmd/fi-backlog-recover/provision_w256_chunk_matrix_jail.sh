@@ -41,12 +41,24 @@ case "$seed_state" in 1\|*\|0) ;; *) die "seed contains wrong checkpoint chain: 
 [ "$(q "SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'")" = 0 ] || die "seed has Accepted outcome"
 [ "$(q "SELECT count(*) FROM pg_partitioned_table WHERE partrelid='fi_recovery_projection.windows_security_event_field'::regclass")" = 1 ] ||
  die "seed Security field table is not partitioned"
+finalize="$repo/go/cmd/fi-backlog-recover/testdata/private_w256_finalize_seed_partition.sql"
+functions="$repo/go/cmd/fi-backlog-recover/testdata/private_field_partitions_isolated.sql"
 sql="$repo/go/cmd/fi-backlog-recover/testdata/private_w256_deferred_index_isolated.sql"
-[ -f "$sql" ] || die "W256 deferred index SQL missing"
-# Installation changes only the disposable W256 seed's private SQL
-# function; the SQL file validates the existing signed checkpoint FIRST.
+[ -f "$finalize" ] && [ -f "$functions" ] && [ -f "$sql" ] ||
+ die "W256 seed finalize and field projection SQL missing"
+# The first W256 window is durably committed before converting its sole
+# DEFAULT child into an exact W0 RANGE partition. Later W1..W4 field
+# partitions can then attach without rescan of the large W0 dataset.
+psql "$src" -X -v ON_ERROR_STOP=1 -f "$finalize" > "$seed/w256-seed-finalize.log" 2>&1 ||
+ { tail -n 25 "$seed/w256-seed-finalize.log" >&2; die "signed W256 W0 partition finalization failed"; }
+[ "$(q "SELECT pg_get_expr(c.relpartbound,c.oid) LIKE 'FOR VALUES FROM%' FROM pg_class c WHERE c.oid='fi_recovery_projection.windows_security_event_field_w000000'::regclass")" = t ] ||
+ die "W256 W0 field partition did not become a bounded RANGE"
+# The existing validated finish function is retained unchanged; the W256
+# SQL only swaps the private unindexed COPY start function.
+psql "$src" -X -v ON_ERROR_STOP=1 -f "$functions" > "$seed/w256-field-functions.log" 2>&1 ||
+ { tail -n 25 "$seed/w256-field-functions.log" >&2; die "W256 field partition functions installation failed"; }
 psql "$src" -X -v ON_ERROR_STOP=1 -f "$sql" > "$seed/w256-index-install.log" 2>&1 ||
- { tail -n 25 "$seed/w256-index-install.log" >&2; die "W256 index installation failed"; }
+ { tail -n 25 "$seed/w256-index-install.log" >&2; die "W256 deferred field-index setup failed"; }
 [ "$(q "SELECT position('EXCLUDING INDEXES' IN pg_get_functiondef('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure))>0")" = t ] ||
  die "deferred index function not installed"
 mkdir -m 700 "$root"
