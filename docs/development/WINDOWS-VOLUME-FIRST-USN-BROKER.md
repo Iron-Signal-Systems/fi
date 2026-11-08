@@ -35,6 +35,12 @@ Primary API references: [Microsoft volume handles](https://learn.microsoft.com/e
 
 The exact on-handle full-width serial behavior and its equality to `FILE_ID_INFO.VolumeSerialNumber` require native evidence on the supported Server builds. If unsupported, the operation must fail closed; do not silently downgrade to 32-bit identity checks.
 
+## Broker concurrency is not yet redesigned
+
+The existing FIUSNReader `serveWithAuthority` loop accepts one pipe connection and handles it synchronously before the next. The separate volume mode inherits that **serialized broker execution**, even though its configured volume authorizations are independent. Independent enrollment status is already tested; simultaneous high-throughput multi-volume journal acquisition, bounded concurrency, per-client timeout/fault containment, fair scheduling, and full host resource ceilings are **NOT implemented or benchmarked**.
+
+Do not treat a successful multi-volume authorization test as proof of the target concurrent collection architecture. Multi-volume broker service scheduling and fault isolation require separate implementation and native backpressure/stalled-client tests before any deployment claim.
+
 ## Tests implemented
 
 Wire round-trips; backward-compatible legacy requests; invalid/mixed/path-based enrollment selectors; bounded requests; immutable volume authority; missing/reformatted/unsupported volume isolation; mock native dispatch proving no raw access after authorization failure; native target validation; full-width serial comparison and malformed FSCTL return rejection.
