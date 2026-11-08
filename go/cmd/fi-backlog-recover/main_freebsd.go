@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -40,8 +41,10 @@ func privateWindowLimits(name string) (recordingest.BacklogWindowLimits, error) 
 		return recordingest.BacklogWindowLimits{MaxRecords: 98304, MaxDataBytes: 1 << 30}, nil
 	case "W128":
 		return recordingest.BacklogWindowLimits{MaxRecords: 131072, MaxDataBytes: 1 << 30}, nil
+	case "W256":
+		return recordingest.BacklogWindowLimits{MaxRecords: 262144, MaxDataBytes: 2 << 30}, nil
 	default:
-		return recordingest.BacklogWindowLimits{}, errors.New("FI backlog recovery: window-profile must be W32, W64, W96, or W128")
+		return recordingest.BacklogWindowLimits{}, errors.New("FI backlog recovery: window-profile must be W32, W64, W96, W128, or W256")
 	}
 }
 
@@ -80,6 +83,7 @@ func run() error {
 	var privateReusableEventCopy bool
 	var privateSecurityPayloadTailGuard bool
 	var privateSecurityPayloadOriginalGuard bool
+	var privateW256Memory4G bool
 	var privateCPUProfile string
 	var testDeferredFault string
 	flag.StringVar(&testDeferredFault,"test-deferred-fault","","EXPERIMENT ONLY: corrupt-clone, after-publish, or kill-after-publish in signed W128/K32 window 3; requires -deferred-verified-clone and -test-stop-after-windows=1")
@@ -89,10 +93,11 @@ func run() error {
 	flag.BoolVar(&privateReusableEventCopy, "private-reusable-event-copy", false, "DEV ONLY: opt in to reusable 40-column Security-event COPY rows for isolated signed W128/P3 deferred clone; production remains unchanged")
 	flag.BoolVar(&privateSecurityPayloadTailGuard, "private-security-payload-tail", false, "DEV ONLY: explicit request for the default object-tail guard in isolated W128/P3 signed replay")
 	flag.BoolVar(&privateSecurityPayloadOriginalGuard, "private-security-payload-original", false, "DEV ONLY: original full JSON-validity scan for CONTROL arm in isolated signed W128/P3 A/B replay")
+	flag.BoolVar(&privateW256Memory4G, "private-w256-memory4g", false, "DEV ONLY: isolated W256 signed-cache experiment with 3GiB Go soft limit, RSS sampling and required host RCTL hard cap")
 	flag.StringVar(&privateCPUProfile, "private-cpu-profile", "", "DEV ONLY: 10m signed W128 disposable private-clone CPU profile")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
-	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
-	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
+	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32/W64/W96/W128; isolated W256=262144 records/2GiB (requires private-w256-memory4g); checkpoints cannot be mixed")
+	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "PRIVATE joined-source and cross-batch typed chunks K32/K64/K96/K128 in W128 or isolated W256; signed batches intact")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
 	flag.StringVar(&generation, "generation-id", "", "exact original signed FI generation")
 	flag.StringVar(&pg, "postgres", "", "FI ingest PostgreSQL connection string")
@@ -111,8 +116,8 @@ func run() error {
 	flag.StringVar(&securityProfile, "security-profile", "P1", "fixed bounded security source COPY batch: P1 conservative, P3 benchmark candidate; immutable for this invocation")
 	flag.IntVar(&maxWindows, "max-windows", 2, "private windows to process per invocation; 0 means to final window")
 	flag.IntVar(&startWindow, "start-window", 0, "original signed window index to resume from")
-	flag.BoolVar(&privateFieldPartitions, "private-field-partitions", false, "DEV ONLY: field COPY into validated detached partitions in an isolated W128 private database")
-	flag.IntVar(&testStopAfterWindows, "test-stop-after-windows", 0, "DEV ONLY: cancel after 1-2 durable windows or exactly 10 in the isolated W128/K32/P3/F3 signed replay; 0=normal")
+	flag.BoolVar(&privateFieldPartitions, "private-field-partitions", false, "DEV ONLY: field COPY into validated detached partitions in an isolated W128 or W256 private database")
+	flag.IntVar(&testStopAfterWindows, "test-stop-after-windows", 0, "DEV ONLY: private W128 existing stop, or exactly 4 W256 windows after a fresh signed W256 seed; 0=all")
 	flag.IntVar(&testFieldFailWindow, "test-field-fail-window", 0, "DEV ONLY: inject late private-field partition rollback in exact window")
 	flag.Parse()
 	if optimizedK32 {
@@ -155,7 +160,7 @@ func run() error {
 		return err
 	}
 	if verifiedCacheRoot != "" {
-		if windowProfile != "W128" || !enable ||
+		if (windowProfile != "W128" && windowProfile != "W256") || !enable ||
 			!((streamLoader && startWindow == 0 && maxWindows == 1) ||
 				(continuousPrivate && startWindow >= 1 && maxWindows == 0)) {
 			return errors.New("verified-cache-root is restricted to W128 signed seed or verified cached continuous private trial")
@@ -172,8 +177,8 @@ func run() error {
 		}
 	}
 	if processingChunkRecords != 0 {
-		if windowProfile != "W128" || !continuousPrivate {
-			return errors.New("FI processing-chunk-records requires W128 continuous-private; existing paths remain unchanged")
+		if (windowProfile != "W128" && windowProfile != "W256") || !continuousPrivate {
+			return errors.New("FI processing-chunk-records requires W128 or isolated W256 continuous-private")
 		}
 		switch processingChunkRecords {
 		case 32768, 65536, 98304, 131072:
@@ -196,17 +201,40 @@ func run() error {
 	if indexedPrivate && (streamLoader || startWindow == 0 || maxWindows < 1 || maxWindows > 2) {
 		return errors.New("indexed-private requires start-window > 0 and one or two selected windows; cannot combine with stream-loader")
 	}
-	if privateFieldPartitions && (!continuousPrivate || !enable || windowProfile != "W128" ||
-		(processingChunkRecords != 32768 && processingChunkRecords != 65536) || verifiedCacheRoot == "" || startWindow < 1 ||
+	if windowProfile == "W256" {
+		if !privateW256Memory4G || !enable || indexedPrivate || preflightOnly ||
+			maxRuntime != 0 || securityProfile != "P3" || fileProfile != "F3" {
+			return errors.New("FI W256 requires explicit private 4GiB experiment, P3/F3, and no wall-clock truncation")
+		}
+		if streamLoader {
+			if continuousPrivate || startWindow != 0 || maxWindows != 1 ||
+				verifiedCacheRoot != "" || processingChunkRecords != 0 ||
+				privateFieldPartitions || deferredVerifiedClone || testStopAfterWindows != 0 {
+				return errors.New("FI W256 signed first-window seed requires fresh isolated stream-loader with no prior checkpoint")
+			}
+		} else if !continuousPrivate || startWindow != 1 || maxWindows != 0 ||
+			verifiedCacheRoot == "" || !privateFieldPartitions || !deferredVerifiedClone ||
+			(processingChunkRecords != 32768 && processingChunkRecords != 65536 &&
+				processingChunkRecords != 98304 && processingChunkRecords != 131072) ||
+			(testStopAfterWindows != 0 && testStopAfterWindows != 4) {
+			return errors.New("FI W256 signed continuation requires exact fresh W256 seed, verified cache, detached fields, deferred clone and K32/K64/K96/K128")
+		}
+	} else if privateW256Memory4G {
+		return errors.New("FI 4GiB W256 governor may not be used for W128 or production")
+	}
+	if privateFieldPartitions && (!continuousPrivate || !enable ||
+		(windowProfile != "W128" && windowProfile != "W256") ||
+		(windowProfile == "W128" && processingChunkRecords != 32768 && processingChunkRecords != 65536) ||
+		verifiedCacheRoot == "" || startWindow < 1 ||
 		securityProfile != "P3" || fileProfile != "F3") {
-		return errors.New("FI private field partitions require isolated cached W128 continuous-private P3/F3 with 32768 processing chunk")
+		return errors.New("FI private field partitions require isolated signed-cache W128 or W256 P3/F3 continuation")
 	}
 	if deferredVerifiedClone && (!enable || !continuousPrivate || !privateFieldPartitions ||
-		windowProfile != "W128" || processingChunkRecords != 32768 ||
+		(windowProfile != "W256" && (windowProfile != "W128" || processingChunkRecords != 32768)) ||
 		securityProfile != "P3" || fileProfile != "F3" ||
-		verifiedCacheRoot == "" || startWindow != 3 || maxWindows != 0 ||
+		verifiedCacheRoot == "" || startWindow != func() int { if windowProfile == "W256" { return 1 }; return 3 }() || maxWindows != 0 ||
 		indexedPrivate || streamLoader || preflightOnly) {
-		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32/P3/F3 private joined trial starting at window 3")
+		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32 or W256/K32..K128 private continuation")
 	}
 	if privateThirtyMinuteProbe && (maxRuntime != 30*time.Minute || !deferredVerifiedClone ||
 		!enable || !continuousPrivate || !privateFieldPartitions ||
@@ -264,8 +292,10 @@ func run() error {
 		return errors.New("FI exact 10-window stop requires exclusive unbounded private signed-cache W128/K32/P3/F3 deferred clone")
 	}
 	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 ||
-		(testStopAfterWindows > 2 && testStopAfterWindows != 10) || !continuousPrivate ||
-		windowProfile != "W128" || verifiedCacheRoot == "" || processingChunkRecords != 32768)) ||
+		(testStopAfterWindows > 2 && testStopAfterWindows != 10 &&
+			!(testStopAfterWindows == 4 && windowProfile == "W256" && privateW256Memory4G)) ||
+		!continuousPrivate || verifiedCacheRoot == "" ||
+		(windowProfile == "W128" && processingChunkRecords != 32768))) ||
 		(testFieldFailWindow != 0 && (!privateFieldPartitions || testFieldFailWindow < startWindow ||
 			testFieldFailWindow > startWindow+1)) {
 		return errors.New("FI isolated field benchmark: illegal test stop/failure combination")
@@ -295,6 +325,19 @@ func run() error {
 		}
 		defer func() { pprof.StopCPUProfile(); _ = file.Close() }()
 		fmt.Println("FI PRIVATE CPU PROFILE START mode=profile10 path=cpu.pprof source=real_signed_backlog")
+	}
+	if privateW256Memory4G {
+		// The kernel RCTL limit is still mandatory: GOMEMLIMIT excludes
+		// native mappings and is a SOFT garbage-collector target, not a cap.
+		const goSoftBytes int64 = 3 << 30
+		previous := debug.SetMemoryLimit(-1)
+		effective := goSoftBytes
+		if previous < effective {
+			effective = previous
+		}
+		debug.SetMemoryLimit(effective)
+		defer debug.SetMemoryLimit(previous)
+		fmt.Printf("FI PRIVATE W256 MEMORY CONFIG kernel_rss_limit_required=%d go_soft_limit=%d source=real_signed\n", uint64(4)<<30, effective)
 	}
 	ctx := context.Background()
 	var stop context.CancelFunc
@@ -345,6 +388,12 @@ func run() error {
 		ctx, chunkErr = recordingest.WithBacklogJoinedSourceChunkRecords(ctx, processingChunkRecords)
 		if chunkErr != nil {
 			return chunkErr
+		}
+		if privateW256Memory4G {
+			ctx, chunkErr = recordingest.WithPrivateW256MemoryBudget(ctx, processingChunkRecords)
+			if chunkErr != nil {
+				return chunkErr
+			}
 		}
 	}
 	if securityProfile != "P1" && securityProfile != "P3" {
@@ -506,7 +555,7 @@ SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 A
 				return fmt.Errorf("FI controlled stop: marker/SoR mismatch windows=%d authoritative=%d last=%d err=%v",
 					markerCount, authoritativeCount, lastWindow, checkErr)
 			}
-			if testStopAfterWindows == 10 {
+			if testStopAfterWindows == 10 || (testStopAfterWindows == 4 && windowProfile == "W256") {
 				// Elapsed time is measured to the final durable commit, not a
 				// fixed timer cutoff or a partially processed 11th window.
 				elapsed := time.Since(began)
