@@ -34,6 +34,10 @@ All policy changes — including `metadata` to `security`, `security` to `metada
 
 The standalone preflight continues to run before the legacy installer's default `-apply=true` path and before SACL recovery, PKI/AD operations or service changes. No installed v2 configuration is created; the legacy collector and helper still load v1.1.
 
+## Signed consent verifier remains separate from scope review
+
+`go/internal/windows/volumeconsent` verifies a short-lived ECDSA P-256/SHA-256 signed installer intent bound to this exact review, native volume observation, trusted old/new configuration, host/installation identity and an independently maintained approval sequence. The signer and trust-anchor provisioning are **not implemented**. This does not issue operator consent, persist an installed grant or enable volume-mode USN. See `WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+
 ## Test coverage
 
 - First-time enrollment requires explicit review of every volume and policy.
