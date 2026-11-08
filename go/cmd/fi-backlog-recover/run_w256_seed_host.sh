@@ -49,4 +49,11 @@ grep -q '^FI REAL BACKLOG PAUSED completed_to_window=1 ' "$jailroot$seed/seed.lo
 [ "$(sql "SELECT count(*) FROM fi_recovery.source_window")" = 1 ] || fail "W256 seed source checkpoint missing"
 [ "$(sql "SELECT count(*) FROM fi_recovery.verified_artifact_window")" = 1 ] || fail "W256 seed artifact checkpoint missing"
 [ "$(sql "SELECT count(*) FROM fi.recorded_generation")" = 0 ] || fail "SoR modified"
+# The Go process runs as host root, so its redirection creates a root-owned
+# 0600 log under the jailed user's 0700 seed directory. The next stage runs
+# as jailed jwood and must read this validated proof; hand over ownership
+# rather than widening permissions or rerunning the 18-minute signed scan.
+jail_uid=$(jexec -U jwood fi-dev id -u) || fail "cannot determine fi-dev owner"
+chown "$jail_uid" "$jailroot$seed/seed.log" || fail "cannot hand seed log to fi-dev"
+jexec -U jwood fi-dev test -r "$seed/seed.log" || fail "fi-dev cannot read seed proof"
 printf 'FI W256 REAL SIGNED SEED PASS seed=%s record_limit=262144 byte_limit=2147483648 memory=adaptive_soft_target\n' "$seed"
