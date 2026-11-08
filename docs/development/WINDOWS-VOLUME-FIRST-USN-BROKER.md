@@ -16,6 +16,10 @@ This is NOT an install or configuration authority. Future installer code must fi
 
 A separately implemented `volumeconsent.Verify` primitive checks short-lived signed *installer intent*. No production signer, key/host trust provisioning, protected installed grant, or service authority handoff exists yet. Even a valid test-signed receipt is not a durable service authorization. The exported volume-mode broker entry point remains **fail-closed**. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
 
+## Durable installed-grant verification is not yet a broker capability
+
+A separate `volumegrant.Verify` component now verifies signed installed scope *against independently trusted exact-envelope and monotonic-generation state*. That trusted state store, native ACL proof and installer commit flow are still missing. The verifier yields only an error and cannot start the helper. **The exported volume-mode startup remains blocked**, irrespective of whether an isolated test grant verifies. See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
+
 ## Protocol isolation
 
 The same bounded local pipe framing gains two operation codes:
