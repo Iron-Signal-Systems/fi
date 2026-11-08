@@ -529,10 +529,13 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			if counters, _ := ctx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters); counters != nil {
 				counters.FileSourceValidated++
 			}
-			if err := fileBulk.add(ctx, tx, fileObservationBulkRecord{
-				sourceID: sourceID, sourceRecordID: item.sourceRecordID, ordinal: item.ordinal,
-				validatedSource: validated, hashes: &value.ContentHashes, bytes: int64(item.prepared.RecordBytes),
-			}); err != nil {
+			bulkRecord, err := fileBulkRecordFromValidatedSource(
+				sourceID, item.sourceRecordID, item.ordinal, validated,
+				&value.ContentHashes, int64(item.prepared.RecordBytes))
+			if err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
+			}
+			if err := fileBulk.add(ctx, tx, bulkRecord); err != nil {
 				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
 			}
 		}

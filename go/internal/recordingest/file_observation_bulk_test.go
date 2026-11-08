@@ -66,19 +66,20 @@ func TestFileValidationSourceRejectsMalformedAndDirectDoesNotBypass(t *testing.T
 	}
 }
 
-func TestFileBulkValidatedValueIsTheBulkReadSource(t *testing.T) {
+func TestFileBulkConstructorBindsOriginalAndValidatedValue(t *testing.T) {
 	checked := &validatedSourceFileObservation{
 		observation: ntfs.Observation{ObservedAt: "2026-11-08T00:00:00.000000000Z"},
 	}
-	p := fileObservationBulkRecord{
-		value: ntfs.Observation{ObservedAt: "untrusted"},
-		validatedSource: checked,
+	record, err := fileBulkRecordFromValidatedSource("source-A", 11, 2, checked, nil, 100)
+	if err != nil || record.validatedSource != checked ||
+		record.value.ObservedAt != checked.observation.ObservedAt {
+		t.Fatalf("validated constructor did not populate all bulk readers: %#v err=%v", record, err)
 	}
-	if got := p.observation().ObservedAt; got != checked.observation.ObservedAt {
-		t.Fatalf("bulk used different value from validated source: %q", got)
+	if _, err = fileBulkRecordFromValidatedSource("source-A", 11, 2, nil, nil, 100); err == nil {
+		t.Fatal("bulk constructor accepted nil source validation proof")
 	}
 	direct := fileObservationBulkRecord{value: ntfs.Observation{ObservedAt: "direct"}}
-	if direct.observation().ObservedAt != "direct" {
-		t.Fatal("direct record no longer reads its own observation")
+	if direct.value.ObservedAt != "direct" || direct.validatedSource != nil {
+		t.Fatal("legacy/direct bulk value changed or bypasses validation")
 	}
 }

@@ -50,11 +50,19 @@ func validateSourceFileObservation(value ntfs.Observation) (*validatedSourceFile
 	return &validatedSourceFileObservation{observation: value}, nil
 }
 
-func (p fileObservationBulkRecord) observation() ntfs.Observation {
-	if p.validatedSource != nil {
-		return p.validatedSource.observation
+// This constructor binds the validated object to the SAME legacy record
+// field consumed by all parent and child projectors. A separate proof does
+// not replace or empty value: every existing reader must see the exact data.
+func fileBulkRecordFromValidatedSource(sourceID string, sourceRecordID, ordinal int64,
+	checked *validatedSourceFileObservation, hashes *records.ContentHashObservation, recordBytes int64) (fileObservationBulkRecord, error) {
+	if checked == nil {
+		return fileObservationBulkRecord{}, errors.New("FI FileObservation source validation proof is missing")
 	}
-	return p.value
+	return fileObservationBulkRecord{
+		sourceID: sourceID, sourceRecordID: sourceRecordID, ordinal: ordinal,
+		value: checked.observation, hashes: hashes, bytes: recordBytes,
+		validatedSource: checked,
+	}, nil
 }
 
 type fileObservationBulkPrepared struct {
@@ -205,7 +213,7 @@ func prepareFileObservationBulk(ctx context.Context, tx pgx.Tx, p fileObservatio
 	if p.sourceID == "" || p.sourceRecordID <= 0 {
 		return nil, nil, errors.New("FI file observation identity missing")
 	}
-	v := p.observation()
+	v := p.value
 	if v.VolumeIdentity != v.GovernedRoot.VolumeIdentity {
 		return nil, nil, errors.New("FI NTFS observation volume identity does not match governed-root volume")
 	}
@@ -305,7 +313,7 @@ func fileBulkNumeric(value string) (pgtype.Numeric, error) {
 
 func projectFileObservationBulkChildren(ctx context.Context, tx pgx.Tx, p fileObservationBulkRecord) error {
 	sourceRecordID := p.sourceRecordID
-	v := p.observation()
+	v := p.value
 	stages := beginNTFSStage(ctx)
 	defer stages.finish()
 	// The normal projector always includes these child calls. Preserve their
