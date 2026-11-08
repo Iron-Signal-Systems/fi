@@ -1,6 +1,6 @@
 # FI USN Architecture Summary
 
-> **Volume-first redesign pending (2026-11-08):** This describes the existing root-authorized USN broker and root-owned checkpoints. Proposed behavior uses a single independently checkpointed USN stream per approved NTFS volume, with governed roots as policy boundaries. See [ADR-0002](architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). No volume-first native Windows test has passed or been run.
+> **Volume-first redesign pending (2026-11-08):** This describes the existing root-authorized USN broker and root-owned checkpoints. Proposed behavior uses a single independently checkpointed USN stream per approved NTFS volume, with governed roots as policy boundaries. See [ADR-0002](architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). Windows CI has exercised read-only native volume discovery and separate broker-wire tests, but **no privileged USN volume-mode acceptance test has been executed on `adminbox`**. The volume-first FICollector pipeline and installer authority are not integrated; see [signed consent verifier contract](development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md) for what is and is not implemented.
 
 
 FI uses the NTFS USN Journal to discover filesystem changes efficiently and to
