@@ -276,3 +276,60 @@ func TestCanonicalSIDAndDigestValidation(t *testing.T) {
 		t.Fatal("canonical Windows SID or digest rejected")
 	}
 }
+
+func TestSignedConsentBindsTrustedInstalledV2Baseline(t *testing.T) {
+	f := makeFixture(t)
+	installed := f.requested
+	next := makeFixture(t).requested
+	next.Policies[0].Depth = config.DepthContent
+	review, err := volumereview.Build(&installed, next, f.native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !review.RequiresExplicitApproval || review.CurrentConfigSHA256 == "" {
+		t.Fatal("policy change was not tied to the installed baseline")
+	}
+	f.requested = next
+	f.review = review
+	f.payload.PreviousConfigSHA256 = review.CurrentConfigSHA256
+	f.payload.RequestedConfigSHA256 = review.RequestedConfigSHA256
+	f.payload.ReviewFingerprintSHA256 = review.ReviewFingerprintSHA256
+	f.expected.PreviousConfigSHA256 = review.CurrentConfigSHA256
+
+	encoded := f.signed(t)
+	if err := Verify(encoded, f.expected, &installed, next, review, f.native); err != nil {
+		t.Fatalf("valid signed transition was rejected: %v", err)
+	}
+	// Changing the installed state after the review invalidates its approval,
+	// even if the proposed configuration and native NTFS identity are stable.
+	drifted := makeFixture(t).requested
+	drifted.Policies[0].RelativeRoot = `\Shares\Other`
+	if err := Verify(encoded, f.expected, &drifted, next, review, f.native); !errors.Is(err, ErrStaleApproval) {
+		t.Fatalf("approval replayed against changed installed baseline: %v", err)
+	}
+}
+
+func TestSignedConsentRequiresIndependentlyTrustedP256Key(t *testing.T) {
+	f := makeFixture(t)
+	for _, tc := range []struct{
+		name string
+		set func(*Expected)
+	}{
+		{"wrong elliptic curve", func(e *Expected) {
+			key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+			if err != nil { t.Fatal(err) }
+			e.TrustedPublicKey = &key.PublicKey
+		}},
+		{"empty public point", func(e *Expected) {
+			e.TrustedPublicKey = &ecdsa.PublicKey{Curve: elliptic.P256()}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expected := f.expected
+			tc.set(&expected)
+			if err := Verify(f.signed(t), expected, nil, f.requested, f.review, f.native); !errors.Is(err, ErrUnauthorizedReceipt) {
+				t.Fatalf("untrusted/malformed issuer key was accepted: %v", err)
+			}
+		})
+	}
+}
