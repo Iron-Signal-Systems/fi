@@ -1,6 +1,6 @@
 # File Intelligence (FI)
 
-> **Windows architecture under active development (2026-11-08):** This branch proposes explicit NTFS volume enrollment with one USN pipeline per volume and governed roots controlling deeper observation. See [ADR-0002](docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). The implementation, installer, backend schema and tests remain root-centric; this target is **not yet implemented or validated**. FI is an active development project, not release-ready.
+> **Windows architecture under active development (2026-11-08):** This branch proposes explicit NTFS volume enrollment with one USN pipeline per volume and governed roots controlling deeper observation. See [ADR-0002](docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md). Only the new isolated volume enrollment parser and journal continuity model have preliminary unit tests. The operational Windows collector, privileged broker, installer, transport integration and backend schema remain root-centric; **no volume-first Windows runtime behavior has been implemented or accepted**. FI is an active development project, not release-ready.
 
 
 <p align="center">
