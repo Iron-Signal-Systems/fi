@@ -39,6 +39,13 @@
 - The new verifier is **only a pure verification component**. No trusted Windows state storage, key provisioning, native signing/administrator consent, transactional installer mutation, service-startup verifier or durable authority handoff is implemented. Installed FIUSNReader remains root-centric and the exported volume-mode broker startup refuses activation.
 - See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md` and `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
 
+## Creation-only transaction evidence (2026-11-08)
+
+- `go/internal/windows/freshinstall/creation_journal.go` now defines an eight-step, strictly ordered, **creation-only** v2 installer journal protocol with a durable write-ahead intent before each prospective native mutation, a creation-verified acknowledgement and explicit terminal completion. The package-private runner has only test/mock interfaces; **no native write/sync backend or installer activation exists**.
+- Bounded canonical JSON event replay rejects missing, duplicated, rearranged, truncated, oversized or cross-install records. SHA-256 event chaining is order/corruption evidence, **not trusted provenance**. An intent without a verified acknowledgement or missing terminal completion forces an **in-doubt manual-recovery** result; no automatic deletion or retry is authorized.
+- Failure-injection tests cover durable Begin/intent/acknowledgement failures, native ambiguous partial creation and incomplete crash tails. See `docs/development/WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.
+- Remaining: protected Windows append-and-sync writer, independently trusted installation lock, exclusive native create-only operations, ownership-scoped rollback, v2 signed config and CNG receipt installation, SCM disabled-service creation, crash recovery acceptance and native `adminbox` tests. Nothing is wired into installed services.
+
 ## Dependency order
 
 1. Define explicit volume enrollment, volume/epoch identity, minimal USN change record, policy membership and discontinuity contracts.
