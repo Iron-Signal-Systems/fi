@@ -1,5 +1,8 @@
 # FI Windows Installer
 
+> **Installer redesign is required and NOT implemented (2026-11-08):** This document describes the current root-centric native installer, not the proposed volume-first installer. New discovery, explicit NTFS volume enrollment, governed-root policy configuration, authorization checks, rollback and tests are specified in [installer contract](development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md). Do not deploy the development design using old installer instructions.
+
+
 ## Status and authority
 
 `fi-install.exe` is the native FI Windows source installer and desired-state
