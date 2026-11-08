@@ -27,6 +27,13 @@ The new `go/internal/windows/volumereview/` package and branch-only `-list-volum
 These are **preflight inputs**, not an authenticated approval. Future Approval 2 work must still bind a trusted installed baseline, host identity, approved policy effects, exact native object roots, and operator consent to a protected and verifiable receipt, then recheck state at the write boundary. No current `1.1` install plan or runtime begins collecting volumes as a result of this code. See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
 
 
+## Short-lived signed approval verifier (foundation only)
+
+`go/internal/windows/volumeconsent` now verifies a canonical P-256/SHA-256 signed transaction approval against independently sourced host SID, installation ID, approval generation, existing v2 config digest, full scope-review fingerprint and freshly discovered NTFS identity. It uses a trusted public-key input, **not** a key supplied by the receipt.
+
+This verifier cannot authenticate an actual administrator, issue signatures, install protected config or grant access to FIUSNReader. The future CNG signing key, PKI/trust provisioning, user-token checks, atomic durable installed grant and restart verifier are still required. See `docs/development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md`.
+
+## Required behavior
 
 1. Read-only `-plan-only` reports volumes and policy changes accurately without writes.
 2. A discovered volume is not enrolled by default. Addition of any volume, system-volume enrollment, policy widening or new audit/SACL authority requires explicit new approval.
