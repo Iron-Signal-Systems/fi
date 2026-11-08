@@ -13,45 +13,39 @@
 
 ## Prerequisites
 
-1. On `fi-dev`, update the **separate detached** worktree to `origin/experiment/fi-w256-memory4g-chunk-matrix-20261107`; do not edit the canonical FI checkout.
-2. Keep the complete previously authenticated 8,399-batch signed cache at `/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache` on `fi-backend-b`.
-3. Provision a **NEW, EMPTY, ISOLATED** PostgreSQL 18.6 database `fi` with the existing 49-table relational schema, the private `fi_recovery` and `fi_recovery_projection` schemas, the partitioned Security-field table, and the fixture's `fi_m1_admin` / `fi_ingest` roles and grants. Start it inside `fi-dev` under `/home/jwood/fi-w256-seed` at port `55870`, with a socket directory `/home/jwood/fi-w256-seed/socket`. The three-window **W128 seed is NOT usable** for this step. A populated, authoritative, or already checkpointed database must fail preflight. The scripts deliberately do not provision or silently migrate this prerequisite.
-4. Confirm adequate free disk space (at least 96 GiB for the four independent trial databases). No resource-accounting tunables or reboot are needed.
+1. The **separate** `/home/jwood/fi-deferred-experiment` worktree is clean and detached at the W256 experiment branch. The canonical FI checkout remains untouched.
+2. The real original signed custody and already authenticated 8,399-batch cache at `/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache` remain readable.
+3. PostgreSQL 18.6 tooling and at least 96 GiB disk headroom are available inside `fi-dev`. The fixture's private socket uses port 55870 for the seed, then ports 55991–55994 for the four arms.
 
-## Test and build
+**The benchmark now provisions everything else automatically.** It creates a new empty PostgreSQL database from FI's five canonical migrations and audited private-schema generator, installs the isolated field partition, authenticates and commits signed W256 window zero, then clones that one committed W256 seed into four independent K32–K128 candidates. No W128 SQL checkpoint is reused. No RACCT/RCTL or host boot configuration change is required.
 
-In the detached worktree on `jwood@fi-dev`:
+## Build and run
+
+On `jwood@fi-dev`:
 
 ```sh
 cd /home/jwood/fi-deferred-experiment
 git fetch origin
 git checkout --detach origin/experiment/fi-w256-memory4g-chunk-matrix-20261107
-
 cd go
 GOAMD64=v1 go test ./internal/recordingest ./cmd/fi-backlog-recover -count=1
-
+sh -n ./cmd/fi-backlog-recover/provision_w256_fresh_seed_jail.sh
 sh -n ./cmd/fi-backlog-recover/run_w256_seed_host.sh
 sh -n ./cmd/fi-backlog-recover/provision_w256_chunk_matrix_jail.sh
 sh -n ./cmd/fi-backlog-recover/run_w256_chunk_arm_host.sh
 sh -n ./cmd/fi-backlog-recover/run_w256_chunk_matrix_host.sh
 ```
 
-Only after those checks pass, on `root@fi-backend-b`:
+Then on `root@fi-backend-b` run exactly ONE command:
 
 ```sh
-jail_root=$(jls -j fi-dev path)
-base="${jail_root%/}/home/jwood/fi-deferred-experiment/go/cmd/fi-backlog-recover"
-
-# First W256 window; the seed runner reauthenticates the entire signed
-# FIGT, rather than trusting or copying W128 SQL checkpoint identities.
-sh "$base/run_w256_seed_host.sh" /home/jwood/fi-w256-seed 55870
-
-# Four independent W256 database clones, K32/K64/K96/K128.
-# Each arm commits exactly windows 1–4 before stopping.
-sh "$base/run_w256_chunk_matrix_host.sh" /home/jwood/fi-w256-seed 55870
+jailroot=$(jls -j fi-dev path)
+sh "${jailroot%/}/home/jwood/fi-deferred-experiment/go/cmd/fi-backlog-recover/run_w256_chunk_matrix_host.sh"
 ```
 
-The seed scans original custody. The matrix uses that signed receipt and the already authenticated immutable cache; each replay checks the source hashes again. No arbitrary ten-minute cutoff is used. The matrix is serial: only one ingest worker executes at a time.
+The orchestrator stops at the first failed preflight or committed-window verification and leaves isolated diagnostics on disk. It does not delete or mutate the original signed custody, verified cache, canonical source database, or W128 checkpoint chain.
+
+The seed authenticates the original FIGT transfer. Each arm uses the immutable receipt-bound cache with fresh per-batch hashes, and commits four consecutive W256 windows. The four arms execute **serially**; no multiworker ingestion.
 
 ## Acceptance and analysis
 
@@ -62,7 +56,7 @@ For EACH arm, require:
 - Every Security-field partition attached with validated PK and FK constraints.
 - Identical signed data and manifests on disk after publication, compared byte-for-byte against the original cache.
 - Process RSS high-water, Go-managed memory, memory-pressure/actual-chunk statistics recorded. The 4 GiB target is advisory, not an enforced maximum.
-- Compare `FI PRIVATE STAGE PROFILE`, `FI PRIVATE W256 MEMORY COMMITTED`, exact durable elapsed/rates, PostgreSQL waits, CPU, GC and disk I/O; distinguish source processing from durable committed throughput.
+- Compare `FI PRIVATE STAGE PROFILE`, `FI PRIVATE W256 MEMORY COMMITTED`, and exact durable elapsed/rates. Collect external PostgreSQL waits, CPU, GC and disk I/O where supported; distinguish source processing from durable committed throughput.
 
 A smaller chunk that creates more COPY calls but lower memory may still win. A 128K arm that shrinks under pressure is an **adaptive K128-ceiling arm**, not evidence of fixed K128 throughput.
 
