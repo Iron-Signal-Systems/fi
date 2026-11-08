@@ -186,3 +186,17 @@ The private PostgreSQL 18 `pg_stat_io` deltas for both instrumented 10-window re
 | Checkpointer relation fsyncs | 2,624 | 2,607 |
 
 All reported `write_time` and `fsync_time` values are 0.0 ms. Per PostgreSQL 18 official docs, these values are **zero when `track_io_timing` (relation) and `track_wal_io_timing` (WAL) are disabled**, their respective defaults. Therefore these counters do not presently quantify server I/O waiting or explain individual COPY latency. Verify the actual settings before assuming they were off. File `pg_before.txt` and `pg_after.txt` contains `evictions` at pipe-separated column 16 and `reuses` at column 17, not yet inspected. Those can help assess client-backend buffer churn without rerunning. More generally, the close A/B counters do not establish that WAL pressure caused the previously observed differences from historical uninstrumented runs. No PostgreSQL tuning changed.
+
+### pg_stat_io client-backend relation eviction deltas (2026-11-08)
+
+| Context | BASE evictions | OPT evictions | BASE reuses | OPT reuses |
+|---|---:|---:|---:|---:|
+| relation bulkread | 39,297 | 38,636 | 590,549 | 606,707 |
+| relation bulkwrite | 412,099 | 412,283 | 0 | 0 |
+| relation normal | 513,132 | 516,386 | 0 | 0 |
+| relation init/vacuum | 0 | 0 | 0 | 0 |
+| total evictions | 964,528 | 967,305 | n/a | n/a |
+
+Relative delta in total evictions: +2,777 (+0.288%). For PostgreSQL 18 `pg_stat_io`, normal-context evictions reflect buffer replacement; bulk-context evictions reflect taking shared buffers into a size-limited ring. Counts are events, not distinct blocks, not direct evidence that a synchronous write was required each time, and cannot establish storage stalls without I/O timing or waits. The 590,549/606,707 `bulkread` reuses are ring reuse events. Do not infer that zero `bulkwrite` reuses is a data-integrity failure.
+
+Cross-run historical context: prior uninstrumented baseline had 523.424s committed time and 46.262s Security field COPY, whereas the instrumented baseline had 561.514s committed time and 59.996s field COPY. Therefore +38.090s total includes +13.734s field COPY and **+24.356s elsewhere**; the historical slowdown is not exclusively a field COPY issue. Instrumentation, fresh DB restore, and host/time differences prevent causal attribution.
