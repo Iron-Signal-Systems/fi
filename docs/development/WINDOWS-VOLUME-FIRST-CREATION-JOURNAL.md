@@ -27,7 +27,7 @@ These are **future backend contracts**, not implemented native steps. Any implem
 
 ## Write-ahead journal semantics
 
-Each event contains an explicitly declared v2 journal version, monotonically increasing sequence, first-install ID, exact scope SHA-256, fixed step/event type, predecessor digest, and own SHA-256. The envelope is canonical JSON, newline terminated, bounded to 2 KiB per event and at most 18 records. The predetermined sequence is:
+Each event contains an explicitly declared v2 journal version, monotonically increasing sequence, first-install ID, exact **scope SHA-256, operational-configuration SHA-256, signed installer approval receipt SHA-256 and signed installed grant SHA-256**, fixed step/event type, predecessor digest, and own SHA-256. The four prepared digests must remain constant for every event in the transaction. The journal binds to their exact bytes for post-crash investigation but does not itself authenticate them. The envelope is canonical JSON, newline terminated, bounded to 2 KiB per event and at most 18 records. The predetermined sequence is:
 
 ```text
 Begin
