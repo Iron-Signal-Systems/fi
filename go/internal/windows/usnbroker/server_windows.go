@@ -17,8 +17,10 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/auditpolicy"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnraw"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumediscovery"
 	"golang.org/x/sys/windows"
 )
 
@@ -118,7 +120,40 @@ func Serve(ctx context.Context, governedRoots []string) error {
 	if err != nil {
 		return err
 	}
+	return serveWithAuthority(ctx, &authority, nil)
+}
 
+// ServeEnrolledVolumes is the proposed volume-first broker mode. It is not
+// used by the currently deployed root-centric FIUSNReader startup. It must
+// only be selected after the native installer has authenticated and approved
+// the v2 configuration. It captures immutable enrollment authority from
+// native discovery; missing/replaced volumes are blocked individually.
+func ServeEnrolledVolumes(ctx context.Context, approved config.VolumeConfig) error {
+	if ctx == nil {
+		return errors.New("enrolled-volume broker requires a context")
+	}
+	native, err := volumediscovery.Enumerate(ctx)
+	if err != nil {
+		return fmt.Errorf("discover enrolled FI volumes for broker: %w", err)
+	}
+	authority, err := newVolumeAuthoritySnapshot(approved, native)
+	if err != nil {
+		return err
+	}
+	return serveWithAuthority(ctx, nil, &authority)
+}
+
+// Exactly one broker authority mode is permitted. Legacy root-based
+// query/read/SACL operations are never accepted in volume mode, and
+// enrollment-ID operations are never accepted in legacy mode.
+func serveWithAuthority(
+	ctx context.Context,
+	legacy *authoritySnapshot,
+	volumes *volumeAuthoritySnapshot,
+) error {
+	if (legacy == nil) == (volumes == nil) {
+		return errors.New("FIUSNReader requires exactly one authority mode")
+	}
 	collectorSID, _, _, err := windows.LookupSID("", `NT SERVICE\`+CollectorServiceName)
 	if err != nil {
 		return fmt.Errorf("resolve FICollector service SID: %w", err)
@@ -163,7 +198,7 @@ func Serve(ctx context.Context, governedRoots []string) error {
 			return nil
 		}
 
-		connectionErr := handleConnection(handle, collectorSID, authority)
+		connectionErr := handleConnection(handle, collectorSID, legacy, volumes)
 		if connectionErr == nil {
 			// Named-pipe writes may still be buffered when writeResponse returns.
 			// Flush before disconnecting so the client can consume the complete
@@ -289,7 +324,8 @@ func createServerPipe(securityAttributes *windows.SecurityAttributes) (windows.H
 func handleConnection(
 	handle windows.Handle,
 	collectorSID *windows.SID,
-	authority authoritySnapshot,
+	legacy *authoritySnapshot,
+	volumes *volumeAuthoritySnapshot,
 ) error {
 	stream := handleIO{handle: handle}
 
@@ -327,7 +363,10 @@ func handleConnection(
 		return writeResponse(stream, response{Data: data})
 
 	case operationQuery:
-		allowed, err := authority.allowsVolume(value.GovernedRoot)
+		if legacy == nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "root-based broker operation disabled in volume mode")
+		}
+		allowed, err := legacy.allowsVolume(value.GovernedRoot)
 		if err != nil {
 			return writeFailure(stream, err)
 		}
@@ -342,7 +381,10 @@ func handleConnection(
 		return writeResponse(stream, response{Journal: brokerJournal(journal)})
 
 	case operationRead:
-		allowed, err := authority.allowsVolume(value.GovernedRoot)
+		if legacy == nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "root-based broker operation disabled in volume mode")
+		}
+		allowed, err := legacy.allowsVolume(value.GovernedRoot)
 		if err != nil {
 			return writeFailure(stream, err)
 		}
@@ -359,8 +401,39 @@ func handleConnection(
 			Data:    data,
 		})
 
+	case operationQueryVolume:
+		if volumes == nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrolled-volume USN operation is disabled in legacy mode")
+		}
+		target, err := volumes.resolve(value.EnrollmentID)
+		if err != nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrollment is not authorized for USN query")
+		}
+		journal, err := usnraw.QueryEnrolledVolume(target.VolumeGUID, target.Serial64)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		return writeResponse(stream, response{Journal: brokerJournal(journal)})
+
+	case operationReadVolume:
+		if volumes == nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrolled-volume USN operation is disabled in legacy mode")
+		}
+		target, err := volumes.resolve(value.EnrollmentID)
+		if err != nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "enrollment is not authorized for USN read")
+		}
+		journal, data, err := usnraw.ReadEnrolledVolume(target.VolumeGUID, target.Serial64, value.StartUSN)
+		if err != nil {
+			return writeFailure(stream, err)
+		}
+		return writeResponse(stream, response{Journal: brokerJournal(journal), Data: data})
+
 	case operationContainment:
-		if !authority.allowsGovernedRoot(value.GovernedRoot) {
+		if legacy == nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "root-based broker operation disabled in volume mode")
+		}
+		if !legacy.allowsGovernedRoot(value.GovernedRoot) {
 			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested governed root is not configured for FI")
 		}
 
@@ -379,7 +452,10 @@ func handleConnection(
 		return writeResponse(stream, response{Data: []byte{byte(result)}})
 
 	case operationSACL:
-		if !authority.allowsGovernedRoot(value.GovernedRoot) {
+		if legacy == nil {
+			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "root-based broker operation disabled in volume mode")
+		}
+		if !legacy.allowsGovernedRoot(value.GovernedRoot) {
 			return writeFailureCode(stream, uint32(windows.ERROR_ACCESS_DENIED), "requested governed root is not configured for FI")
 		}
 
