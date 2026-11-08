@@ -20,7 +20,13 @@ The native `fi-install.exe` is a first-class part of the refactor. Do not ship o
 | Install configuration authority | `go/cmd/fi/config_authority_windows.go` | Fail closed on unsupported/deprecated versions and unknown/unenrolled volumes |
 | Operator docs | `docs/WINDOWS-INSTALLER.md`, `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`, `docs/WINDOWS-SERVER-VALIDATION.md` | Keep examples and exact-build evidence aligned with code actually tested |
 
-## Required behavior
+## Read-only scope-change contract implemented; no authority granted
+
+The new `go/internal/windows/volumereview/` package and branch-only `-list-volumes -volume-config` inventory command now report a canonical requested-v2 scope hash, each enrollment's current native match, typed authorization-relevant changes, and a deterministic review fingerprint. Proposed changes **always require explicit approval**; a mismatch blocks the operation. Revalidation compares the entire review against freshly discovered identities and rejects stale or modified evidence.
+
+These are **preflight inputs**, not an authenticated approval. Future Approval 2 work must still bind a trusted installed baseline, host identity, approved policy effects, exact native object roots, and operator consent to a protected and verifiable receipt, then recheck state at the write boundary. No current `1.1` install plan or runtime begins collecting volumes as a result of this code. See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
+
+
 
 1. Read-only `-plan-only` reports volumes and policy changes accurately without writes.
 2. A discovered volume is not enrolled by default. Addition of any volume, system-volume enrollment, policy widening or new audit/SACL authority requires explicit new approval.
