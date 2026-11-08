@@ -6,6 +6,8 @@
 
 The branch now has a signed short-lived installer-intent verification package (`go/internal/windows/volumeconsent`) with unit tests. **It is not an installed v2 authority**: native signer, administrator approval token, protected installation state, transactional apply/rollback and privileged service startup remain NOT RUN/NOT IMPLEMENTED.
 
+The branch now also includes a pure-Go signed installed-grant verifier with replay/tamper/scope/host/sequence regression tests. **The protected native grant commitment store, signer, transactional installation, privileged service handoff, and actual Windows acceptance are NOT RUN/NOT IMPLEMENTED.** See `WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
+
 ## Rules of evidence
 
 The branch includes an opt-in read-only `TestNativeEnrolledVolumeUSNReadOnly` test for `adminbox`, described in `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Its existence is NOT a PASS. All native acceptance rows remain NOT RUN until actual evidence is recorded.
