@@ -6,7 +6,9 @@ package volumeconsent
 
 import (
 	"bytes"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -26,7 +28,7 @@ const (
 )
 
 type fixture struct {
-	privateKey ed25519.PrivateKey
+	privateKey *ecdsa.PrivateKey
 	expected Expected
 	payload Payload
 	requested config.VolumeConfig
@@ -57,7 +59,7 @@ policy.finance.depth = security
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader) // TEST ONLY, never persisted
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader) // TEST ONLY, never persisted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ policy.finance.depth = security
 	instance := "bcdef01234567890abcdef0123456789"
 	return fixture{
 		privateKey: priv,
-		expected: Expected{MachineSID: machine, InstallationID: instance, Sequence: 7, TrustedPublicKey: pub, Now: now},
+		expected: Expected{MachineSID: machine, InstallationID: instance, Sequence: 7, TrustedPublicKey: &priv.PublicKey, Now: now},
 		payload: Payload{
 			Version: ReceiptVersion,
 			Action: ApprovedAction,
@@ -84,7 +86,7 @@ policy.finance.depth = security
 }
 
 // In tests only, sign the exact domain-separated payload with a newly
-// generated disposable in-memory Ed25519 private key. Production MUST NOT
+// generated disposable in-memory P-256 private key. Production MUST NOT
 // generate an ephemeral signing key and trust its own public half.
 func (f fixture) signed(t *testing.T) []byte {
 	t.Helper()
@@ -92,7 +94,12 @@ func (f fixture) signed(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(Receipt{Payload: f.payload, SignatureBase64: base64.StdEncoding.EncodeToString(ed25519.Sign(f.privateKey, msg))})
+	digest := sha256.Sum256(msg)
+	signature, err := ecdsa.SignASN1(rand.Reader, f.privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(Receipt{Payload: f.payload, SignatureBase64: base64.StdEncoding.EncodeToString(signature)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +182,7 @@ func TestSignedConsentRejectsForgedOrMalformedReceipts(t *testing.T) {
 		change func([]byte) []byte
 		want error
 	}{
-		{"wrong signer public key", func(b []byte) []byte { _, private, _ := ed25519.GenerateKey(rand.Reader); f.expected.TrustedPublicKey = private.Public().(ed25519.PublicKey); return b }, ErrUnauthorizedReceipt},
+		{"wrong signer public key", func(b []byte) []byte { private, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader); f.expected.TrustedPublicKey = &private.PublicKey; return b }, ErrUnauthorizedReceipt},
 		{"payload action tampered", func(b []byte) []byte {
 			var receipt Receipt
 			if err := json.Unmarshal(b, &receipt); err != nil { t.Fatal(err) }
@@ -185,7 +192,7 @@ func TestSignedConsentRejectsForgedOrMalformedReceipts(t *testing.T) {
 		{"signature tampered", func(b []byte) []byte {
 			var receipt Receipt
 			if err := json.Unmarshal(b, &receipt); err != nil { t.Fatal(err) }
-			receipt.SignatureBase64 = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x23}, ed25519.SignatureSize))
+			receipt.SignatureBase64 = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x23}, 70))
 			d, _ := json.Marshal(receipt); return d
 		}, ErrUnauthorizedReceipt},
 		{"extra field", func(b []byte) []byte { return append(b[:len(b)-1], []byte(`,"allowed":true}`)... ) }, ErrInvalidReceipt},
