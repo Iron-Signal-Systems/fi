@@ -229,10 +229,14 @@ func run() error {
 		securityProfile != "P3" || fileProfile != "F3") {
 		return errors.New("FI private field partitions require isolated signed-cache W128 or W256 P3/F3 continuation")
 	}
+	deferredStartWindow := 3
+	if windowProfile == "W256" {
+		deferredStartWindow = 1
+	}
 	if deferredVerifiedClone && (!enable || !continuousPrivate || !privateFieldPartitions ||
 		(windowProfile != "W256" && (windowProfile != "W128" || processingChunkRecords != 32768)) ||
 		securityProfile != "P3" || fileProfile != "F3" ||
-		verifiedCacheRoot == "" || startWindow != func() int { if windowProfile == "W256" { return 1 }; return 3 }() || maxWindows != 0 ||
+		verifiedCacheRoot == "" || startWindow != deferredStartWindow || maxWindows != 0 ||
 		indexedPrivate || streamLoader || preflightOnly) {
 		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32 or W256/K32..K128 private continuation")
 	}
