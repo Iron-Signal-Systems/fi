@@ -33,7 +33,7 @@ FI-owned paths: `C:\Program Files\FI` and `C:\ProgramData\FI`. These encompass t
 
 Any `Present` or `Unknown` blocks, with a nonzero process exit. A clean host receives `clean=true`, but **no installer approval or authority token**. All statuses are read-only; no files, services, audits, Windows rights or signed FI state change.
 
-The command must be used **alone**. It refuses combinations with `-list-volumes`, `-volume-config`, `-apply`, `-plan-only`, `-config` or any other installer argument, including explicitly passing default values. It returns before legacy installer's default `-apply=true`, old SACL recovery and all PKI/AD/SCM mutation paths. Running the command on an occupied FI host is safe for discovery, not a way to perform cleanup.
+The command must be used **alone**. It refuses combinations with `-list-volumes`, `-volume-config`, `-apply`, `-plan-only`, `-config` or any other installer argument, including explicitly passing default values. Explicit `-check-clean-install=false` and `-list-volumes=false` are blocked before legacy apply as well; an explicitly requested read-only mode can never silently fall through to `-apply=true`. It returns before legacy installer's default `-apply=true`, old SACL recovery and all PKI/AD/SCM mutation paths. Running the command on an occupied FI host is safe for discovery, not a way to perform cleanup.
 
 ## Fresh authorization and first source custody
 
