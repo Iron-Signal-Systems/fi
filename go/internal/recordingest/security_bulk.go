@@ -43,6 +43,110 @@ type securityBulkTimingCounters struct {
 	EventLatency  copyCallLatency
 	ScopeLatency  copyCallLatency
 	FieldLatency  copyCallLatency
+
+	// Only populated in the isolated private W128/P3 trial. This records
+	// WHY the existing Security COPY boundary occurred, not a new boundary.
+	PrivateFlush securityBulkFlushProfile
+}
+
+// securityBulkFlushReason is recorded only AFTER the corresponding source,
+// event and child COPY operations have succeeded. No per-record logging or
+// changes to the source-ordering, size limits, or transaction are permitted.
+type securityBulkFlushReason uint8
+
+const (
+	securityFlushRecordLimit securityBulkFlushReason = iota + 1
+	securityFlushByteLimit
+	securityFlushBothLimits
+	securityFlushCoverage
+	securityFlushOtherKind
+	securityFlushChunkEnd
+	securityFlushBatchEnd
+)
+
+type securityBulkFlushProfile struct {
+	Calls          int64
+	Events         int64
+	SourceBytes    int64
+	MinEvents      int
+	MaxEvents      int
+	MinSourceBytes int64
+	MaxSourceBytes int64
+
+	RecordLimit int64
+	ByteLimit   int64
+	BothLimits  int64
+	Coverage    int64
+	OtherKind   int64
+	ChunkEnd    int64
+	BatchEnd    int64
+}
+
+// note is strictly observational: byte counts represent original signed
+// source-record bytes, NOT in-memory row allocations, COPY wire bytes or WAL.
+func (p *securityBulkFlushProfile) note(reason securityBulkFlushReason, events int, sourceBytes int64) {
+	if events <= 0 {
+		return // A call with no pending Security records performs no COPY.
+	}
+	if p.Calls == 0 || events < p.MinEvents {
+		p.MinEvents = events
+	}
+	if events > p.MaxEvents {
+		p.MaxEvents = events
+	}
+	if p.Calls == 0 || sourceBytes < p.MinSourceBytes {
+		p.MinSourceBytes = sourceBytes
+	}
+	if sourceBytes > p.MaxSourceBytes {
+		p.MaxSourceBytes = sourceBytes
+	}
+	p.Calls++
+	p.Events += int64(events)
+	p.SourceBytes += sourceBytes
+	switch reason {
+	case securityFlushRecordLimit:
+		p.RecordLimit++
+	case securityFlushByteLimit:
+		p.ByteLimit++
+	case securityFlushBothLimits:
+		p.BothLimits++
+	case securityFlushCoverage:
+		p.Coverage++
+	case securityFlushOtherKind:
+		p.OtherKind++
+	case securityFlushChunkEnd:
+		p.ChunkEnd++
+	case securityFlushBatchEnd:
+		p.BatchEnd++
+	}
+}
+
+// limitReason classifies an EXISTING P3 flush; it must not determine whether
+// a flush happens. The original securityBulkLimits.shouldFlushBefore remains
+// the sole limit check in the ingest loop.
+func (limits securityBulkLimits) limitReason(count int, bufferedBytes, nextBytes int64) securityBulkFlushReason {
+	byCount := count >= limits.MaxRecords
+	byBytes := count > 0 && nextBytes > limits.MaxBytes-bufferedBytes
+	switch {
+	case byCount && byBytes:
+		return securityFlushBothLimits
+	case byCount:
+		return securityFlushRecordLimit
+	default:
+		return securityFlushByteLimit
+	}
+}
+
+func (p securityBulkFlushProfile) summary() string {
+	var meanEvents, meanBytes float64
+	if p.Calls > 0 {
+		meanEvents = float64(p.Events) / float64(p.Calls)
+		meanBytes = float64(p.SourceBytes) / float64(p.Calls)
+	}
+	return fmt.Sprintf("calls=%d events=%d source_bytes=%d avg_events=%.1f min_events=%d max_events=%d avg_source_bytes=%.0f min_source_bytes=%d max_source_bytes=%d record_limit=%d byte_limit=%d both_limits=%d coverage=%d other_kind=%d chunk_end=%d batch_end=%d",
+		p.Calls, p.Events, p.SourceBytes, meanEvents, p.MinEvents, p.MaxEvents,
+		meanBytes, p.MinSourceBytes, p.MaxSourceBytes, p.RecordLimit,
+		p.ByteLimit, p.BothLimits, p.Coverage, p.OtherKind, p.ChunkEnd, p.BatchEnd)
 }
 
 type securityBulkRecord struct {
