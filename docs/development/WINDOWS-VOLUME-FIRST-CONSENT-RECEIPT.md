@@ -10,7 +10,7 @@ This contract concerns a **short-lived installer transaction approval**. It is *
 
 `go/internal/windows/volumeconsent/receipt.go` implements `volumeconsent.Verify` using a bounded canonical JSON envelope and a domain-separated **ECDSA P-256 / SHA-256 signature**. Windows CNG supports P-256 and SHA-256 on the intended Windows Server family, making a future protected CNG signer feasible without storing a private key in FI source or plaintext configuration. **That production signer is not implemented.**
 
-The `Receipt` contains a signed `Payload` and a base64-encoded **ASN.1 DER ECDSA signature**. The signature covers `FI-WINDOWS-VOLUME-APPROVAL-v1\0` concatenated with the canonical JSON encoding of the payload. A future `NCryptSignHash` signer must convert its native raw ECDSA signature to the required DER form before constructing the receipt; direct raw CNG output must not be accepted as a DER signature.
+The `Receipt` contains a signed `Payload` and a base64-encoded **ASN.1 DER ECDSA signature**. The signature covers `FI-WINDOWS-VOLUME-APPROVAL-v1\0` concatenated with the canonical JSON encoding of the payload. The pure-Go `volumeconsent.CNGP256SignatureToDER` helper now converts Windows CNG's 64-byte IEEE P1363 signature (R || S) to DER, rejecting wrong lengths, zero/out-of-range scalars and malformed output. A future protected `NCryptSignHash` signer must use this conversion after authenticating operator consent; direct raw CNG output must not be accepted as a DER receipt signature.
 
 ## Exactly what an approval must bind
 
