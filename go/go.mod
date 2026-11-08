@@ -1,10 +1,10 @@
 module github.com/Iron-Signal-Systems/fi/go
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.20.2
 	golang.org/x/sys v0.47.0
 )
 
