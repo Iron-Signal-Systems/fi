@@ -117,3 +117,35 @@ A real File-stage time reduction occurred between the first and corrected candid
 **What is proven:** 137,777 redundant NTFS validations were eliminated and existing SQL/readback integrity gates passed. **What is unproven:** the size of any causal File-stage speedup and the reason for a 10.888-second wall-time difference. Prior isolated `GOMAXPROCS=1` validation microbenchmarks quantify CPU work, not expected wall-clock benefits under concurrent runtime, DB, ZFS and relay activity. Do not promote an optimization based on a single unpaired baseline.
 
 Next step: record Go CPU/alloc/GC, PostgreSQL WAL/checkpoint/I/O, ARC/vdev I/O **during** controlled alternating identical-source runs (ABBA), from the same logical SQL checkpoint and with same profile and durability settings. Sequential windows 13–22 alone cannot distinguish a code change from differences in record composition or database size.
+
+## Instrumented Security field COPY paired replay (2026-11-08)
+
+Diagnostic source patcher: go/cmd/fi-backlog-recover/field_copy_diagnostic_patcher.go at d6409c0.
+Diagnostic runner: go/cmd/fi-backlog-recover/run_field_copy_diagnostic_host.sh at a433764.
+The first two launch attempts failed before ingestion because private PostgreSQL AF_UNIX socket paths exceeded FreeBSD pathname limits; shortened paths solved both. Only successful runs below count.
+
+- BASE source 9e0e6e236c95d9af91bc67a065efb47ce2318579; output /var/tmp/fi-window-chunks-fielddiag-baseline-20261108T184820Z.
+- OPT source e02a06891600d5877bcb5a680f84bcbcdbc7c195; output /var/tmp/fi-window-chunks-fielddiag-optimized-20261108T192025Z.
+
+| Metric | BASE | OPT |
+|---|---:|---:|
+| Windows | 3–12 | 3–12 |
+| Source records | 1,297,765 | 1,297,765 |
+| Security fields | 16,298,841 | 16,298,841 |
+| Security field COPY calls | 574 | 574 |
+| Approximate field input bytes | 1,407,123,953 | 1,407,123,953 |
+| Field COPY calls >=100 ms | 313 | 320 |
+| Field COPY sum | 59.996 s | 59.945 s |
+| Ten-window committed duration | 561.514 s | 561.024 s |
+| Committed rate | 2311.2 records/s | 2313.2 records/s |
+| Redundant FileObservation validations avoided | 0 | 137,777 |
+| SQL integrity | PASS | PASS |
+| Signed readback | 566 byte-identical files | 566 byte-identical files |
+
+**Every field COPY boundary matched.** field_shape.txt SHA256 for both runs:
+b3e784e97fa561c662cd690b03efccbb96c162795d3a05b91b9c76925724c2b9.
+Shape includes W128 index, Security buffer flush reason, parent Security event count, field row count, and estimated source bytes in execution order. It intentionally excludes elapsed time. This rules out changed Security COPY boundaries as the explanation for the optimized-vs-baseline measured difference.
+
+**Causality:** OPT-BASE committed time = -0.490 s (-0.087%); COPY time = -0.051 s; slow calls = +7. These are near-ties; one sequential pair does not establish an optimization gain. The uninstrumented original baseline from earlier in the day had only 27 >=100ms calls and 46.262s of field COPY time, whereas the new instrumented original baseline has 313 and 59.996s. Consequently the slow-call threshold movement **reproduces on unchanged baseline source**. However, the newly enabled per-call diagnostic printing, GODEBUG=gctrace=1, checkpoint logs, freshly initialized logical-restored PostgreSQL clone, and changing host conditions confound direct historical comparison. Inspect retained pg_before.txt / pg_after.txt (PG WAL/checkpointer/I/O), postgres.log checkpoint activity, and recover.log GC trace before asserting a cause. Do not claim instrumentation or PostgreSQL storage caused it without evidence. Avoid modifying the Security flush algorithm.
+
+Acceptance status: private experiment only; no authoritative writes, no public promotion, no new main-branch code. Next study focus is measurement overhead versus database/host variability, plus separately quantifying whether File validation removal reduces CPU and allocations independently of wall time.
