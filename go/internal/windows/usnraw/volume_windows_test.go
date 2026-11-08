@@ -7,6 +7,7 @@
 package usnraw
 
 import (
+	"encoding/binary"
 	"errors"
 	"strings"
 	"testing"
@@ -68,3 +69,33 @@ func TestVolumeIdentityErrorIsDistinctFromTransientNativeError(t *testing.T) {
 // under FIUSNReader's intended identity. The ordinary GitHub Windows runner
 // cannot establish acceptance of the on-handle FileIdInfo contract, especially
 // on Windows Server 2016/2019/2022/2025 and letterless/mounted volumes.
+
+// NTFS_VOLUME_DATA_BUFFER is a fixed 96-byte structure. The first 8 bytes are
+// its full-width VolumeSerialNumber; checking only the 32-bit volumeinfo serial
+// would allow distinguishable volumes to share the same accepted low bits.
+func TestVolumeUSNNativeSerialAttestationIsFullWidthAndBounded(t *testing.T) {
+	const serial uint64 = 15172277115761558407
+	data := make([]byte, ntfsVolumeDataBufferSize)
+	binary.LittleEndian.PutUint64(data[:8], serial)
+	if err := verifyNTFSVolumeDataBuffer(data, uint32(len(data)), serial); err != nil {
+		t.Fatal(err)
+	}
+	// The low 32 bits match, but the high 32 bits differ.
+	if err := verifyNTFSVolumeDataBuffer(data, uint32(len(data)), serial^(uint64(1)<<40)); !errors.Is(err, errEnrolledVolumeIdentity) {
+		t.Fatalf("high-32-bit serial change was not detected: %v", err)
+	}
+	for _, tc := range []struct {
+		data []byte
+		returned uint32
+	}{
+		{nil, 0},
+		{data[:8], 8},
+		{data[:95], 95},
+		{data, 95},
+		{data, 97},
+	} {
+		if err := verifyNTFSVolumeDataBuffer(tc.data, tc.returned, serial); err == nil {
+			t.Fatalf("malformed FSCTL result accepted: returned=%d buffer=%d", tc.returned, len(tc.data))
+		}
+	}
+}
