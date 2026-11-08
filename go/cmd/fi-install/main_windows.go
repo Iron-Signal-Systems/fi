@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/install"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumediscovery"
 )
@@ -104,22 +105,51 @@ func main() {
 		false,
 		"report native local Windows volume identities and mounts; read-only, no enrollment or installer mutation",
 	)
+	volumeConfig := flag.String(
+		"volume-config",
+		"",
+		"optional version 2.0 volume declaration to compare with native inventory; requires -list-volumes and performs no changes",
+	)
 
 	flag.Parse()
+	var volumeConfigFlagProvided bool
+	flag.Visit(func(item *flag.Flag) {
+		if item.Name == "volume-config" {
+			volumeConfigFlagProvided = true
+		}
+	})
 
-	// A volume-inventory invocation must return before SACL transaction
-	// recovery, signing trust, AD/PKI discovery or any SCM/config mutation.
-	// The existing root-centric installer behavior is otherwise unchanged.
+	// Both read-only inventory and its optional v2 comparison return before
+	// SACL rollback recovery, signing trust, AD/PKI discovery, SCM changes or
+	// legacy installer planning. A lone -volume-config must fail closed.
+	if volumeConfigFlagProvided && !*listVolumes {
+		fmt.Fprintln(os.Stderr, "\nFI VOLUME INPUT BLOCKED: -volume-config requires -list-volumes")
+		os.Exit(2)
+	}
 	if *listVolumes {
 		if err := volumeInventoryCLI(flag.CommandLine); err != nil {
 			fmt.Fprintf(os.Stderr, "\nFI VOLUME INVENTORY INPUT BLOCKED: %v\n", err)
 			os.Exit(2)
+		}
+		var requested *config.VolumeConfig
+		if volumeConfigFlagProvided {
+			if strings.TrimSpace(*volumeConfig) == "" {
+				fmt.Fprintln(os.Stderr, "\nFI VOLUME INPUT BLOCKED: -volume-config path is empty")
+				os.Exit(2)
+			}
+			value, err := loadVolumeDeclaration(*volumeConfig)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nFI VOLUME INPUT BLOCKED: %v\n", err)
+				os.Exit(2)
+			}
+			requested = &value
 		}
 		if err := writeVolumeInventory(
 			context.Background(),
 			os.Stdout,
 			volumediscovery.Enumerate,
 			time.Now,
+			requested,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "\nFI VOLUME INVENTORY FAILED: %v\n", err)
 			os.Exit(1)
