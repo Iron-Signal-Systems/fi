@@ -23,6 +23,7 @@ The branch's native installer returns a JSON report:
 
 - `version`: `fi-windows-v2-fresh-preflight/1`
 - `mode`: `FreshInstallOnly`
+- `action = ReadOnlyFreshHostPreflight` and `installation_authorized = false` (always false)
 - `clean` and `install_blocked`
 - `findings`: all seven fixed local FI locations/SCM names and their `Absent`, `Present` or `Unknown` status, with a diagnostic on a blocking/uncertain finding.
 
