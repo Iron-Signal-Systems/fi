@@ -8,7 +8,7 @@
 
 The installed FIUSNReader still loads root-centric `version_id: 1.1` configuration and invokes `usnbroker.Serve(ctx, governedRoots)`. The existing USN query/read, containment and SACL operations remain unchanged for that mode.
 
-The separately implemented `usnbroker.ServeEnrolledVolumes(ctx, approved)` accepts a strict `config.VolumeConfig` v2 declaration and independently discovers local NTFS volumes. It compares each configured volume GUID and full-width `FILE_ID_INFO` serial against native discovery. The broker retains an immutable enrollment-ID-to-native-target snapshot, rejecting missing, replaced, inaccessible and unsupported volumes individually while still allowing unaffected enrolled volumes.
+**Security gate:** Exported `usnbroker.ServeEnrolledVolumes` deliberately returns `ErrVolumeModeRequiresApproval` and cannot start a privileged pipe. A canonical v2 file and matching native volumes are not sufficient proof of authorization. The unexported `serveEnrolledVolumesWithVerifiedConsent` contains the still-unactivated broker mechanics: strict configuration validation, fresh NTFS discovery, immutable enrolled-ID-to-GUID/serial binding, and per-volume denial for missing, replaced, inaccessible or unsupported identities. This internal path cannot be invoked from the FIUSNReader service entry point until authenticated installer consent is engineered and reviewed.
 
 This is NOT an install or configuration authority. Future installer code must first prove fresh explicit administrator approval, configuration integrity and permitted audit/policy changes before the service may select the new mode.
 
