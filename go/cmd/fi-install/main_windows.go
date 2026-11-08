@@ -8,6 +8,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"time"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/install"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumediscovery"
 )
 
 type repeatedStringFlag []string
@@ -96,7 +99,33 @@ func main() {
 		"new-install deployment input: governed root; repeat for multiple roots",
 	)
 
+	listVolumes := flag.Bool(
+		"list-volumes",
+		false,
+		"report native local Windows volume identities and mounts; read-only, no enrollment or installer mutation",
+	)
+
 	flag.Parse()
+
+	// A volume-inventory invocation must return before SACL transaction
+	// recovery, signing trust, AD/PKI discovery or any SCM/config mutation.
+	// The existing root-centric installer behavior is otherwise unchanged.
+	if *listVolumes {
+		if err := volumeInventoryCLI(flag.CommandLine); err != nil {
+			fmt.Fprintf(os.Stderr, "\nFI VOLUME INVENTORY INPUT BLOCKED: %v\n", err)
+			os.Exit(2)
+		}
+		if err := writeVolumeInventory(
+			context.Background(),
+			os.Stdout,
+			volumediscovery.Enumerate,
+			time.Now,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "\nFI VOLUME INVENTORY FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	doApply :=
 		*apply &&
