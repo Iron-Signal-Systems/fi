@@ -52,6 +52,6 @@ The original `fi-install.exe` apply/plan/install/reconcile flow remains root-cen
 
 ## Next integration boundary
 
-Change the FIUSNReader wire protocol and broker authorization to accept only an explicitly approved enrolled volume, with GUID/serial/journal identity revalidation. Keep FIObjReader's exact-object protected-read authorization separate and policy-scoped. Only then wire the per-volume collector/epoch state to the broker and add transactional installer plan/apply/rollback semantics.
+The branch now contains a separate path-free FIUSNReader enrollment-ID protocol and read-only native USN backend, with same-handle 64-bit identity validation; see `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Those operations remain **inactive** in the installed helper. The next boundary is full installer v2 approval/configuration authority and safe service-startup selection, followed by FICollector per-volume scheduling, checkpoint/custody, policy-scoped FIObjReader/SACL access, and signed records/backend integration. Do not treat a successful scope preflight as authorization to run privileged operations.
 
 See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md`, `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md`, and `docs/development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`.
