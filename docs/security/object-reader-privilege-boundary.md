@@ -1,5 +1,8 @@
 # FI NTFS Object Reader Privilege Boundary
 
+> **Volume-first security review required (2026-11-08):** The existing FIObjReader broker remains governed-root authorized as described below. Proposed volume-wide USN evidence does **not** authorize privileged content, ACL, SACL or protected-file observation outside explicit policy roots. The new policy-to-object authorization binding and native failure tests remain unimplemented; see [ADR-0002](../architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md).
+
+
 ## Purpose
 
 This document defines the Windows privilege, authorization, deployment, and
