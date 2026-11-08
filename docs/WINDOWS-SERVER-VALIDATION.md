@@ -1,6 +1,8 @@
 # FI Windows Server Validation
 
 > **Historical tests, not volume-first acceptance (2026-11-08):** The existing results below apply only to the tested root-centric source/installers and exact builds, not the proposed volume-first refactor. See [the new development validation matrix](development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md). No new native Windows acceptance is claimed.
+> **Unrun native test added:** The volume-first branch contains an explicitly gated read-only NTFS raw-volume USN identity/journal test under `go/internal/windows/usnraw/volume_integration_windows_test.go`; procedure and approval requirements are in [the USN broker contract](development/WINDOWS-VOLUME-FIRST-USN-BROKER.md). No result for `adminbox` or any supported Server build has been recorded. The test is not deployment authorization.
+
 
 
 This document records Windows Server release/build characterization for the FI
