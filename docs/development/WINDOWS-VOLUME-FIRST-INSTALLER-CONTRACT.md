@@ -35,7 +35,7 @@ The verifier also includes a bounded conversion of native Windows CNG P-256 raw 
 
 ## Installed-scope grant verification exists; protected installer persistence does not
 
-The branch now includes `go/internal/windows/volumegrant/` for verifying a long-lived **installed** P-256 signed scope grant against a separately trusted exact signed-grant digest and committed generation. Unlike the short-lived `volumeconsent` transaction receipt, this durable declaration is designed for future restart-time verification and binds both the canonical scope declaration and the full future v2 operational-config digest.
+The branch now includes `go/internal/windows/volumegrant/` for verifying a long-lived **installed** P-256 signed scope grant against a separately trusted exact signed-grant digest and committed generation. Unlike the short-lived `volumeconsent` transaction receipt, this durable declaration is designed for future restart-time verification and binds both the canonical scope declaration and the full future v2 operational-config digest. The verifier checks **actual installed operational configuration bytes**, not merely two matching asserted hashes; parsing/validating a complete v2 operational schema remains future work.
 
 The code cannot issue or persist grants, authenticate Windows tokens, validate file/registry ACLs, select trust roots, advance durable state, or enable the broker. Installer source remains root-centric for mutations. No `adminbox` privileged acceptance exists. See `docs/development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md`.
 
