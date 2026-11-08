@@ -128,7 +128,13 @@ func TestVolumeInventoryPreflightReadOnly(t *testing.T) {
 	if report.CollectionAuthorized || report.Action != "DiscoveryAndScopePreflightOnly" ||
 		len(report.RequestedConfigSHA256) != 64 || report.RequestedVolumePreflight == nil ||
 		!report.RequestedVolumePreflight.AllVolumesMatch ||
-		!report.RequestedVolumePreflight.ObservationOnly {
+		!report.RequestedVolumePreflight.ObservationOnly ||
+		report.RequestedScopeReview == nil ||
+		!report.RequestedScopeReview.RequiresExplicitApproval ||
+		report.RequestedScopeReview.BlocksMutation ||
+		len(report.RequestedScopeReview.Changes) != 1 ||
+		report.RequestedScopeReview.RequestedConfigSHA256 != report.RequestedConfigSHA256 ||
+		len(report.RequestedScopeReview.ReviewFingerprintSHA256) != 64 {
 		t.Fatalf("unsafe/malformed preflight: %+v", report)
 	}
 }
@@ -147,7 +153,10 @@ func TestVolumeInventoryMismatchReturnsErrorAndEvidence(t *testing.T) {
 	}
 	var report volumeInventoryReport
 	if json.Unmarshal(output.Bytes(), &report) != nil || report.RequestedVolumePreflight == nil ||
-		report.RequestedVolumePreflight.AllVolumesMatch || report.CollectionAuthorized {
+		report.RequestedVolumePreflight.AllVolumesMatch || report.CollectionAuthorized ||
+		report.RequestedScopeReview == nil ||
+		!report.RequestedScopeReview.BlocksMutation ||
+		report.RequestedScopeReview.AllRequestedVolumesMatch {
 		t.Fatalf("mismatch report concealed drift: %+v", report)
 	}
 }
