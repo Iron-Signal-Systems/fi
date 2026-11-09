@@ -30,6 +30,7 @@ func inventoryFlagSet(t *testing.T, args ...string) *flag.FlagSet {
 	set := flag.NewFlagSet("fi-install", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	set.Bool("list-volumes", false, "")
+	set.Bool("inspect-policy-roots", false, "")
 	set.Bool("apply", true, "")
 	set.Bool("plan-only", false, "")
 	set.String("config", "", "")
@@ -44,12 +45,14 @@ func TestStandaloneVolumeInventoryFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"-list-volumes"},
 		{"-list-volumes", "-volume-config=C:\\FI\\scope.conf"},
+		{"-list-volumes", "-volume-config=C:\\FI\\scope.conf", "-inspect-policy-roots"},
 	} {
 		if err := volumeInventoryCLI(inventoryFlagSet(t, args...)); err != nil {
 			t.Fatalf("valid read-only arguments %v rejected: %v", args, err)
 		}
 	}
 	for _, args := range [][]string{
+		{"-list-volumes", "-inspect-policy-roots"},
 		{"-list-volumes", "-apply=true"},
 		{"-list-volumes", "-apply=false"},
 		{"-list-volumes", "-plan-only"},

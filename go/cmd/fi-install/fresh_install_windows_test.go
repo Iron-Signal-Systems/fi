@@ -51,6 +51,7 @@ func freshFlags(t *testing.T, args ...string) *flag.FlagSet {
 	flags.SetOutput(io.Discard)
 	flags.Bool("check-clean-install", false, "")
 	flags.Bool("list-volumes", false, "")
+	flags.Bool("inspect-policy-roots", false, "")
 	flags.String("volume-config", "", "")
 	flags.Bool("apply", true, "")
 	flags.Bool("plan-only", false, "")
@@ -70,6 +71,7 @@ func TestFreshInstallStandaloneFlagsCannotReachLegacyApply(t *testing.T) {
 		{"-check-clean-install", "-apply=false"},
 		{"-check-clean-install", "-plan-only"},
 		{"-check-clean-install", "-list-volumes"},
+		{"-check-clean-install", "-inspect-policy-roots"},
 		{"-check-clean-install", "-volume-config=C:\\FI-v2.conf"},
 		{"-check-clean-install", "-config=C:\\FI-v1.conf"},
 		{"-check-clean-install", "ignored-file"},
@@ -137,6 +139,7 @@ func TestExplicitlyDisabledReadOnlySelectorsNeverFallIntoDefaultApply(t *testing
 	for _, args := range [][]string{
 		{"-check-clean-install=false"},
 		{"-list-volumes=false"},
+		{"-inspect-policy-roots=false"},
 		{"-check-clean-install", "-list-volumes=false"},
 		{"-list-volumes", "-check-clean-install=false"},
 	} {
@@ -148,6 +151,7 @@ func TestExplicitlyDisabledReadOnlySelectorsNeverFallIntoDefaultApply(t *testing
 		nil,
 		{"-check-clean-install"},
 		{"-list-volumes"},
+		{"-list-volumes", "-inspect-policy-roots"},
 	} {
 		if err := rejectDisabledReadOnlySelectors(freshFlags(t, args...)); err != nil {
 			t.Fatalf("valid presence/default of read-only selectors rejected: %v: %v", args, err)
