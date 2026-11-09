@@ -262,3 +262,21 @@ Source-preserving private-only SQL instrument: `go/cmd/fi-backlog-recover/testda
 Experiment runner: `go/cmd/fi-backlog-recover/run_private_finalize_step_diagnostic_host.sh` commit `6159a6b`. Derived from the external-observation clean-runner, retains host disk/CPU sampling and PG before-after stats, no Go field-copy trace or GC debug, same signed workload and verification gates. Captures 60 phase lines from private PostgreSQL `postgres.log` and fails if any expected line or phase is missing. Phase labels: `count`, `check_add`, `check_validate`, `fk_add`, `fk_validate`, `attach`. Results pending user-run host output.
 
 Interpretation: Compare phase subtotals to aggregate Go `validate_attach` per window. Difference may include other PL/pgSQL work, statement overhead and diagnostic logging. This test identifies which SQL operation is slow during the new run, not why it differed from earlier runs; an exact timestamp and per-run host behavior are needed for cause.
+
+### Storage capacity correction and clean replay (2026-11-09)
+
+Operator reported an overprovisioned Proxmox LVM-Thin pool at/near exhaustion, subsequently corrected. A screenshot after correction showed 4.50 TB used of 5.83 TB (77.04%, roughly 1.33 TB capacity remaining). Proxmox VM 801 FI-Receiver-B graphs showed I/O Full pressure spikes near 22% around the replay, additional visible roughly 3–6% pressure periods, little CPU pressure, and corresponding disk activity. Graphs alone do not establish the physical root cause or show capacity for every underlying layer.
+
+Fresh **uninstrumented** baseline after storage correction, source 9e0e6e236c95d9af91bc67a065efb47ce2318579, output /var/tmp/fi-window-chunks-clone-11-08-26-20261109T104430Z:
+
+| Measurement | Previous clean baseline | Post-correction clean baseline |
+|---|---:|---:|
+| Ten-window elapsed | 595.952s | 590.910s |
+| Ingest rate | 2177.6 rec/s | 2196.2 rec/s |
+| Source records | 1,297,765 | 1,297,765 |
+| SQL integrity | PASS | PASS |
+| Signed artifact readback | 566 files PASS | 566 files PASS |
+
+Time improved 5.042s (~0.85%) but remains 67.486s slower than original November 8 uninstrumented 523.424s baseline. Guest CPU pressure was not elevated in screenshot. Post-correction clean run captured 595 host iostat and 130 vmstat lines (contents not yet inspected), plus pg_before/after and pg_settings; per-stage detailed data not yet analyzed. Therefore correcting pool headroom alone did NOT restore baseline performance, and a remaining shared storage/PG I/O bottleneck is plausible but unconfirmed.
+
+Most recent private SQL-finalize diagnostic runner commit d07d00e4c210b9b9f32464ec06e461d993497e87 repairs its jailed executable path to the hardcoded prefix /home/jwood/fi-window-bench-optfield-* (the earlier fstep runner failed closed with FI PG relay: unexpected jailed executable, before replay). The relay allowlist itself was not modified. Await corrected diagnostic result, ideally with no concurrent FI benchmark.
