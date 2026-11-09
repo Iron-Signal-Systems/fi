@@ -10,6 +10,8 @@ The branch now includes a read-only `freshinstall` SCM/path preflight and first-
 
 The branch now includes a bounded creation-only journal protocol, in-memory fault-injection tests, and a private Windows-native journal writer with isolated temporary-directory tests. It **does not create a protected Windows journal parent or committed installed state**, create v2 FI resources or prove crash-consistent native rollback. Acceptance must explicitly test failure between durable intent, native creation and durable acknowledgement, and refuse auto-retry or deletion when ownership is ambiguous. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`. All native transaction and power-loss tests remain **NOT RUN**.
 
+The Windows runner's isolated journal tests are source-level/native-I/O evidence only. **No row requiring an authenticated installation, protected ACL, service SID/gMSA or controlled `adminbox` environment has passed**. The final dev branch commit and exact runner results must accompany any future promotion request.
+
 ## Rules of evidence
 
 The branch includes an opt-in read-only `TestNativeEnrolledVolumeUSNReadOnly` test for `adminbox`, described in `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Its existence is NOT a PASS. All native acceptance rows remain NOT RUN until actual evidence is recorded.
