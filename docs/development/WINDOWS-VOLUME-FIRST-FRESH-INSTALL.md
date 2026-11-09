@@ -25,11 +25,11 @@ The branch's native installer returns a JSON report:
 - `mode`: `FreshInstallOnly`
 - `action = ReadOnlyFreshHostPreflight` and `installation_authorized = false` (always false)
 - `clean` and `install_blocked`
-- `findings`: all seven fixed local FI locations/SCM names and their `Absent`, `Present` or `Unknown` status, with a diagnostic on a blocking/uncertain finding.
+- `findings`: all eight fixed local FI locations/SCM names and their `Absent`, `Present` or `Unknown` status, with a diagnostic on a blocking/uncertain finding.
 
 SCM services: `FICollector`, `FIUSNReader`, `FIObjReader`, `FICRLRefresher`, `FISender`.
 
-FI-owned paths: `C:\Program Files\FI` and `C:\ProgramData\FI`. These encompass the legacy binary directory and FI data/config/state/spool tree under the known installed layout. A directory, file, symlink or reparse point is present. Missing service SCM rights or inaccessible filesystem entries are **Unknown**, not proof of absence.
+FI-owned paths: `C:\Program Files\FI`, `C:\ProgramData\FI` and the separate first-install bootstrap root `C:\ProgramData\FI-Installer`. These encompass the legacy binary directory and FI data/config/state/spool tree under the known installed layout. A directory, file, symlink or reparse point is present. Missing service SCM rights or inaccessible filesystem entries are **Unknown**, not proof of absence.
 
 Any `Present` or `Unknown` blocks, with a nonzero process exit. A clean host receives `clean=true`, but **no installer approval or authority token**. All statuses are read-only; no files, services, audits, Windows rights or signed FI state change.
 
@@ -48,11 +48,11 @@ The installer must recheck clean-host absence at the actual write boundary, in a
 
 ## Transaction journal protocol — development only
 
-The branch defines a fixed first-install event chain in `go/internal/windows/freshinstall/creation_journal.go`, covering new FI roots, protected ACLs, signed executables/configuration, initial signed grant, **disabled** SCM services and the independently protected installation commit. Every native mutation must follow a durable `CreateIntent` and be followed by an acknowledged, durable `CreatedAndSynced`. An ambiguous or incomplete transaction is placed into **manual recovery**; the installer may not silently retry, delete a presumed owned file, or adopt old FI. The source currently has a mock-only FI resource-creation backend and a private Windows-native journal I/O writer tested in isolated temporary directories. The journal writer has **not** proved trusted installer-parent ACLs or actual power-loss durability; **no Windows installer transaction applies these FI steps**. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.
+The branch defines a fixed first-install event chain in `go/internal/windows/freshinstall/creation_journal.go`, covering new FI roots, protected ACLs, signed executables/configuration, initial signed grant, **disabled** SCM services and the independently protected installation commit. Every native mutation must follow a durable `CreateIntent` and be followed by an acknowledged, durable `CreatedAndSynced`. An ambiguous or incomplete transaction is placed into **manual recovery**; the installer may not silently retry, delete a presumed owned file, or adopt old FI. The source currently has a mock-only FI resource-creation backend and a private Windows-native journal I/O writer tested in isolated temporary directories. The journal writer has **not** proved trusted installer-parent ACLs or actual power-loss durability; **no Windows installer transaction applies these FI steps**. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md` and `WINDOWS-VOLUME-FIRST-JOURNAL-PARENT-SECURITY.md`.
 
 ## Tests and limitations
 
-The new pure policy tests enumerate all five service blockers and two FI path blockers. They cover absence, present collisions, SCM access failures, file read failures, explicit unknown/native-invalid status, complete deterministic reporting and nil preflight. The Windows CLI tests cover standalone flag isolation, JSON evidence, nonzero blocking and unknown errors. Separate fresh-only review, signed transaction and signed installed-grant tests reject an old trusted baseline or a later approval generation.
+The new pure policy tests enumerate all five service blockers and three FI path blockers. They cover absence, present collisions, SCM access failures, file read failures, explicit unknown/native-invalid status, complete deterministic reporting and nil preflight. The Windows CLI tests cover standalone flag isolation, JSON evidence, nonzero blocking and unknown errors. Separate fresh-only review, signed transaction and signed installed-grant tests reject an old trusted baseline or a later approval generation.
 
 **Not yet proven:** `adminbox` native SCM/ACL acceptance; prevention of installation races after the preflight; installer authenticated signing/trust; first-install protected state creation; transactional failure recovery; actual FIUSNReader mode selection; FICollector per-volume source custody; FreeBSD ingest. Go CI cannot substitute for these.
 
