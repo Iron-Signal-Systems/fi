@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -154,5 +155,49 @@ func TestWindowsCreationJournalDeniesParentReparseAlias(t *testing.T) {
 	_ = sink.Close()
 	if _, err := os.Stat(filepath.Join(actual, nativeCreationJournalName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("journal written through reparse alias: %v", err)
+	}
+}
+
+func TestWindowsCreationJournalConcurrentInstallReservations(t *testing.T) {
+	dir := t.TempDir()
+	const attempts = 12
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	release := make(chan struct{})
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sink := newWindowsCreationSink(dir)
+			<-start
+			err := sink.ReserveNew(testInstallID)
+			results <- err
+			// Hold successful exclusive file ownership until all contenders
+			// have attempted creation. The file remains after closing.
+			if err == nil {
+				<-release
+			}
+			_ = sink.Close()
+		}()
+	}
+	close(start)
+	// Do not release the successful open handle until every contender has
+	// attempted ReserveNew. Their failed CREATE_NEW calls are deterministic
+	// even though the successful handle remains open.
+	close(release)
+	wg.Wait()
+	close(results)
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("exactly one Windows CREATE_NEW reservation must win; got %d", successes)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, nativeCreationJournalName)); err != nil {
+		t.Fatalf("exclusive journal disappeared: %v", err)
 	}
 }
