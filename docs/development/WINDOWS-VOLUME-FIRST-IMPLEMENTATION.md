@@ -24,7 +24,7 @@
 - `BuildFreshInstall` / `RevalidateFreshInstall` explicitly reject an existing-FI baseline in the intended v2 installer workflow. No v1.1-to-v2 upgrade or in-place policy update is supported.
 - `volumereview.Revalidate` refuses stale/mismatched native observations, changed proposed/old configurations, and modified review fields. SHA-256 provides a deterministic reference only; it is **not a signature or a protected approval receipt**.
 - Branch-only `fi-install.exe -list-volumes -volume-config <path>` now includes `requested_scope_review` in its non-mutating JSON report. Existing `1.1` installation/service startup is untouched. See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
-- Still not implemented: authenticating an administrator's approval, protected host-bound v2 config/receipt installation, native root object identity and audit/SACL approval, transactional rollback, broker selection at service startup, volume worker custody, and backend changes.
+- Still not implemented: authenticating an administrator's approval, protected host-bound v2 config/receipt installation, installer-bound root-object identity approval and audit/SACL authorization, transactional rollback, broker selection at service startup, volume worker custody, and backend changes.
 
 
 ## Signed installer transaction-intent verification (2026-11-08)

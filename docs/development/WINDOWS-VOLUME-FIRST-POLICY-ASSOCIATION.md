@@ -17,7 +17,7 @@ The caller supplies a canonical approved `config.VolumeConfig` and one independe
 
 ## Unimplemented trust-critical components
 
-The package deliberately cannot assert that a caller's `Complete` flag is truthful. Native code must still obtain and verify root directory identities, resolve object parent links on the *enrolled volume*, account for multiple hard links, NTFS delete/rename history, and stop at reparse/mounted-volume boundaries. USN v2 64-bit IDs must be explicitly reconciled against 128-bit FILE_ID_INFO identities; padding/truncation or comparing textual paths is not an accepted substitute.
+The package deliberately cannot assert that a caller's `Complete` flag is truthful. The new read-only native observer can obtain a point-in-time root directory identity, but runtime must still bind that observation to authenticated installed authority, resolve object parent links on the *enrolled volume*, account for multiple hard links, NTFS delete/rename history, and stop at reparse/mounted-volume boundaries. USN v2 64-bit IDs must be explicitly reconciled against 128-bit FILE_ID_INFO identities; padding/truncation or comparing textual paths is not an accepted substitute.
 
 Current NTFS ancestry is **not historical ancestry**. A later rename or hard-link resolution cannot be projected backward onto an earlier USN record. If the source cannot prove containment at the relevant observation time, retain minimal change evidence and `Unknown` policy membership. Even a proven `Matched` result cannot authorize an object read; a separate exact-handle FIObjReader authorization and policy-depth check remain required.
 
@@ -25,4 +25,4 @@ Current NTFS ancestry is **not historical ancestry**. A later rename or hard-lin
 
 Source unit tests exercise multiple volumes, zero policies, overlap, root-self matching, outside vs unknown, reparse and incomplete lineage denial, malformed/cyclic ancestry, alias/cross-volume binding rejection, serial/GUID drift and input mutation. These are pure policy tests, not Windows-native lineage, journal custody or installer acceptance.
 
-Next required engineering: native root-object attestation during fresh-install approval; runtime path/link evidence with precise time semantics; per-volume capture + checkpoint durability; and source records plus backend typed policy projection. Rows V04-V06, V11, V17-V19 remain **NOT RUN**. Nothing starts FIUSNReader volume mode or changes `main`, `adminbox` services, ISS-FS-22A, or FISender.
+Next required engineering: installer-bound native root-object approval and runtime re-attestation; runtime path/link evidence with precise time semantics; per-volume capture + checkpoint durability; and source records plus backend typed policy projection. Rows V04-V06, V11, V17-V19 remain **NOT RUN**. Nothing starts FIUSNReader volume mode or changes `main`, `adminbox` services, ISS-FS-22A, or FISender.
