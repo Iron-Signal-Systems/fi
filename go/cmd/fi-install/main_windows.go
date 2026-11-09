@@ -50,7 +50,7 @@ func main() {
 	apply := flag.Bool(
 		"apply",
 		true,
-		"apply the exact validated Windows Server desired-state plan after explicit approval boundaries; enabled by default",
+		"legacy FI 1.1 apply (disabled in this v2 development branch; only explicit read-only diagnostics are allowed)",
 	)
 	planOnly := flag.Bool(
 		"plan-only",
@@ -123,6 +123,14 @@ func main() {
 	)
 
 	flag.Parse()
+
+	// Branch-only deployment safety: a normal invocation must NEVER fall
+	// through to the inherited 1.1 installer while v2 creation, installed
+	// authority and the volume-owned source pipeline are incomplete.
+	if err := requireVolumeFirstReadOnlyMode(flag.CommandLine); err != nil {
+		fmt.Fprintf(os.Stderr, "\nFI VOLUME-FIRST INSTALLATION BLOCKED: %v\n", err)
+		os.Exit(2)
+	}
 	// An explicitly passed disabled read-only selector is not permission to
 	// proceed with the legacy installer's default -apply=true operation.
 	if err := rejectDisabledReadOnlySelectors(flag.CommandLine); err != nil {
