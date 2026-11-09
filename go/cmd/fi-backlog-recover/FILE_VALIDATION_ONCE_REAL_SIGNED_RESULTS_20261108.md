@@ -210,3 +210,18 @@ Controls: replay windows 3–12, original signed payload/cache, W128 outer windo
 External observations: read-only `pg_stat_wal`, `pg_stat_checkpointer`, and `pg_stat_io` snapshots just before/after the replay; captured PostgreSQL settings (including I/O timing flags); host `iostat -x -w 5` and `vmstat -w 5` sampled in background only during replay, cleaned up through the existing trap. No FI code instrumentation, `GODEBUG` unset, no per-COPY diagnostic log lines and no `log_checkpoints` override. The observers can still have small measurement effects, so results should not be claimed fully overhead-free.
 
 Output uses the successful baseline directory naming convention, with a fresh UTC timestamp. Host must run `sh -n` first; the remote execution result is pending. Compare future `FI INGEST COPY TABLE` field timings, committed elapsed time, PostgreSQL counters, and host sampled I/O to the original 523.424s / 46.262s and subsequent instrumented 561.514s / 59.996s baseline. Do not infer a cause from one control run alone.
+
+### Clean uninstrumented historical baseline control — completed 2026-11-09
+
+Runner: go/cmd/fi-backlog-recover/run_clean_baseline_observed_host.sh from 3c3d131, unchanged source commit 9e0e6e236c95d9af91bc67a065efb47ce2318579.
+Output directory: /var/tmp/fi-window-chunks-clone-11-08-26-20261109T095450Z.
+
+| Metric | Original Nov 8 baseline | Instrumented Nov 8 baseline | Clean Nov 9 baseline |
+|---|---:|---:|---:|
+| Source records | 1,297,765 | 1,297,765 | 1,297,765 |
+| Window time (s) | 523.424 | 561.514 | 595.952 |
+| Rate (records/sec) | 2,479.3 | 2,311.2 | 2,177.6 |
+| Field COPY (s) | 46.262 | 59.996 | Not yet extracted from recover.log |
+| Calls >= 100ms | 27 | 313 | Not yet extracted from recover.log |
+
+Clean-run checks: 10 windows index 3–12, 566 signed cached data files and manifests byte-identical; SQL integrity PASS, checkpoint 13|1688152|12, canonical=0 accepted=0, private fixture on socket length 90 bytes, no per-COPY diagnostic instrumenter, no gctrace, no checkpoint logging override. Separate observers captured 600 lines of host iostat and 131 lines of vmstat at nominal five-second intervals. PostgreSQL stats before/after and settings captured; contents not yet analyzed. Clean minus instrumented elapsed = +34.438s; clean minus original = +72.528s. No basis to assign this difference to Go tracing overhead, WAL, PostgreSQL, or host load from elapsed time alone. Next inspect clean field-COPY metrics already present in recover.log, PostgreSQL stats, and sampled iostat/vmstat without rerunning.
