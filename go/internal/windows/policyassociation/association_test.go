@@ -170,8 +170,16 @@ func TestPlanCopiesApprovedScopeAndBindings(t *testing.T) {
 	roots[0].RootID = fixtureID(55)
 	result, err := plan.Evaluate(systemEvidence())
 	if err != nil || result.Status != Matched || len(result.Memberships) != 2 ||
-		result.Memberships[1].Depth != config.DepthContent {
+		result.Memberships[0] != (Membership{PolicyID: "programs", Depth: config.DepthMetadata}) ||
+		result.Memberships[1] != (Membership{PolicyID: "software", Depth: config.DepthContent}) {
 		t.Fatalf("plan was broadened by mutation of input slices: %+v %v", result, err)
+	}
+	finance := systemEvidence()
+	finance.ObjectID, finance.Ancestors = fixtureID(3), []FileID{fixtureID(20)}
+	result, err = plan.Evaluate(finance)
+	if err != nil || result.Status != Matched || len(result.Memberships) != 1 ||
+		result.Memberships[0] != (Membership{PolicyID: "finance", Depth: config.DepthSecurity}) {
+		t.Fatalf("plan retained mutated config or root binding: %+v %v", result, err)
 	}
 }
 
