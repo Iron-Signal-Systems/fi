@@ -263,6 +263,5 @@ func securitySourceRecordCopyRows(ctx context.Context, pending []securityBulkRec
 			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
 		})
 	}
-	sourceCopyStarted := time.Now()
 	return sourceRows
 }
