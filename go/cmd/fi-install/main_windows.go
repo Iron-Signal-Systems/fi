@@ -18,6 +18,7 @@ import (
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/install"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/policyroot"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/volumediscovery"
 )
 
@@ -110,6 +111,11 @@ func main() {
 		false,
 		"report native local Windows volume identities and mounts; read-only, no enrollment or installer mutation",
 	)
+	inspectPolicyRoots := flag.Bool(
+		"inspect-policy-roots",
+		false,
+		"opt-in read-only native identity inspection of configured governed roots; requires -list-volumes and -volume-config",
+	)
 	volumeConfig := flag.String(
 		"volume-config",
 		"",
@@ -145,6 +151,10 @@ func main() {
 		return
 	}
 
+	if *inspectPolicyRoots && !*listVolumes {
+		fmt.Fprintln(os.Stderr, "\nFI ROOT INSPECTION BLOCKED: -inspect-policy-roots requires -list-volumes")
+		os.Exit(2)
+	}
 	// Both read-only inventory and its optional v2 comparison return before
 	// SACL rollback recovery, signing trust, AD/PKI discovery, SCM changes or
 	// legacy installer planning. A lone -volume-config must fail closed.
@@ -170,12 +180,14 @@ func main() {
 			}
 			requested = &value
 		}
-		if err := writeVolumeInventory(
+		if err := writeVolumeInventoryWithRootInspection(
 			context.Background(),
 			os.Stdout,
 			volumediscovery.Enumerate,
+			policyroot.AttestEnrolledVolumeRoots,
 			time.Now,
 			requested,
+			*inspectPolicyRoots,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "\nFI VOLUME INVENTORY FAILED: %v\n", err)
 			os.Exit(1)

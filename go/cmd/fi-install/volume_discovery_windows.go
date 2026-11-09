@@ -41,7 +41,8 @@ func volumeInventoryCLI(flags *flag.FlagSet) error {
 	}
 	var conflicting []string
 	flags.Visit(func(item *flag.Flag) {
-		if item.Name != "list-volumes" && item.Name != "volume-config" {
+		if item.Name != "list-volumes" && item.Name != "volume-config" &&
+			item.Name != "inspect-policy-roots" {
 			conflicting = append(conflicting, "-"+item.Name)
 		}
 	})
@@ -51,6 +52,18 @@ func volumeInventoryCLI(flags *flag.FlagSet) error {
 	if len(conflicting) > 0 {
 		sort.Strings(conflicting)
 		return fmt.Errorf("-list-volumes is a stand-alone read-only action; conflicting flags: %v", conflicting)
+	}
+	inspectionRequested, declarationProvided := false, false
+	flags.Visit(func(item *flag.Flag) {
+		if item.Name == "inspect-policy-roots" {
+			inspectionRequested = true
+		}
+		if item.Name == "volume-config" {
+			declarationProvided = true
+		}
+	})
+	if inspectionRequested && !declarationProvided {
+		return errors.New("-inspect-policy-roots requires an explicit -volume-config declaration")
 	}
 	return nil
 }
@@ -101,6 +114,10 @@ type volumeInventoryReport struct {
 	RequestedConfigSHA256      string                     `json:"requested_config_sha256,omitempty"`
 	RequestedVolumePreflight   *volumediscovery.Preflight  `json:"requested_volume_preflight,omitempty"`
 	RequestedScopeReview       *volumereview.Review         `json:"requested_scope_review,omitempty"`
+	PolicyRootsInspected       bool                         `json:"policy_roots_inspected"`
+	PolicyRootChecksComplete   bool                         `json:"policy_root_checks_complete"`
+	PreflightBlocked           bool                         `json:"preflight_blocked"`
+	PolicyRootInspections      []volumeRootInspection       `json:"policy_root_inspections,omitempty"`
 }
 
 // writeVolumeInventory is deliberately dependency-injected for failure-path
@@ -115,8 +132,30 @@ func writeVolumeInventory(
 	clock func() time.Time,
 	requested *config.VolumeConfig,
 ) error {
+	return writeVolumeInventoryWithRootInspection(ctx, output, discover, nil, clock, requested, false)
+}
+
+// writeVolumeInventoryWithRootInspection adds opt-in read-only native
+// governed-root inspection while retaining the legacy read-only inventory
+// semantics when the option is absent. The injected observer is only invoked
+// for explicitly enrolled volumes with a matching native inventory identity.
+func writeVolumeInventoryWithRootInspection(
+	ctx context.Context,
+	output io.Writer,
+	discover func(context.Context) ([]volumediscovery.Snapshot, error),
+	inspect rootAttestor,
+	clock func() time.Time,
+	requested *config.VolumeConfig,
+	inspectRoots bool,
+) error {
 	if ctx == nil || output == nil || discover == nil || clock == nil {
 		return errors.New("volume inventory requires context, writer, discovery source and clock")
+	}
+	if inspectRoots && (requested == nil || inspect == nil) {
+		return errors.New("root inspection requires a v2 declaration and read-only native inspector")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if requested != nil {
 		if _, err := config.CanonicalVolumeV2(*requested); err != nil {
@@ -153,6 +192,20 @@ func writeVolumeInventory(
 		report.Action = "DiscoveryAndScopePreflightOnly"
 		mismatch = review.BlocksMutation
 	}
+	if inspectRoots {
+		report.Action = "DiscoveryScopeAndPolicyRootPreflightOnly"
+		report.PolicyRootsInspected = true
+		observations, complete, err := inspectRequestedPolicyRoots(
+			ctx, *requested, report.RequestedVolumePreflight.Matches, inspect,
+		)
+		if err != nil {
+			return fmt.Errorf("invalid policy root inspection preflight: %w", err)
+		}
+		report.PolicyRootInspections = observations
+		report.PolicyRootChecksComplete = complete
+		mismatch = mismatch || !complete
+	}
+	report.PreflightBlocked = mismatch
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(report); err != nil {

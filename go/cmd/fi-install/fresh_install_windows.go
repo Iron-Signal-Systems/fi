@@ -27,7 +27,7 @@ func rejectDisabledReadOnlySelectors(flags *flag.FlagSet) error {
 	var rejected []string
 	flags.Visit(func(item *flag.Flag) {
 		switch item.Name {
-		case "check-clean-install", "list-volumes":
+		case "check-clean-install", "list-volumes", "inspect-policy-roots":
 			if item.Value.String() != "true" {
 				rejected = append(rejected, "-"+item.Name)
 			}
