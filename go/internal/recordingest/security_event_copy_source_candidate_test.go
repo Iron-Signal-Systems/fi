@@ -5,6 +5,7 @@
 package recordingest
 
 import (
+	"context"
 	"crypto/sha256"
 	"math/big"
 	"reflect"
@@ -144,4 +145,41 @@ func BenchmarkSecurityEventCOPYRowsLegacyVsReusable(b *testing.B) {
 		}
 		securityEventRowBenchmarkSink = result
 	})
+}
+
+func TestSecurityEventReusableCOPYSourcePrivateProfileGate(t *testing.T) {
+	// The production P1 default and ordinary P3 must never select the
+	// experimental row source, even though they share the bulk writer.
+	pending := candidateSecurityEventFixture(3)
+	if _, ok := securityEventCopyRows(context.Background(), pending).(*securityEventCopySource); ok {
+		t.Fatal("production default unexpectedly selected the experimental Security COPY source")
+	}
+	p3, err := withFixedSecurityBulkProfile(context.Background(), "P3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := securityEventCopyRows(p3, pending).(*securityEventCopySource); ok {
+		t.Fatal("ordinary P3 unexpectedly selected the experimental Security COPY source")
+	}
+	private := WithPrivateSecurityFieldPartitions(p3)
+	source, ok := securityEventCopyRows(private, pending).(*securityEventCopySource)
+	if !ok {
+		t.Fatal("private-field P3 did not select the reusable Security COPY source")
+	}
+	for i := range pending {
+		if !source.Next() {
+			t.Fatalf("private Security COPY missed event row %d", i)
+		}
+		got, err := source.Values()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := legacySecurityEventCopyValues(pending[i])
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("private Security COPY row %d differed from the legacy forty-column row", i)
+		}
+	}
+	if source.Next() {
+		t.Fatal("private Security COPY generated extra event rows")
+	}
 }
