@@ -2,13 +2,13 @@
 
 **Date:** 2026-11-08  
 **Branch:** `dev/windows-volume-first-20261108`  
-**Status:** Pure-Go bounded transaction-event contract and failure-path tests. NOT a native installer, durable disk journal, completed installation or service-start authority.
+**Status:** Bounded transaction-event contract plus an isolated Windows-native create-new/flush writer and tests. The writer has **no production trusted-parent/ACL authority**, no installer activation, no native FI creation backend, and no service-start authority.
 
 ## Purpose and scope
 
 The new FI v2 Windows installation is **fresh-install only**. A host containing an FI service, binary tree or FI-owned state cannot be upgraded, repaired or silently emptied by the installer. `freshinstall.Assess` and the native `-check-clean-install` command must reject it.
 
-`go/internal/windows/freshinstall/creation_journal.go` now defines the **creation-only event order** for the future installer. It is a write-ahead evidence protocol, not permission to mutate. The runner is intentionally **package-private** and has no native filesystem, SCM, AD/PKI or registry backend. No new installer CLI calls it, and FI services are still not activated in volume mode.
+`go/internal/windows/freshinstall/creation_journal.go` now defines the **creation-only event order** for the future installer. It is a write-ahead evidence protocol, not permission to mutate. The runner is intentionally **package-private**. It now has a separate unexported Windows-native **journal I/O implementation** in `creation_journal_windows.go`, but still **no native FI resource creation backend**, trusted-parent provisioning, SCM, AD/PKI or registry mutation path. No new installer CLI calls it, and FI services are still not activated in volume mode.
 
 ## Required creation phases
 
@@ -47,6 +47,22 @@ The parser `InspectCreationJournal` rejects malformed, noncanonical, reordered, 
 
 **Important trust boundary:** The SHA-256 chain is **corruption/order evidence only**, not an HMAC or digital signature. A malicious writer can recompute it. The future Windows-native journal file must have independently verified issuer/path/ACL/ownership trust and durable append semantics. No journal state is an authorization token. Similarly, a clean host observation is point-in-time only and does not prevent concurrent creation by another process; the native installer still needs a trusted exclusive creation/lock boundary.
 
+## Native Windows journal I/O (development-only)
+
+The branch now includes an unexported `windowsCreationSink` implementing `CreationSink` using Windows native file handles:
+
+- The intended parent must already exist on a local drive, must not be the drive root, and its ancestor paths are rejected if they include a Windows reparse point, junction, or non-directory.
+- The parent is opened with `FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS` and retained with no delete-sharing for the transaction. Its handle attributes are checked, and its final resolved path is compared with the requested path.
+- The single fixed journal filename is created with `CREATE_NEW`, no sharing, `FILE_FLAG_WRITE_THROUGH`, and `FILE_FLAG_OPEN_REPARSE_POINT`. Any already existing journal causes refusal rather than repair, truncate, overwrite, or adoption.
+- The newly opened file handle is checked for unexpected type/reparse and resolved path. A record is accepted only as one bounded newline-terminated frame; after each write, the file is explicitly synchronized before success is returned.
+- A failed or partial write permanently poisons the sink. Closing it does not delete the journal. An interrupted transaction remains for manual disposition; another process invoking create-new against that same name cannot silently restart it.
+
+Windows-only tests run in **isolated temporary directories**, not `C:\\ProgramData\\FI`, and check file-backed complete replay, existing-journal collision, interrupted native creation, a second-process retry, invalid parents and frames, and reparse-parent rejection when runner permissions permit symbolic-link creation. These are **native file I/O tests on GitHub Windows runners**, not a privileged installation acceptance on `adminbox`.
+
+**Important remaining trust gap:** The parent directory is supplied by the caller. This writer can check the path and opened handle but **does not verify the parent owner's native security descriptor, required protected DACL, signer authority, or independent machine identity**. It must not be invoked from an installer on an untrusted writable parent. There is no production bootstrap to provision that parent with an ACL at creation time, no protected signing-key handoff, no tested kernel-level handle-relative child creation race defense, and no crash/power-loss durability proof. Unit tests validate success/error results of Windows I/O calls, **not** persistence across sudden power failure.
+
+The future native bootstrap must solve that trust boundary before exposure. The existing helper is private specifically so a partially tested file-writing capability cannot be mistaken for an installation authority.
+
 ## Test coverage
 
 Branch unit tests verify:
@@ -63,8 +79,8 @@ The test backend and journal sink are **in memory only**. No Windows system file
 
 ## Still required before any actual installation
 
-- Prove native protected parent path and no reparse/directory substitution; create files and directories with **exclusive no-replace** semantics.
-- Implement a protected append-and-sync journal with Windows-specific durability/ACL checks and recovery behavior after abruptly terminated installers.
+- Provision a native **protected, trusted** journal parent and prove owner/DACL/handle/ancestor integrity, exclusive lifetime, safe child creation without reparse/directory substitution, plus controlled ACL inheritance. The isolated native journal writer does not yet satisfy that complete acceptance gate.
+- Integrate the native append-and-sync journal writer with the protected parent, atomic first-install state, checked journal recovery and evidence-based transaction ownership. Test real crash/flush behavior, not just successful `Sync` return values.
 - Authenticate administrator consent and CNG signing authority, then validate a fresh v2 signed grant and scope before any privileged operation.
 - Build a complete v2 operational config, protected local installation commitment and creation-only Windows SCM backend, with correct gMSA/service SIDs and no service activation until authority is verified.
 - Define **owned-artifact-only** rollback for steps with durable confirmed ownership, while preserving and surfacing ambiguous partial writes for operator review. Do not use legacy in-place replacement rollback helpers.
