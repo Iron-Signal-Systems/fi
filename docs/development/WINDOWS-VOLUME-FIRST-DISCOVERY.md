@@ -61,3 +61,7 @@ See `docs/development/WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`.
 The branch now contains a separate path-free FIUSNReader enrollment-ID protocol and read-only native USN backend, with same-handle 64-bit identity validation; see `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Those operations remain **inactive** in the installed helper. The next boundary is full installer v2 approval/configuration authority and safe service-startup selection, followed by FICollector per-volume scheduling, checkpoint/custody, policy-scoped FIObjReader/SACL access, and signed records/backend integration. Do not treat a successful scope preflight as authorization to run privileged operations.
 
 See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md`, `docs/development/WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md`, and `docs/development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`.
+
+## Separate governed-root identity observation (2026-11-09)
+
+A distinct read-only native package, `go/internal/windows/policyroot`, now walks explicit governed-root directory prefixes on one selected, matched NTFS volume, reading FILE_ID_INFO on each retained handle and rejecting reparse crossings. This is NOT performed by `volumediscovery`'s inventory and does not turn a discovered volume into installed authority. See `WINDOWS-VOLUME-FIRST-NATIVE-POLICY-ROOT.md`. Native `adminbox` acceptance and signed installer integration remain outstanding.

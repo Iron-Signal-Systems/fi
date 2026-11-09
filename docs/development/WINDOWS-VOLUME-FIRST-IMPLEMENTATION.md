@@ -1,10 +1,10 @@
 # Windows Volume-First Engineering Implementation Inventory
 
-**Status:** Active branch development. Volume discovery, epoch checks, policy parsing, and a separate volume-ID USN broker mode exist. Live collector, service startup, installer apply, and backend integration are NOT implemented.
+**Status:** Active branch development. Read-only volume and root identity discovery, epoch and policy decisions, and an isolated enrollment-ID USN broker mode exist. Live volume collector, privileged v2 startup, installer apply, and backend integration are NOT implemented.
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows work machine:** `adminbox`
 
-## Implemented work as of 2026-11-08
+## Branch implementation inventory (updated 2026-11-09)
 
 - `go/internal/windows/volumeepoch/continuity.go` and tests: per-enrolled-volume/epoch checkpoint and journal identity assessment; explicit first-baseline, continuity, journal-changed, volume-changed, aged-out, lowest-valid, ahead-of-journal and invalid-input states. Pure validation only; no state creation/advance/reconciliation.
 - `go/internal/config/volume_v2.go` and tests: strict `2.0` scope declarations for one or more volumes, zero or more governed-root policies, 64-bit serial validation, deterministic normalization, duplicate/scope/path rejection. This API is deliberately not wired into legacy `config.Parse` or the installer until full native preflight and approval semantics are implemented. See `docs/development/WINDOWS-VOLUME-FIRST-CONFIGURATION.md`.
@@ -15,6 +15,7 @@
 - `go/internal/windows/usnbroker/` implements the **separate, not activated** volume-ID mechanics, but the exported `ServeEnrolledVolumes` startup is now explicitly fail-closed with `ErrVolumeModeRequiresApproval`. No future service may start the privileged mode from an unapproved v2 file. The internal broker path binds immutable enrollment IDs to native identity, and wire codes 6/7 select IDs rather than paths; legacy-mode helpers deny those codes.
 - `go/internal/windows/usnraw/volume_windows.go` now validates the entire 64-bit NTFS serial using read-only `FSCTL_GET_NTFS_VOLUME_DATA` on the same raw handle used for bounded journal query/read. Mock-dispatch and malformed/unauthorized input regression tests are included. See `docs/development/WINDOWS-VOLUME-FIRST-USN-BROKER.md`.
 - `go/internal/windows/policyassociation/`: pure-Go, non-authorizing volume-bound governed-root association by independently established NTFS object ancestry. It rejects unbound/replaced volumes, ambiguous/missing/cyclic ancestry, reparse crossing, alias/duplicate root identities and implicit policy-depth broadening; zero and overlapping roots are explicit. No native lineage attestation, FICollector wiring, FIObjReader authority or source projection exists. See `WINDOWS-VOLUME-FIRST-POLICY-ASSOCIATION.md`.
+- `go/internal/windows/policyroot/`: read-only native Windows governed-root directory walk anchored on the approved declaration's volume GUID; verifies each directory and full-width serial, refuses reparse/mount crossings, holds ancestors during inspection and returns current FILE_ID_INFO identities. The caller still supplies an unverified declaration, so this is **not operator approval, permanent containment evidence, or protected-object authority**. Pure validation and Windows-runner native tests are present; controlled `adminbox` acceptance and runtime/installer wiring remain missing. See `WINDOWS-VOLUME-FIRST-NATIVE-POLICY-ROOT.md`.
 - The five installed Windows services and native installer apply/reconciliation code remain root-centric. `go/cmd/fi-usn/main_windows.go` still starts the v1.1 broker. Real privileged native integration on `adminbox` has not occurred; Windows-latest CI does not prove that acceptance.
 
 ## Read-only installer scope-review progress (2026-11-08)

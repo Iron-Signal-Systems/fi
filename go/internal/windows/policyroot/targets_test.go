@@ -83,7 +83,7 @@ func TestPolicyTargetNativeWalkBounds(t *testing.T) {
 		{"separator gap", `\A\\B`},
 		{"alternate stream", `\Data:payload`},
 		{"too long", `\` + strings.Repeat("A", maxRootWalkPathBytes)},
-		{"too many components", `\` + strings.Repeat("a\", maxRootWalkComponents) + "end"},
+		{"too many components", `\` + strings.Repeat(`a\`, maxRootWalkComponents) + "end"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

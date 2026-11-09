@@ -1,6 +1,6 @@
 # FI Windows Volume-First — Fresh Installation Contract
 
-**Status:** Development only. Read-only discovery, fresh-host inspection, scope review, signed-intent verification and signed installed-grant verification are partial foundations. No volume-first installer apply, native signed state installation or end-to-end source acceptance exists.  
+**Status:** Development only. Read-only discovery, fresh-host inspection, scope review, signed-intent verification and signed installed-grant verification are partial foundations. No volume-first installer apply, native signed state installation or end-to-end source acceptance exists. A separate read-only governed-root identity observer is not integrated with installer approval and is not itself permission to install.  
 **Branch:** `dev/windows-volume-first-20261108`  
 **Windows engineering and test host:** `adminbox`  
 **Deployment model:** **NEW INSTALL ONLY. No FI present. No in-place update, repair, migration, adoption or reconfiguration.**

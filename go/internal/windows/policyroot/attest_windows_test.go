@@ -11,7 +11,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/policyassociation"
@@ -61,7 +60,6 @@ func TestNativePolicyRootReadOnlyDirectoryChain(t *testing.T) {
 	if _, err := attestNativeDirectoryChain(cancelled, paths, serial); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled chain entered Windows I/O: %v", err)
 	}
-	_ = strconv.FormatUint(serial, 10) // prove full-width native identity used by fixture
 }
 
 func TestNativePolicyRootDeniesFileAndReparse(t *testing.T) {
