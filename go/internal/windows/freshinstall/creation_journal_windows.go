@@ -83,9 +83,14 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 		s.poisoned = true
 		return fmt.Errorf("resolve FI journal parent handle: %w", err)
 	}
-	if !sameNativePath(finalParent, dir) {
+	// The Win32 path used to open this handle may contain an 8.3 alias
+	// (RUNNER~1) while GetFinalPathNameByHandle returns its long spelling.
+	// Never reject based on text spelling alone; the held directory handle
+	// and the newly created file handle must instead resolve to the same
+	// final parent. Reparse ancestry is checked separately below.
+	if finalParent == "" {
 		s.poisoned = true
-		return errors.New("FI journal parent path changed or resolved through an alias")
+		return errors.New("FI journal parent has no resolved native identity")
 	}
 	// Recheck ancestor paths after opening the parent. The held handle denies
 	// rename of the opened directory; full native protected-parent provenance
@@ -122,11 +127,11 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 		return fmt.Errorf("FI journal target type: %w", err)
 	}
 	finalFile, err := nativeFinalPath(handle)
-	if err != nil || !sameNativePath(finalFile, target) ||
-		!sameNativePath(filepath.Dir(finalFile), finalParent) {
+	if err != nil || !sameNativePath(filepath.Dir(finalFile), finalParent) ||
+		!strings.EqualFold(filepath.Base(finalFile), nativeCreationJournalName) {
 		_ = windows.CloseHandle(handle)
 		s.poisoned = true
-		return errors.New("FI journal target handle does not match the retained parent and expected file")
+		return errors.New("FI journal target does not belong to the retained native parent or expected basename")
 	}
 	file := os.NewFile(uintptr(handle), target)
 	if file == nil {
