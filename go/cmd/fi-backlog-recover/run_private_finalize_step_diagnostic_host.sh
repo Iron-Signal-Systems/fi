@@ -168,7 +168,7 @@ printf 'FI CLONE VERIFIED SEED DUMP source=real_signed three_windows=3 records=3
 
 initdb -D "$pgroot/data" -U fi_m1_admin -A trust --no-instructions > "$pgroot/initdb.log" 2>&1 || fail 'clone initdb failed'
 pg_ctl -D "$pgroot/data" -l "$pgroot/postgres.log" \
-    -o "-p $port -k $socket -c listen_addresses= -c unix_socket_permissions=0700" \
+    -o "-p $port -k $socket -c listen_addresses= -c unix_socket_permissions=0700 -c log_destination=stderr -c logging_collector=off -c log_min_messages=log" \
     -w start > "$pgroot/start.log" 2>&1 || fail 'clone start failed'
 admin_postgres="host=$socket port=$port user=fi_m1_admin dbname=postgres sslmode=disable"
 psql "$admin_postgres" -X -q -v ON_ERROR_STOP=1 \
@@ -189,10 +189,35 @@ git -C "$repo" show "$sqlref:$sqlpath" > "$root/finalize-timed.sql" \
 [ -s "$root/finalize-timed.sql" ] || fail 'empty finalize instrumentation SQL'
 psql "$admin" -X -q -v ON_ERROR_STOP=1 -f "$root/finalize-timed.sql" \
     > "$pgroot/finalize-install.log" 2>&1 || fail 'private finalize timing SQL installation failed'
-printf 'FI PRIVATE FINALIZE SQL INSTALLED source_commit=%s diagnostic_commit=%s\n' "$ref" "$sqlref"
+# Fail closed before the replay unless the function actually installed.
+instrumented=$(psql "$admin" -X -qAt -v ON_ERROR_STOP=1 -c \
+    "SELECT CASE WHEN position('FI PRIVATE FINALIZE STEP' IN pg_get_functiondef('fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure)) > 0 THEN 'yes' ELSE 'no' END") \
+    || fail 'cannot verify installed private finalize function'
+[ "$instrumented" = yes ] || fail 'private finalize function instrumentation not installed'
+printf 'FI PRIVATE FINALIZE SQL INSTALLED source_commit=%s diagnostic_commit=%s verified=true\n' "$ref" "$sqlref"
 
 conn="host=$socket port=$port user=fi_ingest dbname=fi sslmode=disable"
 qclone() { psql "$conn" -X -qAt -v ON_ERROR_STOP=1 -c "$1"; }
+
+# A read-only LOG delivery probe as the same database identity used by FI.
+# This verifies the complete server logging path BEFORE ten-window replay.
+[ "$(qclone 'SHOW log_min_messages')" = log ] \
+    || fail 'private PostgreSQL role log_min_messages is not log'
+[ "$(qclone 'SHOW log_destination')" = stderr ] \
+    || fail 'private PostgreSQL server is not logging to stderr'
+[ "$(qclone 'SHOW logging_collector')" = off ] \
+    || fail 'private PostgreSQL logs redirect to a logging collector'
+psql "$conn" -X -q -v ON_ERROR_STOP=1 \
+    > "$pgroot/log-probe-client.txt" 2>&1 <<'FI_LOG_PROBE_SQL'
+DO $fi_probe$
+BEGIN
+    RAISE LOG 'FI PRIVATE FINALIZE LOGGER PROBE';
+END
+$fi_probe$;
+FI_LOG_PROBE_SQL
+grep -Fq 'FI PRIVATE FINALIZE LOGGER PROBE' "$pgroot/postgres.log" \
+    || fail 'private PostgreSQL LOG delivery probe missing; replay NOT started'
+printf 'FI PRIVATE FINALIZE LOGGER PROBE PASS identity=fi_ingest destination=stderr\n'
 [ "$(qclone "SELECT count(*)::text || '|' || coalesce(sum(committed_records),0)::text || '|' || max(window_index)::text FROM fi_recovery.typed_window")" = '3|390387|2' ] || fail 'clone checkpoint differs'
 [ "$(qclone 'SELECT count(*) FROM fi_recovery_projection.windows_security_event_field')" = 4838850 ] || fail 'clone Security field count differs'
 [ "$(qclone 'SELECT count(*) FROM fi.recorded_generation')" = 0 ] || fail 'clone contains canonical rows'
