@@ -1,0 +1,56 @@
+# Windows FI v2 — Protected Installer Journal Parent
+
+**Development branch:** `dev/windows-volume-first-20261108`  
+**Native acceptance host:** `adminbox`  
+**Status:** Read-only native security-descriptor **inspection and strict policy evaluation** implemented; create-only protected-parent provisioning, installer integration and privileged acceptance **not implemented**.
+
+## Why this boundary exists
+
+A fresh FI v2 installation cannot place its first write-ahead journal under the not-yet-created `C:\ProgramData\FI` source directory. It needs an independently protected installer transaction location **before** any FI program/configuration/service mutation. The proposed separate root is `C:\ProgramData\FI-Installer`. It is *installer custody*, not FICollector's runtime state.
+
+The `freshinstall` read-only collision check now checks **eight** artifacts: the five existing FI service names and three fixed FI-owned paths (`C:\Program Files\FI`, `C:\ProgramData\FI`, `C:\ProgramData\FI-Installer`). Any presence or uncertain observation blocks a new install. A later attempt must not silently reuse an incomplete journal. An operator must separately determine and approve the disposition of prior development evidence.
+
+This does not support in-place upgrades or migration; the v2 path remains strictly first-install-only.
+
+## Exact parent ACL contract
+
+`go/internal/windows/freshinstall/journal_parent_policy.go` defines a deliberately narrow DACL decision. The parent security descriptor must have:
+
+- **Owner:** exactly Local SYSTEM (`S-1-5-18`) or BUILTIN Administrators (`S-1-5-32-544`). No arbitrary local/domain identity and no defaulted owner.
+- **DACL:** present, non-null, explicitly **protected from inheritance** (`SE_DACL_PROTECTED`), and not defaulted.
+- **ACEs:** exactly two explicit access-allowed entries, one for SYSTEM and one for BUILTIN Administrators, each granting Windows `FILE_ALL_ACCESS` (`0x001F01FF`) with `OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE` (`0x03`). ACE order is immaterial.
+- **No other entries:** no Everyone, Authenticated Users, Users, Creator Owner, domain accounts, extra ACEs, deny ACEs, unknown/callback ACEs, inherited ACEs, alternate flags or unexpanded generic access masks.
+
+For documentation only, the intended parent descriptor is equivalent to:
+
+```text
+O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)
+```
+
+An equivalent protected descriptor owned by BUILTIN Administrators is allowed by the policy. These are design encodings, **not** directions to change an existing server's DACL.
+
+The policy requires inheritable full control for SYSTEM and Administrators because the subsequent journal must not inherit rights from any less trusted identity. This strict policy may reject otherwise-functional folders, including a normally inherited temporary directory. That is the intended fail-closed behavior.
+
+## Native inspection boundary
+
+`go/internal/windows/freshinstall/journal_parent_security_windows.go` reads the owner and DACL from an already-opened **Windows directory handle** with `GetSecurityInfo`, not by a second named-path lookup. It validates a non-null security descriptor, extracts its owner, defaulting/protection flags and bounded ACE list, then delegates authorization to the strict pure policy. Ordinary directories with additional ACEs can be *inspected*, but are never accepted by that policy.
+
+The separate native journal writer already retains the parent directory handle and compares its resolved identity to the new journal's handle. Its path and reparse checks are useful, but they do not authenticate installer authority. **The new protected-parent verifier is not yet attached to the journal creation entry point.** That decision remains blocked pending a safe create-only bootstrap and service/installer trust flow.
+
+There is no production API accepting an arbitrary user-supplied path and elevating it to FI installation authority.
+
+## Security limits not yet resolved
+
+A correct-looking DACL does not, by itself, prove that the directory was created by FI's authorized installer or that the parent path, ancestors, issuer, token or signing key have not been compromised. In particular:
+
+1. The future installer must **atomically create** the bootstrap directory on an independently trusted local system volume, using an explicitly protected security descriptor **at creation time**. Do not create with broad inherited access and attempt to fix it afterward.
+2. After creation, it must verify the owner's SID, DACL, directory identity, actual parent handle, and journal's effective inherited security **from native handles**, not merely by path strings or self-reported config.
+3. It must establish and retain exclusive installation ownership, reject preexisting or reparse-point bootstrap roots, and persist crash evidence without automatic deletion or retry.
+4. The future protected grant, signer public-key trust, native operator identity, and creation-only FI backend must all be bound to this installation. A protected directory is not a cryptographic signing authority.
+5. Controlled `adminbox` and supported Windows Server acceptance must exercise ACL/owner failures, tampered ACEs, substituted paths, failed writes, sudden interruption, restart and service-SID boundaries.
+
+The policy tests are ordinary cross-platform Go unit tests. The Windows-only tests use SDDL-derived native security descriptors for both acceptable and unacceptable ACLs and read an actual runner temporary-directory security descriptor from a handle, without altering its ACL. They do **not** create an actual protected FI bootstrap directory on an installed server or establish real-world privilege boundaries.
+
+**Nothing in these tests authorizes installing FI or starting volume-wide monitoring.** `ServeEnrolledVolumes` remains fail-closed, and `main` and deployed FI hosts remain unchanged.
+
+See [creation journal](WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md), [fresh-install contract](WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md), [installer requirements](WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md), and [validation matrix](WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md).
