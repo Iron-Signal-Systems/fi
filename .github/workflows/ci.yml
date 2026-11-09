@@ -45,3 +45,48 @@ jobs:
 
       - name: Test
         run: go test ./...
+      - name: Verify v2 development installer blocks legacy execution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = Join-Path $env:RUNNER_TEMP 'fi-install-volume-first-dev.exe'
+          go build -o $binary ./cmd/fi-install
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed' }
+
+          # Launch the actual built executable with a strict timeout. A missing
+          # guard could otherwise enter interactive legacy installer discovery.
+          $blockedArgs = @(
+            @(),
+            @('-apply'),
+            @('-apply=false'),
+            @('-plan-only'),
+            @('-config=C:\FI\legacy.conf'),
+            @('-volume-config=C:\FI\scope.conf'),
+            @('-list-volumes', '-apply=false'),
+            @('-check-clean-install', '-apply=false')
+          )
+          foreach ($argv in $blockedArgs) {
+            $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $processInfo.FileName = $binary
+            $processInfo.UseShellExecute = $false
+            $processInfo.RedirectStandardOutput = $true
+            $processInfo.RedirectStandardError = $true
+            foreach ($argument in $argv) {
+              [void]$processInfo.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::Start($processInfo)
+            if (-not $process.WaitForExit(10000)) {
+              $process.Kill($true)
+              $process.Dispose()
+              throw "Legacy FI installer path did not fail closed: $($argv -join ' ')"
+            }
+            $standardOutput = $process.StandardOutput.ReadToEnd()
+            $standardError = $process.StandardError.ReadToEnd()
+            $exitCode = $process.ExitCode
+            $process.Dispose()
+            if ($exitCode -ne 2 -or
+                $standardOutput.Length -ne 0 -or
+                $standardError -notmatch 'FI VOLUME-FIRST INSTALLATION BLOCKED') {
+              throw "Unexpected installer result for '$($argv -join ' ')': exit=$exitCode stdout=$standardOutput stderr=$standardError"
+            }
+          }
