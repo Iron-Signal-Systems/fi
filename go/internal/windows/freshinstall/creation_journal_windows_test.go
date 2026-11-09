@@ -201,3 +201,48 @@ func TestWindowsCreationJournalConcurrentInstallReservations(t *testing.T) {
 		t.Fatalf("exclusive journal disappeared: %v", err)
 	}
 }
+
+func TestWindowsCreationJournalHandleHasNoFileShareUntilClose(t *testing.T) {
+	dir := t.TempDir()
+	sink := newWindowsCreationSink(dir)
+	if err := sink.ReserveNew(testInstallID); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, nativeCreationJournalName)
+	reader, err := os.Open(path)
+	if err == nil {
+		_ = reader.Close()
+		_ = sink.Close()
+		t.Fatal("journal admitted concurrent filesystem reader while exclusive native handle was held")
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err = os.Open(path)
+	if err != nil {
+		t.Fatalf("journal should remain available as recovery evidence after close: %v", err)
+	}
+	_ = reader.Close()
+}
+
+func TestWindowsCreationJournalRejectsPreexistingFileReparsePoint(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "separate-evidence.bin")
+	alias := filepath.Join(dir, nativeCreationJournalName)
+	if err := os.WriteFile(target, []byte("sensitive previous evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, alias); err != nil {
+		t.Skipf("Windows symlink creation not available: %v", err)
+	}
+	sink := newWindowsCreationSink(dir)
+	if err := sink.ReserveNew(testInstallID); err == nil {
+		_ = sink.Close()
+		t.Fatal("CREATE_NEW accepted an existing reparse-point journal target")
+	}
+	_ = sink.Close()
+	actual, err := os.ReadFile(target)
+	if err != nil || string(actual) != "sensitive previous evidence" {
+		t.Fatalf("reparse target was modified: %q %v", actual, err)
+	}
+}
