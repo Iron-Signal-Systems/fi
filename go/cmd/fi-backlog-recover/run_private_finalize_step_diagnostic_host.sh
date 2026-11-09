@@ -350,8 +350,9 @@ END {
         printf "FI FINALIZE PHASE PASS phase=%-16s windows=%d total=%.3fs avg=%.3fms\n",
             p,count[p],totals[p]/1000,totals[p]/10
     }
-}' "$out/$name/finalize_steps.log" | tee "$out/$name/finalize_summary.txt" \
+}' "$out/$name/finalize_steps.log" > "$out/$name/finalize_summary.txt" \
    || fail 'private finalize-step timing acceptance failed'
+cat "$out/$name/finalize_summary.txt" | tee -a "$out/SUMMARY.txt"
 
 printf 'FI PRIVATE FINALIZE STEP TRACE PASS lines=60 windows=10 phases=6\n' | tee -a "$out/SUMMARY.txt"
 printf 'FI CLEAN CONTROL HOST OBSERVERS captured iostat=%s vmstat=%s\n' \
