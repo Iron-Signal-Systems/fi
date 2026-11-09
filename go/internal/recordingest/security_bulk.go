@@ -103,17 +103,8 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 
 	sqlStarted := time.Now()
 	sourceColumns := []string{"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id", "written_at", "record_bytes", "record_sha256", "ingest_version"}
-	// Keep ordinary ingestion byte-for-byte equivalent to its existing
-	// row callback. Only detached private W128/P3 uses the reusable source.
-	var sourceRows pgx.CopyFromSource
-	if usePrivateSinglePassSecurity(ctx) {
-		sourceRows = newSecuritySourceRecordCopySource(pending, sourceBatchID)
-	} else {
-		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
-			p := pending[i]
-			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
-		})
-	}
+	// Preserve production COPY values; reuse rows only in private W128/P3.
+	sourceRows := securitySourceRecordCopyRows(ctx, pending, sourceBatchID)
 	sourceCopyStarted := time.Now()
 	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns, sourceRows)
 	elapsedSourceCopy := time.Since(sourceCopyStarted)
@@ -258,4 +249,20 @@ func securityEventCopyRows(ctx context.Context, pending []securityBulkRecord) pg
 			nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
 		}, nil
 	})
+}
+
+// securitySourceRecordCopyRows isolates the reusable-row selection from the transaction
+// and preserves the original callback for production P1 and ordinary P3.
+func securitySourceRecordCopyRows(ctx context.Context, pending []securityBulkRecord, sourceBatchID int64) pgx.CopyFromSource {
+	var sourceRows pgx.CopyFromSource
+	if usePrivateSinglePassSecurity(ctx) {
+		sourceRows = newSecuritySourceRecordCopySource(pending, sourceBatchID)
+	} else {
+		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+			p := pending[i]
+			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
+		})
+	}
+	sourceCopyStarted := time.Now()
+	return sourceRows
 }
