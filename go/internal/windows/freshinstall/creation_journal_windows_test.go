@@ -246,3 +246,31 @@ func TestWindowsCreationJournalRejectsPreexistingFileReparsePoint(t *testing.T) 
 		t.Fatalf("reparse target was modified: %q %v", actual, err)
 	}
 }
+
+func TestWindowsCreationJournalRetainedParentBlocksRename(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "journal-parent")
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sink := newWindowsCreationSink(parent)
+	if err := sink.ReserveNew(testInstallID); err != nil {
+		t.Fatal(err)
+	}
+	moved := parent + "-moved"
+	// Windows directory handle is opened without FILE_SHARE_DELETE. Neither
+	// the directory nor its journal must be redirected during the transaction.
+	if err := os.Rename(parent, moved); err == nil {
+		_ = sink.Close()
+		t.Fatal("open journal parent was renamed while native handle was retained")
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(parent, moved); err != nil {
+		t.Fatalf("test parent remained locked after native handle close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, nativeCreationJournalName)); err != nil {
+		t.Fatalf("journal evidence was lost after completed handle release: %v", err)
+	}
+}
