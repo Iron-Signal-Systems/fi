@@ -26,12 +26,15 @@ var serviceNames = [...]string{
 	"FISender",
 }
 
-// FI-owned directories. Any existing directory, file, symlink or reparse
-// point at these roots means this is not a clean installation. Read-only
-// inspection must never erase custody, PKI, logs or previous state.
+// FI-owned directories and the distinct installer bootstrap root. An
+// installation transaction must journal intent BEFORE creating runtime FI
+// artifacts, so it cannot rely on a preexisting C:\ProgramData\FI directory.
+// Any bootstrap directory remaining after a crash is prior FI installation
+// evidence and blocks another install. No automatic recovery/deletion.
 var ownedPaths = [...]string{
 	`C:\Program Files\FI`,
 	`C:\ProgramData\FI`,
+	`C:\ProgramData\FI-Installer`,
 }
 
 type Presence string
