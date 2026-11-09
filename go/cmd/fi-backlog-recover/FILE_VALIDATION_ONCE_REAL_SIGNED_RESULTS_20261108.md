@@ -225,3 +225,22 @@ Output directory: /var/tmp/fi-window-chunks-clone-11-08-26-20261109T095450Z.
 | Calls >= 100ms | 27 | 313 | Not yet extracted from recover.log |
 
 Clean-run checks: 10 windows index 3–12, 566 signed cached data files and manifests byte-identical; SQL integrity PASS, checkpoint 13|1688152|12, canonical=0 accepted=0, private fixture on socket length 90 bytes, no per-COPY diagnostic instrumenter, no gctrace, no checkpoint logging override. Separate observers captured 600 lines of host iostat and 131 lines of vmstat at nominal five-second intervals. PostgreSQL stats before/after and settings captured; contents not yet analyzed. Clean minus instrumented elapsed = +34.438s; clean minus original = +72.528s. No basis to assign this difference to Go tracing overhead, WAL, PostgreSQL, or host load from elapsed time alone. Next inspect clean field-COPY metrics already present in recover.log, PostgreSQL stats, and sampled iostat/vmstat without rerunning.
+
+### Clean-run Security COPY and host telemetry (additional 2026-11-09 evidence)
+
+Clean baseline source unchanged: 9e0e6e236c95d9af91bc67a065efb47ce2318579; output `/var/tmp/fi-window-chunks-clone-11-08-26-20261109T095450Z`.
+
+| Metric | Original historical baseline | Instrumented baseline | Clean baseline Nov 9 |
+|---|---:|---:|---:|
+| Committed window elapsed (s) | 523.424 | 561.514 | 595.952 |
+| PostgreSQL field COPY wrapper sum (s) | 46.254 | 59.986 | 62.315 |
+| Field COPY calls | 574 | 574 | 574 |
+| Field COPY rows | 16,298,841 | 16,298,841 | 16,298,841 |
+| Field COPY calls >=100ms | 27 | 313 | 345 |
+| Elapsed outside field COPY (s) | 477.170 | 501.528 | 533.637 |
+
+Note: wrapper statistics are rounded individually at per-table granularity. The internal SecurityBulk summation differs by milliseconds (e.g. earlier 46.262s and 59.996s). The historical-to-clean total +72.528s comprises approximately +16.061s field COPY and +56.467s other elapsed, so diagnosing only Security COPY is insufficient. All 10 windows in the clean replay were slower than their corresponding window of the instrumented baseline; the baseline itself is not stable across runs.
+
+Clean PostgreSQL settings: shared_buffers 128MB, wal_buffers 4MB, max_wal_size 1GB, checkpoint_timeout 5min, checkpoint_completion_target 0.9, fsync/synchronous_commit/full_page_writes on, track_io_timing/track_wal_io_timing off.
+
+Host samples: iostat -x -w 5 for vtbd0 includes individual sample busy values of 75%, 55%, and 85% with ~4–6ms reads and ~1ms writes; this virtual block device shows potentially significant host-level I/O contention but selective samples do not prove saturation or FI-specific causal latency. Vmstat samples show mostly idle CPUs (roughly 77–90% CPU idle in examples), but host-wide idle percentage does not exclude one serial ingestion thread being CPU-bound. Full sample distributions, historical vs clean per-stage profile totals, and clean-run WAL/checkpoint deltas are still needed. Do not change PostgreSQL tuning until measured.
