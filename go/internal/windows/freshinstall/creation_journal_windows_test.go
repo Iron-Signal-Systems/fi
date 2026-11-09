@@ -182,18 +182,18 @@ func TestWindowsCreationJournalConcurrentInstallReservations(t *testing.T) {
 		}()
 	}
 	close(start)
-	// Do not release the successful open handle until every contender has
-	// attempted ReserveNew. Their failed CREATE_NEW calls are deterministic
-	// even though the successful handle remains open.
-	close(release)
-	wg.Wait()
-	close(results)
+	// Every result arrives before releasing the winning exclusive handle.
+	// Other processes attempting CREATE_NEW must fail even while that handle
+	// is still open, not just because a closed journal remains on disk.
 	successes := 0
-	for err := range results {
-		if err == nil {
+	for i := 0; i < attempts; i++ {
+		if err := <-results; err == nil {
 			successes++
 		}
 	}
+	close(release)
+	wg.Wait()
+	close(results)
 	if successes != 1 {
 		t.Fatalf("exactly one Windows CREATE_NEW reservation must win; got %d", successes)
 	}
