@@ -40,6 +40,7 @@ func TestJournalParentPolicyRejectsAllBroadenedOrAmbiguousACLs(t *testing.T) {
 	}{
 		{"untrusted owner", func(p *JournalParentSecurity) { p.OwnerSID = "S-1-5-21-100-200-300-500" }},
 		{"missing owner", func(p *JournalParentSecurity) { p.OwnerSID = "" }},
+		{"defaulted owner", func(p *JournalParentSecurity) { p.OwnerDefaulted = true }},
 		{"owner is trusted installer", func(p *JournalParentSecurity) { p.OwnerSID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464" }},
 		{"DACL not present", func(p *JournalParentSecurity) { p.DACLPresent = false }},
 		{"DACL not protected", func(p *JournalParentSecurity) { p.DACLProtected = false }},
