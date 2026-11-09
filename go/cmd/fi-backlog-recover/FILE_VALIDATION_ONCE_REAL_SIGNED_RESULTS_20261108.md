@@ -347,3 +347,14 @@ Measured in isolated `fi-efficiency-review` archive from experiment commit `2240
 Arithmetic comparisons: Security events reusable row traversal averaged 16.4% less time, 60.5% fewer allocated bytes and 8,192 fewer allocations per 4,096 parent events (two allocations avoided per event). Matched-scope reusable row traversal averaged 53.3% less time, 69.0% fewer allocated bytes and 8,192 fewer allocations per 4,096 events (one allocation avoided per synthetic matched scope, with ~2 scopes per event). Both sets of three timing samples are consistently separated between implementations, unlike earlier event benchmark. These microbenchmarks still **do not represent full pgx COPY/database elapsed time** or a measured decrease in peak heap/GC.
 
 Next acceptance: run targeted unit tests for `TestSecurityEventReusableCOPYSource` and `TestSecurityScopeReusableCOPYSource` plus other relevant package tests, followed by optional private-only integration verification of exact relational content and rollback. Do not promote source changes or claim overall throughput improvement without real signed end-to-end verification. Future optimization candidates: nine-column Security/File source COPY row allocation, then redundant canonical envelope scanning; one independently measured change at a time.
+
+### 2026-11-09 23:54 UTC — targeted Security reusable COPY unit gate passed
+
+Operator ran `go test ./internal/recordingest -run '^(TestSecurityEventReusableCOPYSource|TestSecurityScopeReusableCOPYSource)' -count=1 -v` from `/home/jwood/fi-efficiency-review/go` (isolated archive of commit `2240f58309b6399b913d41a69ef17c18bd057de0`). FreeBSD amd64 output: all four tests PASS; package PASS in 0.015s.
+
+- `TestSecurityEventReusableCOPYSourceMatchesLegacyFortyColumns`: PASS
+- `TestSecurityEventReusableCOPYSourcePrivateProfileGate`: PASS
+- `TestSecurityScopeReusableCOPYSourceMatchesLegacy`: PASS
+- `TestSecurityScopeReusableCOPYSourceEmpty`: PASS
+
+Result: targeted unit-level row/ordinal/value and selection equivalence accepted alongside allocation microbenchmarks; no claim of complete PostgreSQL integration acceptance or full signed ten-window performance improvement. Next candidate remains independent: reuse nine-column Security/File `source_record` COPY rows without changing generated source-ID lookup or signed ingestion semantics.
