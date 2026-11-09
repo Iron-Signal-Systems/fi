@@ -72,7 +72,7 @@ func targetsForVolume(scope config.VolumeConfig, enrollmentID string) (config.Vo
 // following its final reparse point. No drive alias, UNC, arbitrary device,
 // traversal or skipped intermediate directory may be introduced.
 func rootWalkPaths(item target) ([]string, error) {
-	if item.guid == "" || !strings.HasSuffix(item.guid, `}`) ||
+	if item.guid == "" || !strings.HasSuffix(item.guid, `}\`) ||
 		item.relativeRoot == "" || !strings.HasPrefix(item.relativeRoot, `\`) {
 		return nil, fmt.Errorf("%w: malformed volume locator or relative root", ErrInvalidRootTarget)
 	}
