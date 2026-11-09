@@ -103,12 +103,19 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 
 	sqlStarted := time.Now()
 	sourceColumns := []string{"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id", "written_at", "record_bytes", "record_sha256", "ingest_version"}
-	sourceCopyStarted := time.Now()
-	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns,
-		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+	// Keep ordinary ingestion byte-for-byte equivalent to its existing
+	// row callback. Only detached private W128/P3 uses the reusable source.
+	var sourceRows pgx.CopyFromSource
+	if usePrivateSinglePassSecurity(ctx) {
+		sourceRows = newSecuritySourceRecordCopySource(pending, sourceBatchID)
+	} else {
+		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			p := pending[i]
 			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
-		}))
+		})
+	}
+	sourceCopyStarted := time.Now()
+	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns, sourceRows)
 	elapsedSourceCopy := time.Since(sourceCopyStarted)
 	profile.SecurityBulk.SourceCopy += elapsedSourceCopy
 	profile.SecurityBulk.SourceLatency.observe(elapsedSourceCopy)
