@@ -183,6 +183,49 @@ func TestPlanCopiesApprovedScopeAndBindings(t *testing.T) {
 	}
 }
 
+func TestPerVolumePlanDoesNotDependOnOtherVolumeRootAvailability(t *testing.T) {
+	cfg, roots, _ := fixturePlan(t)
+	// A host-wide plan cannot claim complete policy authority while
+	// identities on the system volume are missing.
+	if _, err := NewPlan(cfg, nil); !errors.Is(err, ErrInvalidBindings) {
+		t.Fatalf("incomplete whole-host plan incorrectly accepted: %v", err)
+	}
+	// The independent data-volume pipeline has no governed roots and must
+	// remain evaluable even while the system volume is offline/unresolved.
+	dataPlan, err := NewVolumePlan(cfg, "data", nil)
+	if err != nil {
+		t.Fatalf("healthy volume was blocked by unrelated scope: %v", err)
+	}
+	data := Evidence{
+		VolumeID: "data",
+		VolumeGUID: `\\?\Volume{18fed846-4275-4251-b698-f268192100f2}\`,
+		VolumeSerial: "15172277115761558407",
+		ObjectID: fixtureID(8),
+	}
+	if result, err := dataPlan.Evaluate(data); err != nil || result.Status != Outside {
+		t.Fatalf("healthy volume could not evaluate own observation: %+v %v", result, err)
+	}
+	if _, err := dataPlan.Evaluate(systemEvidence()); !errors.Is(err, ErrInvalidEvidence) {
+		t.Fatalf("foreign-volume evidence accepted by isolated plan: %v", err)
+	}
+	if _, err := NewVolumePlan(cfg, "system", nil); !errors.Is(err, ErrInvalidBindings) {
+		t.Fatalf("unresolved system-volume policy roots were accepted: %v", err)
+	}
+	if _, err := NewVolumePlan(cfg, "other", nil); !errors.Is(err, ErrInvalidBindings) {
+		t.Fatalf("unknown volume enrollment accepted: %v", err)
+	}
+	if _, err := NewVolumePlan(cfg, "data", roots[:1]); !errors.Is(err, ErrInvalidBindings) {
+		t.Fatalf("foreign governed root was accepted on healthy volume: %v", err)
+	}
+	systemPlan, err := NewVolumePlan(cfg, "system", roots)
+	if err != nil {
+		t.Fatalf("resolved system volume was blocked: %v", err)
+	}
+	if result, err := systemPlan.Evaluate(systemEvidence()); err != nil || result.Status != Matched {
+		t.Fatalf("resolved system volume did not preserve policy membership: %+v %v", result, err)
+	}
+}
+
 func TestRejectsMutatedUncanonicalScope(t *testing.T) {
 	cfg, roots, _ := fixturePlan(t)
 	cfg.Policies[0].RelativeRoot = `\foo\..\bar`

@@ -142,6 +142,40 @@ func NewPlan(approved config.VolumeConfig, roots []RootBinding) (Plan, error) {
 	return out, nil
 }
 
+// NewVolumePlan makes an independently usable policy plan for exactly one
+// enrolled volume. A missing root identity or offline volume elsewhere in
+// the host must not block healthy-volume observation. All configured scope
+// is still validated; foreign-volume bindings are never silently accepted.
+func NewVolumePlan(approved config.VolumeConfig, enrollmentID string, roots []RootBinding) (Plan, error) {
+	if _, err := config.CanonicalVolumeV2(approved); err != nil {
+		return Plan{}, fmt.Errorf("%w: malformed approved volume scope: %v", ErrInvalidBindings, err)
+	}
+	var selected config.VolumeEnrollment
+	found := false
+	for _, volume := range approved.Volumes {
+		if volume.ID == enrollmentID {
+			selected = volume
+			found = true
+			break
+		}
+	}
+	if !found {
+		return Plan{}, fmt.Errorf("%w: volume %q is not enrolled", ErrInvalidBindings, enrollmentID)
+	}
+	isolated := config.VolumeConfig{
+		Version: config.VolumeConfigVersion,
+		Volumes: []config.VolumeEnrollment{selected},
+	}
+	for _, policy := range approved.Policies {
+		if policy.VolumeID == enrollmentID {
+			isolated.Policies = append(isolated.Policies, policy)
+		}
+	}
+	// NewPlan enforces an exact binding for every policy belonging to this
+	// volume and rejects IDs from every other volume.
+	return NewPlan(isolated, roots)
+}
+
 // Evaluate associates one trusted observation lineage with each matching
 // policy at most once. Missing ancestry is Unknown, never proof of Outside.
 // A reparse crossing makes the whole proposed containment proof unusable.
