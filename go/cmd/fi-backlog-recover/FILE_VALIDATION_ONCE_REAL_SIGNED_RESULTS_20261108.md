@@ -298,3 +298,18 @@ The ten W128 windows contain 1,159,345 Security parent events, 16,298,841 Securi
 A previously implemented and unit-tested `securityEventCopySource` in `security_event_copy_source_candidate.go` reuses a `[40]any` buffer and `[32]byte` digest per COPY sequence, preserving all 40 column positions/types and pgx's synchronous Values consumption contract. Staged **only on the experiment branch**: commit `d364ca76` routes the private W128 field-partition P3 path through this reusable source; default production P1 and ordinary P3 preserve the existing `pgx.CopyFromSlice` callback verbatim. Source SQL, event validation, strict signed envelope, window/field limits, field COPY, and per-window commit remain unchanged. Commit `0389abbc` adds private-P3-only selector/equivalence test in addition to existing 40-column equivalence and legacy-vs-reusable microbench.
 
 Required acceptance **before** proposing an end-to-end real signed rerun: run formatting and `go test ./internal/recordingest` from the GO 1.27.3 module on a disposable experiment-only checkout, run `go test ./internal/recordingest -run '^TestSecurityEventReusableCOPYSource' -count=1`, and the existing `BenchmarkSecurityEventCOPYRowsLegacyVsReusable` with `-benchmem`. Check for regressions in row values, event count, source IDs, nullable fields, SHA256 and both P1/P3 gate paths. Only after these pass choose one private end-to-end W3–W12 replay with original source and changed candidate; verify SQL integrity, 566 signed artifact readback, 1,297,765 records and event/field counts. Do not assert throughput gain without measurement, especially while Proxmox I/O pressure varies.
+
+### Reusable Security parent event COPY source microbenchmark — FreeBSD Xeon E5-2680 v2 (2026-11-09)
+
+Operator ran benchmark in isolated `git archive` of experiment commit `0389abbcef68cced4034dfa49ebf0cbc42c9ab81`: `goos=freebsd`, `goarch=amd64`, Go 1.27.3, Xeon E5-2680 v2 @ 2.80GHz. Command: `go test ./internal/recordingest -run '^$' -bench '^BenchmarkSecurityEventCOPYRowsLegacyVsReusable$' -benchmem -count=3`.
+
+| Implementation | ns/op (three runs) | B/op | allocs/op |
+|---|---|---:|---:|
+| legacy slice | 12,400,373; 13,287,929; 12,768,688 | 4,979,577; 4,979,564; 4,979,620 | 75,621 |
+| reusable source | 13,133,077; 12,641,646; 12,503,183 | 1,965,613; 1,965,611; 1,965,614 | 67,429 |
+
+One benchmark operation traverses 4,096 events. Arithmetic mean: 12.819ms legacy vs 12.759ms reusable (~0.5% difference, not a credible CPU speedup given variation). Allocated bytes: 4,979,587 vs 1,965,613 average, saving 3,013,974 B/op (~60.5%). Exactly 8,192 fewer allocations/op, equivalent to **two fewer allocations per event**. At 1,159,345 real Security events in W3–W12, proportional synthetic-fixture savings suggest roughly 853 MB of allocation traffic avoided, not actually measured on signed data.
+
+The benchmark exercises row-source traversal and hashing, not PostgreSQL CopyFrom encoding, transport, indexing or WAL. It does not establish end-to-end throughput gains. Benchmark PASS reported; separate `-run '^TestSecurityEventReusableCOPYSource'` results were not in the supplied output. Code remains staged privately, not accepted or merged.
+
+Next source-specific priority: choose a CPU/alloc hot path in envelope preparation (~120.184s historical), or redundant high-volume per-record work, and validate with microbench and correctness before a full signed replay. No rerun for unproven ~0.5% microbenchmark CPU effect.
