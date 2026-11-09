@@ -332,3 +332,18 @@ Engineering scoring dimensions: throughput and CPU, allocated B/op, allocs/op, G
 Private Security scope source design: `security_scope_copy_source_candidate.go` iterates already validated parent payloads, skips zero-scope events, writes `[4]any{source_record_id, scope_ordinal, scope_id, governed_root}` with per-parent one-based ordinals, never materializes `[][]any`, and never owns SQL transaction lifecycle. Only `usePrivateSinglePassSecurity(ctx)` W128/P3 selects it. Production P1 and nonprivate P3 retain the original materialized writer and source fields. Independent table COPY boundaries, row validation, field cursor, source custody, and Security partition finalization are unchanged. New unit tests cover exact legacy order/values, empty parents and a 4,096-event synthetic allocation benchmark. The change is **staged, not accepted**; it has not been compiled or tested on `fi-dev`.
 
 Next acceptance gate: in a disposable experiment-branch archive on `fi-dev`, run `go test ./internal/recordingest -run '^(TestSecurityEventReusableCOPYSource|TestSecurityScopeReusableCOPYSource)' -count=1` and the Security event+scope benchmarks with `-benchmem -count=3`. If both pass, evaluate allocation savings and check type/row parity for all sources. Only then decide if a new full private real-signed replay is justified; no main branch or production deployment.
+
+### 2026-11-09 paired event/scope reuse benchmark — operator-reported results
+
+Measured in isolated `fi-efficiency-review` archive from experiment commit `2240f58309b6399b913d41a69ef17c18bd057de0`, FreeBSD amd64, Intel Xeon E5-2680 v2 2.80 GHz. Command: `go test ./internal/recordingest -run '^$' -bench '^(BenchmarkSecurityEventCOPYRowsLegacyVsReusable|BenchmarkSecurityScopeCOPYRowsLegacyVsReusable)$' -benchmem -count=3`. Command completed PASS in 15.093s. Separate unit-test command output was not included in the reported results.
+
+| Row generator (4,096 events/op) | Three timing samples ns/op | Average ns/op | Average B/op | allocs/op |
+|---|---|---:|---:|---:|
+| Security events legacy | 14,086,059; 13,696,070; 13,647,097 | 13,809,742 | 4,979,571 | 75,621 |
+| Security events reusable | 11,058,555; 11,513,474; 12,069,684 | 11,547,238 | 1,965,610 | 67,429 |
+| Matched scopes legacy materialized | 1,886,866; 2,106,163; 1,875,525 | 1,956,185 | 1,044,324 | 32,252 |
+| Matched scopes reusable | 878,437; 934,952; 925,348 | 912,912 | 323,520 | 24,060 |
+
+Arithmetic comparisons: Security events reusable row traversal averaged 16.4% less time, 60.5% fewer allocated bytes and 8,192 fewer allocations per 4,096 parent events (two allocations avoided per event). Matched-scope reusable row traversal averaged 53.3% less time, 69.0% fewer allocated bytes and 8,192 fewer allocations per 4,096 events (one allocation avoided per synthetic matched scope, with ~2 scopes per event). Both sets of three timing samples are consistently separated between implementations, unlike earlier event benchmark. These microbenchmarks still **do not represent full pgx COPY/database elapsed time** or a measured decrease in peak heap/GC.
+
+Next acceptance: run targeted unit tests for `TestSecurityEventReusableCOPYSource` and `TestSecurityScopeReusableCOPYSource` plus other relevant package tests, followed by optional private-only integration verification of exact relational content and rollback. Do not promote source changes or claim overall throughput improvement without real signed end-to-end verification. Future optimization candidates: nine-column Security/File source COPY row allocation, then redundant canonical envelope scanning; one independently measured change at a time.
