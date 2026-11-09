@@ -49,6 +49,7 @@ type JournalParentACE struct {
 // a defaulted DACL, inherited ACEs, and unknown ACE forms are not acceptable.
 type JournalParentSecurity struct {
 	OwnerSID      string
+	OwnerDefaulted bool
 	DACLPresent   bool
 	DACLProtected bool
 	DACLDefaulted bool
@@ -66,6 +67,9 @@ func ValidateJournalParentSecurity(value JournalParentSecurity) error {
 		// local user, even one running in an elevated interactive session.
 	default:
 		return fmt.Errorf("%w: unacceptable owner SID %q", ErrUntrustedJournalParent, value.OwnerSID)
+	}
+	if value.OwnerDefaulted {
+		return fmt.Errorf("%w: defaulted owner is not accepted", ErrUntrustedJournalParent)
 	}
 	if !value.DACLPresent || !value.DACLProtected || value.DACLDefaulted {
 		return fmt.Errorf("%w: explicit nondefaulted protected DACL required", ErrUntrustedJournalParent)
