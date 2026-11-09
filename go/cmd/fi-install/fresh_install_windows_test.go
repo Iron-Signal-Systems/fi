@@ -96,7 +96,7 @@ func TestFreshInstallJSONNeverClaimsInstallationAuthority(t *testing.T) {
 		result.Action != "ReadOnlyFreshHostPreflight" ||
 		result.Mode != freshinstall.InstallMode ||
 		result.Version != freshinstall.ReportVersion ||
-		len(result.Findings) != 7 {
+		len(result.Findings) != 8 {
 		t.Fatalf("incorrect clean read-only preflight: %+v", result)
 	}
 }
@@ -112,7 +112,7 @@ func TestFreshInstallJSONReportsResidueAndReturnsNonzeroError(t *testing.T) {
 	}
 	var result freshinstall.Report
 	if json.Unmarshal(out.Bytes(), &result) != nil || result.Clean ||
-		!result.InstallBlocked || len(result.Findings) != 7 {
+		!result.InstallBlocked || len(result.Findings) != 8 {
 		t.Fatalf("existing FI hidden in report: %+v", result)
 	}
 }
