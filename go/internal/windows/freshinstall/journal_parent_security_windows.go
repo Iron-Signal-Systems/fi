@@ -7,7 +7,6 @@
 package freshinstall
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 	"unsafe"
@@ -113,6 +112,3 @@ func verifyJournalParentHandle(handle windows.Handle) error {
 	return nil
 }
 
-// All native ACL errors are fatal rather than treated as empty or defaulted
-// security. Do not follow a caller-provided path to repair these failures.
-var _ = errors.Is
