@@ -67,13 +67,16 @@ func journalParentSecurityFromDescriptor(sd *windows.SECURITY_DESCRIPTOR) (Journ
 		return out, fmt.Errorf("%w: DACL is null or unavailable: %v", ErrUntrustedJournalParent, err)
 	}
 	out.DACLDefaulted = daclDefaulted
-	// Fail before decoding an unexpectedly long list. There is no reason to
-	// process a larger DACL under the exact two-ACE parent security contract.
-	if dacl.AceCount != 2 {
-		return out, fmt.Errorf("%w: native journal directory DACL contains %d ACEs, expected exactly two",
+	// Native inspection may encounter ordinary Windows directories with
+	// several ACEs. Decode them for diagnostics, then let the strict
+	// two-ACE policy reject them. Still bound how much untrusted ACL data is
+	// processed; never grant trust just because decoding succeeded.
+	const maxNativeParentACEs = 32
+	if dacl.AceCount > maxNativeParentACEs {
+		return out, fmt.Errorf("%w: journal parent DACL exceeds native inspection bound: %d ACEs",
 			ErrUntrustedJournalParent, dacl.AceCount)
 	}
-	out.Entries = make([]JournalParentACE, 0, 2)
+	out.Entries = make([]JournalParentACE, 0, dacl.AceCount)
 	for index := uint16(0); index < dacl.AceCount; index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, uint32(index), &ace); err != nil || ace == nil {
