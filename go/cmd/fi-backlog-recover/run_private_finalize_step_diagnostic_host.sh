@@ -21,9 +21,16 @@ ref=9e0e6e236c95d9af91bc67a065efb47ce2318579
 seed=/home/jwood/fi-window-bench-fieldpart-20261104T091019Z/W64
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-root=/home/jwood/fi-window-bench-fstep-$stamp
+# The historical relay has an explicit executable-path allowlist:
+# /home/jwood/fi-window-bench-optfield-*
+# Preserve that allowlist; do not weaken relay restrictions for a diagnostic.
+root=/home/jwood/fi-window-bench-optfield-fstep-$stamp
 out=/var/tmp/fi-window-chunks-fstep-$stamp
 # Fail before touching the seed if either AF_UNIX socket would exceed FreeBSD sun_path.
+case "$root" in
+    /home/jwood/fi-window-bench-optfield-*) ;;
+    *) fail 'private experiment root rejected by pinned relay executable allowlist' ;;
+esac
 private_socket="$root/$name/socket/.s.PGSQL.55981"
 relay_socket="$out/pg-$name/.s.PGSQL.55981"
 [ "${#private_socket}" -le 103 ] || fail "private socket path too long: ${#private_socket}"
