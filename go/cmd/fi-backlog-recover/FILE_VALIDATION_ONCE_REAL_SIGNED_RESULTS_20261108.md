@@ -313,3 +313,22 @@ One benchmark operation traverses 4,096 events. Arithmetic mean: 12.819ms legacy
 The benchmark exercises row-source traversal and hashing, not PostgreSQL CopyFrom encoding, transport, indexing or WAL. It does not establish end-to-end throughput gains. Benchmark PASS reported; separate `-run '^TestSecurityEventReusableCOPYSource'` results were not in the supplied output. Code remains staged privately, not accepted or merged.
 
 Next source-specific priority: choose a CPU/alloc hot path in envelope preparation (~120.184s historical), or redundant high-volume per-record work, and validate with microbench and correctness before a full signed replay. No rerun for unproven ~0.5% microbenchmark CPU effect.
+
+### Engineering efficiency review, beyond records/sec (2026-11-09)
+
+Maintain the fixed real-signed 10-window W3–W12 baseline of 1,297,765 records, 1,159,345 Security parent events, 16,298,841 Security child fields. The original fast run's nested stage totals are: envelope prepare 120.184s, Security projection 120.989s, File projection 77.676s, source SQL 39.616s, Security field COPY 46.262s, whole windows 523.424s. Later runs exhibited material VM storage pressure, so throughput deltas are not comparable without a stable host; CPU/heap microbenchmarks remain valuable independent evidence.
+
+Engineering scoring dimensions: throughput and CPU, allocated B/op, allocs/op, GC pressure/peak live heap, SQL/WAL and disk work, predictability of bounded resources, exact source evidence and error-path acceptance. A meaningful memory win is valuable even when elapsed time is unchanged.
+
+| Candidate | Source finding | Expected resource targeted | State |
+|---|---|---|---|
+| File validation once | 137,777 duplicate NTFS validations removed on 10-window replay | CPU and transient allocation | Acceptance passes for removal; no proven end-to-end speed gain |
+| Reusable 40-column Security event COPY source | Original callback created a new []any per event; existing candidate reuses array | Heap allocation, GC | Synthetic 4,096-event bench: ~60.5% fewer allocated bytes; 8,192 fewer allocations per operation; no proven elapsed improvement; private W128/P3 only |
+| Reusable Security matched-scope COPY source | Current code materializes `[][]any` for every matched scope before `windows_security_event_scope` COPY | Peak temporary memory, allocated bytes, GC | New private-only candidate in 6e4e347 + a3f67aa; unit/bench in 386f769. **Not yet tested** |
+| Reusable nine-column Security and File source COPY rows | Both existing `CopyFromSlice` callbacks return new []any for each source record | Allocation/GC | Source-review candidate only; do not change until scope acceptance |
+| Canonical Security envelope scanning | `tryPrepareSinglePassSecurity` runs multiple `bytes.Count`/`json.Valid` prechecks before strict JSON decode | CPU and allocation | Source-review candidate only; malformed/fallback equivalence is mandatory |
+| PostgreSQL partition validation | One 1.6M-row/window count/min/max, CHECK validation, FK validation and attach | DB CPU, buffer traffic, I/O | Data integrity essential; do not remove checks or reorder SQL based on noisy virtual-storage timings |
+
+Private Security scope source design: `security_scope_copy_source_candidate.go` iterates already validated parent payloads, skips zero-scope events, writes `[4]any{source_record_id, scope_ordinal, scope_id, governed_root}` with per-parent one-based ordinals, never materializes `[][]any`, and never owns SQL transaction lifecycle. Only `usePrivateSinglePassSecurity(ctx)` W128/P3 selects it. Production P1 and nonprivate P3 retain the original materialized writer and source fields. Independent table COPY boundaries, row validation, field cursor, source custody, and Security partition finalization are unchanged. New unit tests cover exact legacy order/values, empty parents and a 4,096-event synthetic allocation benchmark. The change is **staged, not accepted**; it has not been compiled or tested on `fi-dev`.
+
+Next acceptance gate: in a disposable experiment-branch archive on `fi-dev`, run `go test ./internal/recordingest -run '^(TestSecurityEventReusableCOPYSource|TestSecurityScopeReusableCOPYSource)' -count=1` and the Security event+scope benchmarks with `-benchmem -count=3`. If both pass, evaluate allocation savings and check type/row parity for all sources. Only then decide if a new full private real-signed replay is justified; no main branch or production deployment.
