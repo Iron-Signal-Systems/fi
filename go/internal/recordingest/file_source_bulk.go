@@ -60,13 +60,20 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 		"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id",
 		"written_at", "record_bytes", "record_sha256", "ingest_version",
 	}
-	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, columns,
-		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+	// Only the isolated private W128/P3 path selects the reusable source.
+	// Keep all existing ordinal/identity checks and the default COPY callback.
+	var sourceRows pgx.CopyFromSource
+	if usePrivateSinglePassSecurity(ctx) {
+		sourceRows = newFileSourceRecordCopySource(pending, sourceBatchID)
+	} else {
+		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
 			p := pending[i]
 			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version,
 				p.prepared.Record.RecordKind, p.prepared.Record.ScopeID,
 				p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
-		}))
+		})
+	}
+	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, columns, sourceRows)
 	if err != nil {
 		return fmt.Errorf("FI FileObservation source COPY: %w", err)
 	}
