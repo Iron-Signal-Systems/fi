@@ -7,6 +7,8 @@
 
 > **Installed-grant security boundary (branch-only):** `volumeconsent` verifies signed short-lived installer intent and `volumegrant` verifies a signed durable grant against **independently trusted state**. Neither is wired into the legacy installer, creates a protected grant, supplies real operator approval or starts volume-wide capture. See [transaction consent](development/WINDOWS-VOLUME-FIRST-CONSENT-RECEIPT.md) and [installed grant](development/WINDOWS-VOLUME-FIRST-INSTALLED-GRANT.md).
 
+> **Fresh-install journal foundation (branch-only):** `freshinstall` now has a private Windows-native `CREATE_NEW`/sync journal writer and unit tests; it refuses existing journals and ambiguous interrupted transactions, but is **not connected** to the installer, has no provisioned protected parent, and cannot create FI services. See [creation journal](development/WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md).
+
 ## Status and authority
 
 `fi-install.exe` is the native FI Windows source installer and desired-state
