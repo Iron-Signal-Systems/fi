@@ -144,20 +144,11 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		"share_name", "share_local_path", "relative_target_name", "old_security_descriptor", "new_security_descriptor", "subcategory_guid", "audit_policy_changes",
 		"raw_xml_bytes", "raw_xml_sha256",
 	}
+	// The experimental W128/P3 path reuses the already-tested forty-column
+	// row buffer. Production P1 and ordinary P3 retain their original writer.
+	eventRows := securityEventCopyRows(ctx, pending)
 	eventCopyStarted := time.Now()
-	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns,
-		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
-			p := pending[i]
-			v := p.value
-			rawXML := []byte(v.RawXML)
-			digest := sha256.Sum256(rawXML)
-			return []any{
-				p.sourceRecordID, p.observedAt, v.CollectionMethod, v.Channel, v.Provider, p.eventID, nullString(v.Version), p.eventRecordID, p.timeCreated, v.Computer, nullString(v.Keywords),
-				string(v.AuditResult), string(v.ScopeBasis), nullString(v.SubjectUserSID), nullString(v.SubjectUserName), nullString(v.SubjectDomainName), nullString(v.SubjectLogonID), nullString(v.ObjectServer), nullString(v.ObjectType), nullString(v.ObjectName),
-				nullString(v.HandleID), nullString(v.ProcessID), nullString(v.ProcessName), nullString(v.AccessMask), nullString(v.AccessList), nullString(v.AccessReason), nullString(v.TransactionID), nullString(v.FileName), nullString(v.LinkName), nullString(v.SourceIP), nullString(v.SourcePort),
-				nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
-			}, nil
-		}))
+	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns, eventRows)
 	elapsedEventCopy := time.Since(eventCopyStarted)
 	profile.SecurityBulk.EventCopy += elapsedEventCopy
 	profile.SecurityBulk.EventLatency.observe(elapsedEventCopy)
@@ -228,4 +219,26 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	profile.Projection += elapsedProjection
 	profile.SecurityProjection += elapsedProjection
 	return nil
+}
+
+// securityEventCopyRows keeps the exact established callback for ordinary
+// ingestion. Only the isolated private-field W128/P3 path can select the
+// reusable forty-column row source, reducing per-event allocation pressure
+// without changing validations, column values, COPY order or transaction scope.
+func securityEventCopyRows(ctx context.Context, pending []securityBulkRecord) pgx.CopyFromSource {
+	if usePrivateSinglePassSecurity(ctx) {
+		return newSecurityEventCopySource(pending)
+	}
+	return pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+		p := pending[i]
+		v := p.value
+		rawXML := []byte(v.RawXML)
+		digest := sha256.Sum256(rawXML)
+		return []any{
+			p.sourceRecordID, p.observedAt, v.CollectionMethod, v.Channel, v.Provider, p.eventID, nullString(v.Version), p.eventRecordID, p.timeCreated, v.Computer, nullString(v.Keywords),
+			string(v.AuditResult), string(v.ScopeBasis), nullString(v.SubjectUserSID), nullString(v.SubjectUserName), nullString(v.SubjectDomainName), nullString(v.SubjectLogonID), nullString(v.ObjectServer), nullString(v.ObjectType), nullString(v.ObjectName),
+			nullString(v.HandleID), nullString(v.ProcessID), nullString(v.ProcessName), nullString(v.AccessMask), nullString(v.AccessList), nullString(v.AccessReason), nullString(v.TransactionID), nullString(v.FileName), nullString(v.LinkName), nullString(v.SourceIP), nullString(v.SourcePort),
+			nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
+		}, nil
+	})
 }
