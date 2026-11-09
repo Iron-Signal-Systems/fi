@@ -1,6 +1,6 @@
 # FI Windows Volume-First — Fresh Installation Contract
 
-**Status:** Development only. Read-only discovery, fresh-host inspection, scope review, signed-intent verification and signed installed-grant verification are partial foundations. No volume-first installer apply, native signed state installation or end-to-end source acceptance exists. A separate read-only governed-root identity observer is not integrated with installer approval and is not itself permission to install.  
+**Status:** Development only. Read-only discovery, fresh-host inspection, scope review, signed-intent verification and signed installed-grant verification are partial foundations. No volume-first installer apply, native signed state installation or end-to-end source acceptance exists. A separate read-only governed-root identity observer is **opt-in wired to installer inventory only**; it is not integrated with authorized installer apply or protected-grant approval, and is not permission to install.  
 **Branch:** `dev/windows-volume-first-20261108`  
 **Windows engineering and test host:** `adminbox`  
 **Deployment model:** **NEW INSTALL ONLY. No FI present. No in-place update, repair, migration, adoption or reconfiguration.**
@@ -27,7 +27,7 @@ The underlying `go/internal/windows/freshinstall` package queries these exact lo
 
 A passing preflight is only a **point-in-time observation**. The future native installer must revalidate this on the actual write boundary, prevent concurrent installation from racing that check, and additionally validate v2 policy and native volume identity before any privileged operations.
 
-The separate branch-only `-list-volumes [-volume-config <scope-v2.conf>]` command remains read-only and is **not** an installation action.
+The separate branch-only `-list-volumes [-volume-config <scope-v2.conf>]` command remains read-only and is **not** an installation action. With a v2 scope declaration it also accepts **explicit `-inspect-policy-roots`**, recording per-volume native governed-root identities and failures without granting approval, starting a service or invoking installer mutation. See `WINDOWS-VOLUME-FIRST-ROOT-PREFLIGHT.md`.
 
 ## Implementation surfaces required for the future fresh installer
 

@@ -1,7 +1,7 @@
 # Windows FI Volume-First — Native Governed-Root Attestation
 
 **Branch:** `dev/windows-volume-first-20261108`  
-**Status:** Read-only native directory identity observation staged, with pure and Windows-runner tests. NOT wired to FICollector, the installer, FIObjReader or any running FI service. Native `adminbox` acceptance remains NOT RUN.
+**Status:** Read-only native directory identity observation staged, with pure and Windows-runner tests. Integrated only into the installer **opt-in read-only `-inspect-policy-roots` inventory command**; NOT wired to FICollector, installer mutation/approval, FIObjReader or any running FI service. Native `adminbox` acceptance remains NOT RUN.
 
 ## Scope
 
@@ -20,3 +20,7 @@ The `AttestEnrolledVolumeRoots` API currently accepts a caller-supplied v2 decla
 Actual file history requires time-qualified evidence. A current directory ancestor is not proof of membership at a past USN event, especially for rename, delete and hard links. Report unknown rather than inventing historical paths.
 
 Required continuation: runtime installed-grant authority, native `adminbox` tests, volume-owned journal capture/custody and checkpoint state, time-aware parent link resolution, FICollector wiring, installer updates and backend source/projector changes. Validation rows V04-V07, V11, V14-V19 are NOT RUN. `main`, ISS-FS-22A and FISender remain unchanged.
+
+## Read-only preflight caller (2026-11-09)
+
+The Windows installer `-list-volumes -volume-config <scope> -inspect-policy-roots` command now invokes this native observer for each currently matched enrolled volume, validates returned root bindings with `policyassociation.NewVolumePlan`, and reports ordered 128-bit root identities or explicit independent failures. It is **not** a signature, authority token, source-history proof, installer create/apply path or service activation. See `WINDOWS-VOLUME-FIRST-ROOT-PREFLIGHT.md`.

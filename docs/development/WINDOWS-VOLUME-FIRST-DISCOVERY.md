@@ -12,12 +12,14 @@
 
 ## Operator command in branch-built `fi-install.exe`
 
-The native installer has two **stand-alone, read-only** forms:
+The native installer has three **stand-alone, read-only** forms:
 
 ```powershell
 .\fi-install.exe -list-volumes
 
 .\fi-install.exe -list-volumes -volume-config C:\FI-Dev\volume-v2.conf
+
+.\fi-install.exe -list-volumes -volume-config C:\FI-Dev\volume-v2.conf -inspect-policy-roots
 ```
 
 The optional file is a strict `version_id: 2.0` **scope-only** declaration as described in `WINDOWS-VOLUME-FIRST-CONFIGURATION.md`. It must be a regular file no larger than 1 MiB; unsupported syntax or old `1.1` configuration fails before native enumeration. The report is versioned JSON with:
@@ -65,3 +67,7 @@ See `docs/architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md`, `docs/development/WIND
 ## Separate governed-root identity observation (2026-11-09)
 
 A distinct read-only native package, `go/internal/windows/policyroot`, now walks explicit governed-root directory prefixes on one selected, matched NTFS volume, reading FILE_ID_INFO on each retained handle and rejecting reparse crossings. This is NOT performed by `volumediscovery`'s inventory and does not turn a discovered volume into installed authority. See `WINDOWS-VOLUME-FIRST-NATIVE-POLICY-ROOT.md`. Native `adminbox` acceptance and signed installer integration remain outstanding.
+
+## Opt-in read-only governed-root inspection (2026-11-09)
+
+The third form requires an explicit v2 declaration and reports current native 128-bit file identities for each governed root on every matching enrolled volume. It uses the separate `policyroot` package. Independent failed/unavailable volume and root statuses are reported, and any failure returns nonzero. The inspector is not enabled by the first two forms. It does **not** authenticate operator approval, grant FIObjReader rights, start FIUSNReader or install v2 FI. See `WINDOWS-VOLUME-FIRST-ROOT-PREFLIGHT.md`. All `adminbox` acceptance remains NOT RUN.
