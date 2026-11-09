@@ -42,7 +42,7 @@ func TestFreshInstallAcceptsOnlyCompleteObservedAbsence(t *testing.T) {
 	}
 	if !report.Clean || report.InstallBlocked || report.InstallationAuthorized ||
 		report.Action != "ReadOnlyFreshHostPreflight" || report.Mode != InstallMode ||
-		report.Version != ReportVersion || len(report.Findings) != 7 {
+		report.Version != ReportVersion || len(report.Findings) != 8 {
 		t.Fatalf("incorrect new-install preflight report: %+v", report)
 	}
 	if !reflect.DeepEqual(p.serviceCalls, []string{
@@ -51,7 +51,7 @@ func TestFreshInstallAcceptsOnlyCompleteObservedAbsence(t *testing.T) {
 		t.Fatalf("unexpected SCM names checked: %+v", p.serviceCalls)
 	}
 	if !reflect.DeepEqual(p.pathCalls, []string{
-		`C:\Program Files\FI`, `C:\ProgramData\FI`,
+		`C:\Program Files\FI`, `C:\ProgramData\FI`, `C:\ProgramData\FI-Installer`,
 	}) {
 		t.Fatalf("unexpected FI paths checked: %+v", p.pathCalls)
 	}
@@ -104,6 +104,9 @@ func TestFreshInstallUnknownNeverMeansAbsent(t *testing.T) {
 		}},
 		{"FI state cannot be inspected", &fakeInspector{
 			pathErrors: map[string]error{`C:\ProgramData\FI`: errors.New("access denied")},
+		}},
+		{"installer bootstrap state cannot be inspected", &fakeInspector{
+			pathErrors: map[string]error{`C:\ProgramData\FI-Installer`: errors.New("access denied")},
 		}},
 		{"unrecognized native status", &fakeInspector{
 			services: map[string]Presence{"FICollector": "INVALID"},
