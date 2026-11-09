@@ -165,25 +165,35 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		scopeCount += len(p.value.MatchedScopes)
 		fieldCount += len(p.value.Fields)
 	}
-	scopes := make([][]any, 0, scopeCount)
-	for _, p := range pending {
-		for i, s := range p.value.MatchedScopes {
-			scopes = append(scopes, []any{p.sourceRecordID, i + 1, s.ScopeID, s.GovernedRoot})
+	var scopeRows pgx.CopyFromSource
+	if scopeCount > 0 {
+		if usePrivateSinglePassSecurity(ctx) {
+			// Private W128/P3 reuses a four-column row rather than retaining
+			// all matched scopes in an additional [][]any matrix.
+			scopeRows = newSecurityScopeCopySource(pending)
+		} else {
+			// Preserve the established P1 and ordinary P3 COPY behavior.
+			scopes := make([][]any, 0, scopeCount)
+			for _, p := range pending {
+				for i, scope := range p.value.MatchedScopes {
+					scopes = append(scopes, []any{p.sourceRecordID, i + 1, scope.ScopeID, scope.GovernedRoot})
+				}
+			}
+			scopeRows = pgx.CopyFromSlice(len(scopes), func(i int) ([]any, error) { return scopes[i], nil })
 		}
 	}
 	profile.SecurityBulk.ChildPrepare += time.Since(childPrepareStarted)
-	if len(scopes) > 0 {
+	if scopeCount > 0 {
 		scopeCopyStarted := time.Now()
-		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"}, []string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"},
-			pgx.CopyFromSlice(len(scopes), func(i int) ([]any, error) { return scopes[i], nil }))
+		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"}, []string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"}, scopeRows)
 		elapsedScopeCopy := time.Since(scopeCopyStarted)
 		profile.SecurityBulk.ScopeCopy += elapsedScopeCopy
 		profile.SecurityBulk.ScopeLatency.observe(elapsedScopeCopy)
 		if err != nil {
 			return fmt.Errorf("FI Security bulk scopes COPY: %w", err)
 		}
-		if copied != int64(len(scopes)) {
-			return fmt.Errorf("FI Security bulk scopes count: got %d expected %d", copied, len(scopes))
+		if copied != int64(scopeCount) {
+			return fmt.Errorf("FI Security bulk scopes count: got %d expected %d", copied, scopeCount)
 		}
 	}
 	// Feed fields directly from the already validated event payloads. Do not
@@ -213,7 +223,7 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	}
 	profile.SecurityBulk.Batches++
 	profile.SecurityBulk.Events += int64(len(pending))
-	profile.SecurityBulk.Scopes += int64(len(scopes))
+	profile.SecurityBulk.Scopes += int64(scopeCount)
 	profile.SecurityBulk.Fields += writtenFields
 	elapsedProjection := time.Since(projectionStarted)
 	profile.Projection += elapsedProjection
