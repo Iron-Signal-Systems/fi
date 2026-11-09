@@ -1,5 +1,7 @@
 # Windows Volume-First Development Validation Matrix
 
+> **Readiness decision 2026-11-09:** **NO-GO** to remove or reinstall FI on ISS-FS-22A. Green GitHub CI is not completion of the V01–V20 native acceptance cases. See [branch readiness audit](WINDOWS-VOLUME-FIRST-READINESS-AUDIT-2026-11-09.md).
+
 **Status:** All cases NOT RUN. This matrix is a development requirement, not a test report.
 **Branch:** `dev/windows-volume-first-20261108`
 **Windows development/test machine:** `adminbox`

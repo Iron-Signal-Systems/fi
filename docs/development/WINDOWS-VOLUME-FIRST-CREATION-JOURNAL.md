@@ -75,7 +75,7 @@ Branch unit tests verify:
 - duplicate, unknown, reordered, maliciously rehashed, mismatched identity/sequence and oversized journal events are refused;
 - nil source/sink and malformed installation IDs or scope digests are refused.
 
-The test backend and journal sink are **in memory only**. No Windows system files, services, PKI or source custody are mutated by these tests.
+The pure protocol runner's fault-injection backend/sink are **in memory only**. Separate Windows-native journal I/O tests do create isolated temporary-directory files; neither test class installs FI services, alters system PKI, or modifies real source custody.
 
 ## Still required before any actual installation
 
