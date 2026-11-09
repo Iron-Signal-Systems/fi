@@ -61,7 +61,7 @@ Windows-only tests run in **isolated temporary directories**, not `C:\\ProgramDa
 
 **Important remaining trust gap:** The parent directory is supplied by the caller. This writer can check the path and opened handle but **does not verify the parent owner's native security descriptor, required protected DACL, signer authority, or independent machine identity**. It must not be invoked from an installer on an untrusted writable parent. There is no production bootstrap to provision that parent with an ACL at creation time, no protected signing-key handoff, no tested kernel-level handle-relative child creation race defense, and no crash/power-loss durability proof. Unit tests validate success/error results of Windows I/O calls, **not** persistence across sudden power failure.
 
-The future native bootstrap must solve that trust boundary before exposure. The existing helper is private specifically so a partially tested file-writing capability cannot be mistaken for an installation authority.
+The branch now has a strict read-only parent-owner/DACL evaluator and a native handle-based Windows descriptor reader; see `WINDOWS-VOLUME-FIRST-JOURNAL-PARENT-SECURITY.md`. They **do not create the parent and are not yet wired into the journal writer**. The future protected bootstrap must solve that trust boundary before exposure. The existing helper is private specifically so a partially tested file-writing capability cannot be mistaken for an installation authority.
 
 ## Test coverage
 
