@@ -144,7 +144,6 @@ func TestPublishedVolumeWindowRejectsCorruptAndMislocatedArtifacts(t *testing.T)
 }
 
 func TestWindowContinuityAndIdentityFailureNeverReadsSpool(t *testing.T) {
-	cp, journal, window := custodyFixture()
 	for _, tc := range []struct {
 		name string
 		change func(*volumeepoch.Checkpoint,*volumeepoch.Journal,*Window)
