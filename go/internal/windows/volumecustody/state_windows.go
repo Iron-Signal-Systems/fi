@@ -14,7 +14,6 @@ import (
  "io"
  "os"
  "path/filepath"
- "strings"
  "sync"
  "syscall"
  "unsafe"
@@ -91,7 +90,7 @@ func (s *WindowsVolumeState) Acquire(ctx context.Context,id string) (Lease,error
  f,err:=os.OpenFile(lockPath,os.O_CREATE|os.O_RDWR,0600)
  if err!=nil{return nil,fmt.Errorf("open enrolled-volume lease: %w",err)}
  fi,err:=f.Stat()
- if err!=nil || !fi.Mode().IsRegular(){
+ if err!=nil || fi==nil || !fi.Mode().IsRegular(){
   _=f.Close()
   return nil,fmt.Errorf("%w: lease file handle is not regular: %v",ErrVolumeStateUntrusted,err)
  }
@@ -229,4 +228,3 @@ func parseVolumeCursor(value string) (uint64,error) {
 // installer must establish trusted ancestor handles, owner/DACL, protected
 // state directory, service access and a signed installed-grant before this
 // component can be wired into a Windows FICollector service.
-var _ = strings.Compare
