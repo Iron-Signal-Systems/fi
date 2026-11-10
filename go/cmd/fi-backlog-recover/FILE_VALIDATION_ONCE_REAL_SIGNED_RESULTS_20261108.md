@@ -383,3 +383,23 @@ Three-run benchmarks used `-run '^$' -bench '^(BenchmarkSecuritySourceRecordCOPY
 | File/USN source reusable | 957,732; 949,102; 987,616 | 964,817 | ~437,051 | 25,936 |
 
 Result: Security source candidate saves ~57.4% B/op and 4,097 allocs/op (~one per record plus a fixed one) and improves row-source generation timing ~44.1%. File/USN source candidate saves ~57.4% B/op and 4,097 allocs/op and improves row-source generation timing ~44.1%. Means are arithmetic over three samples, not end-to-end pgx COPY or full-ingest metrics. These results plus targeted tests close the candidate's unit/microbenchmark gate. No production promotion or full signed end-to-end acceptance yet.
+
+### Security canonical envelope key scan candidate (2026-11-10) — STAGED, UNTESTED
+
+The private W128/P3 canonical Security fast path (`security_single_pass_candidate.go`) previously performed `bytes.Index(body, securityWrittenAtKey)` and `bytes.Index(body, securityPayloadKey)`, followed by `bytes.Count(body, securityWrittenAtKey)` and `bytes.Count(body, securityPayloadKey)`. This repeats searches across the same signed JSONL envelope before running payload validity and strict JSON v1 decoding. Historical envelope preparation accounted for ~120.184s of the original ten-window run, but no cost is attributed specifically to these searches.
+
+Experiment commit `6f9334fdcf742bdec48c85aa2b50e18d669bf07f` replaces those four marker lookups with one sequential comma scan, `findSinglePassSecurityEnvelopeKeys`: find first exact `,"written_at":` and `,"payload":` occurrences and fail selection on any duplicate. It purposely scans commas inside strings/nested payloads too, matching the original *raw-byte* predicate rather than using a different top-level JSON interpretation. Original marker-order checks, `json.Valid(scopeValue)`, `json.Valid(writtenAtValue)`, **`json.Valid(rawPayload)`**, `decodeStrictPayload(..., json.DefaultOptionsV1(), jsonv2.RejectUnknownMembers(true))`, Security observation validation, SHA-256 of exact LF-terminated bytes, original `SourceRecord` and private-only P3 selection are unchanged. This is not an attempt to skip validation.
+
+Test/benchmark commit `e74661414fe91e64e5e5321bf668ff497beb8a59` adds `security_envelope_key_scan_test.go`: a frozen old Index/Count oracle; canonical, missing, reversed, duplicated, nested, quote and NUL byte cases; deterministic randomized marker probes; and isolated 8KiB/64KiB parser-key-search benchmarks (`legacy-four-searches` vs `single-comma-scan`). Existing `TestSinglePassSecurityCanonicalEquivalence`, `TestSinglePassSecurityFallbackAndReject`, and `TestSinglePassSecuritySelectionPrivateP3Only` remain mandatory.
+
+**Status:** the new candidate was staged remotely but has **NOT been compiled, benchmarked or run** on fi-dev. No measured CPU, B/op or allocs/op effect; new scanner could be neutral or slower and must be dropped if so. Scope of change is the existing private W128/P3 fast path only. It does not touch the four previously accepted reusable COPY row candidates, their tests, production P1, ordinary P3, PostgreSQL schema, WAL settings or main branch.
+
+Next unit and microbenchmark commands, in an isolated archive of commit `e74661414fe91e64e5e5321bf668ff497beb8a59`:
+
+```sh
+go test ./internal/recordingest -run '^TestSinglePassSecurity' -count=1 -v
+go test ./internal/recordingest -run '^$' -bench '^BenchmarkSinglePassSecurityEnvelopeKeySearch$' -benchmem -count=3
+go test ./internal/recordingest -run '^$' -bench '^BenchmarkSecuritySourceEnvelopeAndPayloadOnePass$' -benchmem -count=3
+```
+
+Do not launch another ten-window private replay for an unproven marker-scan micro-optimization. If the scanner is slower or does not preserve strict byte-identical input acceptance, revert the experiment before trying another envelope candidate.
