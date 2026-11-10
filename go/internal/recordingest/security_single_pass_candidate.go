@@ -59,12 +59,14 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 	// Only select the exact canonical layout. A repeated or reordered
 	// member goes through the original strict decoder, preserving its
 	// legacy JSON v1 acceptance/rejection and error behavior.
-	written := bytes.Index(body, securityWrittenAtKey)
-	payload := bytes.Index(body, securityPayloadKey)
-	if written <= len(securityEnvelopePrefix) ||
-		payload <= written+len(securityWrittenAtKey) ||
-		bytes.Count(body, securityWrittenAtKey) != 1 ||
-		bytes.Count(body, securityPayloadKey) != 1 {
+	// One comma-delimited scan locates both key markers and rejects
+	// duplicates. This is byte-for-byte equivalent to the legacy Index+Count
+	// checks, including markers inside nested payloads and quoted strings.
+	// The strict JSON v1 decoder below remains the acceptance authority.
+	written, payload, unique := findSinglePassSecurityEnvelopeKeys(body)
+	if !unique ||
+		written <= len(securityEnvelopePrefix) ||
+		payload <= written+len(securityWrittenAtKey) {
 		return emptySource, emptySecurity, false, nil
 	}
 	// The two intervening values must be exactly one JSON string each;
@@ -137,6 +139,41 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		eventRecordID: pgtype.Numeric{Int: bigEventRecordID, Exp: 0, Valid: true},
 	}
 	return source, security, true, nil
+}
+
+
+// findSinglePassSecurityEnvelopeKeys replaces four complete byte searches
+// (two Index and two Count) with one pass over commas. It deliberately
+// recognizes the same raw marker bytes, even inside nested JSON members or
+// quoted content: changing that behavior would alter the existing fallback
+// contract for noncanonical signed input.
+//
+// This is NOT a parser. decodeStrictPayload still strictly validates the
+// complete envelope, including unknown members and malformed JSON.
+func findSinglePassSecurityEnvelopeKeys(body []byte) (writtenAt, payload int, unique bool) {
+	writtenAt, payload = -1, -1
+	for offset := 0; offset < len(body); {
+		comma := bytes.IndexByte(body[offset:], ',')
+		if comma < 0 {
+			break
+		}
+		offset += comma
+		if bytes.HasPrefix(body[offset:], securityWrittenAtKey) {
+			if writtenAt >= 0 {
+				return -1, -1, false
+			}
+			writtenAt = offset
+		}
+		if bytes.HasPrefix(body[offset:], securityPayloadKey) {
+			if payload >= 0 {
+				return -1, -1, false
+			}
+			payload = offset
+		}
+		// Advance past this comma, including when it starts a key marker.
+		offset++
+	}
+	return writtenAt, payload, writtenAt >= 0 && payload >= 0
 }
 
 // usePrivateSinglePassSecurity restricts this CPU optimization to the
