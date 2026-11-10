@@ -13,11 +13,56 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
+
+// newWindowsCreationSinkForIsolatedTests exists ONLY in the Windows test
+// binary. It retains the earlier native CREATE_NEW/write/sync/recovery tests
+// in disposable, ordinary temp directories, where owner/DACL are not an FI
+// installer trust boundary. Shipping code must use newWindowsCreationSink,
+// which always verifies the retained protected parent handle first.
+func newWindowsCreationSinkForIsolatedTests(path string) *windowsCreationSink {
+	return &windowsCreationSink{
+		parentPath: path,
+		skipProtectedParentForTests: true,
+	}
+}
+
+func TestProtectedNativeJournalWriterRejectsUntrustedParentBeforeCREATE_NEW(t *testing.T) {
+	dir := t.TempDir()
+	// A runner temp directory is normally inherited and intentionally not
+	// configured as an approved installer parent. Inspect it independently
+	// so this test does not assume particular runner image ACL defaults.
+	parentPtr, err := windows.UTF16PtrFromString(dir)
+	if err != nil { t.Fatal(err) }
+	handle, err := windows.CreateFile(
+		parentPtr, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0,
+	)
+	if err != nil { t.Fatal(err) }
+	policyErr := verifyJournalParentHandle(handle)
+	if err := windows.CloseHandle(handle); err != nil { t.Fatal(err) }
+	if policyErr == nil {
+		t.Skip("runner temp directory unexpectedly matches canonical FI installer owner/DACL; cannot exercise rejection")
+	}
+
+	sink := newWindowsCreationSink(dir) // normal, non-test-bypass constructor
+	if err := sink.ReserveNew(testInstallID); !errors.Is(err, ErrUntrustedJournalParent) {
+		_ = sink.Close()
+		t.Fatalf("untrusted journal parent reached create-new boundary: %v", err)
+	}
+	if err := sink.Close(); err != nil { t.Fatal(err) }
+	if _, err := os.Lstat(filepath.Join(dir, nativeCreationJournalName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("untrusted journal parent left newly created FI evidence: %v", err)
+	}
+}
 
 func TestWindowsCreationJournalDurablyRecordsAllEvents(t *testing.T) {
 	dir := t.TempDir() // isolated test directory, NEVER a live FI installation
-	sink := newWindowsCreationSink(dir)
+	sink := newWindowsCreationSinkForIsolatedTests(dir)
 	creator := &recordingCreator{}
 	if err := executeCreation(sink, creator, testCreationIdentity); err != nil {
 		_ = sink.Close()
@@ -48,7 +93,7 @@ func TestWindowsCreationJournalRefusesExistingFileWithoutModification(t *testing
 	if err := os.WriteFile(path, before, 0600); err != nil {
 		t.Fatal(err)
 	}
-	sink := newWindowsCreationSink(dir)
+	sink := newWindowsCreationSinkForIsolatedTests(dir)
 	creator := &recordingCreator{}
 	if err := executeCreation(sink, creator, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
 		t.Fatalf("existing journal accepted for replacement: %v", err)
@@ -67,7 +112,7 @@ func TestWindowsCreationJournalRefusesExistingFileWithoutModification(t *testing
 
 func TestWindowsCreationJournalNativeMutationFailurePreservesPartialCustody(t *testing.T) {
 	dir := t.TempDir()
-	sink := newWindowsCreationSink(dir)
+	sink := newWindowsCreationSinkForIsolatedTests(dir)
 	backend := &recordingCreator{failAt: 3}
 	if err := executeCreation(sink, backend, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
 		t.Fatalf("native partial creation did not fail closed: %v", err)
@@ -84,7 +129,7 @@ func TestWindowsCreationJournalNativeMutationFailurePreservesPartialCustody(t *t
 		status.CreatedSteps != 2 || status.NextStep != creationSteps[2] {
 		t.Fatalf("partial native creation was interpreted as complete: %+v %v", status, err)
 	}
-	second := newWindowsCreationSink(dir)
+	second := newWindowsCreationSinkForIsolatedTests(dir)
 	retryBackend := &recordingCreator{}
 	if err := executeCreation(second, retryBackend, testCreationIdentity); !errors.Is(err, ErrCreationInDoubt) {
 		t.Fatalf("existing incomplete journal accepted by new process: %v", err)
@@ -103,14 +148,14 @@ func TestWindowsCreationJournalRejectsBadParentAndClosedSink(t *testing.T) {
 		filepath.VolumeName(t.TempDir()) + `\`,
 	}
 	for _, path := range testPaths {
-		sink := newWindowsCreationSink(path)
+		sink := newWindowsCreationSinkForIsolatedTests(path)
 		if err := sink.ReserveNew(testInstallID); err == nil {
 			_ = sink.Close()
 			t.Fatalf("invalid local journal parent accepted: %q", path)
 		}
 		_ = sink.Close()
 	}
-	sink := newWindowsCreationSink(t.TempDir())
+	sink := newWindowsCreationSinkForIsolatedTests(t.TempDir())
 	if err := sink.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +166,7 @@ func TestWindowsCreationJournalRejectsBadParentAndClosedSink(t *testing.T) {
 
 func TestWindowsCreationJournalRejectsUnsafeFrames(t *testing.T) {
 	dir := t.TempDir()
-	sink := newWindowsCreationSink(dir)
+	sink := newWindowsCreationSinkForIsolatedTests(dir)
 	if err := sink.ReserveNew(testInstallID); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +192,7 @@ func TestWindowsCreationJournalDeniesParentReparseAlias(t *testing.T) {
 		// The Windows runner may not be granted symbolic-link creation rights.
 		t.Skipf("Windows symlink privilege unavailable: %v", err)
 	}
-	sink := newWindowsCreationSink(alias)
+	sink := newWindowsCreationSinkForIsolatedTests(alias)
 	if err := sink.ReserveNew(testInstallID); err == nil {
 		_ = sink.Close()
 		t.Fatal("reparse parent accepted")
@@ -169,7 +214,7 @@ func TestWindowsCreationJournalConcurrentInstallReservations(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sink := newWindowsCreationSink(dir)
+			sink := newWindowsCreationSinkForIsolatedTests(dir)
 			<-start
 			err := sink.ReserveNew(testInstallID)
 			results <- err
@@ -204,7 +249,7 @@ func TestWindowsCreationJournalConcurrentInstallReservations(t *testing.T) {
 
 func TestWindowsCreationJournalHandleHasNoFileShareUntilClose(t *testing.T) {
 	dir := t.TempDir()
-	sink := newWindowsCreationSink(dir)
+	sink := newWindowsCreationSinkForIsolatedTests(dir)
 	if err := sink.ReserveNew(testInstallID); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +280,7 @@ func TestWindowsCreationJournalRejectsPreexistingFileReparsePoint(t *testing.T) 
 	if err := os.Symlink(target, alias); err != nil {
 		t.Skipf("Windows symlink creation not available: %v", err)
 	}
-	sink := newWindowsCreationSink(dir)
+	sink := newWindowsCreationSinkForIsolatedTests(dir)
 	if err := sink.ReserveNew(testInstallID); err == nil {
 		_ = sink.Close()
 		t.Fatal("CREATE_NEW accepted an existing reparse-point journal target")
@@ -253,7 +298,7 @@ func TestWindowsCreationJournalRetainedParentBlocksRename(t *testing.T) {
 	if err := os.Mkdir(parent, 0700); err != nil {
 		t.Fatal(err)
 	}
-	sink := newWindowsCreationSink(parent)
+	sink := newWindowsCreationSinkForIsolatedTests(parent)
 	if err := sink.ReserveNew(testInstallID); err != nil {
 		t.Fatal(err)
 	}

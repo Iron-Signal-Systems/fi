@@ -21,16 +21,21 @@ import (
 const nativeCreationJournalName = "fi-v2-create-only.journal"
 
 // windowsCreationSink implements the native file I/O portion of the creation
-// journal protocol. It is private and is NOT wired to fi-install. In
-// particular, a caller must NOT assume an arbitrary directory is a trusted
-// installer journal parent: native owner/DACL and issuer trust provisioning,
-// crash recovery, and service authorization remain separate acceptance gates.
+// journal protocol. It is private and is NOT wired to fi-install. Normal
+// construction now requires the native held parent handle to satisfy the exact
+// protected SYSTEM/Administrators owner/DACL contract BEFORE journal creation.
+// This does not establish installer issuer, ancestor trust, native protected
+// parent provisioning, crash recovery or service authorization.
 //
 // Retain the parent and journal handles for the whole transaction. The journal
 // is opened with zero file-sharing permissions and must never be truncated,
 // overwritten, renamed, or removed on any failure path.
 type windowsCreationSink struct {
 	parentPath string
+	// Only isolated _test.go fixtures may set this flag. Normal construction
+	// always enforces native owner/DACL attestation before CREATE_NEW.
+	// It is NOT an operator override, installer flag or service setting.
+	skipProtectedParentForTests bool
 	parent     windows.Handle
 	file       *os.File
 	reserved   bool
@@ -91,6 +96,18 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 	if finalParent == "" {
 		s.poisoned = true
 		return errors.New("FI journal parent has no resolved native identity")
+	}
+	// A correct-looking path is insufficient: inspect OWNER and DACL from
+	// the SAME retained native directory handle before CREATE_NEW. This
+	// enforces the strict SYSTEM/Administrators protected inheritance policy.
+	// Even a genuine protected ACL is not, by itself, installer authorization:
+	// issuer, ancestor provenance and operator consent remain separate gates.
+	// An unsafe test-only bypass is compiled only through the _test.go helper.
+	if !s.skipProtectedParentForTests {
+		if err := verifyJournalParentHandle(parent); err != nil {
+			s.poisoned = true
+			return fmt.Errorf("FI installer journal parent has no protected native owner/DACL: %w", err)
+		}
 	}
 	// Recheck ancestor paths after opening the parent. The held handle denies
 	// rename of the opened directory; full native protected-parent provenance
