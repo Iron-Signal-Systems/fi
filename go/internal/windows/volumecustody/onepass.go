@@ -73,14 +73,17 @@ type PassDependencies struct {
 	SpoolDir  string
 }
 
-// PassResult preserves source custody diagnostics even when the checkpoint
-// remains unchanged. Published does NOT mean cursor committed; an interrupted
-// commit must remain replayable and must not trigger automatic spool deletion.
+// PassResult preserves source custody evidence even on failure. Published
+// does NOT mean cursor committed. CommitAttempted and !CheckpointCommitted
+// represent an IN-DOUBT durable CAS, not proof of unchanged checkpoint.
+// Such a failure requires reloading protected checkpoint state before retry;
+// never delete or retire the already published spool evidence.
 type PassResult struct {
 	EnrollmentID        string
 	ManifestPath        string
 	Published           bool
 	Candidate           *volumeepoch.Checkpoint
+	CommitAttempted     bool
 	CheckpointCommitted bool
 }
 
@@ -91,7 +94,9 @@ type PassResult struct {
 // The correct sequence is lease -> checkpoint -> native read -> source-window
 // validation -> complete publication -> native journal rediscovery -> manifest
 // verification -> saved-state recheck -> atomic checkpoint CAS -> release.
-// All error paths preserve the existing checkpoint and published artifacts.
+// All failures BEFORE Commit leave checkpoint persistence untouched; an
+// error FROM Commit leaves its durable outcome IN DOUBT. Published artifacts
+// must remain available for manual replay/reconciliation in either case.
 // A caller-supplied fake Source/Store/Lease is NOT production authorization.
 func ProcessOneWindow(
 	ctx context.Context,
@@ -156,7 +161,18 @@ func ProcessOneWindow(
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	manifest, err := deps.Publisher.PublishWindow(ctx, window)
+	// Snapshot the native read before presenting a mutable window to the
+	// external publisher. The later byte-for-byte verifier MUST use the
+	// untouched source snapshot, never a caller-modified publisher argument.
+	captured := Window{
+		Boundary: window.Boundary,
+		Changes:  append([]MinimalChange(nil), window.Changes...),
+	}
+	publishInput := Window{
+		Boundary: captured.Boundary,
+		Changes:  append([]MinimalChange(nil), captured.Changes...),
+	}
+	manifest, err := deps.Publisher.PublishWindow(ctx, publishInput)
 	if err != nil {
 		return result, fmt.Errorf("publish complete FI source window: %w", err)
 	}
@@ -175,7 +191,7 @@ func ProcessOneWindow(
 		return result, fmt.Errorf("re-query enrolled-volume journal after publication: %w", err)
 	}
 	candidate, err := ProposeAfterPublishedWindow(
-		saved, current, window, deps.SpoolDir, manifest,
+		saved, current, captured, deps.SpoolDir, manifest,
 	)
 	if err != nil {
 		return result, err
@@ -193,8 +209,9 @@ func ProcessOneWindow(
 	if fresh != saved {
 		return result, ErrVolumeCheckpointConflict
 	}
+	result.CommitAttempted = true
 	if err := deps.Store.Commit(ctx, saved, candidate); err != nil {
-		return result, fmt.Errorf("commit verified volume cursor by durable compare-and-swap: %w", err)
+		return result, fmt.Errorf("commit verified volume cursor by durable compare-and-swap (outcome in doubt; inspect protected state before retry): %w", err)
 	}
 	result.CheckpointCommitted = true
 	return result, nil
