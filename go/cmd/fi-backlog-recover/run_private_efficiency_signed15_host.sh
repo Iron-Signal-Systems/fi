@@ -14,7 +14,7 @@ fail() { printf 'FI CLONE STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] || fail 'run as root on fi-backend-b'
 [ -x /usr/bin/time ] && [ -x /usr/bin/env ] && [ -x /usr/bin/true ] || fail 'FreeBSD resource-usage tools are missing'
 /usr/bin/time -l /usr/bin/true >/dev/null 2>&1 || fail 'FreeBSD time -l rusage unsupported'
-for command in jexec jls ps awk grep find wc sha256 iostat vmstat; do
+for command in jexec jls ps awk grep find wc sha256 iostat vmstat tar; do
     command -v "$command" >/dev/null 2>&1 || fail "missing $command"
 done
 
@@ -593,3 +593,28 @@ printf 'FI EFFICIENCY METRIC EXPORT PASS stage_windows=15 source_rows=%s\n' "$ne
 cat "$out/$name/result.txt" | tee -a "$out/SUMMARY.txt"
 cat "$out/$name/process_resources.txt" | tee -a "$out/SUMMARY.txt"
 printf 'FI EFFICIENCY FIFTEEN-WINDOW ACCEPTED output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$out" "$ref" | tee -a "$out/SUMMARY.txt"
+
+# Shareable diagnostics only. Deliberately EXCLUDE private/ copied signed
+# data, source.tar, PostgreSQL dump/cluster, and credentials. Every source
+# observation remains available in the local directory for later audit.
+bundle="$out/fi-efficiency-metrics-$stamp.tar.gz"
+(
+    cd "$out" || exit 1
+    tar -czf "$bundle" \
+        RUN_MANIFEST.txt SUMMARY.txt relay.log \
+        "$name/recover.log" "$name/result.txt" "$name/windows.txt" \
+        "$name/stages.txt" "$name/deferred.txt" \
+        "$name/WINDOW_RATES.txt" "$name/PER_WINDOW_STAGES.tsv" \
+        "$name/STAGE_TOTALS.tsv" "$name/PER_WINDOW_FAMILIES.tsv" \
+        "$name/PROCESSING_CHUNKS.tsv" "$name/SQL_WINDOW_COUNTS.tsv" \
+        "$name/GC_EVENTS.txt" "$name/process_resources.txt" \
+        "$name/METRICS_README.txt" "$name/pg_settings.txt" \
+        "$name/pg_before.txt" "$name/pg_after.txt" \
+        "$name/pg_stat_wal_before.jsonl" "$name/pg_stat_wal_after.jsonl" \
+        "$name/pg_stat_checkpointer_before.jsonl" "$name/pg_stat_checkpointer_after.jsonl" \
+        "$name/pg_stat_io_before.jsonl" "$name/pg_stat_io_after.jsonl" \
+        "$name/host-iostat.txt" "$name/host-vmstat.txt"
+) || fail 'cannot package complete metrics-only archive'
+[ -s "$bundle" ] || fail 'metrics archive empty'
+printf 'FI EFFICIENCY METRICS BUNDLE PASS path=%s\n' "$bundle"
+
