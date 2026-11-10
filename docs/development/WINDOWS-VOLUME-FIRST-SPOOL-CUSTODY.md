@@ -1,7 +1,7 @@
 # FI Volume-First — Bounded Spool Custody and USN Cursor Proposal
 
 **Development branch:** `dev/windows-volume-first-20261108`  
-**Status:** Verification-only implementation with isolated real spool-file tests. **NOT wired to the FICollector service, native USN reader, checkpoint persistence or backend.**
+**Status:** Verification-only spool-file and one-window coordination components with real published-spool tests and injected native/state/lease interfaces. **NOT wired to the FICollector service, native USN reader, protected checkpoint persistence or backend.**
 
 ## Purpose and source-truth boundaries
 
@@ -26,3 +26,9 @@ Tests in `verify_test.go` use the real published `spool.Writer` and `spool.Verif
 Next step: implement an **authorized** native enrolled-volume reader into a guarded per-volume worker; produce these exact minimal facts and a bounded boundary, durably publish a complete pass using a safe retry/abort protocol, and atomically guard checkpoint persistence. The backend must explicitly understand and preserve the new source version before any operational capture is enabled.
 
 **Deployment hold remains in force for ISS-FS-22A.**
+
+## One-window coordination (2026-11-09)
+
+`ProcessOneWindow` now orchestrates an **injected**, per-enrollment lease, checkpoint load, pre-read native journal query and continuity assessment, bounded native read, immutable expected-fact snapshot, publisher call, post-publication journal query, actual spool verification, saved checkpoint re-read and required atomic-CAS callback. It never implicitly opens NTFS devices, starts a service, creates an epoch or persists a checkpoint itself. Both ambiguous publication and checkpoint commit attempts are reported without deleting spool data. An injected native source, lease, publisher and store remain **untrusted external implementations** unless separately authorized and accepted.
+
+See [one-window custody coordinator contract](WINDOWS-VOLUME-FIRST-ONEPASS.md). No V01–V20 case is promoted from NOT RUN.

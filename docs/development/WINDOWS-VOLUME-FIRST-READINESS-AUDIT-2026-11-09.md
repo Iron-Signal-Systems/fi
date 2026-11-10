@@ -65,3 +65,9 @@ The development branch now invokes `requireVolumeFirstReadOnlyMode` before any i
 ## Additional A03 development evidence — 2026-11-09 (not closure)
 
 An isolated `volumecustody` package now verifies **actual published FI spool bytes** for one bounded volume-owned minimal USN window, including a terminal read-boundary record, before returning an **in-memory cursor proposal**. It preserves USN V2/V3 native reference width and rejects incomplete/tampered source batches. This is progress toward the custody boundary in A03, but **A03 remains P0/open**: no authenticated native reader, per-volume FICollector worker, multi-batch atomic publication/retry, protected spool lifetime, durable checkpoint write or backend consumption is integrated. No on-host `adminbox` evidence has been recorded. See `WINDOWS-VOLUME-FIRST-SPOOL-CUSTODY.md`.
+
+## Further A03 development progress — 2026-11-09 (still NO-GO)
+
+A new isolated `ProcessOneWindow` coordinator now imposes ordering on enrolled-volume source passes: exclusive-lease dependency, canonical checkpoint and pre-read journal assessment, bounded native reader dependency, actual spool custody verification, post-publication journal continuity check, checkpoint re-read and required durable-CAS callback. Mutation by a publisher cannot rewrite the captured facts being verified, and ambiguous publication or checkpoint commits are recorded rather than considered safe to discard. Fault-injected tests use real temporary FI spool files.
+
+**This is not P0/A03 closure**: no authenticated native FIUSNReader client, cross-process per-volume lease, protected v2 checkpoint store, crash recovery, complete one-batch publisher, FICollector service wiring or FreeBSD backend support is installed or accepted. Audit rows V01–V20 remain NOT RUN. See `WINDOWS-VOLUME-FIRST-ONEPASS.md`.

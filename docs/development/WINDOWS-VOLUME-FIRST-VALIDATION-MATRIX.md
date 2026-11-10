@@ -18,7 +18,7 @@ The Windows runner's isolated journal tests are source-level/native-I/O evidence
 
 **Narrow branch safety check:** Windows CI now builds and launches the actual branch `fi-install.exe` and verifies default and legacy flags are blocked before any installer discovery. This is an **A01 fallback mitigation only**, not V14/V16 native v2 installer acceptance. See `WINDOWS-VOLUME-FIRST-INSTALLER-EXECUTION-GATE.md`.
 
-**New isolated custody verification:** `go/internal/windows/volumecustody` checks published spool file bytes against a one-batch, bounded volume USN window and returns only an in-memory checkpoint candidate. No live reader, spool lifetime lock, persistence transaction, source service or backend linkage exists. These tests do **not** satisfy V03, V05, V07, V08 or V17. See `WINDOWS-VOLUME-FIRST-SPOOL-CUSTODY.md`.
+**New isolated custody coordination and verification:** `go/internal/windows/volumecustody` checks published spool file bytes against a one-batch, bounded volume USN window and returns only an in-memory checkpoint candidate. Its new one-window coordinator requires an injected exclusive lease, native reader, complete publisher and atomic-CAS store, with pre/post source identity checks and explicit in-doubt failure reporting; these are not installed native implementations. No live reader, spool lifetime lock, persistence transaction, source service or backend linkage exists. These tests do **not** satisfy V03, V05, V07, V08 or V17. See `WINDOWS-VOLUME-FIRST-SPOOL-CUSTODY.md` and `WINDOWS-VOLUME-FIRST-ONEPASS.md`.
 
 ## Rules of evidence
 
