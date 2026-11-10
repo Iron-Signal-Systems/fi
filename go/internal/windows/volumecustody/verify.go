@@ -91,9 +91,19 @@ func ProposeAfterPublishedWindow(
 	if err := validateWindow(saved, current, expected); err != nil {
 		return volumeepoch.Checkpoint{}, err
 	}
-	if !filepath.IsAbs(spoolDirectory) || !filepath.IsAbs(manifestPath) ||
-		filepath.Clean(filepath.Dir(manifestPath)) != filepath.Clean(spoolDirectory) {
-		return volumeepoch.Checkpoint{}, fmt.Errorf("%w: manifest is not a direct file in the selected spool directory", ErrUnverifiedCustody)
+	if !filepath.IsAbs(spoolDirectory) || !filepath.IsAbs(manifestPath) {
+		return volumeepoch.Checkpoint{}, fmt.Errorf("%w: spool directory and manifest must be absolute", ErrUnverifiedCustody)
+	}
+	// The FI writer publishes to the resolved physical spool directory, not
+	// necessarily the configured lexical path (which may be a Windows junction
+	// or short-name alias). Use the same authoritative resolver as the writer.
+	// Do not accept a manifest from a sibling, working or frozen directory.
+	physicalDir, err := spool.PhysicalSpoolDir(spoolDirectory)
+	if err != nil {
+		return volumeepoch.Checkpoint{}, fmt.Errorf("%w: resolve physical spool directory: %v", ErrUnverifiedCustody, err)
+	}
+	if filepath.Clean(filepath.Dir(manifestPath)) != physicalDir {
+		return volumeepoch.Checkpoint{}, fmt.Errorf("%w: manifest is not a direct file in the active physical spool directory", ErrUnverifiedCustody)
 	}
 	if err := requirePlainFile(manifestPath); err != nil {
 		return volumeepoch.Checkpoint{}, err
@@ -103,7 +113,7 @@ func ProposeAfterPublishedWindow(
 		return volumeepoch.Checkpoint{}, fmt.Errorf("%w: manifest/data verification failed: %v", ErrUnverifiedCustody, err)
 	}
 	if verification.Manifest.RecordCount != len(expected.Changes)+1 ||
-		filepath.Clean(filepath.Dir(verification.DataPath)) != filepath.Clean(spoolDirectory) ||
+		filepath.Clean(filepath.Dir(verification.DataPath)) != physicalDir ||
 		filepath.Base(manifestPath) != "batch-"+verification.Manifest.BatchID+".manifest.json" {
 		return volumeepoch.Checkpoint{}, fmt.Errorf("%w: published file/count identity mismatch", ErrUnverifiedCustody)
 	}
