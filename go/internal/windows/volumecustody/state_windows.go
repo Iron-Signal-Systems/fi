@@ -126,21 +126,29 @@ func (l *volumeStateLease) Release() error {
  return closeErr
 }
 
-func (s *WindowsVolumeState) requireLease(ctx context.Context,id string) (string,error) {
- if ctx==nil || !validPassEnrollment(id) {return "",ErrUnconfiguredPass}
- if err:=ctx.Err();err!=nil{return "",err}
+// requireLease holds the instance mutex across the whole file operation,
+// not merely its initial lease check. Otherwise another goroutine could call
+// Release between the check and the durable write, forfeiting the native lock
+// before our checkpoint replacement finishes. The unlock closure must always
+// be deferred by Load or Commit.
+func (s *WindowsVolumeState) requireLease(ctx context.Context,id string) (string,func(),error) {
+ if ctx==nil || !validPassEnrollment(id) {return "",nil,ErrUnconfiguredPass}
+ if err:=ctx.Err();err!=nil{return "",nil,err}
  dir,err:=s.checkedDirectory()
- if err!=nil{return "",err}
+ if err!=nil{return "",nil,err}
  s.mu.Lock()
  active:=s.held[id]!=nil && !s.held[id].released
- s.mu.Unlock()
- if !active{return "",fmt.Errorf("%w: checkpoint operations require an active enrolled-volume lease",ErrVolumeStateBusy)}
- return filepath.Join(dir,"fi-volume-"+id+".checkpoint.json"),nil
+ if !active{
+  s.mu.Unlock()
+  return "",nil,fmt.Errorf("%w: checkpoint operations require an active enrolled-volume lease",ErrVolumeStateBusy)
+ }
+ return filepath.Join(dir,"fi-volume-"+id+".checkpoint.json"),s.mu.Unlock,nil
 }
 
 func (s *WindowsVolumeState) Load(ctx context.Context,id string) (volumeepoch.Checkpoint,error) {
- path,err:=s.requireLease(ctx,id)
+ path,unlock,err:=s.requireLease(ctx,id)
  if err!=nil{return volumeepoch.Checkpoint{},err}
+ defer unlock()
  return loadVolumeStateFile(path,id)
 }
 
@@ -177,8 +185,9 @@ func (s *WindowsVolumeState) Commit(ctx context.Context,expected,next volumeepoc
  newCursor,err:=parseVolumeCursor(next.NextUSN)
  if err!=nil{return err}
  if newCursor<=oldCursor{return ErrVolumeCheckpointConflict}
- path,err:=s.requireLease(ctx,expected.EnrollmentID)
+ path,unlock,err:=s.requireLease(ctx,expected.EnrollmentID)
  if err!=nil{return err}
+ defer unlock()
  // Reject stale or replaced saved state while retaining the cross-process
  // lease. An in-doubt prior write must never be blindly overwritten.
  current,err:=loadVolumeStateFile(path,expected.EnrollmentID)
