@@ -55,17 +55,20 @@ jobs:
 
           # Launch the actual built executable with a strict timeout. A missing
           # guard could otherwise enter interactive legacy installer discovery.
-          $blockedArgs = @(
-            @(),
-            @('-apply'),
-            @('-apply=false'),
-            @('-plan-only'),
-            @('-config=C:\FI\legacy.conf'),
-            @('-volume-config=C:\FI\scope.conf'),
-            @('-list-volumes', '-apply=false'),
-            @('-check-clean-install', '-apply=false')
+          # Use labeled hashtables, not nested PowerShell arrays: pipeline
+          # enumeration could otherwise flatten or omit the empty argument set.
+          $blockedCases = @(
+            @{ Name = 'default'; Args = [string[]]@() }
+            @{ Name = 'apply'; Args = [string[]]@('-apply') }
+            @{ Name = 'apply-false'; Args = [string[]]@('-apply=false') }
+            @{ Name = 'legacy-plan'; Args = [string[]]@('-plan-only') }
+            @{ Name = 'legacy-config'; Args = [string[]]@('-config=C:\FI\legacy.conf') }
+            @{ Name = 'lone-v2-scope'; Args = [string[]]@('-volume-config=C:\FI\scope.conf') }
+            @{ Name = 'mixed-inventory-apply'; Args = [string[]]@('-list-volumes', '-apply=false') }
+            @{ Name = 'mixed-clean-apply'; Args = [string[]]@('-check-clean-install', '-apply=false') }
           )
-          foreach ($argv in $blockedArgs) {
+          foreach ($case in $blockedCases) {
+            $argv = $case.Args
             $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
             $processInfo.FileName = $binary
             $processInfo.UseShellExecute = $false
@@ -87,6 +90,7 @@ jobs:
             if ($exitCode -ne 2 -or
                 $standardOutput.Length -ne 0 -or
                 $standardError -notmatch 'FI VOLUME-FIRST INSTALLATION BLOCKED') {
-              throw "Unexpected installer result for '$($argv -join ' ')': exit=$exitCode stdout=$standardOutput stderr=$standardError"
+              throw "Unexpected installer result for '$($case.Name)': exit=$exitCode stdout=$standardOutput stderr=$standardError"
             }
+            Write-Host "PASS: blocked $($case.Name) before legacy installer execution"
           }
