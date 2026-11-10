@@ -182,7 +182,7 @@ func TestPrivateHashH16ByteLimitAndCopyFailure(t *testing.T) {
 			state := newContentHashCopyState()
 			tx := newH16CaptureTx()
 			for id := 1; id <= 2; id++ {
-				row := []any{int64(id), "NotApplicable", nil, nil, nil, nil, nil, payload}
+				row := []any{int64(id), "Error", nil, nil, nil, nil, "test-error", payload}
 				if err := state.add(tc.ctx, tx, row); err != nil {
 					t.Fatal(err)
 				}
