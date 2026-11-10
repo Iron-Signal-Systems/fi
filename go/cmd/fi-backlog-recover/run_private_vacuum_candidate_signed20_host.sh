@@ -487,14 +487,14 @@ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 WHERE n.nspname='fi_recovery_projection'
 AND c.relname ~ '^windows_security_event_field_w0000(0[3-9]|1[0-9]|2[0-2])$'")
 [ "$leaf_config" = '20|20' ] || fail "new private leaf options expected 20|20 got $leaf_config"
-# The three restored seed field partitions may not be changed.
+# Only W1/W2 have restored field leaves; W0 is a marker, not a leaf.
 seed_config=$(sql "SELECT count(*)::text || '|' ||
     count(*) FILTER (WHERE 'autovacuum_vacuum_insert_threshold=-1' =
                        ANY(coalesce(c.reloptions,ARRAY[]::text[])))::text
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 WHERE n.nspname='fi_recovery_projection'
-AND c.relname ~ '^windows_security_event_field_w00000[0-2]$'")
-[ "$seed_config" = '3|0' ] || fail "seed leaf options were changed: $seed_config"
+AND c.relname ~ '^windows_security_event_field_w00000[1-2]$'")
+[ "$seed_config" = '2|0' ] || fail "seed leaf options were changed: $seed_config"
 printf 'FI VACUUM LEAF OPTIONS PASS new=%s seed=%s\n' "$leaf_config" "$seed_config" |
     tee "$out/$name/leaf_options.txt"
 
