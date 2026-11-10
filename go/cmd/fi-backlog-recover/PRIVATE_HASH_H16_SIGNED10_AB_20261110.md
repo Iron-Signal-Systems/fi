@@ -28,7 +28,7 @@ It executes one of **two** fixed modes: `baseline` or `h16`. Both modes:
 - Apply the **same** previously tested private Security field leaf `autovacuum_vacuum_insert_threshold=-1` SQL fixture (commit `dc556813d450f7ab79121d05e10e54c6d2732d01`). This is held constant; it is NOT a second variable.
 - Use real signed **W3–W12** exactly ten new windows, 1,297,765 new source records; expected W0–W12 checkpoint `13|1688152|12`. New field leaves exactly `10|10`, old W1/W2 leaves `2|0`. Canonical SoR and Accepted journal must remain zero.
 - Retain P3 and all other F3 settings, 32768-row processing chunks, `max_wal_size=1GiB`, `fsync=on`, `synchronous_commit=on`, `full_page_writes=on`, global autovacuum on. All 10 committed windows, staged-source/typed/verified descriptor hashes, partition constraints, independent signed batch-and-manifest byte comparisons, single-pass selection and 20-window provenance must pass.
-- Capture complete stage and processing-chunk profiles, per-table synchronous COPY, dedicated `HASH_COPY_PER_WINDOW.tsv` with hash rows/calls/latency for each of ten windows, PostgreSQL relation autovacuum/autoanalyze counters, WAL/checkpointer/IO counters, GC, RSS and host IO. The 10 private field leaves receive a separate post-run measured `VACUUM (ANALYZE)` in **both** variants.
+- Capture complete stage and processing-chunk profiles, per-table synchronous COPY, dedicated `HASH_COPY_PER_WINDOW.tsv` with hash rows/calls/latency for each of ten windows, with a fail-closed equality gate comparing the reported hash-copy rows against the independently validated FileObservation source counts, PostgreSQL relation autovacuum/autoanalyze counters, WAL/checkpointer/IO counters, GC, RSS and host IO. The 10 private field leaves receive a separate post-run measured `VACUUM (ANALYZE)` in **both** variants.
 
 The same-profile control is deliberately freshly replayed, not substituted with historical 15/20-window data. Run variants **sequentially**, never concurrently, and do not change SQL parameters or the input between them. The source build may be reconstructed in a different temporary directory, so “same binary” means equivalent pinned build inputs rather than claiming byte-identical executable hashes across runs.
 
@@ -39,7 +39,7 @@ On `fi-dev` as `jwood`:
 ```sh
 cd /home/jwood/fi-deferred-experiment || exit 1
 git fetch origin experiment/fi-file-validation-once-20261108 || exit 1
-git show <PINNED_RUNNER_COMMIT>:go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh > /home/jwood/fi-hash-ab10.sh || exit 1
+git show f6d2e1d2f7b59841d2247d529c9b6b6f4248c202:go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh > /home/jwood/fi-hash-ab10.sh || exit 1
 sh -n /home/jwood/fi-hash-ab10.sh || exit 1
 ```
 
@@ -56,3 +56,13 @@ Both runs must print `FI HASH AB10 ACCEPTED` and exit zero, with matched SQL cou
 ### Status
 
 **Source and tests staged; unit tests, FreeBSD `sh -n`, and paired signed runs have not yet been executed on the host.** The runner explicitly runs its Go tests before it starts the seed database. This does not touch the FI main branch, installers or production defaults. No performance benefit has been asserted.
+
+
+## Current implementation commits and evidence limits
+
+- Go opt-in hash context: `8b8d42121ceb909f4d1d73cd595571925bad2200`.
+- CLI guarded flag: `778110987550bfe18b57a0f30a30262789a8f685`.
+- Hash-specific Go unit tests with valid Error-state byte-boundary row: `e47b5383e19140090d691b7c20e8d6ef6e0113fa` (pinned source overlay).
+- Paired signed-data runner with exact W3–W12 source counters, per-window hash COPY calls and FileObservation source-row equality: `f6d2e1d2f7b59841d2247d529c9b6b6f4248c202`.
+
+The original accepted `go/internal/recordingest/content_hash_copy.go` and all original production SQL indexes/foreign keys are unchanged. The unit tests must pass in the disposable source tree on the operator's FreeBSD jail *before the seed is started*. The runner's static source and acceptance checks were reviewed, but the actual Go test/SQL runs have not yet been executed.
