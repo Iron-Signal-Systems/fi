@@ -123,6 +123,16 @@ func Assess(enrollmentID string, saved *Checkpoint, current Journal) (Assessment
 	}
 }
 
+// ValidateCheckpoint validates one exact, persisted epoch checkpoint without
+// inventing a current journal snapshot. It grants no volume-read permission,
+// does not establish baseline custody and never writes state.
+func ValidateCheckpoint(enrollmentID string, saved Checkpoint) error {
+	if !validEnrollmentID(enrollmentID) {
+		return fmt.Errorf("%w: invalid enrolled-volume key", ErrInvalidCheckpoint)
+	}
+	return validateCheckpoint(saved, enrollmentID)
+}
+
 func validateCheckpoint(saved Checkpoint, enrollmentID string) error {
 	if saved.Version != CheckpointVersion || saved.Epoch == 0 || saved.EnrollmentID != enrollmentID {
 		return fmt.Errorf("%w: version, epoch or enrollment identity mismatch", ErrInvalidCheckpoint)
