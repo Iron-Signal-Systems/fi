@@ -194,6 +194,10 @@ qclone() { psql "$conn" -X -qAt -v ON_ERROR_STOP=1 -c "$1"; }
 for setting in fsync synchronous_commit full_page_writes; do
     [ "$(qclone "SHOW $setting")" = on ] || fail "clone durability $setting is not on"
 done
+[ "$(qclone 'SHOW autovacuum')" = on ] || fail 'autovacuum globally disabled on trial clone'
+[ "$(qclone 'SHOW track_counts')" = on ] || fail 'PostgreSQL statistics tracking is disabled'
+[ "$(qclone 'SHOW autovacuum_vacuum_insert_threshold')" = 1000 ] ||
+    fail 'unexpected global insert-vacuum threshold; paired pilot invalid'
 # Alter only the SECURITY DEFINER fixture in the NEW private clone.
 # A restored existing function retains owner, EXECUTE ACL and security mode.
 # No fixture function or original seed is modified in either variant.
@@ -418,6 +422,12 @@ if ! /usr/bin/time -l /usr/bin/env GODEBUG=gctrace=1 "$recover" \
 fi
 
 stop_host_monitors
+[ -s "$out/$name/pg_5sec_samples.jsonl" ] ||
+    fail 'PostgreSQL vacuum/WAL observer did not collect samples'
+[ "$(wc -l < "$out/$name/pg_5sec_samples.jsonl" | tr -d ' ')" -ge 3 ] ||
+    fail 'PostgreSQL vacuum/WAL observer coverage incomplete'
+[ ! -s "$out/$name/pg_samples_errors.log" ] ||
+    fail 'PostgreSQL vacuum/WAL observer reported errors'
 snapshot_pg after
 snapshot_relations after
 printf 'FI EFFICIENCY HOST OBSERVERS captured iostat=%s vmstat=%s\n' \
@@ -738,7 +748,7 @@ snapshot_relations maintenance_after
 
 cat "$out/$name/result.txt" | tee -a "$out/SUMMARY.txt"
 cat "$out/$name/process_resources.txt" | tee -a "$out/SUMMARY.txt"
-printf 'FI VACUUM PILOT ACCEPTED output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$out" "$ref" | tee -a "$out/SUMMARY.txt"
+printf 'FI VACUUM PILOT ACCEPTED mode=%s output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$mode" "$out" "$ref" | tee -a "$out/SUMMARY.txt"
 
 # Shareable diagnostics only. Deliberately EXCLUDE private/ copied signed
 # data, source.tar, PostgreSQL dump/cluster, and credentials. Every source
