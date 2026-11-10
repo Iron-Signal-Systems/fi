@@ -102,6 +102,49 @@ func TestNativeWindowsParentSecurityReadsOpenedDirectoryHandle(t *testing.T) {
 	}
 }
 
+
+func TestNativeWindowsCreationJournalFileDescriptorRequiresInheritedPrivilegedACEs(t *testing.T) {
+	// These are actual native Windows SECURITY_DESCRIPTOR/ACE decodings,
+	// not a Go-only fabricated claim that a child file has secure ACLs.
+	const acceptedSDDL = "O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)"
+	sd, err := windows.SecurityDescriptorFromString(acceptedSDDL)
+	if err != nil {
+		t.Fatalf("parse inherited journal-file SDDL: %v", err)
+	}
+	observed, err := journalParentSecurityFromDescriptor(sd)
+	if err != nil {
+		t.Fatalf("inspect native inherited journal-file ACEs: %v", err)
+	}
+	if err := ValidateCreationJournalFileSecurity(observed); err != nil {
+		t.Fatalf("legitimate inherited journal-file SDDL refused: %+v %v", observed, err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		sddl string
+	}{
+		{"unexpected file owner", "O:WDG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)"},
+		{"extra world rights", "O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;;FR;;;WD)"},
+		{"no inheritance evidence", "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)"},
+		{"deny ACE", "O:SYG:SYD:AI(D;ID;FA;;;SY)(A;ID;FA;;;BA)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sd, err := windows.SecurityDescriptorFromString(tc.sddl)
+			if err != nil {
+				t.Fatalf("parse file policy SDDL: %v", err)
+			}
+			found, err := journalParentSecurityFromDescriptor(sd)
+			if err == nil {
+				err = ValidateCreationJournalFileSecurity(found)
+			}
+			if !errors.Is(err, ErrUntrustedJournalFile) &&
+				!errors.Is(err, ErrUntrustedJournalParent) {
+				t.Fatalf("unsafe native journal-file ACE accepted: %+v err=%v", found, err)
+			}
+		})
+	}
+}
+
 func TestNativeWindowsParentSecurityRejectsMissingDescriptor(t *testing.T) {
 	if _, err := journalParentSecurityFromDescriptor(nil); !errors.Is(err, ErrUntrustedJournalParent) {
 		t.Fatalf("nil native descriptor accepted: %v", err)
