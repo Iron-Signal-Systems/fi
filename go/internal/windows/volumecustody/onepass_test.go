@@ -85,6 +85,7 @@ func (h *passHarness) Commit(_ context.Context, old, next volumeepoch.Checkpoint
 		return ErrVolumeCheckpointConflict
 	}
 	h.checked = next
+	if h.failAt == "commit-after-write" { return errPassFault }
 	return nil
 }
 func (h *passHarness) QueryJournal(_ context.Context, id string) (volumeepoch.Journal, error) {
@@ -111,6 +112,11 @@ func (h *passHarness) PublishWindow(_ context.Context, window Window) (string, e
 	h.event("publish")
 	if h.failAt == "publish" { return "", errPassFault }
 	if h.failAt == "no-manifest" { return "", nil }
+	if h.failAt == "mutate-publisher" {
+		// An untrusted publisher can alter its input before writing, but
+		// the coordinator must verify against the original native capture.
+		window.Changes[0].USN = "2201"
+	}
 	h.publishedPath = publishFixture(h.t, h.spoolDir, window,
 		MinimalFactRecordKind, BoundaryRecordKind, "volume:"+window.Boundary.EnrollmentID)
 	if h.failAt == "wrong-manifest" {
@@ -123,7 +129,7 @@ func TestOneWindowCoordinatesCustodyThenCheckpointCAS(t *testing.T) {
 	h := newPassHarness(t)
 	result, err := ProcessOneWindow(context.Background(), "data", h.dep())
 	if err != nil { t.Fatal(err) }
-	if !result.Published || !result.CheckpointCommitted || result.Candidate == nil ||
+	if !result.Published || !result.CommitAttempted || !result.CheckpointCommitted || result.Candidate == nil ||
 		result.Candidate.NextUSN != "2500" || result.ManifestPath != h.publishedPath ||
 		h.checked.NextUSN != "2500" {
 		t.Fatalf("one-pass success not fully accounted: result=%+v saved=%+v", result, h.checked)
@@ -152,6 +158,7 @@ func TestOneWindowFailureGatesDoNotAdvanceCheckpoint(t *testing.T) {
 		{"native invalid bounded window", "", func(h *passHarness){h.window.Boundary.NextUSN="3001"}, "release", false},
 		{"incomplete publication", "publish", nil, "release", false},
 		{"no publication manifest", "no-manifest", nil, "release", false},
+		{"publisher mutated validated capture", "mutate-publisher", nil, "release", true},
 		{"journal requery failure", "requery", nil, "release", true},
 		{"journal replacement after publish", "", func(h *passHarness){
 			j := h.journal
@@ -170,7 +177,8 @@ func TestOneWindowFailureGatesDoNotAdvanceCheckpoint(t *testing.T) {
 			if tc.change!=nil {tc.change(h)}
 			result,err:=ProcessOneWindow(context.Background(),"data",h.dep())
 			if err==nil {t.Fatalf("failure scenario accepted: %+v",result)}
-			if result.CheckpointCommitted || result.Published != tc.published {
+			if result.CheckpointCommitted || result.Published != tc.published ||
+				result.CommitAttempted != (tc.failAt == "commit") {
 				t.Fatalf("failed pass advanced or misreported source custody: %+v %v",result,err)
 			}
 			if h.events[len(h.events)-1] != tc.lastEvent {
@@ -228,6 +236,31 @@ func TestOneWindowReleaseFailureNeverConcealsCommittedState(t *testing.T) {
 	if !errors.Is(err,errPassFault) || !result.Published ||
 		!result.CheckpointCommitted || h.checked.NextUSN!="2500" {
 		t.Fatalf("lease release error concealed committed state: result=%+v err=%v",result,err)
+	}
+}
+
+func TestAmbiguousCheckpointWriteReportsInDoubtWithoutInventedRollback(t *testing.T) {
+	h:=newPassHarness(t)
+	h.failAt="commit-after-write"
+	result,err:=ProcessOneWindow(context.Background(),"data",h.dep())
+	if !errors.Is(err,errPassFault) || !result.Published ||
+		!result.CommitAttempted || result.CheckpointCommitted ||
+		result.Candidate==nil || h.checked.NextUSN!="2500" {
+		t.Fatalf("ambiguous write concealed actual state or claimed commit: result=%+v err=%v persisted=%+v",result,err,h.checked)
+	}
+	if h.publishedPath=="" || result.ManifestPath!=h.publishedPath {
+		t.Fatal("in-doubt pass lost published spool custody evidence")
+	}
+}
+
+func TestEarlyCancellationDoesNotAcquireLease(t *testing.T) {
+	h:=newPassHarness(t)
+	ctx,cancel:=context.WithCancel(context.Background())
+	cancel()
+	result,err:=ProcessOneWindow(ctx,"data",h.dep())
+	if !errors.Is(err,context.Canceled) || len(h.events)!=0 ||
+		result.CommitAttempted || result.Published {
+		t.Fatalf("cancelled pass reached external resource: %+v %v events=%v",result,err,h.events)
 	}
 }
 
