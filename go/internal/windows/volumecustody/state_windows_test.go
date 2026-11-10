@@ -116,6 +116,15 @@ func TestWindowsVolumeStateRejectsCorruptCheckpointAndBadAdvance(t *testing.T){
   // The decoder alone accepts duplicate fields and alternative formatting.
   // Persisted checkpoint bytes must match one canonical encoding precisely.
   `{"version":"fi-volume-usn-checkpoint/1","version":"fi-volume-usn-checkpoint/1"}`,
+  // This representation is semantically valid if the JSON parser silently
+  // takes the last duplicate field. A raw/canonical equality check must
+  // still refuse it, without relying on missing required fields.
+  func() string {
+   b,_:=json.Marshal(cp)
+   return strings.Replace(string(b),
+    `"version":"fi-volume-usn-checkpoint/1"`,
+    `"version":"fi-volume-usn-checkpoint/1","version":"fi-volume-usn-checkpoint/1"`,1)+"\n"
+  }(),
   "  "+func() string {b,_:=json.Marshal(cp);return string(b)}()+"\n",
   func() string {b,_:=json.Marshal(cp);return string(b)}(),
  }{
