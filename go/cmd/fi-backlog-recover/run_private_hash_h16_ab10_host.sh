@@ -745,6 +745,8 @@ PER_WINDOW_FAMILIES.tsv: Security event/field counts, File validation reuse,
 PROCESSING_CHUNKS.tsv: per-processing-chunk duration, records, signed batches.
 SQL_WINDOW_COUNTS.tsv: post-run PostgreSQL durable source-record positions.
 WINDOW_RATES.txt: per-window records and actual durable-window durations.
+HASH_COPY_PER_WINDOW.tsv: exact per-window hash COPY rows, calls and
+  synchronous PostgreSQL COPY duration (same SQL table in both hash modes).
 GC_EVENTS.txt: Go runtime GC trace, enabled on replay only; instrumented
   elapsed time must not be confused with untraced baseline throughput.
 process_resources.txt: FreeBSD rusage peak replay-process resident memory;
@@ -792,6 +794,19 @@ END {
     fail 'hash COPY per-window profile missing or invalid'
 [ "$(wc -l < "$out/$name/HASH_COPY_PER_WINDOW.tsv" | tr -d ' ')" -eq 11 ] ||
     fail 'hash COPY profile does not contain ten rows'
+# One ContentHash observation per source-validated FileObservation in this
+# workload. The hash COPY rows must match the independently reported source
+# validation count, not merely a nonzero sample of PostgreSQL COPY traffic.
+hash_rows=$(awk -F '\t' 'NR>1 { total+=$2; rows++ } END { if (rows!=10) exit 1; print total+0 }' \
+    "$out/$name/HASH_COPY_PER_WINDOW.tsv") ||
+    fail 'hash COPY row matrix invalid'
+file_rows=$(awk -F '\t' 'NR>1 { total+=$6; rows++ } END { if (rows!=10) exit 1; print total+0 }' \
+    "$out/$name/PER_WINDOW_FAMILIES.tsv") ||
+    fail 'FileObservation source count matrix invalid'
+[ "$hash_rows" -eq "$file_rows" ] ||
+    fail "hash COPY/source-validated file row counts differ: $hash_rows/$file_rows"
+printf 'FI HASH COPY SOURCE EQUALITY PASS files=%s hash_rows=%s variant=%s\n' \
+    "$file_rows" "$hash_rows" "$hashmode" | tee -a "$out/SUMMARY.txt"
 
 # Maintenance debt acceptance: this candidate pays explicit
 # VACUUM (ANALYZE) of the 10 newly attached private field leaves, only
