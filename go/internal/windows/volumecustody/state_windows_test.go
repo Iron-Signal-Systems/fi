@@ -113,6 +113,11 @@ func TestWindowsVolumeStateRejectsCorruptCheckpointAndBadAdvance(t *testing.T){
  for _,raw:=range []string{
   "{", "{}","null", `{"version":"x"}`,
   strings.Repeat("x",maxVolumeCheckpointBytes+3),
+  // The decoder alone accepts duplicate fields and alternative formatting.
+  // Persisted checkpoint bytes must match one canonical encoding precisely.
+  `{"version":"fi-volume-usn-checkpoint/1","version":"fi-volume-usn-checkpoint/1"}`,
+  "  "+func() string {b,_:=json.Marshal(cp);return string(b)}()+"\n",
+  func() string {b,_:=json.Marshal(cp);return string(b)}(),
  }{
   if err:=os.WriteFile(path,[]byte(raw),0600);err!=nil{t.Fatal(err)}
   if _,err:=s.Load(ctx,"data");!errors.Is(err,ErrVolumeStateUntrusted){
