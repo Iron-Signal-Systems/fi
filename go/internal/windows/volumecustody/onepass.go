@@ -98,7 +98,7 @@ func ProcessOneWindow(
 	enrollmentID string,
 	deps PassDependencies,
 ) (result PassResult, returnErr error) {
-	if ctx == nil || enrollmentID == "" ||
+	if ctx == nil || !validPassEnrollment(enrollmentID) ||
 		deps.Lease == nil || deps.Store == nil ||
 		deps.Source == nil || deps.Publisher == nil || deps.SpoolDir == "" {
 		return PassResult{}, ErrUnconfiguredPass
@@ -125,12 +125,20 @@ func ProcessOneWindow(
 	if err != nil {
 		return result, fmt.Errorf("load durable FI volume checkpoint: %w", err)
 	}
-	// Check saved checkpoint format and the caller-supplied enrollment before
-	// permitting any privileged source operation. The empty journal is only a
-	// shape-independent checkpoint probe; real journal continuity follows.
-	if saved.Version != volumeepoch.CheckpointVersion ||
-		saved.EnrollmentID != enrollmentID || saved.Epoch == 0 {
-		return result, fmt.Errorf("%w: saved version, epoch or enrollment mismatch", ErrUnsafeWindow)
+	// Discover the actual enrolled journal BEFORE requesting a bounded read.
+	// Besides detecting a gap, Assess validates every persisted checkpoint
+	// field (including exact canonical unsigned NextUSN) and the actual journal
+	// identity. Untrusted persistent bytes never reach the privileged reader.
+	before, err := deps.Source.QueryJournal(ctx, enrollmentID)
+	if err != nil {
+		return result, fmt.Errorf("query enrolled-volume journal before read: %w", err)
+	}
+	assessment, err := volumeepoch.Assess(enrollmentID, &saved, before)
+	if err != nil {
+		return result, fmt.Errorf("%w: invalid checkpoint/journal: %v", ErrUnsafeWindow, err)
+	}
+	if assessment.State != volumeepoch.Continuous {
+		return result, fmt.Errorf("%w: cannot start bounded read from %s/%s", ErrUnsafeWindow, assessment.State, assessment.Reason)
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -190,4 +198,22 @@ func ProcessOneWindow(
 	}
 	result.CheckpointCommitted = true
 	return result, nil
+}
+
+// validPassEnrollment is intentionally checked before invoking the external
+// lease provider. It matches the canonical volumeepoch enrollment namespace,
+// preventing a path-like name from ever becoming a lock or checkpoint key.
+func validPassEnrollment(value string) bool {
+	if len(value) == 0 || len(value) > 64 ||
+		value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		c := value[i]
+		if !((c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
