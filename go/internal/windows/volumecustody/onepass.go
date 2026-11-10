@@ -73,14 +73,16 @@ type PassDependencies struct {
 	SpoolDir  string
 }
 
-// PassResult preserves source custody evidence even on failure. Published
-// does NOT mean cursor committed. CommitAttempted and !CheckpointCommitted
+// PassResult preserves source custody evidence even on failure.
+// PublicationAttempted without Published may have left in-doubt disk artifacts.
+// Published does NOT mean cursor committed. CommitAttempted and !CheckpointCommitted
 // represent an IN-DOUBT durable CAS, not proof of unchanged checkpoint.
 // Such a failure requires reloading protected checkpoint state before retry;
 // never delete or retire the already published spool evidence.
 type PassResult struct {
 	EnrollmentID        string
 	ManifestPath        string
+	PublicationAttempted bool
 	Published           bool
 	Candidate           *volumeepoch.Checkpoint
 	CommitAttempted     bool
@@ -172,14 +174,18 @@ func ProcessOneWindow(
 		Boundary: captured.Boundary,
 		Changes:  append([]MinimalChange(nil), captured.Changes...),
 	}
+	// From the moment the publisher is called, an error can mean partial
+	// persisted files or a completed manifest whose acknowledgement was lost.
+	// Preserve that uncertainty explicitly: it forbids automatic cleanup.
+	result.PublicationAttempted = true
 	manifest, err := deps.Publisher.PublishWindow(ctx, publishInput)
+	result.ManifestPath = manifest
 	if err != nil {
-		return result, fmt.Errorf("publish complete FI source window: %w", err)
+		return result, fmt.Errorf("publish FI source window (publication outcome may be in doubt): %w", err)
 	}
 	if manifest == "" {
-		return result, fmt.Errorf("%w: publisher did not return a manifest", ErrUnverifiedCustody)
+		return result, fmt.Errorf("%w: publisher returned no completed manifest; inspect spool before retry", ErrUnverifiedCustody)
 	}
-	result.ManifestPath = manifest
 	result.Published = true
 	if err := ctx.Err(); err != nil {
 		return result, err
