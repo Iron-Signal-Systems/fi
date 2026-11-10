@@ -1,7 +1,7 @@
 # FI Volume-First — Bounded Spool Custody and USN Cursor Proposal
 
 **Development branch:** `dev/windows-volume-first-20261108`  
-**Status:** Verification-only spool-file and one-window coordination components with real published-spool tests and injected native/state/lease interfaces. **NOT wired to the FICollector service, native USN reader, protected checkpoint persistence or backend.**
+**Status:** Verification-only spool-file, concrete one-batch publication and one-window coordination components with real published-spool tests and injected native/state/lease interfaces. **NOT wired to the FICollector service, native USN reader, protected checkpoint persistence or backend.**
 
 ## Purpose and source-truth boundaries
 
@@ -32,3 +32,7 @@ Next step: implement an **authorized** native enrolled-volume reader into a guar
 `ProcessOneWindow` now orchestrates an **injected**, per-enrollment lease, checkpoint load, pre-read native journal query and continuity assessment, bounded native read, immutable expected-fact snapshot, publisher call, post-publication journal query, actual spool verification, saved checkpoint re-read and required atomic-CAS callback. It never implicitly opens NTFS devices, starts a service, creates an epoch or persists a checkpoint itself. Both ambiguous publication and checkpoint commit attempts are reported without deleting spool data. An injected native source, lease, publisher and store remain **untrusted external implementations** unless separately authorized and accepted.
 
 See [one-window custody coordinator contract](WINDOWS-VOLUME-FIRST-ONEPASS.md). No V01–V20 case is promoted from NOT RUN.
+
+## Concrete FI spool publication and failure safety (2026-11-09)
+
+`OneBatchSpoolPublisher` writes bounded source records and the required terminal boundary with FI's existing spool writer. It requires exactly one completed and independently verified manifest/data pair. A source window cannot be considered complete if a stricter spool policy causes an early rollover. The new `spool.Writer.AbandonUnpublished` closes partial work **without** publishing it, deleting forensic work files or rolling back already published pairs. This is not protected source authority or a durable checkpoint commit. See `WINDOWS-VOLUME-FIRST-ONEPASS.md`.

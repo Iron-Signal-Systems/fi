@@ -71,3 +71,9 @@ An isolated `volumecustody` package now verifies **actual published FI spool byt
 A new isolated `ProcessOneWindow` coordinator now imposes ordering on enrolled-volume source passes: exclusive-lease dependency, canonical checkpoint and pre-read journal assessment, bounded native reader dependency, actual spool custody verification, post-publication journal continuity check, checkpoint re-read and required durable-CAS callback. Mutation by a publisher cannot rewrite the captured facts being verified, and ambiguous publication or checkpoint commits are recorded rather than considered safe to discard. Fault-injected tests use real temporary FI spool files.
 
 **This is not P0/A03 closure**: no authenticated native FIUSNReader client, cross-process per-volume lease, protected v2 checkpoint store, crash recovery, complete one-batch publisher, FICollector service wiring or FreeBSD backend support is installed or accepted. Audit rows V01–V20 remain NOT RUN. See `WINDOWS-VOLUME-FIRST-ONEPASS.md`.
+
+## Concrete single-batch spool publisher — 2026-11-09 (A03 remains open)
+
+An isolated `OneBatchSpoolPublisher` now writes bounded FI volume source facts and a terminal source boundary as one verifiable FI spool manifest/data pair. It refuses premature rollover and incomplete windows. New `spool.Writer.AbandonUnpublished` support closes incomplete work without accidentally publishing partial custody evidence or deleting previously published artifacts. Tests exercise disposable real files and the isolated one-pass coordinator.
+
+This **does not close A03**: the native authenticated volume reader, Windows service runtime, protected cross-process per-volume lease, real persistent v2 checkpoint CAS, crash recovery, bounded multi-batch publication and FreeBSD backend integration remain absent. The installed ISS-FS-22A source and `main` are unchanged; V01–V20 remain NOT RUN.

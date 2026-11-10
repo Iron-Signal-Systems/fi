@@ -1,6 +1,6 @@
 # FI Windows Collector Contract
 
-> **Volume-first source custody development (2026-11-09):** The separate `go/internal/windows/volumecustody` verifier can check one bounded already-published source window's spool bytes before returning an **in-memory checkpoint candidate**. It does **not** integrate a native enrolled-volume reader, persist checkpoints, accept multi-batch windows or run in FICollector. See [custody contract](development/WINDOWS-VOLUME-FIRST-SPOOL-CUSTODY.md). All v2 runtime acceptance remains unrun.
+> **Volume-first source custody development (2026-11-09):** The separate `go/internal/windows/volumecustody` package can concretely publish one complete bounded source window through the FI spool writer and verify its bytes before returning an **in-memory checkpoint candidate**. It does **not** integrate a native enrolled-volume reader, persist checkpoints, accept multi-batch windows or run in FICollector. See [custody contract](development/WINDOWS-VOLUME-FIRST-SPOOL-CUSTODY.md). All v2 runtime acceptance remains unrun.
 
 > **Proposed redesign, not implemented (2026-11-08):** Current code below remains root-owned. The development target uses one USN capture/checkpoint per explicitly enrolled NTFS volume and governed roots as deeper-observation policy boundaries; see [ADR-0002](architecture/ADR-0002-WINDOWS-VOLUME-FIRST.md) and [validation matrix](development/WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md). Source and installer code must change before this becomes a runtime contract.
 
