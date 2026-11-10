@@ -61,3 +61,7 @@ This is an engineering source/contract/readiness audit, not proof that every old
 ## Remediation follow-up — 2026-11-09 (A01 remains open)
 
 The development branch now invokes `requireVolumeFirstReadOnlyMode` before any inherited v1.1 installer discovery or mutation. Default invocation, old `-apply` and `-plan-only` usage, and mixed commands are denied; only explicit standalone read-only actions remain. This mitigates the **legacy fallback** part of A01, with unit tests and an actual Windows executable CI smoke test. **The original A01 finding and its audit-baseline evidence above remain intact. A01 is still P0/open** until there is a complete authenticated **v2 fresh-install apply** transaction. No other P0 finding is closed. See `WINDOWS-VOLUME-FIRST-INSTALLER-EXECUTION-GATE.md`.
+
+## Additional A03 development evidence — 2026-11-09 (not closure)
+
+An isolated `volumecustody` package now verifies **actual published FI spool bytes** for one bounded volume-owned minimal USN window, including a terminal read-boundary record, before returning an **in-memory cursor proposal**. It preserves USN V2/V3 native reference width and rejects incomplete/tampered source batches. This is progress toward the custody boundary in A03, but **A03 remains P0/open**: no authenticated native reader, per-volume FICollector worker, multi-batch atomic publication/retry, protected spool lifetime, durable checkpoint write or backend consumption is integrated. No on-host `adminbox` evidence has been recorded. See `WINDOWS-VOLUME-FIRST-SPOOL-CUSTODY.md`.
