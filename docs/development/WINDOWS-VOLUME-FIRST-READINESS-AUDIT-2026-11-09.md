@@ -77,3 +77,9 @@ A new isolated `ProcessOneWindow` coordinator now imposes ordering on enrolled-v
 An isolated `OneBatchSpoolPublisher` now writes bounded FI volume source facts and a terminal source boundary as one verifiable FI spool manifest/data pair. It refuses premature rollover and incomplete windows. New `spool.Writer.AbandonUnpublished` support closes incomplete work without accidentally publishing partial custody evidence or deleting previously published artifacts. Tests exercise disposable real files and the isolated one-pass coordinator.
 
 This **does not close A03**: the native authenticated volume reader, Windows service runtime, protected cross-process per-volume lease, real persistent v2 checkpoint CAS, crash recovery, bounded multi-batch publication and FreeBSD backend integration remain absent. The installed ISS-FS-22A source and `main` are unchanged; V01–V20 remain NOT RUN.
+
+## Windows-native checkpoint I/O experiment — 2026-11-10 (A03 still P0)
+
+The isolated volume-first `WindowsVolumeState` now implements real Windows cross-process lease exclusion and bounded canonical checkpoint reads, plus full-state CAS writing via an exclusively created flushed pending file and `MoveFileExW` write-through replacement. Fault-path tests reject stale cursors, changed epoch/identity, corrupt state and ambiguous pending files; source-window coordinator tests can use this file backend and the actual FI spool publisher in an isolated Windows runner.
+
+**This is not installed trusted state.** There is no protected-parent issuer/ACL/ancestor attestation, initial native enrollment and signed grant, authenticated service handoff, controlled reboot/power-loss acceptance, or FI backend/schema integration. All source and installer P0 findings remain open and ISS-FS-22A remains untouched.
