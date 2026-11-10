@@ -57,3 +57,7 @@ This is an engineering source/contract/readiness audit, not proof that every old
 `docs/WINDOWS-INSTALLER.md` and `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md` describe the existing legacy installer and are **NOT** approved v2 deployment instructions. Dated October 2026 Windows acceptance records describe earlier builds and must not be rewritten as v2 acceptance. `docs/development/WINDOWS-VOLUME-FIRST-*.md` and ADR-0002 describe the proposed replacement and its incomplete engineering foundation. The validation matrix remains authoritative for unrun acceptance.
 
 **Disposition:** The audit report is ready for engineering review; the branch is **not** approved to replace installed FI. Do not interpret this document, a CI green check or a read-only preflight success as permission to clear ISS-FS-22A.
+
+## Remediation follow-up — 2026-11-09 (A01 remains open)
+
+The development branch now invokes `requireVolumeFirstReadOnlyMode` before any inherited v1.1 installer discovery or mutation. Default invocation, old `-apply` and `-plan-only` usage, and mixed commands are denied; only explicit standalone read-only actions remain. This mitigates the **legacy fallback** part of A01, with unit tests and an actual Windows executable CI smoke test. **The original A01 finding and its audit-baseline evidence above remain intact. A01 is still P0/open** until there is a complete authenticated **v2 fresh-install apply** transaction. No other P0 finding is closed. See `WINDOWS-VOLUME-FIRST-INSTALLER-EXECUTION-GATE.md`.

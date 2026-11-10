@@ -13,6 +13,10 @@ Before the new installer starts any mutation, the machine must have **no locally
 
 A successful initial installation creates a new installation identity, generation 1, a new signed grant with **no predecessor**, new per-volume journal epochs and fresh checkpoints. An explicitly approved previously deployed shared AD/PKI issuer may be used if compatible, but that is a separate credential/trust decision; it does not turn a local FI installation into a supported update.
 
+## Development executable safety gate — NOT an installer
+
+The development branch now refuses the inherited FI 1.1 apply and plan operations (including no-argument default apply) **before any native installer side effect**. Only explicit standalone read-only `-check-clean-install` or `-list-volumes` actions remain callable; their existing strict argument validation still applies. A completed v2 installer must replace the fail-closed entry point with a **separately reviewed authenticated fresh-only transaction**, never re-enable legacy mutation as a shortcut. See `WINDOWS-VOLUME-FIRST-INSTALLER-EXECUTION-GATE.md`.
+
 ## Implemented branch-only clean-host preflight
 
 The read-only command:
