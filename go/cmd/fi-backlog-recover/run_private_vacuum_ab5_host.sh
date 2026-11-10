@@ -711,6 +711,31 @@ FI_METRICS
 printf 'FI EFFICIENCY METRIC EXPORT PASS stage_windows=5 source_rows=%s\n' "$new_records" |
     tee -a "$out/SUMMARY.txt"
 
+# Maintenance debt acceptance: both variants pay the same explicit
+# VACUUM (ANALYZE) of their five newly attached private field leaves, only
+# AFTER committed-window timing, SQL integrity and signed custody checks.
+# This is NOT a PostgreSQL global or production vacuum change.
+# Comparing ingest+repayment helps expose deferred versus eliminated work.
+maint_log="$out/$name/MAINTENANCE_REPAYMENT.tsv"
+printf 'window\telapsed_seconds\n' > "$maint_log"
+maint_start=$(date -u '+%s')
+for w in 3 4 5 6 7; do
+    table=$(printf 'windows_security_event_field_w%06d' "$w")
+    started=$(date -u '+%s')
+    jexec -U jwood fi-dev psql \
+        "host=$root/$name/socket port=55981 user=fi_m1_admin dbname=fi sslmode=disable" \
+        -X -q -v ON_ERROR_STOP=1 -c "VACUUM (ANALYZE) fi_recovery_projection.$table" \
+        > "$out/$name/vacuum_manual_w$w.log" 2>&1 ||
+        fail "postrun private leaf VACUUM ANALYZE failed window=$w"
+    stopped=$(date -u '+%s')
+    printf '%s\t%s\n' "$w" "$((stopped-started))" >> "$maint_log"
+done
+maint_stop=$(date -u '+%s')
+printf 'FI VACUUM REPAYMENT COMPLETE mode=%s leaf_windows=5 elapsed_seconds=%s\n' \
+    "$mode" "$((maint_stop-maint_start))" | tee "$out/$name/MAINTENANCE_REPAYMENT_SUMMARY.txt"
+snapshot_pg maintenance_after
+snapshot_relations maintenance_after
+
 cat "$out/$name/result.txt" | tee -a "$out/SUMMARY.txt"
 cat "$out/$name/process_resources.txt" | tee -a "$out/SUMMARY.txt"
 printf 'FI VACUUM PILOT ACCEPTED output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$out" "$ref" | tee -a "$out/SUMMARY.txt"
@@ -736,7 +761,12 @@ bundle="$out/fi-vacuum-pilot-$mode-$stamp.tar.gz"
         "$name/pg_stat_io_before.jsonl" "$name/pg_stat_io_after.jsonl" \
         "$name/host-iostat.txt" "$name/host-vmstat.txt" \
         "$name/relations_before.jsonl" "$name/relations_after.jsonl" \
-        "$name/pg_5sec_samples.jsonl" "$name/leaf_options.txt"
+        "$name/pg_5sec_samples.jsonl" "$name/leaf_options.txt" \
+        "$name/MAINTENANCE_REPAYMENT.tsv" "$name/MAINTENANCE_REPAYMENT_SUMMARY.txt" \
+        "$name/pg_stat_wal_maintenance_after.jsonl" \
+        "$name/pg_stat_checkpointer_maintenance_after.jsonl" \
+        "$name/pg_stat_io_maintenance_after.jsonl" \
+        "$name/relations_maintenance_after.jsonl"
 ) || fail 'cannot package complete metrics-only archive'
 [ -s "$bundle" ] || fail 'metrics archive empty'
 printf 'FI EFFICIENCY METRICS BUNDLE PASS path=%s\n' "$bundle"
