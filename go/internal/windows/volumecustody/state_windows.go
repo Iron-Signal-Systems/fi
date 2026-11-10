@@ -159,7 +159,12 @@ func loadVolumeStateFile(path,id string) (volumeepoch.Checkpoint,error) {
  if !info.Mode().IsRegular() || info.Size()<=0 || info.Size()>maxVolumeCheckpointBytes {
   return volumeepoch.Checkpoint{},fmt.Errorf("%w: checkpoint must be a bounded regular file",ErrVolumeStateUntrusted)
  }
- raw,err:=os.ReadFile(path)
+ f,err:=os.Open(path)
+ if err!=nil{return volumeepoch.Checkpoint{},err}
+ defer f.Close()
+ // Lstat size is only a point-in-time observation. Always bound the actual
+ // bytes read even if an untrusted file grows between stat and read.
+ raw,err:=io.ReadAll(io.LimitReader(f,maxVolumeCheckpointBytes+1))
  if err!=nil{return volumeepoch.Checkpoint{},err}
  if len(raw)==0 || len(raw)>maxVolumeCheckpointBytes {
   return volumeepoch.Checkpoint{},fmt.Errorf("%w: checkpoint byte length outside permitted bounds",ErrVolumeStateUntrusted)
