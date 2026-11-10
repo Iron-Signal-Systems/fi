@@ -57,6 +57,7 @@ type WindowsVolumeState struct {
 type volumeStateLease struct {
  owner *WindowsVolumeState
  id string
+ directory string // fixed when the native lock is acquired; never retarget
  file *os.File
  overlapped syscall.Overlapped
  released bool
@@ -95,7 +96,7 @@ func (s *WindowsVolumeState) Acquire(ctx context.Context,id string) (Lease,error
   _=f.Close()
   return nil,fmt.Errorf("%w: lease file handle is not regular: %v",ErrVolumeStateUntrusted,err)
  }
- l:=&volumeStateLease{owner:s,id:id,file:f}
+ l:=&volumeStateLease{owner:s,id:id,directory:dir,file:f}
  r,_,callErr:=volumeLockFileEx.Call(f.Fd(),uintptr(volumeLockExclusive|volumeLockFailImmediately),0,1,0,uintptr(unsafe.Pointer(&l.overlapped)))
  if r==0{
   _=f.Close()
@@ -142,6 +143,10 @@ func (s *WindowsVolumeState) requireLease(ctx context.Context,id string) (string
  if !active{
   s.mu.Unlock()
   return "",nil,fmt.Errorf("%w: checkpoint operations require an active enrolled-volume lease",ErrVolumeStateBusy)
+ }
+ if s.held[id].directory!=dir {
+  s.mu.Unlock()
+  return "",nil,fmt.Errorf("%w: state directory changed after exclusive lease acquisition",ErrVolumeStateUntrusted)
  }
  return filepath.Join(dir,"fi-volume-"+id+".checkpoint.json"),s.mu.Unlock,nil
 }
