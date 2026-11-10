@@ -269,7 +269,7 @@ relay="$jailroot$root/fi-optfield-relay"
 
 mkdir -m 700 "$out" "$out/$name" "$out/$name/private"
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI PRIVATE INSERT-VACUUM CANDIDATE: REAL SIGNED, EXACTLY TEN DURABLE WINDOWS
+FI PRIVATE HASH-COPY A/B: REAL SIGNED, EXACTLY TEN DURABLE WINDOWS
 experiment=private_hash_copy_signed10_ab
 source_commit=$ref
 hash_overlay_commit=$h16ref
@@ -426,7 +426,7 @@ kill -0 "$pgwatchpid" 2>/dev/null || fail 'PostgreSQL watcher failed to start'
 if [ "$hashmode" = h16 ]; then set -- -private-hash-h16; else set --; fi
 # The recovery executable runs on the host, connects to the jail through the
 # private AF_UNIX relay, and reads the already-authenticated real signed cache.
-printf 'FI EFFICIENCY START name=%s source=real_signed_8399 source_commit=%s start_index=3 windows=10\n' "$name" "$ref" | tee "$out/SUMMARY.txt"
+printf 'FI HASH AB10 START name=%s source=real_signed_8399 source_commit=%s start_index=3 windows=10\n' "$name" "$ref" | tee "$out/SUMMARY.txt"
 # Trace only the Go recovery process; PostgreSQL and relay remain unchanged.
 # FreeBSD time -l records process high-water resident memory on completion.
 # GC trace adds timing overhead; compare memory evidence before timing.
@@ -520,7 +520,7 @@ leaf_config=$(sql "SELECT count(*)::text || '|' ||
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 WHERE n.nspname='fi_recovery_projection'
 AND c.relname ~ '^windows_security_event_field_w0000(0[3-9]|1[0-2])$'")
-[ "$leaf_config" = '10|10' ] || fail "new private leaf options expected 20|20 got $leaf_config"
+[ "$leaf_config" = '10|10' ] || fail "new private leaf options expected 10|10 got $leaf_config"
 # Only W1/W2 have restored field leaves; W0 is a marker, not a leaf.
 seed_config=$(sql "SELECT count(*)::text || '|' ||
     count(*) FILTER (WHERE 'autovacuum_vacuum_insert_threshold=-1' =
@@ -717,7 +717,7 @@ BEGIN { print "window\tchunk\tlimit\tbatches\trecords\tprocessing" }
         p=index($i,"=")
         if (p>0) f[substr($i,1,p-1)]=substr($i,p+1)
     }
-    if (f["window"]+0>=3 && f["window"]+0<=7)
+    if (f["window"]+0>=3 && f["window"]+0<=12)
         printf "%s\t%s\t%s\t%s\t%s\t%s\n", f["window"],f["chunk"],f["limit"],f["batches"],f["records"],f["processing"]
 }' "$log" > "$out/$name/PROCESSING_CHUNKS.tsv" ||
     fail 'processing chunk timing extraction failed'
@@ -759,6 +759,40 @@ FI_METRICS
 printf 'FI EFFICIENCY METRIC EXPORT PASS stage_windows=10 source_rows=%s\n' "$new_records" |
     tee -a "$out/SUMMARY.txt"
 
+# Extract the observed hash-table COPY work for each signed window. The
+# PostgreSQL COPY metric is a complete synchronous call duration; it does
+# not distinguish network encoding from server-side FK/index maintenance.
+awk '
+function seconds(s) {
+    if (s ~ /ms$/) { sub(/ms$/, "", s); return (s+0)/1000 }
+    sub(/s$/, "", s); return s+0
+}
+BEGIN { print "window\trows\tcalls\tseconds\terrors" }
+/^INGEST COPY TABLE / && /table=fi_recovery_projection.content_hash_observation / {
+    for (k in f) delete f[k]
+    for (i=2;i<=NF;i++) {
+        p=index($i,"=")
+        if (p>0) f[substr($i,1,p-1)]=substr($i,p+1)
+    }
+    outcome=f["outcome"]
+    sub(/^PrivateWindow/,"",outcome)
+    sub(/Committed$/,"",outcome)
+    w=outcome+0
+    if (w>=3 && w<=12 && !seen[w]++ && f["errors"]=="0" && f["rows_reported"]+0>0) {
+        print w "\t" f["rows_reported"] "\t" f["calls"] "\t" seconds(f["total"]) "\t" f["errors"]
+        records+=f["rows_reported"]+0
+        calls+=f["calls"]+0
+        found++
+    } else { bad=1 }
+}
+END {
+    if (found!=10 || bad) exit 3
+    printf "FI HASH COPY PROFILE PASS windows=10 rows=%d calls=%d\n",records,calls > "/dev/stderr"
+}' "$log" > "$out/$name/HASH_COPY_PER_WINDOW.tsv" ||
+    fail 'hash COPY per-window profile missing or invalid'
+[ "$(wc -l < "$out/$name/HASH_COPY_PER_WINDOW.tsv" | tr -d ' ')" -eq 11 ] ||
+    fail 'hash COPY profile does not contain ten rows'
+
 # Maintenance debt acceptance: this candidate pays explicit
 # VACUUM (ANALYZE) of the 10 newly attached private field leaves, only
 # AFTER committed-window timing, SQL integrity and signed custody checks.
@@ -799,7 +833,7 @@ printf 'FI VACUUM POSTMAINTENANCE INTEGRITY PASS state=%s authoritative=0 accept
 
 cat "$out/$name/result.txt" | tee -a "$out/SUMMARY.txt"
 cat "$out/$name/process_resources.txt" | tee -a "$out/SUMMARY.txt"
-printf 'FI HASH AB10 ACCEPTED mode=%s output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$mode" "$out" "$ref" | tee -a "$out/SUMMARY.txt"
+printf 'FI HASH AB10 ACCEPTED hash_mode=%s output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$hashmode" "$out" "$ref" | tee -a "$out/SUMMARY.txt"
 
 # Shareable diagnostics only. Deliberately EXCLUDE private/ copied signed
 # data, source.tar, PostgreSQL dump/cluster, and credentials. Every source
@@ -815,6 +849,7 @@ bundle="$out/fi-hash-ab10-$hashmode-$stamp.tar.gz"
         "$name/STAGE_TOTALS.tsv" "$name/PER_WINDOW_FAMILIES.tsv" \
         "$name/PROCESSING_CHUNKS.tsv" "$name/SQL_WINDOW_COUNTS.tsv" \
         "$name/GC_EVENTS.txt" "$name/process_resources.txt" \
+        "$name/HASH_COPY_PER_WINDOW.tsv" \
         "$name/METRICS_README.txt" "$name/pg_settings.txt" \
         "$name/pg_before.txt" "$name/pg_after.txt" \
         "$name/pg_stat_wal_before.jsonl" "$name/pg_stat_wal_after.jsonl" \
