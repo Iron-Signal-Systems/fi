@@ -39,7 +39,7 @@ On `fi-dev` as `jwood`:
 ```sh
 cd /home/jwood/fi-deferred-experiment || exit 1
 git fetch origin experiment/fi-file-validation-once-20261108 || exit 1
-git show f6d2e1d2f7b59841d2247d529c9b6b6f4248c202:go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh > /home/jwood/fi-hash-ab10.sh || exit 1
+git show bbe90168ed6807d348a9550a4a282fdce89c33d1:go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh > /home/jwood/fi-hash-ab10.sh || exit 1
 sh -n /home/jwood/fi-hash-ab10.sh || exit 1
 ```
 
@@ -63,6 +63,6 @@ Both runs must print `FI HASH AB10 ACCEPTED` and exit zero, with matched SQL cou
 - Go opt-in hash context: `8b8d42121ceb909f4d1d73cd595571925bad2200`.
 - CLI guarded flag: `778110987550bfe18b57a0f30a30262789a8f685`.
 - Hash-specific Go unit tests with valid Error-state byte-boundary row: `e47b5383e19140090d691b7c20e8d6ef6e0113fa` (pinned source overlay).
-- Paired signed-data runner with exact W3–W12 source counters, per-window hash COPY calls and FileObservation source-row equality: `f6d2e1d2f7b59841d2247d529c9b6b6f4248c202`.
+- Paired signed-data runner with exact W3–W12 source counters, per-window hash COPY calls and FileObservation source-row equality: `bbe90168ed6807d348a9550a4a282fdce89c33d1`.
 
-The original accepted `go/internal/recordingest/content_hash_copy.go` and all original production SQL indexes/foreign keys are unchanged. The unit tests must pass in the disposable source tree on the operator's FreeBSD jail *before the seed is started*. The runner's static source and acceptance checks were reviewed, but the actual Go test/SQL runs have not yet been executed.
+The original accepted `go/internal/recordingest/content_hash_copy.go` and all original production SQL indexes/foreign keys are unchanged. The H16 unit tests AND the existing F1/F3 profile, hash COPY row/byte bounds and COPY failure/latency regression tests must pass in the disposable source tree on the operator's FreeBSD jail *before the seed is started*. The runner's static source and acceptance checks were reviewed, but the actual Go test/SQL runs have not yet been executed.
