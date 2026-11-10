@@ -436,3 +436,23 @@ Collected **for every run**: `PER_WINDOW_STAGES.tsv` (28 stage/profile columns f
 **Interpretation constraints:** the Go GC trace adds logging overhead; this run is for combined source-integrity acceptance and resource profiling, not a strictly identical uninstrumented throughput comparison. The original 523.424-second W3..W12 baseline and subsequent Proxmox I/O pressure remain contextual. Stage `projection_total` contains nested file and Security components; do not add nested stages to `typed_total`. Never assert total peak-heap reduction from `B/op` microbenchmarks alone.
 
 **Execution status:** staged on the GitHub experiment branch, not executed from the FreeBSD host; `sh -n` syntax validation and the runner's own host preflights must pass before a full run. Main and production services unchanged.
+
+### 2026-11-10 07:57 UTC — optimized combined W128 15-window replay: private acceptance PASS
+
+Operator executed pinned `run_private_efficiency_signed15_host.sh` on `fi-backend-b` root, private `fi-dev` PostgreSQL 18.6 clone and real signed verified cache. **Source commit actually built/run:** `b01ff0d8cb6559797de052f34b18bd84a395dc4c` (four reusable COPY sources plus single-pass Security envelope candidate). Confirmed `go version go1.27.3 freebsd/amd64`, no preexisting `fi-dev` postmaster, original seed W0-W2 checkpoint `3|390387|2`, original Security field prefix 4,838,850, private PostgreSQL 55981 with `max_wal_size=1024MB`, same durability settings. No changes to main or authoritative SoR.
+
+**Result:** `FI EFFICIENCY FINISHED exit=0`; exact durable `FI PRIVATE EXACT WINDOW STOP start=3 windows=15 last=17 records=1948531 committed_window_time=15m6.203s authoritative=0 accepted=0`. SQL checkpoint `18|2338918|17` (W0-W17 total), exact known W0-W12 prefix 1,688,152; source only W3-W17 1,948,531, cumulative W0-W17 2,338,918. `FI CLONE SQL INTEGRITY PASS canonical=0 accepted=0`. Signed data+manifest byte-for-byte readback passed for **873** batches. Original seed/private cluster shut down successfully. Single-pass path confirmed active: `security_single_pass_rows=1737100` across 15 windows (~89.1% of all source rows, not Security-only denominator).
+
+Resource observations: Go-only `GODEBUG=gctrace=1` produced **1,176 GC trace lines**; FreeBSD `/usr/bin/time -l` high-water RSS reported **389,208 KiB (~380.1 MiB)** for the replay process. Host monitoring captured 910 iostat and 201 vmstat output lines. Peak process RSS is **not** total system RSS, PostgreSQL RSS, live Go heap, cumulative allocation rate, or a measured reduction versus the prior untraced implementation.
+
+| Group | New durable records | Sum committed window seconds | Committed records/sec |
+|---|---:|---:|---:|
+| W3-W12 | 1,297,765 | 592.089 | 2,191.8 |
+| W13-W17 | 650,766 | 314.114 | 2,071.8 |
+| **W3-W17** | **1,948,531** | **906.203** | **2,150.2** |
+
+Per-window `window=duration`: W3 64.262s, W4 58.124s, W5 58.307s, W6 56.819s, W7 57.455s, W8 56.944s, W9 57.332s, W10 59.566s, W11 58.927s, W12 64.353s, W13 62.317s, W14 59.415s, W15 60.047s, W16 66.931s, W17 65.404s. Record count per window ~128,575–130,887. The last five windows' lower average throughput requires stage/workload/host-IO inspection, not speculation.
+
+**Baseline context only:** historical original 10-window timing **523.424s** (2,479.4 records/sec), later uninstrumented clean control **590.910s** (2,196.2 records/sec), optimized **traced** first-ten windows **592.089s** (2,191.8 records/sec). Current vs later clean control +1.179s/+0.20% elapsed; this is *not* a controlled CPU optimization A/B because `gctrace=1`, potential Proxmox IO pressure and timing/environment differences. No justified claim of increased end-to-end throughput or reduced peak heap. The previously validated `-benchmem` allocation reductions remain independently established.
+
+Operator output root `/var/tmp/fi-window-chunks-eff15-20261110T073931Z`, metrics-only archive `/var/tmp/fi-window-chunks-eff15-20261110T073931Z/fi-efficiency-metrics-20261110T073931Z.tar.gz`. Archive includes stage totals/matrices, per-window families/chunks, GC trace, process RSS, PostgreSQL WAL/checkpointer/IO snapshots and host observers. **Archive content not yet inspected in this conversation**; next engineering step is analyze that actual metrics bundle before choosing an optimization or running another replay. No full-run diagnosis should be based only on the final console summary.
