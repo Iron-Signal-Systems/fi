@@ -192,6 +192,10 @@ snapshot_relations() {
 snapshot_pg restarted_before_maintenance
 snapshot_relations restarted_before_maintenance
 
+# The post-run restart can generate additional server stats. Counters at
+# *restarted_before_maintenance isolate the continuation phase from the
+# unchanged original before/after measured ingestion snapshots. Never claim
+# that all restart or VACUUM effects occurred during the original ingestion.
 # The remainder is lifted directly from the experimental script after the
 # erroneous seed-count test; it performs exact signed-artifact readback, all
 # stage matrices, *20* private leaf manual VACUUMs and the final metrics tar.
@@ -488,6 +492,10 @@ bundle="$out/fi-vacuum-candidate20-$stamp.tar.gz"
         "$name/relations_before.jsonl" "$name/relations_after.jsonl" \
         "$name/pg_5sec_samples.jsonl" "$name/leaf_options.txt" \
         "$name/MAINTENANCE_REPAYMENT.tsv" "$name/MAINTENANCE_REPAYMENT_SUMMARY.txt" \
+        "$name/pg_stat_wal_restarted_before_maintenance.jsonl" \
+        "$name/pg_stat_checkpointer_restarted_before_maintenance.jsonl" \
+        "$name/pg_stat_io_restarted_before_maintenance.jsonl" \
+        "$name/relations_restarted_before_maintenance.jsonl" \
         "$name/pg_stat_wal_maintenance_after.jsonl" \
         "$name/pg_stat_checkpointer_maintenance_after.jsonl" \
         "$name/pg_stat_io_maintenance_after.jsonl" \
