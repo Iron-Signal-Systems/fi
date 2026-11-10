@@ -430,6 +430,166 @@ END {
     printf "FIFTEEN-WINDOW TOTAL: records=%d window_seconds=%.3f committed_rate=%.1f records/sec\n", totalrecords, totaltime, totalrecords/totaltime
 }' "$log" | tee "$out/$name/WINDOW_RATES.txt"
 
+
+# Export one row per durable W3..W17 stage profile. Preserve raw duration
+# strings as well as a derived sum, without conflating nested stage counters
+# with mutually exclusive wall-clock phases.
+awk -v totals="$out/$name/STAGE_TOTALS.tsv" '
+function seconds(s, h,m,a) {
+    if (s ~ /ms$/) { sub(/ms$/, "", s); return (s+0)/1000 }
+    h=0; m=0
+    if (index(s,"h")) { split(s,a,"h"); h=a[1]+0; s=a[2] }
+    if (index(s,"m")) { split(s,a,"m"); m=a[1]+0; s=a[2] }
+    if (s ~ /ms$/) { sub(/ms$/, "", s); return h*3600+m*60+(s+0)/1000 }
+    sub(/s$/, "", s)
+    return h*3600+m*60+(s+0)
+}
+BEGIN {
+    columns="index records joined typed_total setup batch_ingest joined_finish deferred_flush verification verify_counts verify_coverage marker_commit source_read batch_hash envelope_prepare security_prepare security_child_prepare source_sql projection_total file_projection_inclusive security_projection_inclusive other_projection_inclusive security_id_lookup security_source_copy security_event_copy security_scope_copy security_field_copy security_single_pass_rows"
+    n=split(columns,col," ")
+    for (i=1; i<=n; i++) printf "%s%s", col[i], (i<n ? "\t" : "\n")
+}
+/^FI PRIVATE STAGE PROFILE / {
+    for (k in values) delete values[k]
+    for (i=5; i<=NF; i++) {
+        p=index($i,"=")
+        if (p>0) values[substr($i,1,p-1)]=substr($i,p+1)
+    }
+    if (!("index" in values)) { bad=1; exit 2 }
+    window=values["index"]+0
+    if (window<3 || window>17 || seen[window]++) { bad=1; exit 2 }
+    for (i=1; i<=n; i++) {
+        if (!(col[i] in values)) { bad=1; exit 2 }
+        printf "%s%s", values[col[i]], (i<n ? "\t" : "\n")
+        if (i>=4 && col[i]!="security_single_pass_rows")
+            duration[i] += seconds(values[col[i]])
+    }
+    total_single_pass+=values["security_single_pass_rows"]+0
+    rows++
+}
+END {
+    if (bad || rows!=15 || total_single_pass<=0) {
+        printf "FI EFFICIENCY STAGE MATRIX FAIL rows=%d single_pass=%d bad=%d\n", rows,total_single_pass,bad > "/dev/stderr"
+        exit 3
+    }
+    print "stage_key\ttotal_seconds\tavg_seconds\tinterpretation" > totals
+    for (i=4; i<=n; i++) {
+        if (col[i]=="security_single_pass_rows") continue
+        printf "%s\t%.3f\t%.3f\t%s\n", col[i], duration[i], duration[i]/15,
+            (col[i]=="typed_total" ? "outer_wall" : "nested_or_component_do_not_sum") >> totals
+    }
+    printf "FI EFFICIENCY SINGLE PASS PASS windows=%d selected_rows=%d\n", rows,total_single_pass > "/dev/stderr"
+}' "$log" > "$out/$name/PER_WINDOW_STAGES.tsv" ||
+    fail 'stage timing matrix or active single-pass selection acceptance failed'
+[ "$(wc -l < "$out/$name/PER_WINDOW_STAGES.tsv" | tr -d ' ')" -eq 16 ] ||
+    fail 'stage timing matrix does not contain a header plus 15 windows'
+
+# Join typed Security counters, File validation counters, and field partition
+# finalization records by canonical window index. No new SQL or per-record logs.
+awk '
+function parse_fields(   i,p,key,val) {
+    for (key in fields) delete fields[key]
+    for (i=2; i<=NF; i++) {
+        p=index($i,"=")
+        if (p>0) fields[substr($i,1,p-1)]=substr($i,p+1)
+    }
+}
+BEGIN { print "window\trecords\tsecurity_events\tsecurity_fields\tfamilies\tfile_source_validated\tfile_bulk_reused\tfile_bulk_validated\tpartition_field_rows\tpartition_begin\tpartition_validate_attach" }
+/^FI REAL TYPED WINDOW / {
+    parse_fields()
+    w=fields["index"]+0
+    if (w>=3 && w<=17) {
+        count[w]++
+        records[w]=fields["records"]; events[w]=fields["security_events"]
+        secfields[w]=fields["security_fields"]; families[w]=fields["families"]
+    }
+}
+/^FI FILE VALIDATION WINDOW / {
+    parse_fields(); w=fields["index"]+0
+    if (w>=3 && w<=17) {
+        file_seen[w]++
+        file_valid[w]=fields["source_validated"]
+        file_reused[w]=fields["bulk_reused"]
+        file_bulk[w]=fields["bulk_validated"]
+    }
+}
+/^FI PRIVATE FIELD PARTITION COMMITTED / {
+    parse_fields(); w=fields["window"]+0
+    if (w>=3 && w<=17) {
+        partition_seen[w]++
+        partition_rows[w]=fields["rows"]
+        partition_begin[w]=fields["begin"]
+        partition_finish[w]=fields["validate_attach"]
+    }
+}
+END {
+    for (w=3; w<=17; w++) {
+        if (count[w]!=1 || file_seen[w]!=1 || partition_seen[w]!=1) {
+            printf "FI EFFICIENCY FAMILY MATRIX incomplete window=%d typed=%d file=%d partition=%d\n",
+                w,count[w],file_seen[w],partition_seen[w] > "/dev/stderr"
+            exit 2
+        }
+        printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+            w, records[w], events[w], secfields[w], families[w],
+            file_valid[w], file_reused[w], file_bulk[w],
+            partition_rows[w], partition_begin[w], partition_finish[w]
+    }
+}' "$log" > "$out/$name/PER_WINDOW_FAMILIES.tsv" ||
+    fail 'per-window Security/File/field counts missing'
+[ "$(wc -l < "$out/$name/PER_WINDOW_FAMILIES.tsv" | tr -d ' ')" -eq 16 ] ||
+    fail 'family matrix does not contain a header plus 15 windows'
+
+# Copy all observed processing chunks, including unusually slow chunks.
+awk '
+BEGIN { print "window\tchunk\tlimit\tbatches\trecords\tprocessing" }
+/^FI TYPED CHUNK COMMITTED / {
+    for (k in f) delete f[k]
+    for (i=2; i<=NF; i++) {
+        p=index($i,"=")
+        if (p>0) f[substr($i,1,p-1)]=substr($i,p+1)
+    }
+    if (f["window"]+0>=3 && f["window"]+0<=17)
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n", f["window"],f["chunk"],f["limit"],f["batches"],f["records"],f["processing"]
+}' "$log" > "$out/$name/PROCESSING_CHUNKS.tsv" ||
+    fail 'processing chunk timing extraction failed'
+
+# Cross-check durable SQL identity and record counts outside replay timing.
+{
+    printf 'window_index\tcommitted_records\n'
+    sql "SELECT window_index::text || chr(9) || committed_records::text
+         FROM fi_recovery.typed_window WHERE window_index BETWEEN 3 AND 17
+         ORDER BY window_index"
+} > "$out/$name/SQL_WINDOW_COUNTS.tsv" ||
+    fail 'SQL committed-window record matrix failed'
+[ "$(wc -l < "$out/$name/SQL_WINDOW_COUNTS.tsv" | tr -d ' ')" -eq 16 ] ||
+    fail 'SQL committed-window matrix not exactly 15 rows'
+
+grep '^gc [0-9]' "$log" > "$out/$name/GC_EVENTS.txt" || :
+cat > "$out/$name/METRICS_README.txt" <<'FI_METRICS'
+Private signed W128 window indexes 3..17; 15 fully durable windows.
+PER_WINDOW_STAGES.tsv: source-reported Go stage durations and fast-path counts;
+  columns named *_inclusive, COPY and source_sql are nested/overlapping.
+STAGE_TOTALS.tsv: sum across the 15 windows of EACH individual stage ONLY;
+  DO NOT ADD different stages together to infer elapsed wall clock.
+PER_WINDOW_FAMILIES.tsv: Security event/field counts, File validation reuse,
+  and private field-partition finish/attach durations by window.
+PROCESSING_CHUNKS.tsv: per-processing-chunk duration, records, signed batches.
+SQL_WINDOW_COUNTS.tsv: post-run PostgreSQL durable source-record positions.
+WINDOW_RATES.txt: per-window records and actual durable-window durations.
+GC_EVENTS.txt: Go runtime GC trace, enabled on replay only; instrumented
+  elapsed time must not be confused with untraced baseline throughput.
+process_resources.txt: FreeBSD rusage peak replay-process resident memory;
+  this is not PostgreSQL RSS or total host memory.
+pg_stat_wal_{before,after}.jsonl: named PostgreSQL 18 WAL counters.
+pg_stat_checkpointer_{before,after}.jsonl: named checkpoint counters.
+pg_stat_io_{before,after}.jsonl: named PostgreSQL IO records.
+host-iostat.txt and host-vmstat.txt: 5-second HOST-WIDE observations.
+recover.log: exact complete authoritative source of the profile and GC lines.
+signed_artifact comparisons and fi_recovery SQL integrity: acceptance gates.
+FI_METRICS
+printf 'FI EFFICIENCY METRIC EXPORT PASS stage_windows=15 source_rows=%s\n' "$new_records" |
+    tee -a "$out/SUMMARY.txt"
+
 cat "$out/$name/result.txt" | tee -a "$out/SUMMARY.txt"
 cat "$out/$name/process_resources.txt" | tee -a "$out/SUMMARY.txt"
 printf 'FI EFFICIENCY FIFTEEN-WINDOW ACCEPTED output=%s source_commit=%s signed_data=real authoritative=0 accepted=0\n' "$out" "$ref" | tee -a "$out/SUMMARY.txt"
