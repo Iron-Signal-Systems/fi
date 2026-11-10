@@ -368,3 +368,18 @@ After all four event/scope targeted unit tests passed, a separate nine-column re
 - Tests: new `source_record_copy_reusable_candidate_test.go` commit `cc16d18`: test legacy versus reusable value/type equality across all nine columns, original and fallback batch IDs, Security, FileObservation, USNObjectObservation, empty input, and the production/nonprivate gate. Two 4,096-row synthetic `-benchmem` comparisons: Security source and File/USN source.
 
 **Status:** not compiled or run. No measured allocation, CPU, GC or end-to-end effects for these new nine-column source changes. Required next command from a fresh isolated archive of commit `cc16d1843fc27931dcb0edd838205bd1d8f4eb58`: `go test ./internal/recordingest -run '^TestSourceRecordReusableCOPYSource' -count=1 -v`, followed by `go test ./internal/recordingest -run '^$' -bench '^(BenchmarkSecuritySourceRecordCOPYLegacyVsReusable|BenchmarkFileSourceRecordCOPYLegacyVsReusable)$' -benchmem -count=3`. Failed test must be investigated before any replay. Existing event/scope tests continue to be acceptance gates.
+
+### 2026-11-10 01:41 UTC — nine-column Security/File source COPY reuse tests and microbenchmarks PASS
+
+Operator tested exact candidate commit `cc16d1843fc27931dcb0edd838205bd1d8f4eb58` from isolated `/home/jwood/fi-source-copy-review/go` on FreeBSD amd64 Xeon E5-2680 v2. Targeted `go test ./internal/recordingest -run '^TestSourceRecordReusableCOPYSource' -count=1 -v` passed in 0.015s: `MatchesLegacyNineColumns` (`security`, `file-and-usn`), `PrivateOnly` (`production-default`, `ordinary-p3`, `private-default-p1`) and `Empty` all PASS.
+
+Three-run benchmarks used `-run '^$' -bench '^(BenchmarkSecuritySourceRecordCOPYLegacyVsReusable|BenchmarkFileSourceRecordCOPYLegacyVsReusable)$' -benchmem -count=3`; package PASS in 16.492s. Each operation generates/traverses 4096 source records.
+
+| Writer | ns/op run 1; run 2; run 3 | Mean ns/op | B/op | allocs/op |
+|---|---|---:|---:|---:|
+| Security source legacy | 1,806,833; 1,799,245; 1,833,509 | 1,813,196 | ~1,026,778 | 30,033 |
+| Security source reusable | 1,104,775; 954,873; 981,393 | 1,013,680 | 437,049 | 25,936 |
+| File/USN source legacy | 1,746,924; 1,698,148; 1,733,219 | 1,726,097 | ~1,026,781 | 30,033 |
+| File/USN source reusable | 957,732; 949,102; 987,616 | 964,817 | ~437,051 | 25,936 |
+
+Result: Security source candidate saves ~57.4% B/op and 4,097 allocs/op (~one per record plus a fixed one) and improves row-source generation timing ~44.1%. File/USN source candidate saves ~57.4% B/op and 4,097 allocs/op and improves row-source generation timing ~44.1%. Means are arithmetic over three samples, not end-to-end pgx COPY or full-ingest metrics. These results plus targeted tests close the candidate's unit/microbenchmark gate. No production promotion or full signed end-to-end acceptance yet.
