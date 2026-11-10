@@ -16,6 +16,8 @@ The branch now includes a bounded creation-only journal protocol, in-memory faul
 
 The Windows runner's isolated journal tests are source-level/native-I/O evidence only. **No row requiring an authenticated installation, protected ACL, service SID/gMSA or controlled `adminbox` environment has passed**. The final dev branch commit and exact runner results must accompany any future promotion request.
 
+**Narrow branch safety check:** Windows CI now builds and launches the actual branch `fi-install.exe` and verifies default and legacy flags are blocked before any installer discovery. This is an **A01 fallback mitigation only**, not V14/V16 native v2 installer acceptance. See `WINDOWS-VOLUME-FIRST-INSTALLER-EXECUTION-GATE.md`.
+
 ## Rules of evidence
 
 The branch includes an opt-in read-only `TestNativeEnrolledVolumeUSNReadOnly` test for `adminbox`, described in `WINDOWS-VOLUME-FIRST-USN-BROKER.md`. Its existence is NOT a PASS. All native acceptance rows remain NOT RUN until actual evidence is recorded.
