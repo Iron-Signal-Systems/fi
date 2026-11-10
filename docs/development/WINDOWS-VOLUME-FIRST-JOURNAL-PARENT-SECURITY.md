@@ -2,7 +2,7 @@
 
 **Development branch:** `dev/windows-volume-first-20261108`  
 **Native acceptance host:** `adminbox`  
-**Status:** Read-only native security-descriptor **inspection and strict policy evaluation** implemented; create-only protected-parent provisioning, installer integration and privileged acceptance **not implemented**.
+**Status:** The private native journal writer now enforces actual parent owner/protected DACL checks before `CREATE_NEW` and child-file inherited owner/DACL checks before acknowledging a reservation. Native protected-parent provisioning, trusted installer authority, installer CLI integration and privileged acceptance remain **NOT IMPLEMENTED / NOT RUN**.
 
 ## Why this boundary exists
 
@@ -35,9 +35,13 @@ The policy requires inheritable full control for SYSTEM and Administrators becau
 
 `go/internal/windows/freshinstall/journal_parent_security_windows.go` reads the owner and DACL from an already-opened **Windows directory handle** with `GetSecurityInfo`, not by a second named-path lookup. It validates a non-null security descriptor, extracts its owner, defaulting/protection flags and bounded ACE list, then delegates authorization to the strict pure policy. Ordinary directories with additional ACEs can be *inspected*, but are never accepted by that policy.
 
-The separate native journal writer already retains the parent directory handle and compares its resolved identity to the new journal's handle. Its path and reparse checks are useful, but they do not authenticate installer authority. **The new protected-parent verifier is not yet attached to the journal creation entry point.** That decision remains blocked pending a safe create-only bootstrap and service/installer trust flow.
+The native journal writer retains the parent directory handle and compares its resolved identity to the new journal's handle. **The default private constructor now calls `verifyJournalParentHandle` on that retained parent BEFORE `CREATE_NEW`.** It checks the file's native owner/DACL through the newly created file handle before reporting reservation success. An unacceptable child file remains **in doubt** because creation has already occurred; no automatic cleanup or retry is permitted. Neither check authenticates installer issuer, protected-parent creation or ancestor provenance, and the writer is not wired to the installer CLI.
 
 There is no production API accepting an arbitrary user-supplied path and elevating it to FI installation authority.
+
+## New journal FILE effective-DACL contract
+
+`journal_file_policy.go` requires the newly created file's actual owner to be SYSTEM or BUILTIN Administrators, and exactly two **inherited**, full-control, access-allowed ACEs (SYSTEM and Administrators) with no additional trustees, generic masks, deny ACEs or unexpected flags. The file itself must have a present, non-defaulted DACL. `journal_file_security_windows.go` obtains the descriptor from the **same newly created handle**, after checking file type and retained-parent identity. A mismatch is a **failed/in-doubt creation**, never a reason to delete, retry or silently repair security after creation. The future privileged installer must arrange acceptable file ownership at creation time.
 
 ## Security limits not yet resolved
 
@@ -49,7 +53,7 @@ A correct-looking DACL does not, by itself, prove that the directory was created
 4. The future protected grant, signer public-key trust, native operator identity, and creation-only FI backend must all be bound to this installation. A protected directory is not a cryptographic signing authority.
 5. Controlled `adminbox` and supported Windows Server acceptance must exercise ACL/owner failures, tampered ACEs, substituted paths, failed writes, sudden interruption, restart and service-SID boundaries.
 
-The policy tests are ordinary cross-platform Go unit tests. The Windows-only tests use SDDL-derived native security descriptors for both acceptable and unacceptable ACLs and read an actual runner temporary-directory security descriptor from a handle, without altering its ACL. They do **not** create an actual protected FI bootstrap directory on an installed server or establish real-world privilege boundaries.
+Parent and child-file policies have cross-platform Go negative-path tests. Windows-only tests decode SDDL-derived native security descriptors for both acceptable and unacceptable parent/file ACLs, and the default writer is tested against an ordinary unprotected runner directory before any journal is created. The earlier temporary-directory journal I/O tests use an explicitly named `_test.go`-only constructor: they demonstrate `CREATE_NEW` and flush semantics, not installed ACL authority. They do **not** create an actual protected FI bootstrap directory on an installed server or establish real-world privilege boundaries.
 
 **Nothing in these tests authorizes installing FI or starting volume-wide monitoring.** `ServeEnrolledVolumes` remains fail-closed, and `main` and deployed FI hosts remain unchanged.
 
