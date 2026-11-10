@@ -44,7 +44,7 @@ grep -Fq "source_commit=$ref" "$out/RUN_MANIFEST.txt" ||
 grep -Fq 'FI EFFICIENCY FIFTEEN-WINDOW ACCEPTED ' "$out/SUMMARY.txt" ||
     fail 'completed signed W3-W17 run acceptance missing'
 [ ! -e "$report" ] || fail 'review output directory already exists'
-[ "$(${#socket})" -le 88 ] || fail 'unexpected PostgreSQL socket path length'
+[ "${#socket}" -le 88 ] || fail 'unexpected PostgreSQL socket path length'
 
 existing=$(ps -axww -o pid,jid,user,rss,command | awk -v jid="$devjid" '
     $2 == jid && $5 == "/usr/local/bin/postgres" && $6 == "-D" { n++ }
