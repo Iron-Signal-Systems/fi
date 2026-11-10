@@ -142,8 +142,8 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 }
 
 
-// findSinglePassSecurityEnvelopeKeys replaces four complete byte searches
-// (two Index and two Count) with one pass over commas. It deliberately
+// findSinglePassSecurityEnvelopeKeys replaces four separate byte searches
+// (two Index and two full Count scans) with one pass over commas. It deliberately
 // recognizes the same raw marker bytes, even inside nested JSON members or
 // quoted content: changing that behavior would alter the existing fallback
 // contract for noncanonical signed input.
