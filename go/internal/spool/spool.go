@@ -325,6 +325,32 @@ func (w *Writer) Close() error {
 	return nil
 }
 
+// AbandonUnpublished closes an unfinished writer WITHOUT finalizing its
+// currently open batch. It never renames, truncates or removes work files,
+// prepared manifests or already-published batches. A caller must use this on
+// fail-closed source-window paths: calling Close after an Append failure could
+// publish a partial USN window without its terminal source boundary.
+//
+// This is NOT rollback and is NOT a proof that no batch was published. Append
+// may already have finalized an earlier batch before a later error; callers
+// must retain any in-doubt artifacts for explicit recovery. Subsequent Append
+// attempts are refused with ErrWriterClosed.
+func (w *Writer) AbandonUnpublished() error {
+	if w == nil || w.closed {
+		return nil
+	}
+	w.closed = true
+	if w.file == nil {
+		return nil
+	}
+	file := w.file
+	w.file = nil
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close incomplete FI spool work file without publication: %w", err)
+	}
+	return nil
+}
+
 func (w *Writer) FinalizedBatches() []FinalizedBatch {
 	if w == nil {
 		return nil
