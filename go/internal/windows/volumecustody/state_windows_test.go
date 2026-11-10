@@ -63,6 +63,26 @@ func TestWindowsVolumeStateReleaseWaitsForActiveFileOperation(t *testing.T) {
  if err:=reacquired.Release();err!=nil{t.Fatal(err)}
 }
 
+func TestWindowsVolumeStateRejectsDirectoryRetargetUnderActiveLease(t *testing.T) {
+ s,cp,_:=testWindowState(t)
+ ctx:=context.Background()
+ l,err:=s.Acquire(ctx,"data")
+ if err!=nil{t.Fatal(err)}
+ original:=s.Directory
+ replacement:=t.TempDir()
+ writeTestCheckpoint(t,replacement,cp)
+ s.Directory=replacement
+ if _,err:=s.Load(ctx,"data");!errors.Is(err,ErrVolumeStateUntrusted){
+  t.Fatalf("lease from first directory authorized second directory read: %v",err)
+ }
+ next:=cp;next.NextUSN="2500"
+ if err:=s.Commit(ctx,cp,next);!errors.Is(err,ErrVolumeStateUntrusted){
+  t.Fatalf("lease from first directory authorized second directory write: %v",err)
+ }
+ s.Directory=original
+ if err:=l.Release();err!=nil{t.Fatal(err)}
+}
+
 func TestWindowsVolumeStateLeaseAndPersistedCAS(t *testing.T){
  s,cp,path:=testWindowState(t)
  ctx:=context.Background()
