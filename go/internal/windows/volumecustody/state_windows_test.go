@@ -33,6 +33,36 @@ func testWindowState(t *testing.T) (*WindowsVolumeState,volumeepoch.Checkpoint,s
  path:=writeTestCheckpoint(t,dir,cp)
  return &WindowsVolumeState{Directory:dir},cp,path
 }
+func TestWindowsVolumeStateReleaseWaitsForActiveFileOperation(t *testing.T) {
+ s,_,_:=testWindowState(t)
+ ctx:=context.Background()
+ lease,err:=s.Acquire(ctx,"data")
+ if err!=nil{t.Fatal(err)}
+ // Simulate an in-flight checkpoint I/O call holding the same mutex
+ // through the OS write boundary. Release must not drop LockFileEx early.
+ _,unlock,err:=s.requireLease(ctx,"data")
+ if err!=nil{t.Fatal(err)}
+ started:=make(chan struct{})
+ finished:=make(chan error,1)
+ go func(){
+  close(started)
+  finished<-lease.Release()
+ }()
+ <-started
+ select {
+ case err:=<-finished:
+  unlock()
+  t.Fatalf("lease released while checkpoint operation still active: %v",err)
+ default:
+ }
+ unlock()
+ if err:=<-finished;err!=nil{t.Fatal(err)}
+ other:=&WindowsVolumeState{Directory:s.Directory}
+ reacquired,err:=other.Acquire(ctx,"data")
+ if err!=nil{t.Fatalf("lease did not become available after I/O release: %v",err)}
+ if err:=reacquired.Release();err!=nil{t.Fatal(err)}
+}
+
 func TestWindowsVolumeStateLeaseAndPersistedCAS(t *testing.T){
  s,cp,path:=testWindowState(t)
  ctx:=context.Background()
