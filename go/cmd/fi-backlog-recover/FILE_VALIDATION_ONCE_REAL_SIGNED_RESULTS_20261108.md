@@ -403,3 +403,22 @@ go test ./internal/recordingest -run '^$' -bench '^BenchmarkSecuritySourceEnvelo
 ```
 
 Do not launch another ten-window private replay for an unproven marker-scan micro-optimization. If the scanner is slower or does not preserve strict byte-identical input acceptance, revert the experiment before trying another envelope candidate.
+
+### 2026-11-10 02:07 UTC — private Security envelope scanner unit and microbenchmark PASS
+
+Operator ran isolated source archive from candidate commit `f23d3f3e34344746cc19d90cb829426bbac98f6f` on FreeBSD amd64 Xeon E5-2680 v2. `GOTOOLCHAIN=auto go test ./internal/recordingest -run '^TestSinglePassSecurity' -count=1 -v` PASS (0.097s). Includes `TestSinglePassSecurityEnvelopeKeyScanLegacyEquivalence` (canonical, empty, absent, missing, reversed, duplicate, nested, quoted marker and NUL cases plus 8,000 seeded randomized byte probes), `TestSinglePassSecurityCanonicalEquivalence`, `TestSinglePassSecurityFallbackAndReject` (normal, nonsecurity, reordered, trailing-member, missing-LF, invalid-body), and `TestSinglePassSecuritySelectionPrivateP3Only` (nil/default/P1/P3/private-P1/private-P3). All PASS.
+
+Three-run `-benchmem` benchmark for `BenchmarkSinglePassSecurityEnvelopeKeySearch|BenchmarkSecuritySourceEnvelopeAndPayloadOnePass` PASS in 24.072s. Detailed unrounded source observations:
+
+| Benchmark | ns/op samples | Mean ns/op | B/op | allocs/op |
+|---|---|---:|---:|---:|
+| 8KiB legacy key scan | 3,123; 3,149; 3,224 | 3,165 | 0 | 0 |
+| 8KiB single comma scan | 1,910; 1,817; 1,787 | 1,838 | 0 | 0 |
+| 64KiB legacy key scan | 15,318; 15,854; 15,767 | 15,646 | 0 | 0 |
+| 64KiB single comma scan | 8,742; 9,244; 9,070 | 9,019 | 0 | 0 |
+| Original full Security two-pass prep | 240,801; 230,691; 223,093 | 231,528 | ~39,435 | 22 |
+| Candidate full Security single-pass prep | 208,317; 215,145; 207,344 | 210,269 | ~25,251 | 21 |
+
+Marker search: ~41.9% less time (8KiB), ~42.4% less time (64KiB); 0 allocations in both. Full preparation candidate: ~9.2% less time, ~36.0% less allocation bytes, one fewer allocation on the 24-field / ~8KiB synthetic fixture. Full preparation comparison is existing two-pass vs combined single-pass candidate and **does not isolate the marker-scan change**. Do not extrapolate any microbenchmark percentage to whole FI workload. Scanner code and tests remain private branch only.
+
+Next work: run package-level regression tests, targeted race and benchmark verification as appropriate, verify original P1/nonprivate P3 and signed-custody behavior, then one controlled disposable real-signed 10-window acceptance replay for the aggregate changes. No release/main promotion or PostgreSQL settings changes merely from these microbenchmarks.
