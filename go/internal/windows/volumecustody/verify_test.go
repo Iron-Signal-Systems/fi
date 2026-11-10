@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -78,6 +79,22 @@ func TestPublishedVolumeWindowReturnsOnlyInMemoryCandidate(t *testing.T) {
 	}
 	if cp.NextUSN != "2000" {
 		t.Fatal("input checkpoint was mutated")
+	}
+}
+
+func TestWindowsPublishedSpoolCanonicalPathCaseAlias(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows physical directory canonicalization is platform-specific")
+	}
+	cp, journal, window := custodyFixture()
+	dir := t.TempDir()
+	manifest := publishFixture(t, dir, window, MinimalFactRecordKind, BoundaryRecordKind, "volume:data")
+	// The writer records the GetFinalPathNameByHandleW-resolved physical path.
+	// A case-distinct configured path is the same Windows directory and must
+	// not be mistaken for a foreign publication.
+	next, err := ProposeAfterPublishedWindow(cp, journal, window, strings.ToUpper(dir), manifest)
+	if err != nil || next.NextUSN != "2500" {
+		t.Fatalf("native spool alias rejected: %+v %v", next, err)
 	}
 }
 
