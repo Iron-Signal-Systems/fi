@@ -64,3 +64,45 @@ Next engineering study: once metrics archive exists, analyze the **actual 20-win
 As `jwood` inside `fi-dev`: fetch branch `experiment/fi-file-validation-once-20261108`, then extract the exact commit's `go/cmd/fi-backlog-recover/finish_completed_private_vacuum_candidate20_host.sh` to `/home/jwood/fi-candidate20-finish.sh`. **Run `sh -n` and stop if nonzero**. Do **not** run the original ingestion runner again. The host script expects the retained clone under `/home/jwood/fi-window-bench-optfield-v20-c-20261110T103933Z`; all paths are fixed to the run whose SQL integrity passed. As root on `fi-backend-b`, obtain `jail_root=$(jls -j fi-dev path) || exit 1` and run `sh "${jail_root%/}/home/jwood/fi-candidate20-finish.sh"`.
 
 Updated continuation audited through commit `3844be5d43acad141f5295066a3678827311f6fd` re-runs **the complete original SQL custody/typed/source/manifest integrity** after private PostgreSQL restart; preserves the original 20-window timed snapshots, writes *restarted_before_maintenance* snapshots separately, checks **new leaves 20|20, seed W1/W2 leaves 2|0, absent W0 leaf**, revalidates original signatures by byte-for-byte cache readback, exports all per-window profile matrices, and performs 20 explicit private VACUUM (ANALYZE) operations only after the original signed run. Stop-and-cleanup trap always attempts to shut down retained clone. Only a successful continuation exit 0 and signed-readback result qualifies the full trial as accepted. The PostgreSQL restart might add background maintenance after the original measured run; those counters must not be misattributed to original ingestion.
+
+## 2026-11-10 11:22 UTC — completed recovery and accepted 20-window signed candidate
+
+Operator executed the pinned continuation `finish_completed_private_vacuum_candidate20_host.sh` against the original stopped 20-window clone (`fi-window-bench-optfield-v20-c-20261110T103933Z`). The run completed with **exit=0**. The originally successful 20-window ingestion was not replayed.
+
+- **SQL:** `FI CANDIDATE20 RECHECK SQL INTEGRITY PASS checkpoint=23|2988103|22 authoritative=0 accepted=0`, `FI CANDIDATE20 RECOVERY GATE PASS checkpoint=23|2988103|22 new=20|20 seed=2|0`, and postmaintenance SQL integrity `PASS state=23|2988103|22 authoritative=0 accepted=0`.
+- **Signed evidence:** 1,176 signed batch data files and matching manifests byte-identical to original verified cache.
+- **Security/records:** W3–W22 exactly 20 committed windows with `2,597,716` new source records. W0–W22 cumulative `2,988,103`. `FI EFFICIENCY SINGLE PASS PASS windows=20 selected_rows=2313320`.
+- **Resources:** Replay Go peak RSS `388536 KiB`, traced GC lines `1546`. These are process-only measurements, not PostgreSQL/host memory.
+- **Performance:** committed-window time `1143.827s` (**19m03.827s**), `2271.1` records/sec. Postrun 20-leaf `VACUUM (ANALYZE)` separately measured `30` elapsed seconds (whole-second precision), giving a simple ingest+manual-maintenance accounting of `1173.827s`. This combined figure is not exhaustive system/idle debt accounting.
+- **Private PostgreSQL:** source commit `b01ff0d8cb6559797de052f34b18bd84a395dc4c`; clone shut down cleanly at `FI CANDIDATE20 FINISHED exit=0`; real fi-sor-db untouched; zero authoritative or Accepted rows.
+
+### Per-window result
+
+| Window | Records | Committed seconds |
+|---:|---:|---:|
+| 3 | 129435 | 55.315 |
+| 4 | 129743 | 52.491 |
+| 5 | 130642 | 52.564 |
+| 6 | 130755 | 52.082 |
+| 7 | 128951 | 52.142 |
+| 8 | 129842 | 53.018 |
+| 9 | 129722 | 53.697 |
+| 10 | 129213 | 54.465 |
+| 11 | 128575 | 54.296 |
+| 12 | 130887 | 61.434 |
+| 13 | 130574 | 58.754 |
+| 14 | 130377 | 58.829 |
+| 15 | 129866 | 57.210 |
+| 16 | 129892 | 62.364 |
+| 17 | 130057 | 62.992 |
+| 18 | 129270 | 60.533 |
+| 19 | 130952 | 60.223 |
+| 20 | 129718 | 60.254 |
+| 21 | 128222 | 58.679 |
+| 22 | 131023 | 62.485 |
+
+Same-window candidate W3–W17 = `841.653s`, compared with old 15-window W3–W17 `906.203s` (`64.550s` less, `7.12%` elapsed reduction; **uncontrolled sequential historical comparison**, not an attributable vacuum-setting improvement). New candidate W3–W12 first 10 = `541.504s` vs W13–W22 last 10 = `602.323s` (both ten-window groups have slightly differing record counts). This is a concrete later-window slowdown worth diagnosing with SQL/host/Go stage metrics.
+
+**Accepted metrics bundle:** `/var/tmp/fi-window-chunks-v20-c-20261110T103933Z/fi-vacuum-candidate20-20261110T103933Z.tar.gz`, generated and accepted on host, not yet uploaded into the assistant's working environment. The archive includes retained real replay before/after PostgreSQL counters and separately labeled `restarted_before_maintenance`/`maintenance_after` snapshots from continuation, Go stage/family/time, GC/RSS, signed readback and host I/O. Do not mix restart/maintenance samples with the timed replay.
+
+**Engineering next step:** ingest full archive and use **measured W3–W22 per-stage and PostgreSQL evidence** to isolate Go envelope preparation, Security/File COPY, SQL table/index/partition finalization, WAL/checkpoints and vacuum/autoanalyze. Classify each nested stage before computing time attribution. Only then implement a small, benchmarked Go/SQL candidate, with regressions/rollback and no main changes. Do not claim the current per-leaf setting is production-justified based on a one-arm 20-window trial.
