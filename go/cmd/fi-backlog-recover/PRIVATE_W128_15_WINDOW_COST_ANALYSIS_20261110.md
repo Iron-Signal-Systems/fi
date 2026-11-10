@@ -76,3 +76,42 @@ Created metrics: `RELATION_MAINTENANCE.jsonl` (all `fi*` schema partitions and t
 **Important:** PostgreSQL startup/shutdown is not bit-for-bit read-only on disk, even with read-only SQL sessions. Data lives in the disposable clone; the SoR, trusted seed and original signed cache remain untouched. `autovacuum=off` affects *only this postrun inspection session*. Relation stats are cumulative since statistic reset, not precise W3-W17 deltas; PG startup can also add small maintenance. Confirm `stats_reset` against the prior snapshot before attributing every counted VACUUM to the signed replay. The previous 15-window archive still cannot reconstruct per-window vacuum timing or actual wait-time without new sampling.
 
 Proceed only after host `sh -n` syntax check. Once collected, compare top relation maintenance duration with Security field partition, source, and TOAST index sizes. Then select a single controlled improvement or add short cadence per-window SQL stats capture to a future replay. Do **not** relax durability/autovacuum on ingestion based solely on aggregate counters.
+
+## 2026-11-10 09:26 UTC — retained PostgreSQL clone relation inspection PASS
+
+Inspection output: `fi-postrun-relation-review-20261110T092339Z.tar.gz` (operator-supplied). `inspect_completed_private15_postgresql_host.sh` completed `exit=0`, verified pinned source `b01ff0d8cb6559797de052f34b18bd84a395dc4c`, SQL checkpoint `18|2338918|17`, SQL `default_transaction_read_only=on`, inspection `autovacuum=off`, then stopped the private PostgreSQL clone cleanly. The archive contains 237 `pg_stat_all_tables` FI/TOAST relation records, 273 index-stat entries, stats identity and named PostgreSQL 18 counters. Original signed data and SoR remain unchanged.
+
+### Time and reset provenance
+
+`STATISTICS_IDENTITY.jsonl` inspection at 2026-11-10 04:23:40 -05:00 reports `wal_stats_reset=2026-11-10 02:39:51.328309 -05:00`, identical to the prior original run's pre/post `pg_stat_wal` snapshots. `pg_stat_database.stats_reset` is null (not proof of a reset at exact replay start). `last_autovacuum` timestamps for active FI relations lie between 02:41:31 and 02:56:35 -05:00, within the original ingestion interval. **All table stats are cumulative across this clone's restore, seed and replay, not independent W3-W17 relation deltas; do not subtract them as if they were pre/post.** PostgreSQL restart after the captured 15-window PG snapshots also caused small extra WAL/stat changes, so use the original archive's before/after deltas for timed replay volume, not the postrestart total.
+
+### Vacuum/analyze ranked by relation (PostgreSQL pg_stat_all_tables time units are milliseconds)
+
+| FI relation or group | Autovacuum worker time | Runs | Autoanalyze time | Autoanalyzes |
+|---|---:|---:|---:|---:|
+| 18 populated Security field partitions: seed plus W1–W17 | 110.094s | 18 | 13.192s | 18 |
+| `fi_recovery_projection.windows_security_event` | 55.655s | 7 | 14.685s | 6 |
+| `fi_recovery.pending_source_record` | 27.053s | 16 | 18.160s | 12 |
+| `fi_recovery_projection.source_record` | 24.835s | 11 | 13.380s | 10 |
+| `fi_recovery_projection.file_observation` | 12.290s | 15 | 8.943s | 11 |
+| `fi_recovery_projection.windows_security_event_scope` | 9.620s | 11 | 3.823s | 8 |
+| All remaining matching FI and FI-owned TOAST relations | 35.817s | 157 | 32.946s | 153 |
+| **TOTAL (non-additive concurrent worker times)** | **275.364s** | **235** | **105.129s** | **218** |
+
+Field partitions + Security event + two source ledgers explain **217.637s (~79.0%)** of cumulative autovacuum worker time. Each populated Security field partition was vacuumed once (5.332–6.641s per partition) and analyzed once. These are *worker durations* (which include possible cost-based sleeps) and can overlap ingest and each other: **275s is not 275s proved lost ingest time**.
+
+### Insert-only pattern and non-leading causes
+
+- All 237 returned relations showed `n_tup_upd=0`, `n_tup_del=0`, and `n_dead_tup=0` at collection. The latter is an estimate *after* vacuum, not a historic pre-vacuum snapshot. Along with ~41.7M cumulative inserted tuples, this strongly supports **insert-triggered VACUUM for visibility/freeze**, not dead-version cleanup, as the main maintenance pattern. PostgreSQL 18 explicitly documents insert-based vacuum thresholds and visibility-map/freezing benefits (official manual §§19.10, 24.1). Such work is not categorically wasteful.
+- 117 associated `pg_toast` tables reported 0 autovacuum runs and 0 vacuum/analyze worker duration. The key maintenance load was **not** in TOAST.
+- The private clone has ~5.585 GiB of heap files, ~2.081 GiB of indexes, and ~7.669 GiB total relation storage after seed plus W3–W17, with 18 field partitions alone ~3.387 GiB. Sizes are postrun totals, not incremental writes during the 15-window workload.
+- 273 index entries include 125/142 unscanned read-side indexes in `fi_recovery_projection` (about 1.547 GiB) and 5/6 in `fi_recovery` (~0.149 GiB). `idx_scan=0` means no counted read-side scan in this ingest clone; it does **not** imply indexes were free to maintain on inserts or safe to remove from the published query projection. Do not drop them on this evidence.
+- Original *timed* PostgreSQL `pg_stat_io` before/after deltas corroborate autovacuum worker `relation/vacuum` **18,453,037,056 B (~17.18 GiB) read** and **5,278,138,368 B (~4.92 GiB) written**. Autovacuum backend WAL write attribution ~6.87 GiB reflects writes, not additional unique WAL generated. WAL generated during timed replay was ~14.98 GiB with 29 requested checkpoints. The postrestart cumulative WAL figure is not the timed-replay delta.
+
+### Decision: first controlled maintenance experiment, private-only
+
+Prioritize a one-variable A/B experiment controlling **insert-triggered VACUUM on disposable private Security field leaf partitions only**, not system-wide autovacuum. On PostgreSQL 18 a leaf table storage parameter `autovacuum_vacuum_insert_threshold=-1` suppresses **insert-triggered** autovacuum on that table; it does not disable autoanalyze or emergency wraparound protection. Apply only when each disposable W3–W17 leaf partition is created, preserving the canonical SoR, old seed, 32,768 source chunk, source commit, WAL, synchronous durability, signed input, partition indexes and remaining table maintenance. Official PostgreSQL 18 `CREATE TABLE` storage parameter documentation confirms leaf-table overrides.
+
+Measure both variants under an identical 15-window source workload, but first consider a short paired pilot to validate selection and metrics. Capture each window's `pg_stat_all_tables`, `pg_stat_io`, `pg_stat_wal`, `pg_stat_checkpointer` deltas, `pg_stat_progress_vacuum` and `pg_stat_activity` samples, per-stage latency, exact signed result, host IO, process RSS/GC and reproducible source hash. Also measure **post-run maintenance** (`VACUUM (ANALYZE)` in the disposable clone, outside timed ingest) as required; an apparent gain that merely defers work is not a net efficiency improvement. Preserve `ANALYZE`, visibility-map/query behavior, freeze safety and published-query acceptance as explicit checks. `autovacuum=off` for the postrun *inspection* did not apply during the signed replay and must not be misinterpreted as an optimized ingestion setting.
+
+**Do not** globally turn off autovacuum, drop indexes based solely on `idx_scan`, change `max_wal_size` yet, reduce `fsync`/durability, or claim autovacuum caused any particular slow W16/W17 window without timestamp-aligned I/O/vacuum samples. The insert-only maintenance pattern is a grounded candidate, not yet a measured causality/speedup proof.
