@@ -247,7 +247,7 @@ relay="$jailroot$root/fi-optfield-relay"
 
 mkdir -m 700 "$out" "$out/$name" "$out/$name/private"
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI PRIVATE VACUUM A/B PILOT: REAL SIGNED, EXACTLY TWENTY DURABLE WINDOWS
+FI PRIVATE INSERT-VACUUM CANDIDATE: REAL SIGNED, EXACTLY TWENTY DURABLE WINDOWS
 experiment=private_insert_vacuum_candidate_signed20
 source_commit=$ref
 vacuum_variant=$mode
@@ -256,11 +256,11 @@ baseline_commit=9e0e6e236c95d9af91bc67a065efb47ce2318579
 source_instrumentation=none
 vacuum_experiment_scope=only_new_private_security_field_leaves
 PostgreSQL_global_autovacuum=unchanged
-manual_vacuum_after_timed_replay=not_yet_performed
+manual_vacuum_after_timed_replay=planned_for_all_20_new_leaves
 optimizations=reusable_security_event_scope_source_file_rows_and_envelope_scan
 GODEBUG_gctrace=enabled_for_recover_only
 process_rusage=FreeBSD_time_l_peak_RSS
-GC_trace_overhead=both_variants_traced_identically
+GC_trace_overhead=instrumented_trial_not_untraced_baseline
 checkpoint_log_override=none
 host_iostat_sample_seconds=5
 host_vmstat_sample_seconds=5
@@ -369,6 +369,8 @@ kill -0 "$vmstatpid" 2>/dev/null || fail 'vmstat failed to start'
 # Restarting a worker later is not acceptable: incomplete metrics skew A/B.
 pg_sample_sql="SELECT json_build_object(
   'observed_at',clock_timestamp(),
+  'last_durable_window',(SELECT max(window_index) FROM fi_recovery.typed_window),
+  'io',(SELECT coalesce(json_agg(row_to_json(i)),'[]'::json) FROM pg_stat_io i),
   'wal',(SELECT row_to_json(w) FROM pg_stat_wal w),
   'checkpointer',(SELECT row_to_json(c) FROM pg_stat_checkpointer c),
   'active_vacuum',(SELECT coalesce(json_agg(row_to_json(v)),'[]'::json)
@@ -513,9 +515,9 @@ for windowdir in "$out/$name/private"/receipt-*/window-*; do
     done
 done
 [ "$checked" -eq "$expected" ] || fail "signed artifact count mismatch $checked/$expected"
-# The five-window batch count is derived from SQL verified-artifact
+# The 20-window signed batch count is derived from the SQL verified-artifact
 # custody and ALL published files are compared to signed-cache originals.
-[ "$checked" -gt 0 ] || fail "five-window signed readback is empty: $checked"
+[ "$checked" -gt 0 ] || fail "twenty-window signed readback is empty: $checked"
 printf 'FI CLONE SIGNED READBACK PASS batch_files=%s byte_identical=true manifests_identical=true\n' "$checked" | tee -a "$out/SUMMARY.txt"
 
 # Real per-window throughput: difference in durable record positions divided
@@ -560,7 +562,7 @@ END {
     if (count!=20 || totaltime<=0) exit 1
     printf "TWENTY-WINDOW TOTAL: records=%d window_seconds=%.3f committed_rate=%.1f records/sec\n", totalrecords, totaltime, totalrecords/totaltime
 }' "$log" > "$out/$name/WINDOW_RATES.txt" ||
-    fail 'five-window rate extraction failed'
+    fail 'twenty-window rate extraction failed'
 cat "$out/$name/WINDOW_RATES.txt"
 
 
@@ -723,15 +725,16 @@ FI_METRICS
 printf 'FI EFFICIENCY METRIC EXPORT PASS stage_windows=20 source_rows=%s\n' "$new_records" |
     tee -a "$out/SUMMARY.txt"
 
-# Maintenance debt acceptance: both variants pay the same explicit
-# VACUUM (ANALYZE) of their five newly attached private field leaves, only
+# Maintenance debt acceptance: this candidate pays explicit
+# VACUUM (ANALYZE) of the 20 newly attached private field leaves, only
 # AFTER committed-window timing, SQL integrity and signed custody checks.
 # This is NOT a PostgreSQL global or production vacuum change.
 # Comparing ingest+repayment helps expose deferred versus eliminated work.
 maint_log="$out/$name/MAINTENANCE_REPAYMENT.tsv"
 printf 'window\telapsed_seconds\n' > "$maint_log"
 maint_start=$(date -u '+%s')
-for w in 3 4 5 6 7; do
+w=3
+while [ "$w" -le 22 ]; do
     table=$(printf 'windows_security_event_field_w%06d' "$w")
     started=$(date -u '+%s')
     jexec -U jwood fi-dev psql \
@@ -741,12 +744,24 @@ for w in 3 4 5 6 7; do
         fail "postrun private leaf VACUUM ANALYZE failed window=$w"
     stopped=$(date -u '+%s')
     printf '%s\t%s\n' "$w" "$((stopped-started))" >> "$maint_log"
+    w=$((w+1))
 done
 maint_stop=$(date -u '+%s')
-printf 'FI VACUUM REPAYMENT COMPLETE mode=%s leaf_windows=5 elapsed_seconds=%s\n' \
+printf 'FI VACUUM REPAYMENT COMPLETE mode=%s leaf_windows=20 elapsed_seconds=%s\n' \
     "$mode" "$((maint_stop-maint_start))" | tee "$out/$name/MAINTENANCE_REPAYMENT_SUMMARY.txt"
 snapshot_pg maintenance_after
 snapshot_relations maintenance_after
+# Postmaintenance remains within the disposable clone and cannot publish SoR.
+post_state=$(sql "SELECT count(*)::text || '|' ||
+   coalesce(sum(committed_records),0)::text || '|' || max(window_index)::text
+   FROM fi_recovery.typed_window")
+[ "$post_state" = "$state" ] ||
+    fail "postmaintenance durable SQL checkpoint changed: $post_state"
+[ "$(sql "SELECT (SELECT count(*) FROM fi.recorded_generation)
+    + (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')")" = 0 ] ||
+    fail 'postmaintenance canonical/accepted SoR invariant failed'
+printf 'FI VACUUM POSTMAINTENANCE INTEGRITY PASS state=%s authoritative=0 accepted=0\n' "$state" |
+    tee -a "$out/SUMMARY.txt"
 
 cat "$out/$name/result.txt" | tee -a "$out/SUMMARY.txt"
 cat "$out/$name/process_resources.txt" | tee -a "$out/SUMMARY.txt"
