@@ -145,7 +145,7 @@ for relpath in \
         fail "cannot extract pinned H16 source $relpath"
 done
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
-    -run '^TestPrivateHashH16' -count=1) > "$root/h16-unit-tests.log" 2>&1 ||
+    -run '^(TestPrivateHashH16|TestFileBulkProfilesAreContextScoped|TestFIContentHashCopyChunk|TestHashCopyLatency)' -count=1) > "$root/h16-unit-tests.log" 2>&1 ||
     { cat "$root/h16-unit-tests.log" >&2; fail 'H16 unit tests failed'; }
 printf 'FI HASH H16 GO TEST PASS pinned_overlay=%s\n' "$h16ref"
 
