@@ -262,6 +262,14 @@ snapshot_pg() {
         sql 'SELECT * FROM pg_stat_checkpointer'
         sql 'SELECT * FROM pg_stat_io'
     } > "$out/$name/pg_${phase}.txt" || fail "PostgreSQL ${phase} stats snapshot failed"
+    # JSON objects retain PG18 counter column names and units for offline
+    # before/after deltas. All are read-only and sampled outside the replay.
+    sql 'SELECT row_to_json(s)::text FROM (SELECT * FROM pg_stat_wal) s' \
+        > "$out/$name/pg_stat_wal_${phase}.jsonl" || fail "WAL statistics snapshot failed"
+    sql 'SELECT row_to_json(s)::text FROM (SELECT * FROM pg_stat_checkpointer) s' \
+        > "$out/$name/pg_stat_checkpointer_${phase}.jsonl" || fail "checkpointer snapshot failed"
+    sql 'SELECT row_to_json(s)::text FROM (SELECT * FROM pg_stat_io) s' \
+        > "$out/$name/pg_stat_io_${phase}.jsonl" || fail "I/O statistics snapshot failed"
 }
 snapshot_pg before
 {
