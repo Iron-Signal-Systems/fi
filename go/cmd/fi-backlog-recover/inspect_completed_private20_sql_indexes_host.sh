@@ -168,24 +168,68 @@ FROM (
 ) x;
 SQL
 
-# Inspect metadata only for the exact SQL relations implicated by the
-# W3-W22 evidence; this does NOT time index insertion or remove constraints.
+# Metadata only, no EXPLAIN ANALYZE, DDL or read of source row values.
 run_sql > "$report/TARGET_INDEX_DEFINITIONS.jsonl" <<'SQL'
 SELECT row_to_json(q)::text FROM (
- SELECT n.nspname AS schema_name, t.relname AS table_name,
-        i.relname AS index_name, pg_get_indexdef(i.oid) AS definition,
-        pg_relation_size(i.oid) AS index_bytes,
+ SELECT ns.nspname AS schema_name,t.relname AS table_name,
+        idx.relname AS index_name,pg_get_indexdef(idx.oid) AS definition,
+        pg_relation_size(idx.oid) AS index_bytes,
         st.idx_scan,st.idx_tup_read,st.idx_tup_fetch,
-        ix.indisunique,ix.indisprimary,ix.indisvalid,ix.indisready
+        pi.indisunique,pi.indisprimary,pi.indisvalid,pi.indisready
  FROM pg_class t
- JOIN pg_namespace n ON n.oid=t.relnamespace
- JOIN pg_index ix ON ix.indrelid=t.oid
- JOIN pg_class i ON i.oid=ix.indexrelid
- LEFT JOIN pg_stat_all_indexes st ON st.indexrelid=ix.indexrelid
- WHERE n.nspname='fi_recovery_projection'
- AND (t.relname IN ('file_observation','file_metadata_observation',
-   'content_hash_observation','windows_security_event','windows_security_event_field')
- OR t.relname ~ '^windows_security_event_field_w[0-9]{6} <<'SQL'
+ JOIN pg_namespace ns ON ns.oid=t.relnamespace
+ JOIN pg_index pi ON pi.indrelid=t.oid
+ JOIN pg_class idx ON idx.oid=pi.indexrelid
+ LEFT JOIN pg_stat_all_indexes st ON st.indexrelid=idx.oid
+ WHERE ns.nspname='fi_recovery_projection'
+ AND (t.relname IN ('content_hash_observation','file_observation',
+       'file_metadata_observation','windows_security_event',
+       'windows_security_event_field')
+      OR t.relname LIKE 'windows_security_event_field_w%')
+ ORDER BY t.relname,pg_relation_size(idx.oid) DESC,idx.relname
+) q;
+SQL
+
+run_sql > "$report/TARGET_CONSTRAINTS.jsonl" <<'SQL'
+SELECT row_to_json(q)::text FROM (
+ SELECT ns.nspname AS schema_name,t.relname AS table_name,
+        con.conname,con.contype,con.convalidated,
+        pg_get_constraintdef(con.oid,true) AS definition,
+        CASE WHEN con.confrelid<>0 THEN con.confrelid::regclass::text END AS referenced_relation
+ FROM pg_constraint con
+ JOIN pg_class t ON t.oid=con.conrelid
+ JOIN pg_namespace ns ON ns.oid=t.relnamespace
+ WHERE ns.nspname='fi_recovery_projection'
+ AND (t.relname IN ('content_hash_observation','file_observation',
+        'windows_security_event','windows_security_event_field')
+      OR t.relname LIKE 'windows_security_event_field_w%')
+ ORDER BY t.relname,con.conname
+) q;
+SQL
+
+run_sql > "$report/TARGET_RELATION_SIZES.jsonl" <<'SQL'
+SELECT row_to_json(q)::text FROM (
+ SELECT ns.nspname AS schema_name,t.relname AS table_name,
+        t.reltuples::bigint AS estimated_tuples,t.relpages,
+        pg_relation_size(t.oid) AS heap_bytes,
+        pg_indexes_size(t.oid) AS index_bytes,
+        pg_total_relation_size(t.oid) AS total_bytes,
+        st.n_tup_ins,st.n_live_tup,st.n_dead_tup,
+        st.autovacuum_count,st.autoanalyze_count,
+        st.total_autovacuum_time,st.total_autoanalyze_time
+ FROM pg_class t
+ JOIN pg_namespace ns ON ns.oid=t.relnamespace
+ LEFT JOIN pg_stat_all_tables st ON st.relid=t.oid
+ WHERE ns.nspname='fi_recovery_projection'
+ AND (t.relname IN ('content_hash_observation','file_observation',
+        'file_metadata_observation','windows_security_event',
+        'windows_security_event_field')
+      OR t.relname LIKE 'windows_security_event_field_w%')
+ ORDER BY pg_total_relation_size(t.oid) DESC,t.relname
+) q;
+SQL
+
+run_sql > "$report/PG_AFTER_RESTART.jsonl" <<'SQL'
 SELECT json_build_object(
     'pg_stat_database', (SELECT row_to_json(d) FROM pg_stat_database d WHERE d.datname=current_database()),
     'pg_stat_wal', (SELECT row_to_json(w) FROM pg_stat_wal w),
@@ -247,231 +291,6 @@ bundle="$report/fi-postrun-sql-index-review-$stamp.tar.gz"
         FI_INDEXES.jsonl PG_AFTER_RESTART.jsonl TOP_MAINTENANCE.csv \
         TARGET_INDEX_DEFINITIONS.jsonl TARGET_CONSTRAINTS.jsonl \
         TARGET_RELATION_SIZES.jsonl
-) || fail 'postrun review bundle creation failed'
-[ -s "$bundle" ] || fail 'postrun review bundle is empty'
-printf 'FI POSTRUN SQL INDEX REVIEW PASS rows=%s package=%s\n' \
-    "$(wc -l < "$report/RELATION_MAINTENANCE.jsonl" | tr -d ' ')" "$bundle"
-)
- ORDER BY t.relname, pg_relation_size(i.oid) DESC,i.relname
-) q;
-SQL
-run_sql > "$report/TARGET_CONSTRAINTS.jsonl" <<'SQL'
-SELECT row_to_json(q)::text FROM (
- SELECT n.nspname AS schema_name, t.relname AS table_name,
-        c.conname, c.contype,c.convalidated,
-        pg_get_constraintdef(c.oid,true) AS definition,
-        CASE WHEN c.confrelid<>0 THEN c.confrelid::regclass::text END AS referenced_relation
- FROM pg_constraint c
- JOIN pg_class t ON t.oid=c.conrelid
- JOIN pg_namespace n ON n.oid=t.relnamespace
- WHERE n.nspname='fi_recovery_projection'
- AND (t.relname IN ('content_hash_observation','file_observation',
-      'windows_security_event','windows_security_event_field')
- OR t.relname ~ '^windows_security_event_field_w[0-9]{6} <<'SQL'
-SELECT json_build_object(
-    'pg_stat_database', (SELECT row_to_json(d) FROM pg_stat_database d WHERE d.datname=current_database()),
-    'pg_stat_wal', (SELECT row_to_json(w) FROM pg_stat_wal w),
-    'pg_stat_checkpointer', (SELECT row_to_json(c) FROM pg_stat_checkpointer c),
-    'pg_stat_io', (SELECT json_agg(row_to_json(i)) FROM pg_stat_io i)
-)::text;
-SQL
-
-run_sql > "$report/TOP_MAINTENANCE.csv" <<'SQL'
-COPY (
-    SELECT s.schemaname, s.relname,
-           coalesce(ns.nspname || '.' || owner.relname,'') AS toast_owner,
-           s.autovacuum_count,
-           s.total_autovacuum_time AS autovacuum_ms,
-           s.autoanalyze_count,
-           s.total_autoanalyze_time AS autoanalyze_ms,
-           s.n_tup_ins, s.n_dead_tup,
-           pg_relation_size(s.relid) AS heap_bytes
-    FROM pg_stat_all_tables s
-    LEFT JOIN pg_class owner ON owner.reltoastrelid=s.relid
-    LEFT JOIN pg_namespace ns ON ns.oid=owner.relnamespace
-    WHERE s.schemaname LIKE 'fi%'
-       OR (s.schemaname='pg_toast' AND ns.nspname LIKE 'fi%')
-    ORDER BY s.total_autovacuum_time DESC NULLS LAST,
-             s.total_autoanalyze_time DESC NULLS LAST
-    LIMIT 75
-) TO STDOUT WITH (FORMAT csv, HEADER true);
-SQL
-
-[ -s "$report/STATISTICS_IDENTITY.jsonl" ] &&
-[ -s "$report/RELATION_MAINTENANCE.jsonl" ] &&
-[ -s "$report/FI_INDEXES.jsonl" ] &&
-[ -s "$report/PG_AFTER_RESTART.jsonl" ] &&
-[ -s "$report/TOP_MAINTENANCE.csv" ] ||
-    fail 'postrun metrics collection incomplete'
-
-cat > "$report/README.txt" <<'README'
-FI W128 private replay post-run relation-level statistics, PostgreSQL 18.
-The original W3-W22 signed replay and postrun acceptance completed.
-A pinned clone was restarted with autovacuum=off and default_transaction_read_only=on.
-This is SQL read-only inspection; PostgreSQL startup/shutdown can alter on-disk
-metadata and tiny amounts of cumulative activity. No original SoR was touched.
-Relations include fi_* schemas, child partitions and FI-owned pg_toast tables.
-Relational and TOAST sizes can overlap: do not sum total relation size blindly.
-Vacuum and analyze counters are CUMULATIVE since each statistic reset, possibly
-including the original seed import and PostgreSQL restart.
-No per-window vacuum timing or actual I/O wait time can be recreated now.
-This review complements the already captured pre/post pg_stat_io/WAL deltas.
-README
-
-bundle="$report/fi-postrun-sql-index-review-$stamp.tar.gz"
-(
-    cd "$report" || exit 1
-    tar -czf "$bundle" README.txt VERIFICATION.txt \
-        STATISTICS_IDENTITY.jsonl RELATION_MAINTENANCE.jsonl \
-        FI_INDEXES.jsonl PG_AFTER_RESTART.jsonl TOP_MAINTENANCE.csv
-) || fail 'postrun review bundle creation failed'
-[ -s "$bundle" ] || fail 'postrun review bundle is empty'
-printf 'FI POSTRUN SQL INDEX REVIEW PASS rows=%s package=%s\n' \
-    "$(wc -l < "$report/RELATION_MAINTENANCE.jsonl" | tr -d ' ')" "$bundle"
-)
- ORDER BY t.relname,c.conname
-) q;
-SQL
-run_sql > "$report/TARGET_RELATION_SIZES.jsonl" <<'SQL'
-SELECT row_to_json(q)::text FROM (
- SELECT n.nspname AS schema_name,t.relname AS table_name,
-        t.reltuples::bigint AS planner_estimated_tuples,t.relpages,
-        pg_relation_size(t.oid) AS heap_bytes,
-        pg_indexes_size(t.oid) AS index_bytes,
-        pg_total_relation_size(t.oid) AS total_bytes,
-        s.n_tup_ins,s.n_live_tup,s.n_dead_tup,
-        s.autovacuum_count,s.autoanalyze_count,
-        s.total_autovacuum_time,s.total_autoanalyze_time
- FROM pg_class t
- JOIN pg_namespace n ON n.oid=t.relnamespace
- LEFT JOIN pg_stat_all_tables s ON s.relid=t.oid
- WHERE n.nspname='fi_recovery_projection'
- AND (t.relname IN ('content_hash_observation','file_observation',
-     'file_metadata_observation','windows_security_event',
-     'windows_security_event_field')
- OR t.relname ~ '^windows_security_event_field_w[0-9]{6} <<'SQL'
-SELECT json_build_object(
-    'pg_stat_database', (SELECT row_to_json(d) FROM pg_stat_database d WHERE d.datname=current_database()),
-    'pg_stat_wal', (SELECT row_to_json(w) FROM pg_stat_wal w),
-    'pg_stat_checkpointer', (SELECT row_to_json(c) FROM pg_stat_checkpointer c),
-    'pg_stat_io', (SELECT json_agg(row_to_json(i)) FROM pg_stat_io i)
-)::text;
-SQL
-
-run_sql > "$report/TOP_MAINTENANCE.csv" <<'SQL'
-COPY (
-    SELECT s.schemaname, s.relname,
-           coalesce(ns.nspname || '.' || owner.relname,'') AS toast_owner,
-           s.autovacuum_count,
-           s.total_autovacuum_time AS autovacuum_ms,
-           s.autoanalyze_count,
-           s.total_autoanalyze_time AS autoanalyze_ms,
-           s.n_tup_ins, s.n_dead_tup,
-           pg_relation_size(s.relid) AS heap_bytes
-    FROM pg_stat_all_tables s
-    LEFT JOIN pg_class owner ON owner.reltoastrelid=s.relid
-    LEFT JOIN pg_namespace ns ON ns.oid=owner.relnamespace
-    WHERE s.schemaname LIKE 'fi%'
-       OR (s.schemaname='pg_toast' AND ns.nspname LIKE 'fi%')
-    ORDER BY s.total_autovacuum_time DESC NULLS LAST,
-             s.total_autoanalyze_time DESC NULLS LAST
-    LIMIT 75
-) TO STDOUT WITH (FORMAT csv, HEADER true);
-SQL
-
-[ -s "$report/STATISTICS_IDENTITY.jsonl" ] &&
-[ -s "$report/RELATION_MAINTENANCE.jsonl" ] &&
-[ -s "$report/FI_INDEXES.jsonl" ] &&
-[ -s "$report/PG_AFTER_RESTART.jsonl" ] &&
-[ -s "$report/TOP_MAINTENANCE.csv" ] ||
-    fail 'postrun metrics collection incomplete'
-
-cat > "$report/README.txt" <<'README'
-FI W128 private replay post-run relation-level statistics, PostgreSQL 18.
-The original W3-W22 signed replay and postrun acceptance completed.
-A pinned clone was restarted with autovacuum=off and default_transaction_read_only=on.
-This is SQL read-only inspection; PostgreSQL startup/shutdown can alter on-disk
-metadata and tiny amounts of cumulative activity. No original SoR was touched.
-Relations include fi_* schemas, child partitions and FI-owned pg_toast tables.
-Relational and TOAST sizes can overlap: do not sum total relation size blindly.
-Vacuum and analyze counters are CUMULATIVE since each statistic reset, possibly
-including the original seed import and PostgreSQL restart.
-No per-window vacuum timing or actual I/O wait time can be recreated now.
-This review complements the already captured pre/post pg_stat_io/WAL deltas.
-README
-
-bundle="$report/fi-postrun-sql-index-review-$stamp.tar.gz"
-(
-    cd "$report" || exit 1
-    tar -czf "$bundle" README.txt VERIFICATION.txt \
-        STATISTICS_IDENTITY.jsonl RELATION_MAINTENANCE.jsonl \
-        FI_INDEXES.jsonl PG_AFTER_RESTART.jsonl TOP_MAINTENANCE.csv
-) || fail 'postrun review bundle creation failed'
-[ -s "$bundle" ] || fail 'postrun review bundle is empty'
-printf 'FI POSTRUN SQL INDEX REVIEW PASS rows=%s package=%s\n' \
-    "$(wc -l < "$report/RELATION_MAINTENANCE.jsonl" | tr -d ' ')" "$bundle"
-)
- ORDER BY pg_total_relation_size(t.oid) DESC,t.relname
-) q;
-SQL
-
-run_sql > "$report/PG_AFTER_RESTART.jsonl" <<'SQL'
-SELECT json_build_object(
-    'pg_stat_database', (SELECT row_to_json(d) FROM pg_stat_database d WHERE d.datname=current_database()),
-    'pg_stat_wal', (SELECT row_to_json(w) FROM pg_stat_wal w),
-    'pg_stat_checkpointer', (SELECT row_to_json(c) FROM pg_stat_checkpointer c),
-    'pg_stat_io', (SELECT json_agg(row_to_json(i)) FROM pg_stat_io i)
-)::text;
-SQL
-
-run_sql > "$report/TOP_MAINTENANCE.csv" <<'SQL'
-COPY (
-    SELECT s.schemaname, s.relname,
-           coalesce(ns.nspname || '.' || owner.relname,'') AS toast_owner,
-           s.autovacuum_count,
-           s.total_autovacuum_time AS autovacuum_ms,
-           s.autoanalyze_count,
-           s.total_autoanalyze_time AS autoanalyze_ms,
-           s.n_tup_ins, s.n_dead_tup,
-           pg_relation_size(s.relid) AS heap_bytes
-    FROM pg_stat_all_tables s
-    LEFT JOIN pg_class owner ON owner.reltoastrelid=s.relid
-    LEFT JOIN pg_namespace ns ON ns.oid=owner.relnamespace
-    WHERE s.schemaname LIKE 'fi%'
-       OR (s.schemaname='pg_toast' AND ns.nspname LIKE 'fi%')
-    ORDER BY s.total_autovacuum_time DESC NULLS LAST,
-             s.total_autoanalyze_time DESC NULLS LAST
-    LIMIT 75
-) TO STDOUT WITH (FORMAT csv, HEADER true);
-SQL
-
-[ -s "$report/STATISTICS_IDENTITY.jsonl" ] &&
-[ -s "$report/RELATION_MAINTENANCE.jsonl" ] &&
-[ -s "$report/FI_INDEXES.jsonl" ] &&
-[ -s "$report/PG_AFTER_RESTART.jsonl" ] &&
-[ -s "$report/TOP_MAINTENANCE.csv" ] ||
-    fail 'postrun metrics collection incomplete'
-
-cat > "$report/README.txt" <<'README'
-FI W128 private replay post-run relation-level statistics, PostgreSQL 18.
-The original W3-W22 signed replay and postrun acceptance completed.
-A pinned clone was restarted with autovacuum=off and default_transaction_read_only=on.
-This is SQL read-only inspection; PostgreSQL startup/shutdown can alter on-disk
-metadata and tiny amounts of cumulative activity. No original SoR was touched.
-Relations include fi_* schemas, child partitions and FI-owned pg_toast tables.
-Relational and TOAST sizes can overlap: do not sum total relation size blindly.
-Vacuum and analyze counters are CUMULATIVE since each statistic reset, possibly
-including the original seed import and PostgreSQL restart.
-No per-window vacuum timing or actual I/O wait time can be recreated now.
-This review complements the already captured pre/post pg_stat_io/WAL deltas.
-README
-
-bundle="$report/fi-postrun-sql-index-review-$stamp.tar.gz"
-(
-    cd "$report" || exit 1
-    tar -czf "$bundle" README.txt VERIFICATION.txt \
-        STATISTICS_IDENTITY.jsonl RELATION_MAINTENANCE.jsonl \
-        FI_INDEXES.jsonl PG_AFTER_RESTART.jsonl TOP_MAINTENANCE.csv
 ) || fail 'postrun review bundle creation failed'
 [ -s "$bundle" ] || fail 'postrun review bundle is empty'
 printf 'FI POSTRUN SQL INDEX REVIEW PASS rows=%s package=%s\n' \
