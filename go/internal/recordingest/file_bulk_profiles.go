@@ -68,3 +68,33 @@ func fileBulkLimitsFromContext(ctx context.Context) fileBulkLimits {
 	}
 	return defaultFileBulkLimits()
 }
+
+// WithPrivateFileHashH16 selects one isolated COPY-batching experiment without
+// changing any other F3 setting or the production F1 defaults. The signed W128
+// recovery CLI permits this only for its guarded deferred/private clone path.
+//
+// The original 8,192-row/8-MiB hash writer cost increased in later W128
+// windows. Doubling only its bounds tests whether fewer synchronous
+// PostgreSQL COPY calls improve wall time; it does NOT bypass FK, hash shape,
+// row validation, transaction boundaries, or per-row digest verification.
+//
+// Requiring the exact original F3 profile prevents accidentally composing
+// experimental contexts or silently weakening bounds in other ingest paths.
+func WithPrivateFileHashH16(ctx context.Context) (context.Context, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("FI private hash H16: context required")
+	}
+	original := fileBulkLimitsFromContext(ctx)
+	if original != (fileBulkLimits{
+		Name: "F3", SourceMaxRecords: 8192, SourceMaxBytes: 32 << 20,
+		ObserveMaxRecords: 8192, ObserveMaxBytes: 32 << 20,
+		HashMaxRows: 8192, HashMaxBytes: 8 << 20, ChildMaxRows: 4096,
+	}) {
+		return nil, fmt.Errorf("FI private hash H16: requires unmodified F3 profile")
+	}
+	adjusted := original
+	adjusted.Name = "F3H16"
+	adjusted.HashMaxRows = 16384
+	adjusted.HashMaxBytes = 16 << 20
+	return context.WithValue(ctx, fileBulkProfileContextKey{}, adjusted), nil
+}
