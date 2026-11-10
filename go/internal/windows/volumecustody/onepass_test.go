@@ -122,6 +122,9 @@ func (h *passHarness) PublishWindow(_ context.Context, window Window) (string, e
 	if h.failAt == "wrong-manifest" {
 		return filepath.Join(h.spoolDir, "missing.manifest.json"), nil
 	}
+	if h.failAt == "publish-after-write" {
+		return h.publishedPath, errPassFault
+	}
 	return h.publishedPath, nil
 }
 
@@ -129,7 +132,7 @@ func TestOneWindowCoordinatesCustodyThenCheckpointCAS(t *testing.T) {
 	h := newPassHarness(t)
 	result, err := ProcessOneWindow(context.Background(), "data", h.dep())
 	if err != nil { t.Fatal(err) }
-	if !result.Published || !result.CommitAttempted || !result.CheckpointCommitted || result.Candidate == nil ||
+	if !result.PublicationAttempted || !result.Published || !result.CommitAttempted || !result.CheckpointCommitted || result.Candidate == nil ||
 		result.Candidate.NextUSN != "2500" || result.ManifestPath != h.publishedPath ||
 		h.checked.NextUSN != "2500" {
 		t.Fatalf("one-pass success not fully accounted: result=%+v saved=%+v", result, h.checked)
@@ -157,6 +160,7 @@ func TestOneWindowFailureGatesDoNotAdvanceCheckpoint(t *testing.T) {
 		{"native read failure", "read", nil, "release", false},
 		{"native invalid bounded window", "", func(h *passHarness){h.window.Boundary.NextUSN="3001"}, "release", false},
 		{"incomplete publication", "publish", nil, "release", false},
+		{"publication persisted but acknowledgement failed", "publish-after-write", nil, "release", false},
 		{"no publication manifest", "no-manifest", nil, "release", false},
 		{"publisher mutated validated capture", "mutate-publisher", nil, "release", true},
 		{"journal requery failure", "requery", nil, "release", true},
@@ -177,7 +181,12 @@ func TestOneWindowFailureGatesDoNotAdvanceCheckpoint(t *testing.T) {
 			if tc.change!=nil {tc.change(h)}
 			result,err:=ProcessOneWindow(context.Background(),"data",h.dep())
 			if err==nil {t.Fatalf("failure scenario accepted: %+v",result)}
+			attempted := false
+			for _, event := range h.events {
+				if event == "publish" { attempted = true }
+			}
 			if result.CheckpointCommitted || result.Published != tc.published ||
+				result.PublicationAttempted != attempted ||
 				result.CommitAttempted != (tc.failAt == "commit") {
 				t.Fatalf("failed pass advanced or misreported source custody: %+v %v",result,err)
 			}
@@ -187,8 +196,8 @@ func TestOneWindowFailureGatesDoNotAdvanceCheckpoint(t *testing.T) {
 			if tc.name != "checkpoint malformed" && h.checked.NextUSN != "2000" {
 				t.Fatalf("checkpoint advanced during failure: %+v",h.checked)
 			}
-			if tc.published && result.ManifestPath == "" {
-				t.Fatal("published evidence path was lost during failure")
+			if (tc.published || tc.failAt == "publish-after-write") && result.ManifestPath == "" {
+				t.Fatal("published or in-doubt evidence path was lost during failure")
 			}
 		})
 	}
@@ -243,7 +252,7 @@ func TestAmbiguousCheckpointWriteReportsInDoubtWithoutInventedRollback(t *testin
 	h:=newPassHarness(t)
 	h.failAt="commit-after-write"
 	result,err:=ProcessOneWindow(context.Background(),"data",h.dep())
-	if !errors.Is(err,errPassFault) || !result.Published ||
+	if !errors.Is(err,errPassFault) || !result.PublicationAttempted || !result.Published ||
 		!result.CommitAttempted || result.CheckpointCommitted ||
 		result.Candidate==nil || h.checked.NextUSN!="2500" {
 		t.Fatalf("ambiguous write concealed actual state or claimed commit: result=%+v err=%v persisted=%+v",result,err,h.checked)
