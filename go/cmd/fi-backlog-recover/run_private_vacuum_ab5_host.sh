@@ -362,28 +362,36 @@ vmstat -w 5 > "$out/$name/host-vmstat.txt" 2>&1 &
 vmstatpid=$!
 kill -0 "$iostatpid" 2>/dev/null || fail 'iostat failed to start'
 kill -0 "$vmstatpid" 2>/dev/null || fail 'vmstat failed to start'
-# Passive 5-second, timestamped PG18 WAL/checkpoint/vacuum samples.
-# Both variants pay identical observer overhead. Zero autovacuum workers
-# is recorded explicitly as an empty JSON array.
+# Preflight the sampling query synchronously. If PG permissions or syntax
+# differ from our expectation, reject BEFORE starting the signed replay.
+# Restarting a worker later is not acceptable: incomplete metrics skew A/B.
+pg_sample_sql="SELECT json_build_object(
+  'observed_at',clock_timestamp(),
+  'wal',(SELECT row_to_json(w) FROM pg_stat_wal w),
+  'checkpointer',(SELECT row_to_json(c) FROM pg_stat_checkpointer c),
+  'active_vacuum',(SELECT coalesce(json_agg(row_to_json(v)),'[]'::json)
+                    FROM pg_stat_progress_vacuum v),
+  'autovacuum_workers',(SELECT coalesce(json_agg(row_to_json(a)),'[]'::json)
+                    FROM (SELECT pid,wait_event_type,wait_event,query
+                          FROM pg_stat_activity
+                          WHERE backend_type='autovacuum worker') a)
+)::text"
+sql "$pg_sample_sql" > "$out/$name/pg_5sec_samples.jsonl" ||
+    fail 'PG vacuum/WAL observer query failed preflight'
+[ -s "$out/$name/pg_5sec_samples.jsonl" ] ||
+    fail 'PG observer preflight produced empty result'
+
+# Same five-second observer for each isolated variant; both capture WAL
+# counters, checkpoint counts and in-flight VACUUM/worker wait detail.
 (
     while :; do
-        sql "SELECT json_build_object(
-          'observed_at',clock_timestamp(),
-          'wal',(SELECT row_to_json(w) FROM pg_stat_wal w),
-          'checkpointer',(SELECT row_to_json(c) FROM pg_stat_checkpointer c),
-          'active_vacuum',(SELECT coalesce(json_agg(row_to_json(v)),'[]'::json)
-                            FROM pg_stat_progress_vacuum v),
-          'autovacuum_workers',(SELECT coalesce(json_agg(row_to_json(a)),'[]'::json)
-                            FROM (SELECT pid,wait_event_type,wait_event,query
-                                  FROM pg_stat_activity
-                                  WHERE backend_type='autovacuum worker') a)
-        )::text" >> "$out/$name/pg_5sec_samples.jsonl" 2>> "$out/$name/pg_samples_errors.log" || break
         sleep 5
+        sql "$pg_sample_sql" >> "$out/$name/pg_5sec_samples.jsonl" \
+            2>> "$out/$name/pg_samples_errors.log" || break
     done
 ) &
 pgwatchpid=$!
 kill -0 "$pgwatchpid" 2>/dev/null || fail 'PostgreSQL watcher failed to start'
-
 
 
 # The recovery executable runs on the host, connects to the jail through the
