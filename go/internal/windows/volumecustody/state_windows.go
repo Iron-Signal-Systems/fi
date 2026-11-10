@@ -7,6 +7,7 @@
 package volumecustody
 
 import (
+ "bytes"
  "context"
  "encoding/json"
  "errors"
@@ -158,10 +159,12 @@ func loadVolumeStateFile(path,id string) (volumeepoch.Checkpoint,error) {
  if !info.Mode().IsRegular() || info.Size()<=0 || info.Size()>maxVolumeCheckpointBytes {
   return volumeepoch.Checkpoint{},fmt.Errorf("%w: checkpoint must be a bounded regular file",ErrVolumeStateUntrusted)
  }
- f,err:=os.Open(path)
+ raw,err:=os.ReadFile(path)
  if err!=nil{return volumeepoch.Checkpoint{},err}
- defer f.Close()
- decoder:=json.NewDecoder(io.LimitReader(f,maxVolumeCheckpointBytes+1))
+ if len(raw)==0 || len(raw)>maxVolumeCheckpointBytes {
+  return volumeepoch.Checkpoint{},fmt.Errorf("%w: checkpoint byte length outside permitted bounds",ErrVolumeStateUntrusted)
+ }
+ decoder:=json.NewDecoder(bytes.NewReader(raw))
  decoder.DisallowUnknownFields()
  var cp volumeepoch.Checkpoint
  if err:=decoder.Decode(&cp);err!=nil{return volumeepoch.Checkpoint{},fmt.Errorf("%w: decode checkpoint: %v",ErrVolumeStateUntrusted,err)}
@@ -171,6 +174,16 @@ func loadVolumeStateFile(path,id string) (volumeepoch.Checkpoint,error) {
  }
  if err:=volumeepoch.ValidateCheckpoint(id,cp);err!=nil {
   return volumeepoch.Checkpoint{},fmt.Errorf("%w: %v",ErrVolumeStateUntrusted,err)
+ }
+ // JSON decoders permit duplicate keys. The protected runtime checkpoint
+ // is strictly our own one-line canonical encoding, so refuse duplicates,
+ // extra whitespace and alternate representations rather than guessing
+ // which disk bytes the previous writer actually committed.
+ canonical,err:=json.Marshal(cp)
+ if err!=nil{return volumeepoch.Checkpoint{},err}
+ canonical=append(canonical,'\n')
+ if !bytes.Equal(raw,canonical) {
+  return volumeepoch.Checkpoint{},fmt.Errorf("%w: noncanonical or duplicate-key checkpoint encoding",ErrVolumeStateUntrusted)
  }
  return cp,nil
 }
