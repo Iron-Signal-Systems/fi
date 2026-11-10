@@ -150,6 +150,18 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 		s.poisoned = true
 		return errors.New("FI journal target does not belong to the retained native parent or expected basename")
 	}
+	// CREATE_NEW can have succeeded before a security failure is discovered.
+	// Verify the newly created FILE's effective owner and inherited DACL
+	// through its own live handle before acknowledging a reservation.
+	// A failure leaves the file as in-doubt evidence: NEVER remove, truncate,
+	// replace, or retry the same installation ID automatically.
+	if !s.skipProtectedParentForTests {
+		if err := verifyCreationJournalFileHandle(handle); err != nil {
+			_ = windows.CloseHandle(handle)
+			s.poisoned = true
+			return fmt.Errorf("FI creation journal was created with untrusted effective native security (in doubt): %w", err)
+		}
+	}
 	file := os.NewFile(uintptr(handle), target)
 	if file == nil {
 		_ = windows.CloseHandle(handle)
