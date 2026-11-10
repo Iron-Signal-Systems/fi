@@ -129,6 +129,29 @@ new_records=$(sql "SELECT coalesce(sum(committed_records),0)
     + (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')")" = 0 ] ||
     fail 'clone contains authoritative or Accepted entries'
 
+# Re-run the exact original logical custody SQL count and digest check on
+# the retained clone before any post-run VACUUM or readback workload.
+integrity=$(sql "
+SELECT CASE WHEN
+ (SELECT count(*) FROM fi_recovery.verified_artifact_window)=(SELECT count(*) FROM fi_recovery.source_window)
+ AND (SELECT count(*) FROM fi_recovery.source_window)=(SELECT count(*) FROM fi_recovery.typed_window)
+ AND (SELECT count(*) FROM fi_recovery.pending_source_record)=(SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window)
+ AND (SELECT count(*) FROM fi_recovery_projection.source_record)=(SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window)
+ AND (SELECT count(*) FROM pg_inherits WHERE inhparent='fi_recovery_projection.windows_security_event_field'::regclass)=(SELECT count(*) FROM fi_recovery.typed_window)
+ AND (SELECT count(*) FROM fi.recorded_generation)=0
+ AND (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')=0
+ AND NOT EXISTS (
+ SELECT 1 FROM fi_recovery.typed_window t
+ JOIN fi_recovery.source_window s USING(receipt_sha256,window_index)
+ JOIN fi_recovery.verified_artifact_window a USING(receipt_sha256,window_index)
+ WHERE t.descriptor_sha256<>s.descriptor_sha256 OR t.descriptor_sha256<>a.descriptor_sha256
+ )
+ THEN 'PASS' ELSE 'FAIL' END") || fail 'SQL integrity query failed'
+[ "$integrity" = PASS ] || fail 'SQL integrity FAIL'
+
+printf 'FI CANDIDATE20 RECHECK SQL INTEGRITY PASS checkpoint=%s authoritative=0 accepted=0\n' "$state" |
+    tee -a "$out/SUMMARY.txt"
+
 # The original candidate W3-W22 setting was already verified. Check again
 # and correct only the mistaken 3|0 seed expectation, NOT any relation.
 leaf_config=$(sql "SELECT count(*)::text || '|' ||
