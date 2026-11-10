@@ -73,9 +73,11 @@ func run() error {
 	var testStopAfterWindows, testFieldFailWindow int
 	var securityProfile, windowProfile string
 	var optimizedK32 bool
+	var privateHashH16 bool
 	var deferredVerifiedClone bool
 	flag.BoolVar(&deferredVerifiedClone, "deferred-verified-clone", false, "EXPERIMENT ONLY: W128/K32/P3/F3 verified cache; defer artifact marker until signed SHA and typed SQL verification share one private transaction")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
+	flag.BoolVar(&privateHashH16, "private-hash-h16", false, "EXPERIMENT ONLY: double hash COPY rows/bytes in isolated deferred W128/P3/F3 private clone; never production")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
 	flag.StringVar(&source, "source", "", "exact original signed FI source")
@@ -190,6 +192,12 @@ func run() error {
 		indexedPrivate || streamLoader || preflightOnly) {
 		return errors.New("FI deferred verified clone requires isolated signed-cache W128/K32/P3/F3 private joined trial starting at window 3")
 	}
+	// Every other source, transaction, profile and isolation precondition is
+	// checked by deferredVerifiedClone immediately above. H16 is not allowed
+	// in general continuous ingestion, source publication, or F1/F2 paths.
+	if privateHashH16 && !deferredVerifiedClone {
+		return errors.New("FI private hash H16 requires the guarded deferred verified clone experiment")
+	}
 	if (testStopAfterWindows != 0 && (testStopAfterWindows < 1 || testStopAfterWindows > 2 || !continuousPrivate ||
 		windowProfile != "W128" || verifiedCacheRoot == "" || processingChunkRecords != 32768)) ||
 		(testFieldFailWindow != 0 && (!privateFieldPartitions || testFieldFailWindow < startWindow ||
@@ -236,6 +244,15 @@ func run() error {
 	ctx, profileErr = recordingest.WithFixedFileBulkProfile(ctx, fileProfile)
 	if profileErr != nil {
 		return profileErr
+	}
+	if privateHashH16 {
+		// Change ONLY the bounded content-hash COPY batch size. Every other
+		// F3 limit, signed verification step, and PG transaction stays intact.
+		ctx, profileErr = recordingest.WithPrivateFileHashH16(ctx)
+		if profileErr != nil {
+			return profileErr
+		}
+		fmt.Println("FI PRIVATE HASH COPY EXPERIMENT profile=F3H16 max_rows=16384 max_bytes=16777216 other_F3_limits=unchanged")
 	}
 	limits, err := privateWindowLimits(windowProfile)
 	if err != nil {
