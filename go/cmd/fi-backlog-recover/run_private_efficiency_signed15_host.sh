@@ -428,7 +428,9 @@ BEGIN {
 END {
     if (count!=15 || totaltime<=0) exit 1
     printf "FIFTEEN-WINDOW TOTAL: records=%d window_seconds=%.3f committed_rate=%.1f records/sec\n", totalrecords, totaltime, totalrecords/totaltime
-}' "$log" | tee "$out/$name/WINDOW_RATES.txt"
+}' "$log" > "$out/$name/WINDOW_RATES.txt" ||
+    fail 'fifteen-window rate extraction failed'
+cat "$out/$name/WINDOW_RATES.txt"
 
 
 # Export one row per durable W3..W17 stage profile. Preserve raw duration
