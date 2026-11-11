@@ -8,6 +8,9 @@ import (
 	"math/rand"
 	"reflect"
 	"testing"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
 
 // legacySecurityJSONSelection mirrors the pre-change envelope and full
@@ -62,6 +65,50 @@ func TestSecurityJSONOnceCanonicalEvidenceAndTypedParity(t *testing.T) {
 			!bytes.Equal(security.digest, wantSecurity.digest) {
 			t.Fatalf("fields=%d: signed evidence or typed projection diverged", fields)
 		}
+	}
+}
+
+// This reproduces the missing conditions from real signed Security events.
+// "version" and "scope_id" are valid NESTED payload members. Neither
+// belongs to the spool envelope and neither may disable the one-pass path.
+func TestSecurityJSONOnceNestedSecurityMembersRemainSelected(t *testing.T) {
+	raw := singlePassSecurityTestRecord(t, 48, 8192)
+	var record spool.Record
+	if err := json.Unmarshal(raw[:len(raw)-1], &record); err != nil { t.Fatal(err) }
+	var event records.WindowsSecurityEventObservation
+	if err := json.Unmarshal(record.Payload, &event); err != nil { t.Fatal(err) }
+	event.Version = "3"
+	event.MatchedScopes = []records.WindowsSecurityMatchedScope{
+		{ScopeID: "finance", GovernedRoot: `D:\Finance`},
+		{ScopeID: "public", GovernedRoot: `D:\Public`},
+	}
+	payload, err := json.Marshal(event)
+	if err != nil { t.Fatal(err) }
+	record.Payload = payload
+	encoded, err := json.Marshal(record)
+	if err != nil { t.Fatal(err) }
+	encoded = append(encoded, '\n')
+
+	if !bytes.Contains(encoded, []byte(`"version":"3"`)) ||
+		!bytes.Contains(encoded, []byte(`"scope_id":"finance"`)) {
+		t.Fatal("missing nested Security test members")
+	}
+	if !legacySecurityJSONSelection(encoded) {
+		t.Fatal("legacy fast path rejected a canonical nested Security record")
+	}
+	got, security, selected, err := tryPrepareSinglePassSecurity(encoded)
+	if err != nil || !selected {
+		t.Fatalf("nested Security disabled fast path: selected=%t err=%v", selected, err)
+	}
+	legacy, err := prepareOwnedSourceRecord(encoded)
+	if err != nil { t.Fatal(err) }
+	legacySecurity, err := prepareSecurityBulkRecord(1, legacy, legacy.RecordDigest[:])
+	if err != nil { t.Fatal(err) }
+	if !reflect.DeepEqual(got, legacy) ||
+		!reflect.DeepEqual(security.value, legacySecurity.value) ||
+		!reflect.DeepEqual(security.eventRecordID, legacySecurity.eventRecordID) ||
+		!bytes.Equal(security.digest, legacySecurity.digest) {
+		t.Fatal("nested Security changed exact bytes, digest, or relational values")
 	}
 }
 
