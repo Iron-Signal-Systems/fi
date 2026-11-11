@@ -21,7 +21,7 @@ import (
 func TestNativeInstallerOperatorCannotAuthorizeMissingSignedReceipt(t *testing.T) {
 	err := verifyNativeInstallerOperatorReceipt(
 		nil,
-		volumeconsent.Expected{},
+		volumeconsent.Expected{Sequence: 1},
 		config.VolumeConfig{},
 		volumereview.Review{},
 		nil,
