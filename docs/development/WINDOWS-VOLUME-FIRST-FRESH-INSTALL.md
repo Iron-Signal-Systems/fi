@@ -68,3 +68,5 @@ No change is authorized to `main`, deployed `ISS-FS-22A`, FISender, or backend p
 
 
 **2026-11-11 system parent ACL constraint:** The v2 branch now has a read-only audit of existing Windows system root and common ProgramData DACLs. Unknown ACEs and nonprivileged create/write/delete/owner rights fail closed. The development installer is not permitted to rewrite shared Windows ACLs or remove an FI instance to make the host eligible. A matching owner/DACL does not replace the required authenticated installer consent and transaction. See `WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-ACL.md`.
+
+**2026-11-11 read-only effective-rights diagnostic:** The v2 branch now includes a private native AccessCheck of current-process permissions for exact child-directory creation and READ_CONTROL on the retained common ProgramData DACL. This inspection is not wired to the fresh installer and does not authorize changing the root/ProgramData ACL, enabling FI services, adopting old state, or removing FI from ISS-FS-22A. See `WINDOWS-VOLUME-FIRST-INSTALLER-PARENT-ACCESS.md`.

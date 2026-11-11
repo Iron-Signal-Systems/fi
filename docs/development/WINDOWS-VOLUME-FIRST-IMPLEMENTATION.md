@@ -91,3 +91,5 @@
 - Investigation of `F:\FI-Governed-10M` journal/volume discontinuity is historical diagnostic evidence, not a successful correction.
 - Branch creation or documentation does not touch `main`, Windows services, PKI, filesystem SACLs or PostgreSQL.
 - Implemented, tested, runtime-verified and not-yet-started work must remain explicitly distinguished.
+
+- `freshinstall/installer_parent_access_policy.go` and `installer_parent_access_windows.go` now implement read-only **native Windows AccessCheck** for exact `FILE_ADD_SUBDIRECTORY` and `READ_CONTROL` rights on the **retained ProgramData directory handle's** security descriptor. The query-only SecurityIdentification impersonation-FORMAT token duplicate is never installed on a thread or granted sensitive capabilities. The observer checks group/DACL descriptor freshness and original native identity; pure and native SDDL allow/deny tests refuse false/missing/privilege-assisted decisions. This diagnostic is still disconnected from bootstrap creation, installer apply, signed grant and SCM. See `WINDOWS-VOLUME-FIRST-INSTALLER-PARENT-ACCESS.md`.
