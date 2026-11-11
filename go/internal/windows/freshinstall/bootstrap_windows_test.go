@@ -136,8 +136,8 @@ func TestProtectedBootstrapNativeCreationIsVerifiedAndRetained(t *testing.T) {
 	if err := verifyJournalParentHandle(res.child); err != nil {
 		t.Fatalf("created native directory is not protected: %v", err)
 	}
-	if err := os.Rename(want, want+"-moved"); err == nil {
-		t.Fatal("retained native bootstrap handle permitted a rename")
+	if err := res.verifyRetained(); err != nil {
+		t.Fatalf("newly created native reservation was not stable: %v", err)
 	}
 	// CREATE_NEW with an existing protected directory must NEVER adopt it.
 	retry, err := reserveProtectedBootstrap(parent)
@@ -146,6 +146,18 @@ func TestProtectedBootstrapNativeCreationIsVerifiedAndRetained(t *testing.T) {
 			_ = retry.Close()
 		}
 		t.Fatalf("bootstrap was reused on second attempt: %v", err)
+	}
+	// The Windows runner has demonstrated that an open directory HANDLE
+	// with no FILE_SHARE_DELETE may still admit os.Rename. Do not pretend
+	// the requested sharing mode is a path pin; assert the original native
+	// identity is no longer accepted if that rename succeeds.
+	renameErr := os.Rename(want, want+"-moved")
+	if renameErr == nil {
+		if err := res.verifyRetained(); !errors.Is(err, ErrBootstrapInDoubt) {
+			t.Fatalf("renamed native bootstrap was accepted under the original path: %v", err)
+		}
+	} else if err := res.verifyRetained(); err != nil {
+		t.Fatalf("failed Windows rename destabilized retained reservation: %v", err)
 	}
 }
 
