@@ -58,3 +58,6 @@ The branch now has a **separate read-only** installer-token preflight for High-i
 
 
 **2026-11-11 root-relative ProgramData observer:** A new independent read-only Windows `NtCreateFile(FILE_OPEN)` observer checks the fixed `ProgramData` leaf relative to the held system-volume root directory, comparing the full NTFS file identity with the separately observed known-folder object. This is NOT a create-capable handle or an authenticated system-root-to-bootstrap handoff, and does not alter `reserveProtectedBootstrap(parentPath)`. See `WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-EVIDENCE.md`.
+
+
+**2026-11-11 root-relative create-rights preparation:** A private ProgramData preflight now requests `FILE_ADD_SUBDIRECTORY` through the retained system-volume root handle with a fixed FILE_OPEN leaf. It validates the same original full-width ProgramData identity and ACL after existing native token/effective-access checks. Only disposable Windows fixture objects are used to exercise native child creation; actual ProgramData is never modified. The create-capable handle is not yet handed to `createProtectedBootstrapChildAt` in a trusted installer transaction; authenticated approval, pre-bootstrap intent custody and protected installed-grant persistence remain open.

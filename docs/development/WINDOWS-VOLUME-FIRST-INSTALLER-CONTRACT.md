@@ -91,3 +91,6 @@ See `WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md`, `WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.
 
 
 **2026-11-11 independent root-relative ProgramData check:** The private Windows observer now opens the fixed `ProgramData` leaf directly under the retained root handle using native `FILE_OPEN`, then requires its full-width native identity to equal the independently retained OS known-folder object. It never opens an installer-write handle, and is not connected to bootstrap creation. This reduces a future pathname-origin ambiguity but neither authenticates the original root nor establishes the required transaction/issuer. A05 remains open, installer apply disabled.
+
+
+**2026-11-11 ProgramData create-rights handle (A05 OPEN):** The branch now has a separate root-relative `FILE_ADD_SUBDIRECTORY` ProgramData opener and a read-only native qualification that requires existing token/AccessCheck/ACL evidence and exact original ProgramData file ID, path and descriptor. Child creation is exercised only in a disposable native test directory; no actual OS ProgramData mutation or FI bootstrap create is wired. This is not issuer authentication, operator consent or installer apply.

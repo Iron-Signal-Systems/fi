@@ -102,3 +102,6 @@
 
 
 **2026-11-11 system parent native root-relative cross-check:** A read-only, fixed-child native FILE_OPEN now cross-checks the OS ProgramData object beneath the retained system root against the independently retained known-folder object. Its Windows tests prove original-object continuity after a disposable root path rename/replacement. No create-capable handle or mutation authority is returned; bootstrap creation and installer apply are unchanged.
+
+
+**2026-11-11 ProgramData native create-right preflight:** A separate FILE_OPEN rooted in the original native volume handle can request FILE_ADD_SUBDIRECTORY on ProgramData without modifying it; private preflight combines actual process token/effective ACL rights with full-width original object and descriptor checks. A disposable Windows test-only child proves the native right. No actual protected bootstrap, installer apply or signed grant is created by this change.

@@ -96,3 +96,6 @@ Record PASS / FAIL / INCOMPLETE with source/build/environment/log references, ev
 
 
 **2026-11-11 root-relative ProgramData native read-only tests:** Windows native tests cross-check the actual runner's ProgramData object with a fixed leaf opened relative to its retained system-volume root handle, test renamed/replaced disposable roots, and reject closed/invalid root handles, absent ProgramData children and reparse-point leaf substitution. No actual ProgramData changes occur. This validates relative-open identity behavior, **not** issuer trust, the first write, or privileged native `adminbox` acceptance. A05 remains P0; V14/V16 remain NOT RUN.
+
+
+**2026-11-11 ProgramData create-rights native tests:** Windows-only disposable fixtures require an actual `NtCreateFile(FILE_OPEN)` parent handle with `FILE_ADD_SUBDIRECTORY`, full-width identity equality against a separately opened read-only handle, and successful creation of a **test-named** directory under `t.TempDir()/ProgramData`. Invalid/missing root, absent ProgramData and reparse substitution must fail. Real system ProgramData testing is observation-only; a conservative token/ACL failure is BLOCKED, never installation qualification. A05 remains P0; native privileged `adminbox` and V14/V16 acceptance remain NOT RUN.
