@@ -197,12 +197,11 @@ func findCanonicalSecurityEnvelopeKeys(body []byte) (written, payload int, canon
 					if key[i] == '"' {
 						// Recognized envelope fields following payload
 						// are never canonical. Match only a short key.
-						switch {
-						case bytes.EqualFold(key[:i], []byte("payload")),
-							bytes.EqualFold(key[:i], []byte("version")),
-							bytes.EqualFold(key[:i], []byte("record_kind")),
-							bytes.EqualFold(key[:i], []byte("scope_id")),
-							bytes.EqualFold(key[:i], []byte("written_at")):
+						// Nested Security events legitimately contain "version"
+						// and "scope_id". Only a duplicate payload member
+						// can alias the outer payload and invalidate the
+						// zero-copy RawMessage slice after strict decode.
+						if bytes.EqualFold(key[:i], []byte("payload")) {
 							return -1, -1, false
 						}
 						break
