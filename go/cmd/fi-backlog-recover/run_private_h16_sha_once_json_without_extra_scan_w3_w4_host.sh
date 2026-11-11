@@ -214,35 +214,37 @@ cp "$assets/fi_private_batch_hash_once_test.go" \
     { cat "$root/hash-once-go-tests.log" >&2; fail 'private SHA-once tests failed'; }
 printf 'FI HASH ONCE GO GATE PASS pinned_source=true private_tests=true historical_ref=%s\n' "$ref"
 
-# JSON-ONCE: exact pinned private source, original SHA-once and strict decoder.
-# NO structural replacement scan or extra whole-payload syntax traversal.
+# Directly install the exact reviewed Security JSON-once source and its
+# tests into the disposable H16 archive. No Go source patcher or wrapper.
+# The normal SHA-once input and transaction code stay unchanged.
 jsonassets=/home/jwood/fi-h16-json-once-assets
-[ -d "$jsonassets" ] && [ ! -L "$jsonassets" ] || fail 'JSON-once assets missing'
+[ -d "$jsonassets" ] && [ ! -L "$jsonassets" ] || fail 'JSON-once source assets missing'
 for spec in \
- "patch_private_security_json_without_double_scan.go ce98815e4877f6818622f1e7112b20ceba4ec3e4" \
- "fi_private_security_json_once_test.go ed51f6267564520461c75a215e44c6df5eec6e85"; do
+ "security_single_pass_candidate.go d87ea706a1c10eec2941b9a70707c5fbaeaac3bd" \
+ "security_json_once_test.go 4240516d626ba36fb2991427f3756b995a47921e"; do
     set -- $spec
-    [ -f "$jsonassets/$1" ] && [ ! -L "$jsonassets/$1" ] || fail "JSON-once asset missing: $1"
-    [ "$(git hash-object "$jsonassets/$1")" = "$2" ] || fail "JSON-once asset blob mismatch: $1"
+    [ -f "$jsonassets/$1" ] && [ ! -L "$jsonassets/$1" ] ||
+        fail "JSON-once asset missing: $1"
+    [ "$(git hash-object "$jsonassets/$1")" = "$2" ] ||
+        fail "JSON-once asset changed: $1"
 done
-cp "$jsonassets/fi_private_security_json_once_test.go" \
-    "$src/go/internal/recordingest/private_security_json_once_test.go"
-(cd "$src/go" && GOTOOLCHAIN=auto go run \
- "$jsonassets/patch_private_security_json_without_double_scan.go" "$src") ||
- fail 'JSON-once historical source patch rejected'
+cp "$jsonassets/security_single_pass_candidate.go" \
+    "$src/go/internal/recordingest/security_single_pass_candidate.go"
+cp "$jsonassets/security_json_once_test.go" \
+    "$src/go/internal/recordingest/security_json_once_test.go"
 (cd "$src/go" && gofmt -w \
- ./internal/recordingest/private_security_json_once_test.go \
- ./internal/recordingest/security_single_pass_candidate.go) ||
- fail 'JSON-once Go formatter failed'
+    ./internal/recordingest/security_single_pass_candidate.go \
+    ./internal/recordingest/security_json_once_test.go) ||
+    fail 'JSON-once source formatting failed'
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
- -run '^(TestPrivateSecurityJSONOnce|TestSinglePassSecurity|TestFIJSONOneShot|TestPrivateBatchHashOnce)' \
- -count=1) > "$root/json-once-go-tests.log" 2>&1 ||
- { cat "$root/json-once-go-tests.log" >&2; fail 'JSON-once tests failed'; }
+    -run '^(TestSecurityJSONOnce|TestSinglePassSecurity|TestFIJSONOneShot|TestPrivateBatchHashOnce)' \
+    -count=1) > "$root/json-once-go-tests.log" 2>&1 ||
+    { cat "$root/json-once-go-tests.log" >&2; fail 'JSON-once strict equivalence tests failed'; }
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
- -run '^$' -bench '^(BenchmarkPrivateSecurityJSONOnceEndToEnd|BenchmarkSecuritySourceEnvelopeAndPayloadOnePass)$' \
- -benchtime=1s -count=2 -benchmem) > "$root/json-once-benchmark.log" 2>&1 ||
- { cat "$root/json-once-benchmark.log" >&2; fail 'JSON-once microbench failed'; }
-printf 'FI SECURITY JSON ONCE GO GATE PASS strict_decoder=unchanged seeded_mutations=12000 no_extra_payload_json_valid=true\n'
+    -run '^$' -bench '^(BenchmarkSecurityJSONOnceWholeRecord|BenchmarkSecuritySourceEnvelopeAndPayloadOnePass)$' \
+    -benchtime=1s -count=2 -benchmem) > "$root/json-once-benchmark.log" 2>&1 ||
+    { cat "$root/json-once-benchmark.log" >&2; fail 'JSON-once microbenchmark failed'; }
+printf 'FI SECURITY JSON ONCE GO GATE PASS source=exact_reviewed_blob strict_decoder=unchanged seeded_mutations=12000 no_extra_payload_json_valid=true\n'
 
 (cd "$src/go" && GOTOOLCHAIN=auto go build -o "$root/fi-optfield-recover" ./cmd/fi-backlog-recover) || fail 'optimized Go build failed'
 (cd "$src/go/cmd/fi-backlog-recover/optfield" && GOTOOLCHAIN=auto go build -o "$root/fi-optfield-relay" ./relay.go) || fail 'single-fixture relay build failed'
