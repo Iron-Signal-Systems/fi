@@ -39,7 +39,7 @@ On `fi-dev` as `jwood`:
 ```sh
 cd /home/jwood/fi-deferred-experiment || exit 1
 git fetch origin experiment/fi-file-validation-once-20261108 || exit 1
-git show bbe90168ed6807d348a9550a4a282fdce89c33d1:go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh > /home/jwood/fi-hash-ab10.sh || exit 1
+git show 00425f952ef2cbccf3717710769528cbc22423d3:go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh > /home/jwood/fi-hash-ab10.sh || exit 1
 sh -n /home/jwood/fi-hash-ab10.sh || exit 1
 ```
 
@@ -47,7 +47,7 @@ On `fi-backend-b` as root, after syntax check:
 
 ```sh
 jail_root=$(jls -j fi-dev path) || exit 1
-sh "${jail_root%/}/home/jwood/fi-hash-ab10.sh" baseline || exit 1
+sh "${jail_root%/}/home/jwood/fi-hash-ab10.sh" baseline && \
 sh "${jail_root%/}/home/jwood/fi-hash-ab10.sh" h16
 ```
 
@@ -63,6 +63,28 @@ Both runs must print `FI HASH AB10 ACCEPTED` and exit zero, with matched SQL cou
 - Go opt-in hash context: `8b8d42121ceb909f4d1d73cd595571925bad2200`.
 - CLI guarded flag: `778110987550bfe18b57a0f30a30262789a8f685`.
 - Hash-specific Go unit tests with valid Error-state byte-boundary row: `e47b5383e19140090d691b7c20e8d6ef6e0113fa` (pinned source overlay).
-- Paired signed-data runner with exact W3–W12 source counters, per-window hash COPY calls and FileObservation source-row equality: `bbe90168ed6807d348a9550a4a282fdce89c33d1`.
+- Paired signed-data runner with exact W3–W12 source counters, per-window hash COPY calls and FileObservation source-row equality: `00425f952ef2cbccf3717710769528cbc22423d3`.
 
 The original accepted `go/internal/recordingest/content_hash_copy.go` and all original production SQL indexes/foreign keys are unchanged. The H16 unit tests AND the existing F1/F3 profile, hash COPY row/byte bounds and COPY failure/latency regression tests must pass in the disposable source tree on the operator's FreeBSD jail *before the seed is started*. The runner's static source and acceptance checks were reviewed, but the actual Go test/SQL runs have not yet been executed.
+
+## 2026-11-11 host preflight blocked by existing private postmaster; runner error improved
+
+Operator's first ten-window baseline attempt was rejected **before a clone was provisioned**: `FI CLONE STOP: 1 PostgreSQL postmasters already running in fi-dev; no benchmark started`. The original preflight deliberately prevents a private-clone collision, but did not print which data directory owns the running postmaster. The subsequent `h16` attempt ran under the non-root `jwood` shell and correctly failed `run as root`; the previous interactive root command ended with `|| exit 1`, which can terminate that interactive shell upon nonzero exit.
+
+Updated runner `00425f952ef2cbccf3717710769528cbc22423d3` now prints `PID/JID/OWNER/DATA_DIR` for every **fi-dev** PostgreSQL postmaster detected. It **never stops** an unidentified/running PostgreSQL server, never touches `fi-sor-db`, and still refuses to start the benchmark until the conflict is deliberately resolved. This update does **not** change the Go H16 implementation, its test overlay SHA, signed replay configuration or data. Replace the prior installed script with the pinned new runner and host-`sh -n` it before executing again.
+
+At a root shell on `fi-backend-b`, diagnose the existing instance (read only):
+```sh
+devjid=$(jls -j fi-dev jid)
+ps -axww -o pid,jid,user,rss,command | awk -v jid="$devjid" '
+  $2==jid && $5=="/usr/local/bin/postgres" && $6=="-D" {
+    print "PID=" $1 " OWNER=" $3 " DATA_DIR=" $7
+  }'
+```
+
+If the data root belongs to a **known, finished** private FI clone and no other operation uses it, the owner can deliberately stop that exact cluster from the host:
+```sh
+jexec -U jwood fi-dev pg_ctl -D '<exact printed DATA_DIR>' status
+jexec -U jwood fi-dev pg_ctl -D '<exact printed DATA_DIR>' -m fast -w -t 60 stop
+```
+The placeholder must be replaced with the **actual inspected** data-directory path; do not run that example verbatim, stop arbitrary PostgreSQL instances, stop the jail or run `pkill postgres`. Then run both test modes from **root** using `baseline && h16`, which skips candidate if baseline fails **without exiting the root shell**. Do not claim the preflight failure constitutes a baseline benchmark measurement.
