@@ -68,51 +68,58 @@ func main() {
 	}`
     src=exactlyOne(src,oldDecoder,newDecoder)
 
-    // json/v1 semantics can accept an alternate-case duplicate payload key.
-    // Reject such a post-payload key in the EXISTING comma scanning loop
-    // rather than revalidating the entire payload. The existing key scanner
-    // remains the only O(n) delimiter scan performed before strict decode.
-    oldScanner:=`if bytes.HasPrefix(body[offset:], securityPayloadKey) {
-			if payload >= 0 {
-				return -1, -1, false
-			}
-			payload = offset
-		}`
-    newScanner:=`if bytes.HasPrefix(body[offset:], securityPayloadKey) {
-			if payload >= 0 {
-				return -1, -1, false
-			}
-			payload = offset
-		} else if payload >= 0 {
-			// Noncanonical spaced or escaped member keys are not emitted by
-			// the canonical Windows spool writer. Decline this fast path
-			// without adding another whole-payload syntax pass. The old
-			// general decoder will handle such records unchanged.
-			keyStart := offset + 1
-			for keyStart < len(body) && (body[keyStart] == ' ' || body[keyStart] == '\t') {
-				keyStart++
-			}
-			if keyStart != offset+1 && keyStart < len(body) && body[keyStart] == '"' {
-				return -1, -1, false
-			}
-			if keyStart+1 < len(body) && body[keyStart] == '"' && body[keyStart+1] == '\\' {
-				return -1, -1, false
-			}
-			// A duplicate payload member with changed capitalization or
-			// whitespace is not canonical (v1 accepts case-folded keys).
-			const key = ",\"payload\""
-			if len(body)-offset >= len(key) &&
-				bytes.EqualFold(body[offset:offset+len(key)], []byte(key)) {
-				end := offset + len(key)
-				for end < len(body) && (body[end] == ' ' || body[end] == '\t') {
-					end++
-				}
-				if end < len(body) && body[end] == ':' {
-					return -1, -1, false
-				}
-			}
-		}`
-    src=exactlyOne(src,oldScanner,newScanner)
+    // Keep findSinglePassSecurityEnvelopeKeys unchanged: its historical
+    // equivalence tests and legacy fallback behavior are authoritative.
+    // The private canonical variant performs the additional duplicate-key
+    // disqualification IN ITS EXISTING comma scan, with no second pass.
+    src=exactlyOne(src,
+        "written, payload, unique := findSinglePassSecurityEnvelopeKeys(body)",
+        "written, payload, unique := findPrivateCanonicalSecurityEnvelopeKeys(body)")
+
+    // This helper is used only when private W128/P3 explicitly selected
+    // canonical Security ingestion. The legacy key scan is retained intact.
+    helper:=`
+func findPrivateCanonicalSecurityEnvelopeKeys(body []byte) (writtenAt, payload int, unique bool) {
+    writtenAt,payload=-1,-1
+    for offset:=0;offset<len(body); {
+        comma:=bytes.IndexByte(body[offset:],',')
+        if comma<0 {break}
+        offset+=comma
+        if bytes.HasPrefix(body[offset:],securityWrittenAtKey) {
+            if writtenAt>=0 {return -1,-1,false}
+            writtenAt=offset
+        }
+        if bytes.HasPrefix(body[offset:],securityPayloadKey) {
+            if payload>=0 {return -1,-1,false}
+            payload=offset
+        } else if payload>=0 {
+            // Canonical signed Windows spool JSON has no padded JSON
+            // member separators or escaped member names. Fall back to
+            // the original strict decoder for noncanonical member keys.
+            keyStart:=offset+1
+            for keyStart<len(body)&&(body[keyStart]==' '||body[keyStart]=='\t'){
+                keyStart++
+            }
+            if keyStart!=offset+1&&keyStart<len(body)&&body[keyStart]=='"'{
+                return -1,-1,false
+            }
+            if keyStart+1<len(body)&&body[keyStart]=='"'&&body[keyStart+1]=='\\'{
+                return -1,-1,false
+            }
+            const key = ",\"payload\""
+            if len(body)-offset>=len(key)&&
+                bytes.EqualFold(body[offset:offset+len(key)],[]byte(key)){
+                end:=offset+len(key)
+                for end<len(body)&&(body[end]==' '||body[end]=='\t'){end++}
+                if end<len(body)&&body[end]==':'{return -1,-1,false}
+            }
+        }
+        offset++
+    }
+    return writtenAt,payload,writtenAt>=0&&payload>=0
+}
+`
+    src += helper
 
     if err:=os.WriteFile(p,[]byte(src),0600);err!=nil {panic(err)}
     fmt.Println("FI JSON ONCE PATCH PASS canonical_extra_payload_scans=0 strict_json_decoder=unchanged SHA_once=retained")
