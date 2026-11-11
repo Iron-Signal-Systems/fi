@@ -46,12 +46,22 @@ devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor-db jid) || fail 'fi-sor-db missing'
 [ "$devjid" != "$sorjid" ] || fail 'SoR and development JIDs match'
 
-# Detect actual PostgreSQL postmasters, not background process names.
+# Never stop unknown running database instances. Report their exact
+# processes and -D data roots before refusing to start a competing clone.
+# This prevents repetitive "1 postmaster already running" dead ends and
+# provides the operator with an auditable target for a deliberate pg_ctl stop.
 existing=$(ps -axww -o pid,jid,user,rss,command | awk -v jid="$devjid" '
-    $2 == jid && $5 == "/usr/local/bin/postgres" && $6 == "-D" { n++ }
-    END { print n + 0 }
+    $2 == jid && $5 == "/usr/local/bin/postgres" && $6 == "-D" {
+        print "PID=" $1 " JID=" $2 " OWNER=" $3 " DATA_DIR=" $7
+        n++
+    }
 ')
-[ "$existing" -eq 0 ] || fail "$existing PostgreSQL postmasters already running in fi-dev; no benchmark started"
+if [ -n "$existing" ]; then
+    printf 'FI PRIVATE POSTMASTER BLOCKED: existing fi-dev server(s):\n%s\n' "$existing" >&2
+    printf 'FI PRIVATE POSTMASTER BLOCKED: inspect status with jexec -U jwood fi-dev pg_ctl -D <DATA_DIR> status\n' >&2
+    printf 'FI PRIVATE POSTMASTER BLOCKED: do not terminate an unidentified/active database; fi-sor-db must not be touched\n' >&2
+    fail 'private clone cannot start while fi-dev contains another PostgreSQL postmaster'
+fi
 
 jexec fi-sor-db service postgresql status >/dev/null 2>&1 || fail 'real SoR PostgreSQL not running'
 [ -d "$jailroot$seed/data" ] && [ -d "$jailroot$seed/socket" ] || fail 'original validated seed missing'
