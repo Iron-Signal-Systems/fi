@@ -161,6 +161,18 @@ func loadSamples(root string, offset, count int) ([]batchSample, int64, int, err
         }
         opensslHash, err := opensslSum(b)
         if err != nil || goHash != opensslHash { return nil, 0, 0, fmt.Errorf("OpenSSL SHA mismatch: %s, %v",filepath.Base(name),err) }
+        // The ingest pipeline uses an incremental SHA across LF-terminated
+        // records. Verify exact streamed digest equality separately from
+        // the timed comparison, not just a compact benchmark checksum.
+        stream, err := newSHAStream()
+        if err != nil { return nil, 0, 0, err }
+        _, err = eachRecord(b, stream.write)
+        if err != nil { stream.close(); return nil, 0, 0, err }
+        streamed, err := stream.sum()
+        stream.close()
+        if err != nil || streamed != goHash {
+            return nil, 0, 0, fmt.Errorf("streamed OpenSSL batch SHA differs: %s, %v",filepath.Base(name),err)
+        }
         n, err := eachRecord(b, func(rec []byte) error {
             a := sha256.Sum256(rec)
             c, err := opensslSum(rec)
@@ -223,7 +235,7 @@ func main() {
     if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 { fmt.Fprintln(os.Stderr,"FI SHA PROBE STOP: invalid cache root");os.Exit(1) }
     samples, totalBytes, records, err := loadSamples(*root,*offset,*count)
     if err != nil { fmt.Fprintln(os.Stderr,"FI SHA PROBE STOP:",err); os.Exit(1) }
-    fmt.Printf("FI SHA PROBE SOURCE PASS signed_batches=%d sample_bytes=%d sample_records=%d signed_manifest_digests=verified\n",len(samples),totalBytes,records)
+    fmt.Printf("FI SHA PROBE SOURCE PASS sample_batches=%d sample_bytes=%d sample_records=%d data_sha256_matches_manifests=true\n",len(samples),totalBytes,records)
     for _, kind := range []string{"batch_stream", "record_sum"} {
         for round:=1;round<=*rounds;round++ {
             engines:=[]string{"go","openssl"}
