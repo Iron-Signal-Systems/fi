@@ -65,3 +65,6 @@ Tests that intentionally plant FI remnants must use a disposable isolated test h
 See `WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md` and `WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`.
 
 No change is authorized to `main`, deployed `ISS-FS-22A`, FISender, or backend production data.
+
+
+**2026-11-11 system parent ACL constraint:** The v2 branch now has a read-only audit of existing Windows system root and common ProgramData DACLs. Unknown ACEs and nonprivileged create/write/delete/owner rights fail closed. The development installer is not permitted to rewrite shared Windows ACLs or remove an FI instance to make the host eligible. A matching owner/DACL does not replace the required authenticated installer consent and transaction. See `WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-ACL.md`.
