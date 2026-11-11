@@ -220,8 +220,9 @@ printf 'FI HASH ONCE GO GATE PASS pinned_source=true private_tests=true historic
 jsonassets=/home/jwood/fi-h16-json-once-assets
 [ -d "$jsonassets" ] && [ ! -L "$jsonassets" ] || fail 'JSON-once source assets missing'
 for spec in \
- "security_single_pass_candidate.go d87ea706a1c10eec2941b9a70707c5fbaeaac3bd" \
- "security_json_once_test.go 4240516d626ba36fb2991427f3756b995a47921e"; do
+ "security_single_pass_candidate.go 9a70be536f0a07687640fe1e2e48459d85430073" \
+ "security_json_once_test.go 9250302470679dd9c23ce7daca92a9f7fbb22596" \
+ "security_json_once_signed_cache_test.go af5710cfe4557c29ed1dcff76e570280c6b47236"; do
     set -- $spec
     [ -f "$jsonassets/$1" ] && [ ! -L "$jsonassets/$1" ] ||
         fail "JSON-once asset missing: $1"
@@ -232,9 +233,12 @@ cp "$jsonassets/security_single_pass_candidate.go" \
     "$src/go/internal/recordingest/security_single_pass_candidate.go"
 cp "$jsonassets/security_json_once_test.go" \
     "$src/go/internal/recordingest/security_json_once_test.go"
+cp "$jsonassets/security_json_once_signed_cache_test.go" \
+    "$src/go/internal/recordingest/security_json_once_signed_cache_test.go"
 (cd "$src/go" && gofmt -w \
     ./internal/recordingest/security_single_pass_candidate.go \
-    ./internal/recordingest/security_json_once_test.go) ||
+    ./internal/recordingest/security_json_once_test.go \
+    ./internal/recordingest/security_json_once_signed_cache_test.go) ||
     fail 'JSON-once source formatting failed'
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
     -run '^(TestSecurityJSONOnce|TestSinglePassSecurity|TestFIJSONOneShot|TestPrivateBatchHashOnce)' \
@@ -244,7 +248,12 @@ cp "$jsonassets/security_json_once_test.go" \
     -run '^$' -bench '^(BenchmarkSecurityJSONOnceWholeRecord|BenchmarkSecuritySourceEnvelopeAndPayloadOnePass)$' \
     -benchtime=1s -count=2 -benchmem) > "$root/json-once-benchmark.log" 2>&1 ||
     { cat "$root/json-once-benchmark.log" >&2; fail 'JSON-once microbenchmark failed'; }
-printf 'FI SECURITY JSON ONCE GO GATE PASS source=exact_reviewed_blob strict_decoder=unchanged seeded_mutations=12000 no_extra_payload_json_valid=true\n'
+printf 'FI SECURITY JSON ONCE GO GATE PASS source=exact_reviewed_blob strict_decoder=unchanged nested_scope_version_test=true seeded_mutations=12000 no_extra_payload_json_valid=true\n'
+(cd "$src/go" && GOTOOLCHAIN=auto go test -c \
+    -o "$root/fi-security-json-preflight.test" ./internal/recordingest) \
+    > "$root/security-json-preflight-build.log" 2>&1 ||
+    { cat "$root/security-json-preflight-build.log" >&2; fail 'Security JSON preflight build failed'; }
+sha256 -q "$root/fi-security-json-preflight.test" > "$root/fi-security-json-preflight.sha256"
 
 (cd "$src/go" && GOTOOLCHAIN=auto go build -o "$root/fi-optfield-recover" ./cmd/fi-backlog-recover) || fail 'optimized Go build failed'
 (cd "$src/go/cmd/fi-backlog-recover/optfield" && GOTOOLCHAIN=auto go build -o "$root/fi-optfield-relay" ./relay.go) || fail 'single-fixture relay build failed'
@@ -348,6 +357,22 @@ relay="$jailroot$root/fi-optfield-relay"
 [ "$(sha256 -q "$relay")" = "$(cat "$jailroot$root/relay.sha256")" ] || fail 'relay binary hash mismatch'
 
 mkdir -m 700 "$out" "$out/$name" "$out/$name/private"
+# The next actual replay is blocked unless the real verified cache samples
+# succeed through the canonical one-pass decoder (without SQL writes).
+preflight="$jailroot$root/fi-security-json-preflight.test"
+[ -x "$preflight" ] || fail 'Security JSON real signed preflight executable missing'
+[ "$(sha256 -q "$preflight")" = "$(cat "$jailroot$root/fi-security-json-preflight.sha256")" ] ||
+    fail 'Security JSON real signed preflight executable hash mismatch'
+if ! env FI_SECURITY_JSON_REAL_SIGNED_CACHE="$cache" "$preflight" \
+    -test.v -test.run '^TestSecurityJSONOnceRealSignedPreflight$' \
+    > "$out/security-real-signed-preflight.log" 2>&1; then
+    cat "$out/security-real-signed-preflight.log" >&2
+    fail 'real signed Security JSON preflight failed; no replay'
+fi
+grep -Fq 'FI SECURITY JSON REAL SIGNED PREFLIGHT PASS' "$out/security-real-signed-preflight.log" ||
+    fail 'Security preflight lacked PASS count'
+printf 'FI SECURITY JSON REAL SIGNED PREFLIGHT PASS records=512 strict_equivalent=true\n' |
+    tee "$out/security-real-signed-preflight-summary.txt"
 cat > "$out/RUN_MANIFEST.txt" <<EOF
 FI PRIVATE H16 SHA-ONCE WITH SECURITY JSON-ONCE: W3-W4
 experiment=private_h16_sha_once_security_json_once_real_signed_w3_w4
@@ -598,6 +623,24 @@ done
     fail "signed readback count mismatch $checked/$expected trusted=$reused"
 printf 'FI H16 HASH ONCE SIGNED READBACK PASS batch_files=%s byte_identical=true manifests_identical=true\n' "$checked" |
     tee -a "$out/SUMMARY.txt"
+# Do not accept another candidate that silently uses the two-pass fallback.
+# Previous signed SHA-once W3-W4 selected 116357 and 116522 Security records.
+security_pass=$(awk '
+/^FI PRIVATE STAGE PROFILE / {
+    w=""; rows=""
+    for (i=1; i<=NF; i++) {
+        if ($i ~ /^index=/) {split($i,a,"="); w=a[2]}
+        if ($i ~ /^security_single_pass_rows=/) {split($i,a,"="); rows=a[2]}
+    }
+    if (w=="3") {w3=rows; n3++}
+    if (w=="4") {w4=rows; n4++}
+}
+END {if(n3!=1 || n4!=1)exit 2; print w3 "|" w4}
+' "$log") || fail 'missing Security single-pass counters'
+[ "$security_pass" = '116357|116522' ] ||
+    fail "Security one-pass selection mismatch: $security_pass vs 116357|116522"
+printf 'FI SECURITY JSON ONCE REAL SIGNED ROW GATE PASS W3=116357 W4=116522 total=232879\n' |
+    tee -a "$out/SUMMARY.txt"
 grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
 grep '^FI PRIVATE BATCH HASH ONCE ' "$log" > "$out/$name/HASH_ONCE.txt"
 grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt"
@@ -608,6 +651,7 @@ bundle="$out/fi-h16-sha-once-json-once-w3-w4-$stamp.tar.gz"
 (
  cd "$out" || exit 1
  tar -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt \
+   security-real-signed-preflight.log security-real-signed-preflight-summary.txt \
    "$name/HASH_ONCE.txt" "$name/STAGES.txt" "$name/WINDOWS.txt" "$name/RESULT.txt" \
    "$name/pg_settings.txt" "$name/pg_before.txt" "$name/pg_after.txt" \
    "$name/pg_stat_wal_before.jsonl" "$name/pg_stat_wal_after.jsonl" \
