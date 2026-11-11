@@ -52,9 +52,15 @@ func TestNativeRootRelativeProgramDataUsesRetainedRootAfterRelocation(t *testing
 	heldChild, err := openNativeProgramDataFromRoot(root.handle)
 	if err != nil { t.Fatal(err) }
 	defer heldChild.CloseHandle()
+	// Compare the TWO LIVE NATIVE HANDLES, not a reconstructed tempfile
+	// path. Windows runners can present short/long path aliases for temp
+	// directories while still referring to the same underlying object.
+	retainedRootNative, err := nativeFinalPath(root.handle)
+	if err != nil { t.Fatal(err) }
 	if heldChild.id != originalID ||
-		!sameNativePath(filepath.Dir(heldChild.nativePath), filepath.Join(parent, "moved")) {
-		t.Fatalf("root-relative opening escaped the original retained root: %+v", heldChild.id)
+		!sameNativePath(filepath.Dir(heldChild.nativePath), retainedRootNative) {
+		t.Fatalf("root-relative open changed object or escaped retained root: child=%q root=%q original_id=%+v observed_id=%+v",
+			heldChild.nativePath, retainedRootNative, originalID, heldChild.id)
 	}
 	other, err := openNativeSystemDirectory(filepath.Join(original, "ProgramData"))
 	if err != nil { t.Fatal(err) }
