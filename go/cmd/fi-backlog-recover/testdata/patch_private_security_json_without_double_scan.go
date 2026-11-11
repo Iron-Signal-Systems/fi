@@ -86,11 +86,11 @@ func main() {
 		} else if payload >= 0 {
 			// A duplicate payload member with changed capitalization or
 			// whitespace is not canonical (v1 accepts case-folded keys).
-			const key = ",\\\"payload\\\""
+			const key = ",\"payload\""
 			if len(body)-offset >= len(key) &&
 				bytes.EqualFold(body[offset:offset+len(key)], []byte(key)) {
 				end := offset + len(key)
-				for end < len(body) && (body[end] == ' ' || body[end] == '\\t') {
+				for end < len(body) && (body[end] == ' ' || body[end] == '\t') {
 					end++
 				}
 				if end < len(body) && body[end] == ':' {
