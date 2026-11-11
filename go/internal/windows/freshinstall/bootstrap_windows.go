@@ -40,13 +40,21 @@ var (
 // creation journal/commit is retained for crash recovery. This primitive
 // cannot confer any of those facts. No public installer code invokes it.
 //
-// Both handles deny FILE_SHARE_DELETE, preventing path rename/removal of the
-// opened parent and the newly created child while the reservation is held.
+// Both handles request no FILE_SHARE_DELETE, but on actual supported
+// Windows configurations a directory may still be renamed while open.
+// Therefore every handoff MUST revalidate both retained handles' native
+// paths against their original observed identities. This is detection, NOT
+// an atomic defense against hostile ancestor replacement; the future
+// trusted installer requires handle-relative creation/provenance.
 // Close NEVER removes the bootstrap directory (even after errors).
 type windowsBootstrapReservation struct {
 	parent windows.Handle
 	child windows.Handle
 	path string
+	// These are the native paths observed through the retained handles on
+	// successful creation. They must never be recomputed as a new baseline.
+	parentNative string
+	childNative string
 	closed bool
 }
 
@@ -65,6 +73,39 @@ func (r *windowsBootstrapReservation) Close() error {
 		r.parent = 0
 	}
 	return errors.Join(errs...)
+}
+
+// verifyRetained detects if either held object was moved to a different
+// path or lost its original descriptor after initial creation. In particular,
+// lack of FILE_SHARE_DELETE does NOT guarantee that a directory cannot be
+// renamed on every Windows filesystem. This must be rechecked at every
+// future installation mutation boundary; it does not close TOCTOU windows
+// between separate path operations. No installer or service calls it yet.
+func (r *windowsBootstrapReservation) verifyRetained() error {
+	if r == nil || r.closed || r.parent == 0 || r.child == 0 ||
+		r.parent == windows.InvalidHandle || r.child == windows.InvalidHandle ||
+		r.parentNative == "" || r.childNative == "" {
+		return fmt.Errorf("%w: no live native bootstrap reservation", ErrBootstrapInDoubt)
+	}
+	if err := requireNativeHandleType(r.parent, true); err != nil {
+		return fmt.Errorf("%w: original parent changed type: %v", ErrBootstrapInDoubt, err)
+	}
+	if err := requireNativeHandleType(r.child, true); err != nil {
+		return fmt.Errorf("%w: original bootstrap child changed type: %v", ErrBootstrapInDoubt, err)
+	}
+	parentNow, err := nativeFinalPath(r.parent)
+	if err != nil || !sameNativePath(parentNow, r.parentNative) {
+		return fmt.Errorf("%w: retained parent relocated: %v", ErrBootstrapInDoubt, err)
+	}
+	childNow, err := nativeFinalPath(r.child)
+	if err != nil || !sameNativePath(childNow, r.childNative) ||
+		!sameNativePath(filepath.Dir(childNow), parentNow) {
+		return fmt.Errorf("%w: retained bootstrap directory relocated: %v", ErrBootstrapInDoubt, err)
+	}
+	if err := verifyJournalParentHandle(r.child); err != nil {
+		return fmt.Errorf("%w: retained bootstrap directory owner/DACL changed: %v", ErrBootstrapInDoubt, err)
+	}
+	return nil
 }
 
 // reserveProtectedBootstrap creates exactly ONE new FI-Installer child under
@@ -180,10 +221,16 @@ func reserveProtectedBootstrap(parentPath string) (res *windowsBootstrapReservat
 		return res, fmt.Errorf("%w: created directory owner/protected DACL differs from intended policy: %v",
 			ErrBootstrapInDoubt, err)
 	}
-	// No file exists inside this bootstrap and no grant was issued. This is
-	// an object reservation only; the future trusted installer transaction
-	// must decide whether any subsequent FI creation is permissible.
+	// No file exists inside this bootstrap and no grant was issued. Store
+	// the ORIGINAL native paths. If Windows permits a later rename despite
+	// requested sharing restrictions, verifyRetained rejects that move at
+	// the next handoff rather than believing the lock pinned a path.
 	res.path = childPath
+	res.parentNative = finalParent
+	res.childNative = finalChild
+	if err := res.verifyRetained(); err != nil {
+		return res, err
+	}
 	success = true
 	return res, nil
 }
