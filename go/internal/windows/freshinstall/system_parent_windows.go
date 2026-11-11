@@ -17,7 +17,10 @@ import (
 )
 
 const nativeParentFileIDInfoClass = 18 // GetFileInformationByHandleEx(FileIdInfo)
-var nativeParentFileIDProc = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetFileInformationByHandleEx")
+var (
+	nativeParentFileIDProc = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetFileInformationByHandleEx")
+	nativeParentVolumeInfoProc = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetVolumeInformationW")
+)
 
 // Windows FILE_ID_INFO is exactly 8-byte volume serial + 16-byte FileID.
 var (
@@ -84,6 +87,23 @@ func openNativeSystemDirectory(path string) (nativeSystemDirectory,error) {
 	return out,nil
 }
 
+// requireNativeSystemNTFS checks the actual filesystem at the original
+// system volume root. FILE_ID_INFO on a non-NTFS filesystem is not an
+// acceptable basis for FI's NTFS-only privileged installation model.
+func requireNativeSystemNTFS(root string) error {
+	ptr,err:=windows.UTF16PtrFromString(root)
+	if err!=nil {return fmt.Errorf("%w: encode OS system volume root: %v",ErrUnattestedSystemParent,err)}
+	var fsName [32]uint16
+	ok,_,callErr:=nativeParentVolumeInfoProc.Call(
+		uintptr(unsafe.Pointer(ptr)),0,0,0,0,0,
+		uintptr(unsafe.Pointer(&fsName[0])),uintptr(len(fsName)),
+	)
+	if ok==0 || !strings.EqualFold(windows.UTF16ToString(fsName[:]),"NTFS") {
+		return fmt.Errorf("%w: OS system volume is not attested as NTFS: %v",ErrUnattestedSystemParent,callErr)
+	}
+	return nil
+}
+
 // inspectNativeSystemProgramData observes independently reported common
 // ProgramData and system Windows directories from native Windows APIs.
 // The known-folder query has flags=0: NEVER request KF_FLAG_CREATE.
@@ -102,6 +122,7 @@ func inspectNativeSystemProgramData() (p *nativeSystemParentInspection,err error
 		return nil,fmt.Errorf("%w: OS returned noncanonical native system paths",ErrUnattestedSystemParent)
 	}
 	rootPath:=filepath.VolumeName(win)+`\`
+	if err:=requireNativeSystemNTFS(rootPath);err!=nil{return nil,err}
 	// Check path shape BEFORE touching any handle; this cannot authorize
 	// a redirected ProgramData on a separate volume or at a nested path.
 	if err:=AssessSystemParentEvidence(SystemParentEvidence{
@@ -140,6 +161,18 @@ func (p *nativeSystemParentInspection) Evidence() SystemParentEvidence {
 func (p *nativeSystemParentInspection) verifyRetained() error {
 	if p==nil || p.closed {return ErrUnattestedSystemParent}
 	if err:=AssessSystemParentEvidence(p.Evidence());err!=nil{return err}
+	// The current system API mappings can change after first observation.
+	// Even if the original object still exists at its old path, a changed
+	// mapping must fail closed rather than being silently retained.
+	currentPD,err:=windows.KnownFolderPath(windows.FOLDERID_ProgramData,0)
+	if err!=nil || !strings.EqualFold(currentPD,p.programData.path) {
+		return fmt.Errorf("%w: OS ProgramData known-folder mapping changed: %v",ErrUnattestedSystemParent,err)
+	}
+	currentWindows,err:=windows.GetSystemWindowsDirectory()
+	if err!=nil || !strings.EqualFold(currentWindows,p.windowsDir.path) {
+		return fmt.Errorf("%w: OS system Windows directory mapping changed: %v",ErrUnattestedSystemParent,err)
+	}
+	if err:=requireNativeSystemNTFS(p.root.path);err!=nil{return err}
 	objects:=[]nativeSystemDirectory{p.root,p.windowsDir,p.programData}
 	for _,obs:=range objects {
 		if obs.handle==0 || obs.handle==windows.InvalidHandle {
