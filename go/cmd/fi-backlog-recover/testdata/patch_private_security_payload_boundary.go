@@ -23,26 +23,26 @@ func main() {
     if err!=nil {panic(err)}
     src:=string(original)
     oldCheck:=`if len(rawPayload) == 0 || !json.Valid(rawPayload) {
-        return emptySource, emptySecurity, false, nil
-    }`
+		return emptySource, emptySecurity, false, nil
+	}`
     // The canonical scanner remains a shape check, not the JSON acceptance
     // authority. Valid full payload JSON is still strictly decoded once.
     newCheck:=`boundary := privateSingleJSONObjectBoundary(rawPayload)
-    if len(rawPayload) == 0 || (!boundary && !json.Valid(rawPayload)) {
-        return emptySource, emptySecurity, false, nil
-    }`
+	if len(rawPayload) == 0 || (!boundary && !json.Valid(rawPayload)) {
+		return emptySource, emptySecurity, false, nil
+	}`
     oldErr:=`if err := decodeStrictPayload(json.RawMessage(body), &parsed); err != nil {
-        return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
-    }`
+		return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
+	}`
     newErr:=`if err := decodeStrictPayload(json.RawMessage(body), &parsed); err != nil {
-        // Structural scanning intentionally does not validate JSON grammar.
-        // If malformed payload JSON was admitted by the cheap boundary
-        // scan, decline exactly as the original json.Valid gate did.
-        if boundary && !json.Valid(rawPayload) {
-            return emptySource, emptySecurity, false, nil
-        }
-        return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
-    }`
+		// Structural scanning intentionally does not validate JSON grammar.
+		// If malformed payload JSON was admitted by the cheap boundary
+		// scan, decline exactly as the original json.Valid gate did.
+		if boundary && !json.Valid(rawPayload) {
+			return emptySource, emptySecurity, false, nil
+		}
+		return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
+	}`
     for _,edit:=range [][2]string{{oldCheck,newCheck},{oldErr,newErr}} {
         if strings.Count(src,edit[0])!=1 {
             panic(fmt.Sprintf("FI SECURITY BOUNDARY PATCH STOP: anchor count=%d",strings.Count(src,edit[0])))
