@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"time"
@@ -43,7 +42,6 @@ type IngestResult struct {
 type ingestStageProfile struct {
 	Read           time.Duration
 	BatchHash      time.Duration
-	BatchHashReusedBatches int64 // privately proven COW batch SHA reuse; zero on unproved input
 	Prepare        time.Duration
 	SourceSQL      time.Duration
 	Projection     time.Duration
@@ -453,10 +451,7 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	defer file.Close()
 
 	reader := bufio.NewReader(file)
-	proof, err := privateReuseSignedBatchDigest(ctx, batch, file)
-	if err != nil { return 0, fmt.Errorf("FI verified batch evidence: %w", err) }
-	var hasher hash.Hash
-	if proof == nil { hasher = sha256.New() }
+	hasher := sha256.New()
 	var ordinal int64
 	progress, _ := ctx.Value(ingestProgressContextKey{}).(*ingestProgress)
 	if progress != nil {
@@ -577,10 +572,8 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		}
 		byteCount += int64(len(raw))
 		hashStarted := time.Now()
-		if hasher != nil {
-			_, _ = hasher.Write(raw)
-			profile.BatchHash += time.Since(hashStarted)
-		}
+		_, _ = hasher.Write(raw)
+		profile.BatchHash += time.Since(hashStarted)
 
 		prepareStarted := time.Now()
 		var prepared SourceRecord
@@ -738,22 +731,9 @@ RETURNING source_record_id
 		}
 	}
 
-	if ordinal != int64(batch.Manifest.RecordCount) || byteCount != batch.Manifest.DataBytes {
-		return ordinal, fmt.Errorf("%w: signed batch %s record or byte count changed", ErrSourceRecordRejected, batch.BatchID)
-	}
-	if proof != nil {
-		// Reuse the original authenticated SHA only for the owned, registered
-		// COW clone whose opened file identity still matches its proof.
-		if err := proof.check(); err != nil {
-			return ordinal, fmt.Errorf("%w: batch %s COW identity changed: %v", ErrSourceRecordRejected, batch.BatchID, err)
-		}
-		profile.BatchHashReusedBatches++
-	} else {
-		// Ordinary/unproved ingestion retains exact signed byte verification.
-		gotSHA := hex.EncodeToString(hasher.Sum(nil))
-		if gotSHA != batch.Manifest.DataSHA256 {
-			return ordinal, fmt.Errorf("%w: batch %s changed between custody validation and relational ingest", ErrSourceRecordRejected, batch.BatchID)
-		}
+	gotSHA := hex.EncodeToString(hasher.Sum(nil))
+	if ordinal != int64(batch.Manifest.RecordCount) || byteCount != batch.Manifest.DataBytes || gotSHA != batch.Manifest.DataSHA256 {
+		return ordinal, fmt.Errorf("%w: batch %s changed between custody validation and relational ingest", ErrSourceRecordRejected, batch.BatchID)
 	}
 	return ordinal, nil
 }
