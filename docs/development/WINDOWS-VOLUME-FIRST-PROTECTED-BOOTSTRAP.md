@@ -50,3 +50,5 @@ The private branch now separately observes owner and DACL on the **preexisting W
 ## Private installer token evidence (2026-11-11)
 
 The branch now has a **separate read-only** installer-token preflight for High-integrity elevated administrator primary tokens, rejecting UAC-limited, restricted, AppContainer, SYSTEM/service and thread-impersonating contexts. It records sensitive privilege states without changes. **It is not wired to this private bootstrap child creation code**: token eligibility alone cannot authorize a trusted ProgramData handle, write-ahead journal, signed grant or installation. See `WINDOWS-VOLUME-FIRST-INSTALLER-TOKEN-PREFLIGHT.md`.
+
+**2026-11-11 native token-to-parent rights:** A separate read-only AccessCheck diagnostic now evaluates exact current-process rights against the retained ProgramData DACL. The private handle-rooted `FI-Installer` bootstrap creation remains **disconnected** from this observer; the initial ProgramData parent is not independently issuer-authenticated and the write-ahead installation transaction is not implemented. See `WINDOWS-VOLUME-FIRST-INSTALLER-PARENT-ACCESS.md`.

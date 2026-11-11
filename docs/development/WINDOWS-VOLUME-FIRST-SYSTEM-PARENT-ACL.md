@@ -30,3 +30,5 @@ The private bootstrap still accepts a supplied parent pathname and is **not wire
 ## Complementary elevated installer-process token observation (2026-11-11)
 
 A separate **read-only** Windows process-token inspector now checks elevation, Administrators membership, mandatory integrity and thread impersonation, and records six security-sensitive privilege LUID states without enabling any privilege. This does **not** perform Windows effective-access checks against the actual system-root/ProgramData DACL, prove the issuer/operator, or bind a trusted handle to a create-only transaction. See `WINDOWS-VOLUME-FIRST-INSTALLER-TOKEN-PREFLIGHT.md`.
+
+**2026-11-11 observed effective rights:** Windows AccessCheck now checks exact create-child and READ_CONTROL rights for the current process token against the retained ProgramData descriptor. A privileged token may have access even when the ordinary ProgramData ACL exposes disallowed user-creation rights; FI's conservative shared-parent ACL policy remains a separate blocker. Existing Windows ACLs are never modified. See `WINDOWS-VOLUME-FIRST-INSTALLER-PARENT-ACCESS.md`.
