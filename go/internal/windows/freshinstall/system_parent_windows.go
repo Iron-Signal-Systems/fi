@@ -72,7 +72,7 @@ func openNativeSystemDirectoryWithSharing(path string,share uint32) (nativeSyste
 	}
 	ptr,err:=windows.UTF16PtrFromString(path)
 	if err!=nil{return nativeSystemDirectory{},err}
-	h,err:=windows.CreateFile(ptr,windows.FILE_READ_ATTRIBUTES,
+	h,err:=windows.CreateFile(ptr,windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
 		share,
 		nil,windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,0)
