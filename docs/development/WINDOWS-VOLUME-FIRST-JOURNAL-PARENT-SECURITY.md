@@ -2,7 +2,7 @@
 
 **Development branch:** `dev/windows-volume-first-20261108`  
 **Native acceptance host:** `adminbox`  
-**Status:** The private native journal writer now enforces actual parent owner/protected DACL checks before `CREATE_NEW` and child-file inherited owner/DACL checks before acknowledging a reservation. Native protected-parent provisioning, trusted installer authority, installer CLI integration and privileged acceptance remain **NOT IMPLEMENTED / NOT RUN**.
+**Status:** The private native journal writer checks parent owner/protected DACL before `CREATE_NEW` and child-file inherited owner/DACL before acknowledging a reservation. A separate **package-private Windows protected `FI-Installer` creation experiment now exists**, but an authorized parent issuer/ancestor chain, production bootstrap orchestration, installer CLI integration and privileged acceptance remain **NOT IMPLEMENTED / NOT RUN**.
 
 ## Why this boundary exists
 
@@ -39,6 +39,10 @@ The native journal writer retains the parent directory handle and compares its r
 
 There is no production API accepting an arbitrary user-supplied path and elevating it to FI installation authority.
 
+## New protected bootstrap child creation experiment
+
+`freshinstall/bootstrap_windows.go` now has a separate **private** create-only `FI-Installer` child reservation. It retains parent/child native directory handles, uses the exact protected SYSTEM/Administrators descriptor at `CreateDirectoryW` time, refuses a preexisting child, verifies the resulting child handle's owner/DACL, and never deletes an in-doubt directory. This is a code-level native primitive, **not an installer entry point or trusted system-parent attestation**. The operator approval and installed-grant transaction are not connected. See [bootstrap experiment contract](WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md).
+
 ## New journal FILE effective-DACL contract
 
 `journal_file_policy.go` requires the newly created file's actual owner to be SYSTEM or BUILTIN Administrators, and exactly two **inherited**, full-control, access-allowed ACEs (SYSTEM and Administrators) with no additional trustees, generic masks, deny ACEs or unexpected flags. The file itself must have a present, non-defaulted DACL. `journal_file_security_windows.go` obtains the descriptor from the **same newly created handle**, after checking file type and retained-parent identity. A mismatch is a **failed/in-doubt creation**, never a reason to delete, retry or silently repair security after creation. The future privileged installer must arrange acceptable file ownership at creation time.
@@ -47,7 +51,7 @@ There is no production API accepting an arbitrary user-supplied path and elevati
 
 A correct-looking DACL does not, by itself, prove that the directory was created by FI's authorized installer or that the parent path, ancestors, issuer, token or signing key have not been compromised. In particular:
 
-1. The future installer must **atomically create** the bootstrap directory on an independently trusted local system volume, using an explicitly protected security descriptor **at creation time**. Do not create with broad inherited access and attempt to fix it afterward.
+1. A package-private native experiment now creates the bootstrap child with `CreateDirectoryW` and explicit protected security attributes **at creation time** (see `WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md`). A future installer must still prove that the parent is independently trusted on the local system volume; do not create with inherited or broad access and attempt post-create repair.
 2. After creation, it must verify the owner's SID, DACL, directory identity, actual parent handle, and journal's effective inherited security **from native handles**, not merely by path strings or self-reported config.
 3. It must establish and retain exclusive installation ownership, reject preexisting or reparse-point bootstrap roots, and persist crash evidence without automatic deletion or retry.
 4. The future protected grant, signer public-key trust, native operator identity, and creation-only FI backend must all be bound to this installation. A protected directory is not a cryptographic signing authority.
