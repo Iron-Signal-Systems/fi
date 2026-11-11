@@ -10,9 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -40,12 +38,12 @@ var (
 // creation journal/commit is retained for crash recovery. This primitive
 // cannot confer any of those facts. No public installer code invokes it.
 //
-// Both handles request no FILE_SHARE_DELETE, but on actual supported
-// Windows configurations a directory may still be renamed while open.
-// Therefore every handoff MUST revalidate both retained handles' native
-// paths against their original observed identities. This is detection, NOT
-// an atomic defense against hostile ancestor replacement; the future
-// trusted installer requires handle-relative creation/provenance.
+// Both handles request no FILE_SHARE_DELETE, but Windows may still permit
+// a directory rename while open. The fixed child is now CREATED relative to
+// the live parent HANDLE, eliminating the second by-path create resolution.
+// Every handoff still revalidates retained original native paths and DACLs.
+// This is detection against subsequent relocation, NOT authentication of a
+// hostile/replaced original parent or trusted system ProgramData provenance.
 // Close NEVER removes the bootstrap directory (even after errors).
 type windowsBootstrapReservation struct {
 	parent windows.Handle
@@ -112,11 +110,14 @@ func (r *windowsBootstrapReservation) verifyRetained() error {
 // an already existing local directory. It NEVER creates the parent, modifies
 // existing ACLs, adopts an existing bootstrap, or retries an uncertain create.
 //
-// The native directory handle is retained across CreateDirectoryW and child
-// attestation. Windows CreateDirectoryW with a non-nil SecurityAttributes
-// initializes the protected descriptor atomically with the new directory.
-// Handle/path/ancestor checks are defense-in-depth, not a substitute for
-// a future trusted parent issuer or truly handle-relative native creation.
+// The native parent directory handle is retained across a parent-relative
+// NtCreateFile(FILE_CREATE|FILE_DIRECTORY_FILE) child creation and subsequent
+// identity/ACL attestation. The protected security descriptor is supplied
+// in OBJECT_ATTRIBUTES at the first create call, never repaired later.
+// RootDirectory binds the creation to the held parent object, not a second
+// resolution of a caller-provided path. This does NOT independently establish
+// the parent/ancestor's authenticity as system ProgramData, a trusted issuer,
+// or an approved installation transaction.
 func reserveProtectedBootstrap(parentPath string) (res *windowsBootstrapReservation, err error) {
 	parentDir, err := validateJournalParentPath(parentPath)
 	if err != nil {
@@ -134,7 +135,7 @@ func reserveProtectedBootstrap(parentPath string) (res *windowsBootstrapReservat
 	}
 	parent, err := windows.CreateFile(
 		parentName,
-		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|0x00000004, // FILE_ADD_SUBDIRECTORY
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, // no delete/rename
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -176,37 +177,16 @@ func reserveProtectedBootstrap(parentPath string) (res *windowsBootstrapReservat
 		return res, fmt.Errorf("%w: intended owner/DACL does not satisfy policy: %v", ErrBootstrapInDoubt, err)
 	}
 	childPath := filepath.Join(parentDir, nativeBootstrapDirectoryName)
-	childName, err := windows.UTF16PtrFromString(childPath)
-	if err != nil {
-		return res, fmt.Errorf("%w: encode new directory path: %v", ErrBootstrapInDoubt, err)
-	}
-	attrs := &windows.SecurityAttributes{
-		Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
-		SecurityDescriptor: descriptor,
-	}
-	createErr := windows.CreateDirectory(childName, attrs)
-	runtime.KeepAlive(descriptor)
+	// The NT object name is the single fixed child component, and the
+	// RootDirectory is the LIVE parent handle above. No absolute child path
+	// or a fresh path lookup determines which directory receives this create.
+	child, createErr := createProtectedBootstrapChildAt(parent, descriptor)
 	if createErr != nil {
-		if errors.Is(createErr, windows.ERROR_ALREADY_EXISTS) ||
-			errors.Is(createErr, windows.ERROR_FILE_EXISTS) {
-			return res, fmt.Errorf("%w: %v", ErrBootstrapAlreadyExists, createErr)
-		}
-		return res, fmt.Errorf("%w: CreateDirectoryW with protected security attributes: %w", ErrBootstrapInDoubt, createErr)
+		return res, createErr
 	}
-
-	// A successful CreateDirectoryW is not complete until the exact new
-	// object is re-opened and its ACTUAL security and identity are verified.
-	// Failure after this point is ALWAYS in doubt; never delete the child.
-	child, openErr := windows.CreateFile(
-		childName, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
-		nil, windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
-	)
-	if openErr != nil {
-		return res, fmt.Errorf("%w: reopen created protected child: %v", ErrBootstrapInDoubt, openErr)
-	}
+	// FILE_CREATE reports a newly created handle, never an adopted older FI
+	// directory. All subsequent checks use that EXACT returned native handle.
+	// Any failure after creation leaves the object for manual recovery.
 	res.child = child
 	if err = requireNativeHandleType(child, true); err != nil {
 		return res, fmt.Errorf("%w: created child is not a plain directory: %v", ErrBootstrapInDoubt, err)
