@@ -97,7 +97,7 @@ func TestNativeBootstrapRelativeCreateBindsToHeldParentAfterRename(t *testing.T)
 	)
 	defer windows.CloseHandle(parent)
 	if err := os.Rename(original, moved); err != nil {
-		t.Skipf("runner prevented rename of opened parent; cannot test moved-parent binding: %v", err)
+		t.Fatalf("test-only delete-sharing parent could not be relocated before native create: %v", err)
 	}
 	child, err := createProtectedBootstrapChildAt(parent, bootstrapTestDescriptor(t))
 	if err != nil {
