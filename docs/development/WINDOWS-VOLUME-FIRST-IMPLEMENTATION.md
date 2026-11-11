@@ -96,3 +96,6 @@
 
 
 - **2026-11-11 operator binding slice (development only):** `volumeconsent/operator_binding.go` and tests cryptographically verify a fresh first-install receipt before comparing signed `ApproverSID` to a separately observed installer process user SID. `freshinstall/installer_operator_consent_windows.go` privately supplies that SID from the actual process primary token after conservative token-policy checks; Windows negative tests refuse missing consent. This code is NOT invoked by installer apply, and no human authorization UI, production CNG signer, parent-handle transaction, protected installed grant or native `adminbox` acceptance is implemented. See `WINDOWS-VOLUME-FIRST-INSTALLER-OPERATOR-BINDING.md`.
+
+
+**2026-11-11 A05 handle-connected journal foundation:** `freshinstall.newWindowsCreationSinkFromBootstrap` duplicates the original protected `FI-Installer` child handle (which now retains `FILE_ADD_FILE`) and uses it as the parent for the journal's native fixed-name `FILE_CREATE`. The original reservation is revalidated across creation and append without reopening its path for journal placement. This is uncalled private source/test work; no trusted system ProgramData-to-bootstrap handoff, pre-bootstrap write-ahead commitment, signer authorization, protected installed grant or installer apply exists.

@@ -73,3 +73,6 @@ No change is authorized to `main`, deployed `ISS-FS-22A`, FISender, or backend p
 
 
 **2026-11-11 installer approver identity foundation:** The development branch now verifies that a fresh-install signed approval's `approver_sid` agrees with a read-only independently observed elevated Windows installer process token SID. A signed receipt for some other administrator fails; this is not authenticated interactive approval or proof of issuer signing authority. It is disconnected from all installer writes, and does not permit clean-host removal, replacement or installation. See `WINDOWS-VOLUME-FIRST-INSTALLER-OPERATOR-BINDING.md`.
+
+
+**2026-11-11 protected native handoff update:** The branch can now pass an original protected bootstrap directory handle directly into the private journal sink, using `DuplicateHandle` and a parent-relative native FILE_CREATE instead of a second bootstrap pathname open. The first `FI-Installer` directory creation still occurs before the journal and does not have an accepted independent write-ahead authority. This is neither an installer transaction nor permission to remove, adopt or replace any FI installation.

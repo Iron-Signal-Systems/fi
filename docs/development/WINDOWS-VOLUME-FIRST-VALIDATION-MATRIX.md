@@ -90,3 +90,6 @@ Record PASS / FAIL / INCOMPLETE with source/build/environment/log references, ev
 
 
 **2026-11-11 native journal RootDirectory regression:** Windows-only tests must prove that `FILE_CREATE` follows the retained parent after a disposable directory is renamed, refuses an existing journal, invalid and closed parent handles, and preserves exclusive single-writer and write-ahead recovery behavior. The result is NOT protected ProgramData issuer trust, end-to-end A05 consent, V14/V16 or adminbox acceptance.
+
+
+**2026-11-11 A05 protected bootstrap / journal continuity:** Windows-native regression tests cover a complete record journal written from the existing bootstrap's retained child directory handle, denial of nil/closed reservations, a deliberately invalid diagnostic path that must not redirect creation, and denial after a permitted directory rename. The earlier journal collision, exclusive-writer and replay tests remain required. Tests of exact privileged protected-owner creation can **skip** if a GitHub runner lacks owner-assignment privilege; this is not `adminbox` acceptance. A05 remains open and V14/V16 remain NOT RUN.

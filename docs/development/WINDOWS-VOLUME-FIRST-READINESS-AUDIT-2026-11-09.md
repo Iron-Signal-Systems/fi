@@ -150,3 +150,10 @@ New `volumeconsent.VerifyFreshInstallForOperator` compares the verified signed `
 ### 2026-11-11 A05 journal native RootDirectory boundary — still P0/open
 
 The private native journal sink now uses `NtCreateFile(FILE_CREATE)` with a retained parent handle for the fixed journal name and checks the returned file identity and inherited owner/DACL. This removes the independent path-based target lookup during journal creation. Native Windows tests cover renamed disposable parent, collision, invalid handle and existing write-ahead recovery behavior. **Original system ProgramData provenance, trusted handoff from its independently checked handle, authenticated CNG signer and approval, protected installed-grant commitment, interruption recovery and native adminbox V14/V16 remain unaccepted.** No install action, service or main branch change is authorized.
+
+
+### A05 — original bootstrap-to-journal native handle handoff (2026-11-11)
+
+The development branch adds a private journal sink that takes the original protected bootstrap reservation and duplicates its retained child directory handle. The journal is created with a parent-relative fixed-name native FILE_CREATE, and protected owner/DACL, full-width IDs and original paths are checked before/after reservation and each append. A missing, closed, altered or relocated reservation is a hard stop; uncertain artifacts remain for review. This implementation narrows the separate pathname-opening gap between bootstrap and journal.
+
+**A05 remains P0/open:** the trusted ProgramData system-parent handle has not yet been bound to bootstrap creation. The bootstrap itself precedes the journal and therefore lacks independent write-ahead first-mutation custody. Native protected issuer provisioning, actual authenticated operator consent and CNG signing, signed installed-grant storage/commitment, interruption recovery and controlled `adminbox` V14/V16 acceptance remain missing. Privileged fixture skips in CI do not close those gates. `main`, ISS-FS-22A and FISender remain untouched; no uninstall or fresh install is approved.
