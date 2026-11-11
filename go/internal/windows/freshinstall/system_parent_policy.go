@@ -60,6 +60,22 @@ func validDirectoryID(id SystemDirectoryID) bool {
 	return id.VolumeSerial!=0 && id.FileID!=([16]byte{})
 }
 
+// validateSystemParentLayout checks the three OS-reported path shapes
+// BEFORE any directory handles are opened. It cannot validate filesystem
+// identity or be used alone to authorize a later mutation.
+func validateSystemParentLayout(programData,systemWindows,root string) error {
+	if !validSystemPath(root) || !validSystemPath(programData) ||
+		!validSystemPath(systemWindows) ||
+		len(root)!=3 || !strings.EqualFold(programData[:3],root) ||
+		!strings.EqualFold(systemWindows[:3],root) ||
+		!strings.EqualFold(programData[3:],"ProgramData") ||
+		strings.Contains(systemWindows[3:],"\\") || systemWindows[3:]=="" ||
+		strings.EqualFold(systemWindows,programData) {
+		return fmt.Errorf("%w: ProgramData and system Windows must be distinct plain direct children of the same local system root", ErrUnattestedSystemParent)
+	}
+	return nil
+}
+
 // AssessSystemParentEvidence returns an error ONLY: it never bestows any
 // mutation permission. The ProgramData OS known-folder must be a direct
 // child named ProgramData of the same volume root as the shared Windows
@@ -70,14 +86,8 @@ func validDirectoryID(id SystemDirectoryID) bool {
 // layouts until they have a separately designed, explicitly authorized
 // installation policy; a Windows known-folder path is not a trust issuer.
 func AssessSystemParentEvidence(e SystemParentEvidence) error {
-	if !validSystemPath(e.RootPath) || !validSystemPath(e.KnownProgramData) ||
-		!validSystemPath(e.SystemWindows) ||
-		len(e.RootPath)!=3 || !strings.EqualFold(e.KnownProgramData[:3],e.RootPath) ||
-		!strings.EqualFold(e.SystemWindows[:3],e.RootPath) ||
-		!strings.EqualFold(e.KnownProgramData[3:],"ProgramData") ||
-		strings.Contains(e.SystemWindows[3:],"\\") || e.SystemWindows[3:]=="" ||
-		strings.EqualFold(e.SystemWindows,e.KnownProgramData) {
-		return fmt.Errorf("%w: ProgramData and system Windows must be distinct plain direct children of the same local system root", ErrUnattestedSystemParent)
+	if err:=validateSystemParentLayout(e.KnownProgramData,e.SystemWindows,e.RootPath);err!=nil {
+		return err
 	}
 	if !validDirectoryID(e.RootID) || !validDirectoryID(e.ProgramDataID) ||
 		!validDirectoryID(e.WindowsID) ||

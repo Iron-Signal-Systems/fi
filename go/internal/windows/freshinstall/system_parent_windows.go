@@ -123,14 +123,9 @@ func inspectNativeSystemProgramData() (p *nativeSystemParentInspection,err error
 	}
 	rootPath:=filepath.VolumeName(win)+`\`
 	if err:=requireNativeSystemNTFS(rootPath);err!=nil{return nil,err}
-	// Check path shape BEFORE touching any handle; this cannot authorize
-	// a redirected ProgramData on a separate volume or at a nested path.
-	if err:=AssessSystemParentEvidence(SystemParentEvidence{
-		KnownProgramData:pd,SystemWindows:win,RootPath:rootPath,
-		RootID:SystemDirectoryID{VolumeSerial:1,FileID:[16]byte{1}},
-		ProgramDataID:SystemDirectoryID{VolumeSerial:1,FileID:[16]byte{2}},
-		WindowsID:SystemDirectoryID{VolumeSerial:1,FileID:[16]byte{3}},
-	});err!=nil{return nil,err}
+	// Check the OS-reported layout BEFORE opening any handles; actual
+	// full-width IDs are obtained from the live native objects below.
+	if err:=validateSystemParentLayout(pd,win,rootPath);err!=nil{return nil,err}
 	p=&nativeSystemParentInspection{}
 	success:=false
 	defer func(){
