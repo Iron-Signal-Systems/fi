@@ -165,6 +165,10 @@ func TestProtectedBootstrapCanHostStrictNativeCreationJournal(t *testing.T) {
 }
 
 func TestProtectedBootstrapConcurrentCreateExactlyOneWinner(t *testing.T) {
+	// First prove that this Windows runner permits exact protected owner-at-
+	// creation semantics. A runner without that privilege cannot validate
+	// concurrent successful creation and must never use a weaker ACL.
+	_, _ = nativeBootstrapFixture(t)
 	parent := t.TempDir()
 	const n = 8
 	var wg sync.WaitGroup
