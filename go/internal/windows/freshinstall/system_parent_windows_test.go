@@ -9,6 +9,7 @@ package freshinstall
 import (
 	"errors"
 	"path/filepath"
+	"os"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -67,6 +68,41 @@ func TestNativeSystemProgramDataEvidenceRefusesTamperedIdentityAndClosedHandles(
 	if err:=observed.Close();err!=nil{t.Fatal(err)}
 	if err:=observed.verifyRetained();!errors.Is(err,ErrUnattestedSystemParent){
 		t.Fatalf("released directory handles accepted as trustworthy: %v",err)
+	}
+}
+
+func TestReadOnlyDirectoryAttestationRejectsNativeRenameAndReplacement(t *testing.T) {
+	// This is an ISOLATED Windows runner fixture. It purposefully permits
+	// delete-sharing on the original handle so the file can be renamed
+	// while we hold it; this must never authorize a fresh path as the old
+	// FILE_ID_INFO. Production observations use the stricter share mode.
+	root:=t.TempDir()
+	original:=filepath.Join(root,"original")
+	moved:=filepath.Join(root,"moved")
+	if err:=os.Mkdir(original,0700);err!=nil{t.Fatal(err)}
+	obs,err:=openNativeSystemDirectoryWithSharing(original,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE)
+	if err!=nil{t.Fatal(err)}
+	defer windows.CloseHandle(obs.handle)
+	if err:=verifyObservedSystemDirectory(obs);err!=nil{
+		t.Fatalf("original read-only identity not stable: %v",err)
+	}
+	if err:=os.Rename(original,moved);err!=nil{
+		t.Fatalf("cannot test actual Windows rename while keeping original native handle: %v",err)
+	}
+	// A path may be reused by a different object after the original has
+	// been relocated. Its owner/ACL/volume alone would not establish
+	// continuity; file identity must be compared with the retained handle.
+	if err:=os.Mkdir(original,0700);err!=nil{t.Fatal(err)}
+	replacement,err:=openNativeSystemDirectory(original)
+	if err!=nil{t.Fatal(err)}
+	if replacement.id==obs.id {
+		_ = windows.CloseHandle(replacement.handle)
+		t.Fatal("replacement unexpectedly reused the original full-width FileID")
+	}
+	if err:=windows.CloseHandle(replacement.handle);err!=nil{t.Fatal(err)}
+	if err:=verifyObservedSystemDirectory(obs);!errors.Is(err,ErrUnattestedSystemParent){
+		t.Fatalf("replaced original path passed retained native identity check: %v",err)
 	}
 }
 
