@@ -63,8 +63,8 @@ func TestSecurityJSONOnceRealSignedPreflight(t *testing.T) {
 			oldSelected := legacySecurityJSONSelection(raw)
 			got, fast, selected, fastErr := tryPrepareSinglePassSecurity(raw)
 			if !oldSelected || !selected || fastErr != nil {
-				return fmt.Errorf("Security JSON fast path mismatch in signed sample %d (old=%t new=%t err=%v)",
-					seenSecurity, oldSelected, selected, fastErr)
+				return fmt.Errorf("Security JSON fast path mismatch in signed sample %d (old=%t new=%t decode_failed=%t)",
+					seenSecurity, oldSelected, selected, fastErr != nil)
 			}
 			legacyFast++
 			candidateFast++
@@ -86,7 +86,7 @@ func TestSecurityJSONOnceRealSignedPreflight(t *testing.T) {
 		if seenSecurity >= wanted {
 			return errStop
 		}
-		return file.Close()
+		return nil
 	})
 	if err != nil && !errors.Is(err, errStop) {
 		t.Fatal(err)
