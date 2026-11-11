@@ -59,13 +59,21 @@ func (p *nativeSystemParentInspection) Close() error {
 }
 
 func openNativeSystemDirectory(path string) (nativeSystemDirectory,error) {
+	// Live system-origin observations never permit delete-sharing.
+	return openNativeSystemDirectoryWithSharing(path,windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
+}
+
+// The explicit share variant is private and is used only by native fixture
+// tests that intentionally allow a disposable directory to be relocated.
+// It cannot authorize a service, installation or privileged journal read.
+func openNativeSystemDirectoryWithSharing(path string,share uint32) (nativeSystemDirectory,error) {
 	if !validSystemPath(path) {
 		return nativeSystemDirectory{},fmt.Errorf("%w: invalid absolute local drive path",ErrUnattestedSystemParent)
 	}
 	ptr,err:=windows.UTF16PtrFromString(path)
 	if err!=nil{return nativeSystemDirectory{},err}
 	h,err:=windows.CreateFile(ptr,windows.FILE_READ_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		share,
 		nil,windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,0)
 	if err!=nil{return nativeSystemDirectory{},fmt.Errorf("%w: open read-only system directory %q: %v",ErrUnattestedSystemParent,path,err)}
@@ -76,15 +84,52 @@ func openNativeSystemDirectory(path string) (nativeSystemDirectory,error) {
 	}
 	native,err:=nativeFinalPath(h)
 	if err!=nil||native==""{return nativeSystemDirectory{},fmt.Errorf("%w: resolve system directory native name: %v",ErrUnattestedSystemParent,err)}
-	var id SystemDirectoryID
-	r,_,callErr:=nativeParentFileIDProc.Call(uintptr(h),nativeParentFileIDInfoClass,
-		uintptr(unsafe.Pointer(&id)),unsafe.Sizeof(id))
-	if r==0 || !validDirectoryID(id){
-		return nativeSystemDirectory{},fmt.Errorf("%w: missing full-width FILE_ID_INFO: %v",ErrUnattestedSystemParent,callErr)
-	}
+	id,err:=systemDirectoryIDFromHandle(h)
+	if err!=nil{return nativeSystemDirectory{},err}
 	out:=nativeSystemDirectory{path:path,nativePath:native,id:id,handle:h}
 	ok=true
 	return out,nil
+}
+
+func systemDirectoryIDFromHandle(h windows.Handle) (SystemDirectoryID,error) {
+	if h==0 || h==windows.InvalidHandle {
+		return SystemDirectoryID{},fmt.Errorf("%w: no valid native directory handle",ErrUnattestedSystemParent)
+	}
+	var id SystemDirectoryID
+	r,_,callErr:=nativeParentFileIDProc.Call(uintptr(h),nativeParentFileIDInfoClass,
+		uintptr(unsafe.Pointer(&id)),unsafe.Sizeof(id))
+	if r==0 || !validDirectoryID(id) {
+		return SystemDirectoryID{},fmt.Errorf("%w: missing full-width FILE_ID_INFO: %v",ErrUnattestedSystemParent,callErr)
+	}
+	return id,nil
+}
+
+// verifyObservedSystemDirectory prevents a stale Windows path from being
+// silently reinterpreted as an original observed directory after a rename,
+// replacement, reparse substitution or identity change. This method is
+// deliberately read-only and usable by native disposable fixture tests.
+func verifyObservedSystemDirectory(obs nativeSystemDirectory) error {
+	if obs.handle==0 || obs.handle==windows.InvalidHandle {
+		return fmt.Errorf("%w: retained system directory handle missing",ErrUnattestedSystemParent)
+	}
+	if err:=requireNativeHandleType(obs.handle,true);err!=nil {
+		return fmt.Errorf("%w: retained system directory changed type: %v",ErrUnattestedSystemParent,err)
+	}
+	actualID,err:=systemDirectoryIDFromHandle(obs.handle)
+	if err!=nil{return err}
+	if actualID!=obs.id {
+		return fmt.Errorf("%w: original retained directory identity changed",ErrUnattestedSystemParent)
+	}
+	now,err:=nativeFinalPath(obs.handle)
+	if err!=nil || !sameNativePath(now,obs.nativePath){
+		return fmt.Errorf("%w: retained native system directory relocated: %v",ErrUnattestedSystemParent,err)
+	}
+	reopened,err:=openNativeSystemDirectory(obs.path)
+	if err!=nil{return err}
+	same:=reopened.id==obs.id && sameNativePath(reopened.nativePath,obs.nativePath)
+	_ = windows.CloseHandle(reopened.handle)
+	if !same {return fmt.Errorf("%w: system directory path now resolves to a different object",ErrUnattestedSystemParent)}
+	return nil
 }
 
 // requireNativeSystemNTFS checks the actual filesystem at the original
@@ -170,21 +215,7 @@ func (p *nativeSystemParentInspection) verifyRetained() error {
 	if err:=requireNativeSystemNTFS(p.root.path);err!=nil{return err}
 	objects:=[]nativeSystemDirectory{p.root,p.windowsDir,p.programData}
 	for _,obs:=range objects {
-		if obs.handle==0 || obs.handle==windows.InvalidHandle {
-			return fmt.Errorf("%w: retained system directory handle missing",ErrUnattestedSystemParent)
-		}
-		if err:=requireNativeHandleType(obs.handle,true);err!=nil {
-			return fmt.Errorf("%w: retained system directory changed type: %v",ErrUnattestedSystemParent,err)
-		}
-		now,err:=nativeFinalPath(obs.handle)
-		if err!=nil || !sameNativePath(now,obs.nativePath){
-			return fmt.Errorf("%w: retained native system directory relocated: %v",ErrUnattestedSystemParent,err)
-		}
-		reopened,err:=openNativeSystemDirectory(obs.path)
-		if err!=nil{return err}
-		same:=reopened.id==obs.id && sameNativePath(reopened.nativePath,obs.nativePath)
-		_ = windows.CloseHandle(reopened.handle)
-		if !same {return fmt.Errorf("%w: system directory path now resolves to a different object",ErrUnattestedSystemParent)}
+		if err:=verifyObservedSystemDirectory(obs);err!=nil{return err}
 	}
 	if !sameNativePath(filepath.Dir(p.programData.nativePath),p.root.nativePath) ||
 		!sameNativePath(filepath.Dir(p.windowsDir.nativePath),p.root.nativePath) ||
