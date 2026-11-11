@@ -1,0 +1,149 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// FI experimental canonical Security JSON-once acceptance tests.
+package recordingest
+
+import (
+	"bytes"
+	"encoding/json"
+	"math/rand"
+	"reflect"
+	"testing"
+)
+
+// legacySecurityJSONSelection mirrors the pre-change envelope and full
+// payload-json.Valid gates. This acceptance oracle must remain independent
+// of findCanonicalSecurityEnvelopeKeys and the optimized implementation.
+func legacySecurityJSONSelection(raw []byte) bool {
+	if len(raw) < len(securityEnvelopePrefix)+len(securityPayloadKey)+2 ||
+		!bytes.HasPrefix(raw, securityEnvelopePrefix) ||
+		raw[len(raw)-1] != '\n' || raw[len(raw)-2] != '}' {
+		return false
+	}
+	body := raw[:len(raw)-1]
+	if bytes.Contains(body, []byte{'\n'}) {
+		return false
+	}
+	written := bytes.Index(body, securityWrittenAtKey)
+	payload := bytes.Index(body, securityPayloadKey)
+	if written <= len(securityEnvelopePrefix) ||
+		payload <= written+len(securityWrittenAtKey) ||
+		bytes.Count(body, securityWrittenAtKey) != 1 ||
+		bytes.Count(body, securityPayloadKey) != 1 {
+		return false
+	}
+	scope := body[len(securityEnvelopePrefix):written]
+	writtenAt := body[written+len(securityWrittenAtKey):payload]
+	if len(scope) < 2 || scope[0] != '"' || scope[len(scope)-1] != '"' ||
+		!json.Valid(scope) || len(writtenAt) < 2 || writtenAt[0] != '"' ||
+		writtenAt[len(writtenAt)-1] != '"' || !json.Valid(writtenAt) {
+		return false
+	}
+	rawPayload := body[payload+len(securityPayloadKey):len(body)-1]
+	return len(rawPayload) != 0 && json.Valid(rawPayload)
+}
+
+func TestSecurityJSONOnceCanonicalEvidenceAndTypedParity(t *testing.T) {
+	for _, fields := range []int{0, 1, 24, 96} {
+		raw := singlePassSecurityTestRecord(t, fields, 8192)
+		if !legacySecurityJSONSelection(raw) {
+			t.Fatalf("fields=%d: canonical fixture was not accepted by original", fields)
+		}
+		want, err := prepareOwnedSourceRecord(raw)
+		if err != nil { t.Fatal(err) }
+		wantSecurity, err := prepareSecurityBulkRecord(1, want, want.RecordDigest[:])
+		if err != nil { t.Fatal(err) }
+		got, security, selected, err := tryPrepareSinglePassSecurity(raw)
+		if err != nil || !selected {
+			t.Fatalf("fields=%d: fast path selected=%t err=%v", fields, selected, err)
+		}
+		if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(security.value, wantSecurity.value) ||
+			!reflect.DeepEqual(security.eventRecordID, wantSecurity.eventRecordID) ||
+			security.eventID != wantSecurity.eventID ||
+			!bytes.Equal(security.digest, wantSecurity.digest) {
+			t.Fatalf("fields=%d: signed evidence or typed projection diverged", fields)
+		}
+	}
+}
+
+// Selection is allowed to be *more conservative* for abnormal signed JSON,
+// but cannot accept an unsafe fast-path slice that was invalid under the
+// original json.Valid gate. The fallback must preserve original acceptance,
+// exact source bytes and typed relational values.
+func TestSecurityJSONOnceNoncanonicalAndMalformedFallback(t *testing.T) {
+	raw := singlePassSecurityTestRecord(t, 24, 8192)
+	variants := [][]byte{
+		bytes.Replace(raw, []byte("\"event_id\":\"4663\""), []byte("\"event_id\":false"), 1),
+		bytes.Replace(raw, []byte("\"event_id\":\"4663\""), []byte("\"event_id\":\"\\q\""), 1),
+		bytes.Replace(raw, []byte("\"scope_id\":\"test-scope\""), []byte("\"scope_id\":false"), 1),
+		bytes.Replace(raw, []byte("\"event_id\":\"4663\""), []byte("\"event_id\":[}}"), 1),
+		raw[:len(raw)-1],
+	}
+	for _, extra := range []string{
+		",\"version\":\"fi-spool-record/0.1\"}",
+		",\"Payload\":{}}",
+		", \"payload\":{}}",
+		",\"\\u0070ayload\":{}}",
+		",\"P\\u0061yload\":{}}",
+		",\"unknown\":{\"a\":1}}",
+		",\"record_kind\":\"WindowsSecurityEvent\"}",
+	} {
+		record := append([]byte(nil), raw[:len(raw)-2]...)
+		record = append(record, []byte(extra)...)
+		variants = append(variants, append(record, '\n'))
+	}
+	rng := rand.New(rand.NewSource(20261111))
+	for i := 0; i < 12000; i++ {
+		record := append([]byte(nil), raw...)
+		for j := 0; j <= i%2; j++ {
+			record[rng.Intn(len(record))] = byte(rng.Intn(256))
+		}
+		variants = append(variants, record)
+	}
+	for i, record := range variants {
+		originalFastSelection := legacySecurityJSONSelection(record)
+		got, security, selected, fastErr := tryPrepareSinglePassSecurity(record)
+		if selected && !originalFastSelection {
+			t.Fatalf("case %d: fast-path selected an input that failed original JSON validity", i)
+		}
+		if selected {
+			if fastErr == nil {
+				legacy, err := prepareOwnedSourceRecord(record)
+				if err != nil {
+					t.Fatalf("case %d: fast path accepted input rejected by legacy: %v", i, err)
+				}
+				legacySecurity, err := prepareSecurityBulkRecord(1, legacy, legacy.RecordDigest[:])
+				if err != nil || !reflect.DeepEqual(got, legacy) ||
+					!reflect.DeepEqual(security.value, legacySecurity.value) {
+					t.Fatalf("case %d: signed source/typed projection differs, err=%v", i, err)
+				}
+			}
+			continue
+		}
+		if fastErr != nil {
+			t.Fatalf("case %d: fallback returned an error: %v", i, fastErr)
+		}
+		// The same general decoder remains the fallback. It must never
+		// bypass strict schema validation or event-record validation.
+		legacy, err := prepareOwnedSourceRecord(record)
+		if err != nil {
+			continue
+		}
+		if legacy.Record.RecordKind == "WindowsSecurityEvent" {
+			if _, err := prepareSecurityBulkRecord(1, legacy, legacy.RecordDigest[:]); err != nil {
+				continue
+			}
+		}
+	}
+}
+
+var securityJSONOnceBenchmarkSink int
+
+func BenchmarkSecurityJSONOnceWholeRecord(b *testing.B) {
+	raw := singlePassSecurityTestRecord(b, 24, 8192)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		source, security, selected, err := tryPrepareSinglePassSecurity(raw)
+		if err != nil || !selected { b.Fatalf("selected=%t err=%v", selected, err) }
+		securityJSONOnceBenchmarkSink = source.RecordBytes + len(security.value.Fields)
+	}
+}
