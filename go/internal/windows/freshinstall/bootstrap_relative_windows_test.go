@@ -26,6 +26,10 @@ func bootstrapTestDescriptor(t *testing.T) *windows.SECURITY_DESCRIPTOR {
 }
 
 func bootstrapOpenParent(t *testing.T, directory string) windows.Handle {
+	return bootstrapOpenParentWithSharing(t, directory, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
+}
+
+func bootstrapOpenParentWithSharing(t *testing.T, directory string, share uint32) windows.Handle {
 	t.Helper()
 	ptr, err := windows.UTF16PtrFromString(directory)
 	if err != nil {
@@ -36,7 +40,7 @@ func bootstrapOpenParent(t *testing.T, directory string) windows.Handle {
 	parent, err := windows.CreateFile(
 		ptr,
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|0x00000004,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		share,
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0,
 	)
@@ -83,12 +87,15 @@ func TestNativeBootstrapRelativeCreateBindsToHeldParentAfterRename(t *testing.T)
 	if err := os.Mkdir(original, 0700); err != nil {
 		t.Fatal(err)
 	}
-	parent := bootstrapOpenParent(t, original)
+	// This test intentionally permits delete-sharing on its disposable
+	// parent directory so the rename can succeed while the parent handle
+	// remains live. Production never requests this sharing mode. The test
+	// isolates whether RootDirectory, not a stale absolute name, determines
+	// which parent object receives the new child.
+	parent := bootstrapOpenParentWithSharing(
+		t, original, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+	)
 	defer windows.CloseHandle(parent)
-	// The parent handle is live when the original name is relocated. This
-	// isolates whether native RootDirectory, rather than a stored pathname,
-	// controls where the new child lands. Some NTFS policy combinations
-	// forbid the rename; that is not proof the child create path is safe.
 	if err := os.Rename(original, moved); err != nil {
 		t.Skipf("runner prevented rename of opened parent; cannot test moved-parent binding: %v", err)
 	}
