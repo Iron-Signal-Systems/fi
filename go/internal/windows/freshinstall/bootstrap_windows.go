@@ -150,7 +150,7 @@ func reserveProtectedBootstrap(parentPath string) (res *windowsBootstrapReservat
 			errors.Is(createErr, windows.ERROR_FILE_EXISTS) {
 			return res, fmt.Errorf("%w: %v", ErrBootstrapAlreadyExists, createErr)
 		}
-		return res, fmt.Errorf("%w: CreateDirectoryW with protected security attributes: %v", ErrBootstrapInDoubt, createErr)
+		return res, fmt.Errorf("%w: CreateDirectoryW with protected security attributes: %w", ErrBootstrapInDoubt, createErr)
 	}
 
 	// A successful CreateDirectoryW is not complete until the exact new
