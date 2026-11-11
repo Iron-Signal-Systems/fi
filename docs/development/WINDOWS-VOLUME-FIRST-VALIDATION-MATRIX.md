@@ -93,3 +93,6 @@ Record PASS / FAIL / INCOMPLETE with source/build/environment/log references, ev
 
 
 **2026-11-11 A05 protected bootstrap / journal continuity:** Windows-native regression tests cover a complete record journal written from the existing bootstrap's retained child directory handle, denial of nil/closed reservations, a deliberately invalid diagnostic path that must not redirect creation, and denial after a permitted directory rename. The earlier journal collision, exclusive-writer and replay tests remain required. Tests of exact privileged protected-owner creation can **skip** if a GitHub runner lacks owner-assignment privilege; this is not `adminbox` acceptance. A05 remains open and V14/V16 remain NOT RUN.
+
+
+**2026-11-11 root-relative ProgramData native read-only tests:** Windows native tests cross-check the actual runner's ProgramData object with a fixed leaf opened relative to its retained system-volume root handle, test renamed/replaced disposable roots, and reject closed/invalid root handles, absent ProgramData children and reparse-point leaf substitution. No actual ProgramData changes occur. This validates relative-open identity behavior, **not** issuer trust, the first write, or privileged native `adminbox` acceptance. A05 remains P0; V14/V16 remain NOT RUN.

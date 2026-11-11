@@ -55,3 +55,6 @@ The branch now has a **separate read-only** installer-token preflight for High-i
 
 
 **2026-11-11 live-handle journal bridge:** The returned protected `FI-Installer` child handle now includes `FILE_ADD_FILE`, enabling the new private journal sink to duplicate the very same directory object and create the fixed journal through `NtCreateFile(RootDirectory=duplicate, FILE_CREATE)`. It does not reopen the child pathname to select the journal location. Original and duplicated full-width file IDs, native paths and owner/DACL are rechecked across reserve and append, while the original reservation remains live. This reduces the bootstrap-to-journal substitution boundary but cannot journal creation of the bootstrap itself. System ProgramData authenticity and installer authorization remain OPEN; see `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.
+
+
+**2026-11-11 root-relative ProgramData observer:** A new independent read-only Windows `NtCreateFile(FILE_OPEN)` observer checks the fixed `ProgramData` leaf relative to the held system-volume root directory, comparing the full NTFS file identity with the separately observed known-folder object. This is NOT a create-capable handle or an authenticated system-root-to-bootstrap handoff, and does not alter `reserveProtectedBootstrap(parentPath)`. See `WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-EVIDENCE.md`.

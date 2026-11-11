@@ -99,3 +99,6 @@
 
 
 **2026-11-11 A05 handle-connected journal foundation:** `freshinstall.newWindowsCreationSinkFromBootstrap` duplicates the original protected `FI-Installer` child handle (which now retains `FILE_ADD_FILE`) and uses it as the parent for the journal's native fixed-name `FILE_CREATE`. The original reservation is revalidated across creation and append without reopening its path for journal placement. This is uncalled private source/test work; no trusted system ProgramData-to-bootstrap handoff, pre-bootstrap write-ahead commitment, signer authorization, protected installed grant or installer apply exists.
+
+
+**2026-11-11 system parent native root-relative cross-check:** A read-only, fixed-child native FILE_OPEN now cross-checks the OS ProgramData object beneath the retained system root against the independently retained known-folder object. Its Windows tests prove original-object continuity after a disposable root path rename/replacement. No create-capable handle or mutation authority is returned; bootstrap creation and installer apply are unchanged.
