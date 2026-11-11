@@ -219,7 +219,7 @@ printf 'FI HASH ONCE GO GATE PASS pinned_source=true private_tests=true historic
 jsonassets=/home/jwood/fi-h16-json-once-assets
 [ -d "$jsonassets" ] && [ ! -L "$jsonassets" ] || fail 'JSON-once assets missing'
 for spec in \
- "patch_private_security_json_without_double_scan.go bb2637bbf2adbbce3bf22b4f473d63a60ab207b9" \
+ "patch_private_security_json_without_double_scan.go ce98815e4877f6818622f1e7112b20ceba4ec3e4" \
  "fi_private_security_json_once_test.go ed51f6267564520461c75a215e44c6df5eec6e85"; do
     set -- $spec
     [ -f "$jsonassets/$1" ] && [ ! -L "$jsonassets/$1" ] || fail "JSON-once asset missing: $1"
