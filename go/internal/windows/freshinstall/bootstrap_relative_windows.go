@@ -60,7 +60,9 @@ func createProtectedBootstrapChildAt(parent windows.Handle, descriptor *windows.
 	// attestation; no DELETE or WRITE_DAC rights are requested.
 	err = windows.NtCreateFile(
 		&child,
-		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE|nativeJournalParentAddFile,
+		// The original created directory handle also permits FILE_ADD_FILE
+		// for a future journal without reopening the child directory path.
 		attributes,
 		&ioStatus,
 		nil,

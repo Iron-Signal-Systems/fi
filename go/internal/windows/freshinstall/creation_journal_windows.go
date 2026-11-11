@@ -32,6 +32,10 @@ const nativeCreationJournalName = "fi-v2-create-only.journal"
 // overwritten, renamed, or removed on any failure path.
 type windowsCreationSink struct {
 	parentPath string
+	// A protected-bootstrap handoff uses the original live child directory,
+	// never a later by-path open. Failure does not fall back to path mode.
+	bootstrapRequired bool
+	bootstrap *windowsBootstrapReservation
 	// Only isolated _test.go fixtures may set this flag. Normal construction
 	// always enforces native owner/DACL attestation before CREATE_NEW.
 	// It is NOT an operator override, installer flag or service setting.
@@ -44,7 +48,45 @@ type windowsCreationSink struct {
 }
 
 func newWindowsCreationSink(parentPath string) *windowsCreationSink {
+	// Historical isolated writer, not an eligible installer handoff.
 	return &windowsCreationSink{parentPath: parentPath}
+}
+
+// newWindowsCreationSinkFromBootstrap duplicates the original protected
+// FI-Installer handle for the fixed journal. It is private and never invoked
+// by fi-install; ancestor issuer, operator consent and pre-bootstrap custody
+// remain independent prerequisites.
+func newWindowsCreationSinkFromBootstrap(res *windowsBootstrapReservation) *windowsCreationSink {
+	return &windowsCreationSink{bootstrapRequired: true, bootstrap: res}
+}
+
+// verifyBootstrapParent rechecks the original handle, duplicate and protected
+// DACL before every mutation. A relocated or closed bootstrap causes an
+// in-doubt failure; this cannot prevent all intercall namespace races.
+func (s *windowsCreationSink) verifyBootstrapParent() error {
+	if s == nil || !s.bootstrapRequired || s.bootstrap == nil ||
+		s.bootstrap.closed || s.parent == 0 || s.parent == windows.InvalidHandle {
+		return fmt.Errorf("%w: no live bootstrap-to-journal handoff", ErrCreationInDoubt)
+	}
+	if err := s.bootstrap.verifyRetained(); err != nil {
+		return fmt.Errorf("%w: original bootstrap changed: %v", ErrCreationInDoubt, err)
+	}
+	originalID, err := systemDirectoryIDFromHandle(s.bootstrap.child)
+	if err != nil {
+		return fmt.Errorf("%w: original child file ID unavailable: %v", ErrCreationInDoubt, err)
+	}
+	duplicateID, err := systemDirectoryIDFromHandle(s.parent)
+	if err != nil || originalID != duplicateID {
+		return fmt.Errorf("%w: duplicated directory file ID mismatch: %v", ErrCreationInDoubt, err)
+	}
+	now, err := nativeFinalPath(s.parent)
+	if err != nil || !sameNativePath(now, s.bootstrap.childNative) {
+		return fmt.Errorf("%w: duplicated directory path moved: %v", ErrCreationInDoubt, err)
+	}
+	if err := verifyJournalParentHandle(s.parent); err != nil {
+		return fmt.Errorf("%w: duplicated directory owner/DACL changed: %v", ErrCreationInDoubt, err)
+	}
+	return nil
 }
 
 // ReserveNew requires a pre-existing parent directory. It never creates a
@@ -58,24 +100,49 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 	if !validInstallHex128(installationID) {
 		return errors.New("Windows FI journal reservation requires a canonical installation ID")
 	}
-	dir, err := validateJournalParentPath(s.parentPath)
-	if err != nil {
-		return err
-	}
-	parentName, err := windows.UTF16PtrFromString(dir)
-	if err != nil {
-		return fmt.Errorf("encode FI journal parent: %w", err)
-	}
-	parent, err := windows.CreateFile(
-		parentName,
-		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|nativeJournalParentAddFile,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, // deny delete/rename
-		nil, windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
+	var (
+		dir string
+		parent windows.Handle
+		err error
 	)
-	if err != nil {
-		return fmt.Errorf("open FI journal parent without following final reparse point: %w", err)
+	if s.bootstrapRequired {
+		if s.bootstrap == nil || s.bootstrap.closed {
+			s.poisoned = true
+			return fmt.Errorf("%w: original bootstrap unavailable", ErrCreationInDoubt)
+		}
+		if err = s.bootstrap.verifyRetained(); err != nil {
+			s.poisoned = true
+			return fmt.Errorf("%w: original bootstrap relocated or changed: %v", ErrCreationInDoubt, err)
+		}
+		dir = s.bootstrap.path // Diagnostic file name only; never reopened.
+		if dir == "" {
+			s.poisoned = true
+			return fmt.Errorf("%w: original bootstrap path label missing", ErrCreationInDoubt)
+		}
+		process := windows.CurrentProcess()
+		if err = windows.DuplicateHandle(process, s.bootstrap.child, process, &parent,
+			0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+			s.poisoned = true
+			return fmt.Errorf("%w: duplicate original protected child: %v", ErrCreationInDoubt, err)
+		}
+	} else {
+		// The historical path-based constructor remains an isolated native
+		// experiment only; never use it for an authorized v2 install.
+		if dir, err = validateJournalParentPath(s.parentPath); err != nil {
+			return err
+		}
+		parentName, encodeErr := windows.UTF16PtrFromString(dir)
+		if encodeErr != nil {
+			return fmt.Errorf("encode isolated journal parent: %w", encodeErr)
+		}
+		parent, err = windows.CreateFile(parentName,
+			windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|nativeJournalParentAddFile,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+			nil, windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if err != nil {
+			return fmt.Errorf("open isolated journal parent: %w", err)
+		}
 	}
 	// The retained parent handle is deliberately not released until Close.
 	s.parent = parent
@@ -109,10 +176,14 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 			return fmt.Errorf("FI installer journal parent has no protected native owner/DACL: %w", err)
 		}
 	}
-	// Recheck ancestor paths after opening the parent. The held handle denies
-	// rename of the opened directory; full native protected-parent provenance
-	// and ancestry race testing remain required before installer integration.
-	if _, err := validateJournalParentPath(dir); err != nil {
+	// The new strict bootstrap handoff does not reopen or resolve the
+	// directory path. The older isolated constructor rechecks ancestry.
+	if s.bootstrapRequired {
+		if err := s.verifyBootstrapParent(); err != nil {
+			s.poisoned = true
+			return err
+		}
+	} else if _, err := validateJournalParentPath(dir); err != nil {
 		s.poisoned = true
 		return err
 	}
@@ -149,6 +220,14 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 			return fmt.Errorf("FI creation journal was created with untrusted effective native security (in doubt): %w", err)
 		}
 	}
+	// A failed recheck after native FILE_CREATE leaves in-doubt evidence.
+	if s.bootstrapRequired {
+		if err := s.verifyBootstrapParent(); err != nil {
+			_ = windows.CloseHandle(handle)
+			s.poisoned = true
+			return err
+		}
+	}
 	file := os.NewFile(uintptr(handle), target)
 	if file == nil {
 		_ = windows.CloseHandle(handle)
@@ -172,6 +251,22 @@ func (s *windowsCreationSink) AppendAndSync(record []byte) error {
 		bytes.IndexByte(record, '\r') >= 0 {
 		s.poisoned = true
 		return errors.New("FI journal frame is not exactly one bounded canonical line")
+	}
+	if s.bootstrapRequired {
+		if err := s.verifyBootstrapParent(); err != nil {
+			s.poisoned = true
+			return err
+		}
+		finalFile, err := nativeFinalPath(windows.Handle(s.file.Fd()))
+		if err != nil || !sameNativePath(filepath.Dir(finalFile), s.bootstrap.childNative) ||
+			!strings.EqualFold(filepath.Base(finalFile), nativeCreationJournalName) {
+			s.poisoned = true
+			return fmt.Errorf("%w: journal handle moved from original bootstrap: %v", ErrCreationInDoubt, err)
+		}
+		if err := verifyCreationJournalFileHandle(windows.Handle(s.file.Fd())); err != nil {
+			s.poisoned = true
+			return fmt.Errorf("%w: journal owner/DACL changed: %v", ErrCreationInDoubt, err)
+		}
 	}
 	s.poisoned = true // clear ONLY after the entire record has been flushed
 	n, err := s.file.Write(record)

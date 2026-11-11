@@ -7,6 +7,7 @@
 package freshinstall
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -214,5 +215,66 @@ func TestProtectedBootstrapConcurrentCreateExactlyOneWinner(t *testing.T) {
 	}
 	if wins != 1 || collisions != n-1 {
 		t.Fatalf("native CREATE_NEW bootstrap did not exclude competing creators: winners=%d collisions=%d", wins, collisions)
+	}
+}
+
+// An invalid diagnostic pathname must not redirect the journal. A complete
+// native journal is created via the original protected bootstrap handle.
+func TestNativeBootstrapJournalHandoffUsesRetainedDirectory(t *testing.T) {
+	res, parent := nativeBootstrapFixture(t)
+	sink := newWindowsCreationSinkFromBootstrap(res)
+	sink.parentPath = filepath.Join(t.TempDir(), "nonexistent-parent")
+	if err := executeCreation(sink, &recordingCreator{}, testCreationIdentity); err != nil {
+		_ = sink.Close()
+		t.Fatalf("native bootstrap journal handoff failed: %v", err)
+	}
+	if err := sink.Close(); err != nil { t.Fatal(err) }
+	raw, err := os.ReadFile(filepath.Join(parent, nativeBootstrapDirectoryName, nativeCreationJournalName))
+	if err != nil { t.Fatalf("protected journal missing from original directory: %v", err) }
+	status, err := InspectCreationJournal(bytes.NewReader(raw))
+	if err != nil || !status.Complete || status.InDoubt {
+		t.Fatalf("native protected journal did not complete: %+v %v", status, err)
+	}
+	if err := res.verifyRetained(); err != nil {
+		t.Fatalf("original bootstrap identity changed: %v", err)
+	}
+}
+
+func TestNativeBootstrapJournalHandoffRefusesNilOrClosedOriginal(t *testing.T) {
+	missing := newWindowsCreationSinkFromBootstrap(nil)
+	if err := missing.ReserveNew(testInstallID); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("nil bootstrap accepted: %v", err)
+	}
+	if err := missing.Close(); err != nil { t.Fatal(err) }
+
+	res, parent := nativeBootstrapFixture(t)
+	if err := res.Close(); err != nil { t.Fatal(err) }
+	closed := newWindowsCreationSinkFromBootstrap(res)
+	if err := closed.ReserveNew(testInstallID); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("closed original bootstrap accepted: %v", err)
+	}
+	if err := closed.Close(); err != nil { t.Fatal(err) }
+	if _, err := os.Lstat(filepath.Join(parent, nativeBootstrapDirectoryName, nativeCreationJournalName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed bootstrap handoff wrote journal: %v", err)
+	}
+}
+
+func TestNativeBootstrapJournalHandoffRefusesMovedOriginal(t *testing.T) {
+	res, parent := nativeBootstrapFixture(t)
+	original := filepath.Join(parent, nativeBootstrapDirectoryName)
+	moved := original + "-moved"
+	if err := os.Rename(original, moved); err != nil {
+		if err := res.verifyRetained(); err != nil {
+			t.Fatalf("denied rename destabilized original bootstrap: %v", err)
+		}
+		return
+	}
+	sink := newWindowsCreationSinkFromBootstrap(res)
+	if err := sink.ReserveNew(testInstallID); !errors.Is(err, ErrCreationInDoubt) {
+		t.Fatalf("relocated original bootstrap accepted: %v", err)
+	}
+	_ = sink.Close()
+	if _, err := os.Lstat(filepath.Join(moved, nativeCreationJournalName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("relocated bootstrap received journal: %v", err)
 	}
 }
