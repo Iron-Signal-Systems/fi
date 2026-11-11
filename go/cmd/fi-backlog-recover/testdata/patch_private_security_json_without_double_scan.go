@@ -84,6 +84,20 @@ func main() {
 			}
 			payload = offset
 		} else if payload >= 0 {
+			// Noncanonical spaced or escaped member keys are not emitted by
+			// the canonical Windows spool writer. Decline this fast path
+			// without adding another whole-payload syntax pass. The old
+			// general decoder will handle such records unchanged.
+			keyStart := offset + 1
+			for keyStart < len(body) && (body[keyStart] == ' ' || body[keyStart] == '\t') {
+				keyStart++
+			}
+			if keyStart != offset+1 && keyStart < len(body) && body[keyStart] == '"' {
+				return -1, -1, false
+			}
+			if keyStart+1 < len(body) && body[keyStart] == '"' && body[keyStart+1] == '\\' {
+				return -1, -1, false
+			}
 			// A duplicate payload member with changed capitalization or
 			// whitespace is not canonical (v1 accepts case-folded keys).
 			const key = ",\"payload\""
