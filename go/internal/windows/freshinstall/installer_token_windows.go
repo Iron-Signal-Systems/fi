@@ -98,7 +98,6 @@ func installerTokenPrivilegesBounded(token windows.Token) ([]InstallerPrivilegeO
 		return nil,fmt.Errorf("%w: unsupported/truncated TOKEN_PRIVILEGES array (count=%d bytes=%d)",
 			ErrUnqualifiedInstallerToken,count,len(data))
 	}
-	type observedLUID struct{low uint32;high int32;attrs uint32}
 	observed:=make(map[[2]uint32]uint32,int(count))
 	for i:=0;i<int(count);i++ {
 		offset:=4+i*12
