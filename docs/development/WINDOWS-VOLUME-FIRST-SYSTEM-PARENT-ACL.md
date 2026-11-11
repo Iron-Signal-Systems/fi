@@ -26,3 +26,7 @@ Pure negative tests exercise untrusted/defaulted owners, null/defaulted DACLs, e
 The private bootstrap still accepts a supplied parent pathname and is **not wired to this observer**. Missing: independently trusted root/ProgramData ancestor issuer, verified installer identity/Windows token effective rights, authenticated administrator consent, secure parent-handle-to-creation transaction handoff, protected signed installed-grant commitment, restart/power-loss recovery and controlled `adminbox` testing.
 
 **A05 remains P0/open. V14/V16 are NOT RUN. ISS-FS-22A removal or reinstall remains NO-GO.**
+
+## Complementary elevated installer-process token observation (2026-11-11)
+
+A separate **read-only** Windows process-token inspector now checks elevation, Administrators membership, mandatory integrity and thread impersonation, and records six security-sensitive privilege LUID states without enabling any privilege. This does **not** perform Windows effective-access checks against the actual system-root/ProgramData DACL, prove the issuer/operator, or bind a trusted handle to a create-only transaction. See `WINDOWS-VOLUME-FIRST-INSTALLER-TOKEN-PREFLIGHT.md`.

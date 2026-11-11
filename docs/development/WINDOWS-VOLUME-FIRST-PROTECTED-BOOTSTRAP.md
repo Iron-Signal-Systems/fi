@@ -46,3 +46,7 @@ Native Windows negative-path tests require an actual temporary parent rename *be
 ## System parent ACL inspection (2026-11-11)
 
 The private branch now separately observes owner and DACL on the **preexisting Windows volume root and common ProgramData**, via native `GetSecurityInfo` on retained identity-checked handles. The policy conservatively refuses nonprivileged create/write/delete/owner ACEs and unknown ACL forms; a stock Windows parent can remain BLOCKED without changing its ACL. The handle-relative FI-Installer creation experiment **is not connected** to this inspector. See [System Parent ACL Audit](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-ACL.md).
+
+## Private installer token evidence (2026-11-11)
+
+The branch now has a **separate read-only** installer-token preflight for High-integrity elevated administrator primary tokens, rejecting UAC-limited, restricted, AppContainer, SYSTEM/service and thread-impersonating contexts. It records sensitive privilege states without changes. **It is not wired to this private bootstrap child creation code**: token eligibility alone cannot authorize a trusted ProgramData handle, write-ahead journal, signed grant or installation. See `WINDOWS-VOLUME-FIRST-INSTALLER-TOKEN-PREFLIGHT.md`.
