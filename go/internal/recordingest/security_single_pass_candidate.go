@@ -59,12 +59,10 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 	// Only select the exact canonical layout. A repeated or reordered
 	// member goes through the original strict decoder, preserving its
 	// legacy JSON v1 acceptance/rejection and error behavior.
-	written := bytes.Index(body, securityWrittenAtKey)
-	payload := bytes.Index(body, securityPayloadKey)
-	if written <= len(securityEnvelopePrefix) ||
-		payload <= written+len(securityWrittenAtKey) ||
-		bytes.Count(body, securityWrittenAtKey) != 1 ||
-		bytes.Count(body, securityPayloadKey) != 1 {
+	written, payload, canonical := findCanonicalSecurityEnvelopeKeys(body)
+	if !canonical ||
+		written <= len(securityEnvelopePrefix) ||
+		payload <= written+len(securityWrittenAtKey) {
 		return emptySource, emptySecurity, false, nil
 	}
 	// The two intervening values must be exactly one JSON string each;
@@ -79,16 +77,22 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		return emptySource, emptySecurity, false, nil
 	}
 	rawPayload := body[payload+len(securityPayloadKey):len(body)-1]
-	// A payload followed by another top-level envelope member is valid
-	// legacy JSON, but not canonical spool layout: decline this fast path.
-	// json.Valid also confirms that the exact zero-copy RawMessage is
-	// independently well-formed, as required by the source-record contract.
-	if len(rawPayload) == 0 || !json.Valid(rawPayload) {
+	// Canonical Security spool payloads are JSON objects and the LAST
+	// envelope member. Their exact byte span starts and ends with braces.
+	// The existing strict decoder below validates all nested JSON once.
+	// Unlike the old json.Valid check, this does not rescan the large payload.
+	if len(rawPayload) < 2 || rawPayload[0] != '{' || rawPayload[len(rawPayload)-1] != '}' {
 		return emptySource, emptySecurity, false, nil
 	}
 
 	var parsed singlePassSecurityEnvelope
 	if err := decodeStrictPayload(json.RawMessage(body), &parsed); err != nil {
+		// Preserve legacy selection for invalid payload syntax. This full
+		// payload check is paid only on a strict decoder failure, never for
+		// an authenticated canonical Security event.
+		if !json.Valid(rawPayload) {
+			return emptySource, emptySecurity, false, nil
+		}
 		return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
 	}
 	if parsed.Version != SpoolRecordVersion || parsed.RecordKind != "WindowsSecurityEvent" {
@@ -137,6 +141,78 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		eventRecordID: pgtype.Numeric{Int: bigEventRecordID, Exp: 0, Valid: true},
 	}
 	return source, security, true, nil
+}
+
+
+// findCanonicalSecurityEnvelopeKeys locates the two exact outer-envelope
+// markers in one pass over commas. The collector emits canonical keys with
+// no extra spaces, casing changes, or JSON escape sequences. If a signed
+// record instead contains another plausible envelope member after payload,
+// decline the fast path so the general strict decoder owns it.
+//
+// We do not validate or decode JSON here. The strict JSONv2 decoder above is
+// the sole full-payload validation. This scanner already replaces the old
+// two Index + two Count traversals, so its suffix checks require NO additional
+// full record pass.
+func findCanonicalSecurityEnvelopeKeys(body []byte) (written, payload int, canonical bool) {
+	written, payload = -1, -1
+	for offset := 0; offset < len(body); {
+		rel := bytes.IndexByte(body[offset:], ',')
+		if rel < 0 {
+			break
+		}
+		offset += rel
+		if bytes.HasPrefix(body[offset:], securityWrittenAtKey) {
+			if written >= 0 {
+				return -1, -1, false
+			}
+			written = offset
+		}
+		if bytes.HasPrefix(body[offset:], securityPayloadKey) {
+			if payload >= 0 {
+				return -1, -1, false
+			}
+			payload = offset
+		} else if payload >= 0 {
+			// A second envelope member can otherwise be case-folded by v1
+			// JSON or use escaped key characters. It may even have a JSON
+			// object value, making a suffix-brace check insufficient.
+			//
+			// This check examines only key-shaped commas as the existing
+			// scan passes them, and conservatively falls back for unusual
+			// keys rather than emitting an invalid raw payload slice.
+			next := offset + 1
+			for next < len(body) && (body[next] == ' ' || body[next] == '\t') {
+				next++
+			}
+			if next < len(body) && body[next] == '"' {
+				if next != offset+1 {
+					return -1, -1, false
+				}
+				key := body[next+1:]
+				for i := 0; i < len(key) && i < 40; i++ {
+					if key[i] == '\\' {
+						return -1, -1, false
+					}
+					if key[i] == '"' {
+						// Recognized envelope fields following payload
+						// are never canonical. Match only a short key.
+						switch {
+						case bytes.EqualFold(key[:i], []byte("payload")),
+							bytes.EqualFold(key[:i], []byte("version")),
+							bytes.EqualFold(key[:i], []byte("record_kind")),
+							bytes.EqualFold(key[:i], []byte("scope_id")),
+							bytes.EqualFold(key[:i], []byte("written_at")):
+							return -1, -1, false
+						}
+						break
+					}
+				}
+			}
+		}
+		offset++
+	}
+	return written, payload, written >= 0 && payload >= 0
 }
 
 // usePrivateSinglePassSecurity restricts this CPU optimization to the
