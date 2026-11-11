@@ -62,3 +62,7 @@ Parent and child-file policies have cross-platform Go negative-path tests. Windo
 **Nothing in these tests authorizes installing FI or starting volume-wide monitoring.** `ServeEnrolledVolumes` remains fail-closed, and `main` and deployed FI hosts remain unchanged.
 
 See [creation journal](WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md), [fresh-install contract](WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md), [installer requirements](WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md), and [validation matrix](WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md).
+
+## Read-only system ProgramData identity observation (2026-11-11)
+
+The branch now includes a separate native Windows read-only observer of the OS-known `ProgramData` path, shared Windows directory, system-volume NTFS status, and independent full-width FILE_ID_INFO on retained root/parent/Windows handles, plus a recheck against fresh name lookups. The observer rejects moved/replaced objects and nonstandard/redirected paths. It is **not a trusted issuer or permission to run the private bootstrap**. Real parent owner/DACL/ancestor provenance and transaction authorization remain blockers. See [system parent evidence](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-EVIDENCE.md).
