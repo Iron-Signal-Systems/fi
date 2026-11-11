@@ -415,7 +415,7 @@ snapshot_relations before
 
 # The observers read host-wide counters; they do not trace or modify FI,
 # PostgreSQL or the replay process. The first sample may be since boot.
-# The Go recovery worker uses the candidate private SHA-once code; host monitors are passive.
+# The Go recovery worker uses the original pinned batch-hash code; host monitors are passive.
 iostat -x -w 5 > "$out/$name/host-iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/host-vmstat.txt" 2>&1 &
@@ -554,6 +554,6 @@ bundle="$out/fi-h16-batch-hash-control-w3-w4-$stamp.tar.gz"
    "$name/pg_stat_io_before.jsonl" "$name/pg_stat_io_after.jsonl" \
    "$name/relations_before.jsonl" "$name/relations_after.jsonl" \
    "$name/pg_5sec_samples.jsonl" "$name/host-iostat.txt" "$name/host-vmstat.txt"
-) || fail 'SHA-once diagnostics bundle creation failed'
-[ -s "$bundle" ] || fail 'SHA-once diagnostics bundle missing'
+) || fail 'H16 original-hash control diagnostics bundle creation failed'
+[ -s "$bundle" ] || fail 'H16 original-hash control diagnostics bundle missing'
 printf 'FI H16 HASH CONTROL METRICS BUNDLE PASS path=%s\n' "$bundle"
