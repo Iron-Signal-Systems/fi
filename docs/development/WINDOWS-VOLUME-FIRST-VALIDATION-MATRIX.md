@@ -87,3 +87,6 @@ Record PASS / FAIL / INCOMPLETE with source/build/environment/log references, ev
 
 
 **2026-11-11 operator SID / signed receipt regression (A05 still P0):** Pure-Go tests in `volumeconsent/operator_binding_test.go` cover an authentic first-install signed approver matching the observed identity and rejection of mismatched/absent/malformed native identity, wrong signer, expired receipt, other machine, changed NTFS serial and tampered approver. Windows-only `freshinstall/installer_operator_consent_windows_test.go` checks that an actual native process-token inspection cannot accept a missing signed receipt. Inspect Windows and Linux CI at the exact final commit before recording these as PASS. Native elevated `adminbox` consent issuance, CNG key ownership, journal handoff, signed installed-grant commitment and V14/V16 remain NOT RUN. See `WINDOWS-VOLUME-FIRST-INSTALLER-OPERATOR-BINDING.md`.
+
+
+**2026-11-11 native journal RootDirectory regression:** Windows-only tests must prove that `FILE_CREATE` follows the retained parent after a disposable directory is renamed, refuses an existing journal, invalid and closed parent handles, and preserves exclusive single-writer and write-ahead recovery behavior. The result is NOT protected ProgramData issuer trust, end-to-end A05 consent, V14/V16 or adminbox acceptance.

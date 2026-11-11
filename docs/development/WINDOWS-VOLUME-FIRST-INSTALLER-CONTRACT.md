@@ -82,3 +82,6 @@ See `WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md`, `WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.
 
 
 **2026-11-11 verified approver binding:** A new private Windows process-token bridge requires an eligible actual elevated process token and calls `volumeconsent.VerifyFreshInstallForOperator` to check that the *cryptographically verified* approval receipt names precisely the observed process user. This does not create the human consent ceremony, authenticate signer custody, provide protected trusted state, commit an installed grant or connect to installer apply. The development executable remains deliberately read-only. See `WINDOWS-VOLUME-FIRST-INSTALLER-OPERATOR-BINDING.md`.
+
+
+**2026-11-11 journal path-substitution narrowing (A05 OPEN):** The native create-only journal now creates its fixed file relative to an already retained parent directory handle, not by re-resolving the parent pathname with `CreateFile`. This is a standalone private Windows primitive with disposable native rename/collision regressions. It does not connect the verified system ProgramData parent handle or authenticated operator approval to the transaction, and installer apply remains disabled. See `WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md`.

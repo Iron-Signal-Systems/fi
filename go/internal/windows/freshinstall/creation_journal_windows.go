@@ -68,7 +68,7 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 	}
 	parent, err := windows.CreateFile(
 		parentName,
-		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|nativeJournalParentAddFile,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, // deny delete/rename
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -117,23 +117,10 @@ func (s *windowsCreationSink) ReserveNew(installationID string) error {
 		return err
 	}
 	target := filepath.Join(dir, nativeCreationJournalName)
-	targetName, err := windows.UTF16PtrFromString(target)
-	if err != nil {
-		s.poisoned = true
-		return fmt.Errorf("encode FI journal target: %w", err)
-	}
-	// CREATE_NEW is atomic: even an empty preexisting file or reparse point
-	// refuses this transaction. No FILE_SHARE_* flags are permitted while
-	// holding the journal; every Write is explicitly followed by Sync.
-	handle, err := windows.CreateFile(
-		targetName,
-		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		0,
-		nil,
-		windows.CREATE_NEW,
-		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_WRITE_THROUGH|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
-	)
+	// The file is always created relative to the native directory handle,
+	// rather than resolving the parent pathname a second time. The path is
+	// retained only as an os.File diagnostic name after handle creation.
+	handle, err := createNativeJournalFileAt(parent)
 	if err != nil {
 		s.poisoned = true
 		return fmt.Errorf("exclusively create FI journal (never replace): %w", err)
