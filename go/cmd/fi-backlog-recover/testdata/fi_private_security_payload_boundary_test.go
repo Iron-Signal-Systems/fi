@@ -6,7 +6,6 @@ import (
     "bytes"
     "encoding/json"
     "math/rand"
-    "strings"
     "testing"
 )
 
@@ -116,5 +115,4 @@ func BenchmarkPrivateSecurityPayloadBoundary(b *testing.B) {
         b.ReportAllocs()
         for i:=0;i<b.N;i++{privateSecurityPayloadProbeSink=privateSingleJSONObjectBoundary(payload)}
     })
-    _=strings.Builder{}
 }
