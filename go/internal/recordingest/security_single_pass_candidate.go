@@ -215,6 +215,29 @@ func findCanonicalSecurityEnvelopeKeys(body []byte) (written, payload int, canon
 	return written, payload, written >= 0 && payload >= 0
 }
 
+// findSinglePassSecurityEnvelopeKeys preserves the historical strict-equivalent
+// marker scan used by the signed source acceptance tests and the established
+// legacy/canonical-selection contract. The JSON-once candidate uses the
+// conservative canonical variant but keeps this reference implementation.
+func findSinglePassSecurityEnvelopeKeys(body []byte) (writtenAt, payload int, unique bool) {
+	writtenAt, payload = -1, -1
+	for offset := 0; offset < len(body); {
+		comma := bytes.IndexByte(body[offset:], ',')
+		if comma < 0 { break }
+		offset += comma
+		if bytes.HasPrefix(body[offset:], securityWrittenAtKey) {
+			if writtenAt >= 0 { return -1, -1, false }
+			writtenAt = offset
+		}
+		if bytes.HasPrefix(body[offset:], securityPayloadKey) {
+			if payload >= 0 { return -1, -1, false }
+			payload = offset
+		}
+		offset++
+	}
+	return writtenAt, payload, writtenAt >= 0 && payload >= 0
+}
+
 // usePrivateSinglePassSecurity restricts this CPU optimization to the
 // experimental detached Security-field W128/P3 path. Production P1 and
 // ordinary P3 keep the established two-step strict decoder.
