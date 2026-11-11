@@ -429,6 +429,8 @@ INSERT INTO fi_recovery.typed_window (
 	// Projection_total retains the historical mixed projection accumulator.
 	// The File/Security/Other components now partition THAT accumulator and
 	// correct the former misleading file_projection_inclusive label.
+	// One counter per durable private window; no per-record logging in the hot path.
+	fmt.Printf("FI PRIVATE BATCH HASH ONCE window=%d trusted_batches=%d\n", index, profile.BatchHashReusedBatches)
 	fmt.Printf("FI PRIVATE STAGE PROFILE index=%d records=%d joined=%t typed_total=%s setup=%s batch_ingest=%s joined_finish=%s deferred_flush=%s verification=%s verify_counts=%s verify_coverage=%s marker_commit=%s source_read=%s batch_hash=%s envelope_prepare=%s security_prepare=%s security_child_prepare=%s source_sql=%s projection_total=%s file_projection_inclusive=%s security_projection_inclusive=%s other_projection_inclusive=%s security_id_lookup=%s security_source_copy=%s security_event_copy=%s security_scope_copy=%s security_field_copy=%s security_single_pass_rows=%d\n",
 		index, totalRecords, joined, windowElapsed, setupElapsed, batchElapsed, joinedElapsed, flushElapsed, verifyElapsed, countElapsed, coverageElapsed, commitElapsed,
 		profile.Read, profile.BatchHash, profile.Prepare, profile.SecurityBulk.Prepare, profile.SecurityBulk.ChildPrepare,
