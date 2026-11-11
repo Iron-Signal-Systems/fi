@@ -52,5 +52,8 @@ func TestNativeInstallerTokenFunctionsRejectInvalidTokenHandles(t *testing.T) {
 		if _, err := installerTokenPrivilegesBounded(token); !errors.Is(err, ErrUnqualifiedInstallerToken) {
 			t.Fatalf("invalid token allowed privilege query: %v", err)
 		}
+		if _, err := enabledInstallerAdministratorsGroup(token); !errors.Is(err, ErrUnqualifiedInstallerToken) {
+			t.Fatalf("invalid token allowed primary-token group query: %v", err)
+		}
 	}
 }

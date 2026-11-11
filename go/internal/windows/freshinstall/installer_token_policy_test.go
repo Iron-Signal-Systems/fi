@@ -77,3 +77,25 @@ func TestInstallerTokenPolicyRejectsFalseAdministratorAuthority(t *testing.T) {
 		})
 	}
 }
+
+// An Administrators SID can be present but disabled or deny-only in a
+// UAC-limited process. Mere SID presence must never qualify an installer.
+func TestInstallerAdministratorsSIDGroupAttributes(t *testing.T) {
+	for _,tc:=range []struct{
+		name string
+		attributes uint32
+		want bool
+	}{
+		{"no flags",0,false},
+		{"enabled",0x00000004,true},
+		{"deny-only",0x00000010,false},
+		{"enabled and deny-only",0x00000014,false},
+		{"mandatory and enabled",0x00000005,true},
+	} {
+		t.Run(tc.name,func(t *testing.T) {
+			if got:=installerAdministratorsGroupEnabled(tc.attributes);got!=tc.want {
+				t.Fatalf("Windows Administrators group attribute 0x%x: got=%t want=%t",tc.attributes,got,tc.want)
+			}
+		})
+	}
+}

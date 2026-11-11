@@ -158,8 +158,7 @@ func enabledInstallerAdministratorsGroup(token windows.Token) (bool,error) {
 			return false,fmt.Errorf("%w: duplicate built-in Administrators SID",ErrUnqualifiedInstallerToken)
 		}
 		seen=true
-		enabled=g.Attributes&windows.SE_GROUP_ENABLED!=0 &&
-			g.Attributes&windows.SE_GROUP_USE_FOR_DENY_ONLY==0
+		enabled=installerAdministratorsGroupEnabled(g.Attributes)
 	}
 	return enabled,nil
 }

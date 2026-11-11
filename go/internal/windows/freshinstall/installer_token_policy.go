@@ -58,6 +58,15 @@ type InstallerTokenEvidence struct {
 	Privileges []InstallerPrivilegeObservation
 }
 
+// installerAdministratorsGroupEnabled evaluates the documented Windows
+// SE_GROUP_ENABLED and SE_GROUP_USE_FOR_DENY_ONLY flags directly. This is
+// NOT a process-token AccessCheck against a securable object.
+func installerAdministratorsGroupEnabled(attributes uint32) bool {
+	const seGroupEnabled uint32 = 0x00000004
+	const seGroupDenyOnly uint32 = 0x00000010
+	return attributes&seGroupEnabled != 0 && attributes&seGroupDenyOnly == 0
+}
+
 // AssessInstallerTokenEvidence checks whether an ACTUAL native process-token
 // snapshot satisfies the narrow preconditions for a *future interactive*
 // elevated administrator installer. LocalSystem, NetworkService, LocalService,
