@@ -55,5 +55,38 @@ func TestNativeInstallerTokenFunctionsRejectInvalidTokenHandles(t *testing.T) {
 		if _, err := enabledInstallerAdministratorsGroup(token); !errors.Is(err, ErrUnqualifiedInstallerToken) {
 			t.Fatalf("invalid token allowed primary-token group query: %v", err)
 		}
+		if _, err := queryInstallerTokenBoolean(token, windows.TokenHasRestrictions); !errors.Is(err, ErrUnqualifiedInstallerToken) {
+			t.Fatalf("invalid token allowed Boolean token query: %v", err)
+		}
+	}
+}
+
+func TestNativeTokenBooleanWidthsAndMalformedValues(t *testing.T) {
+	cases:=[]struct{
+		name string
+		data [4]byte
+		size uint32
+		want bool
+		valid bool
+	}{
+		{"BOOLEAN false",[4]byte{},1,false,true},
+		{"BOOLEAN true",[4]byte{1},1,true,true},
+		{"DWORD false",[4]byte{},4,false,true},
+		{"DWORD true",[4]byte{1},4,true,true},
+		{"invalid width",[4]byte{1},2,false,false},
+		{"missing width",[4]byte{},0,false,false},
+		{"bad BOOLEAN",[4]byte{2},1,false,false},
+		{"bad DWORD",[4]byte{2},4,false,false},
+		{"noncanonical DWORD",[4]byte{1,1,0,0},4,false,false},
+	}
+	for _,tc:=range cases {
+		t.Run(tc.name,func(t *testing.T) {
+			got,err:=decodeInstallerTokenBoolean(tc.data,tc.size)
+			if tc.valid {
+				if err!=nil || got!=tc.want {t.Fatalf("valid token Boolean: got=%t err=%v",got,err)}
+			} else if !errors.Is(err,ErrUnqualifiedInstallerToken) {
+				t.Fatalf("malformed native Boolean accepted: got=%t err=%v",got,err)
+			}
+		})
 	}
 }

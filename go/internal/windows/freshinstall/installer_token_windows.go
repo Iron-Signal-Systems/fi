@@ -39,6 +39,36 @@ func queryInstallerTokenDword(token windows.Token, class uint32) (uint32,error) 
 	return value,nil
 }
 
+// decodeInstallerTokenBoolean accepts only the Windows BOOLEAN (1 byte)
+// or DWORD Boolean (4 bytes) ABI. TokenHasRestrictions is returned as a
+// single byte on supported Windows runners, while other classes use DWORD.
+// An unexpected count/value is not a false value; it is a failed query.
+func decodeInstallerTokenBoolean(bytes [4]byte, returned uint32) (bool,error) {
+	var value uint32
+	switch returned {
+	case 1:
+		value=uint32(bytes[0])
+	case 4:
+		value=binary.LittleEndian.Uint32(bytes[:])
+	default:
+		return false,fmt.Errorf("%w: unexpected native token Boolean width %d",ErrUnqualifiedInstallerToken,returned)
+	}
+	if value>1 {
+		return false,fmt.Errorf("%w: native token Boolean value is not 0 or 1",ErrUnqualifiedInstallerToken)
+	}
+	return value==1,nil
+}
+
+func queryInstallerTokenBoolean(token windows.Token,class uint32) (bool,error) {
+	var buffer [4]byte
+	var returned uint32
+	err:=windows.GetTokenInformation(token,class,&buffer[0],uint32(len(buffer)),&returned)
+	if err!=nil {
+		return false,fmt.Errorf("%w: query native token Boolean class %d: %v",ErrUnqualifiedInstallerToken,class,err)
+	}
+	return decodeInstallerTokenBoolean(buffer,returned)
+}
+
 // queryInstallerTokenVariable obtains a bounded single native token
 // information snapshot. It refuses a growing/ill-formed structure rather
 // than allocating unlimited memory or accepting an inconsistent result.
@@ -235,12 +265,11 @@ func inspectNativeInstallerProcessToken() (InstallerTokenEvidence,error) {
 	restricted,err:=token.IsRestricted()
 	if err!=nil{return InstallerTokenEvidence{},fmt.Errorf("%w: query token restrictions: %v",ErrUnqualifiedInstallerToken,err)}
 	e.Restricted=restricted
-	hadRestrictions,err:=queryInstallerTokenDword(token,windows.TokenHasRestrictions)
+	hadRestrictions,err:=queryInstallerTokenBoolean(token,windows.TokenHasRestrictions)
 	if err!=nil{return InstallerTokenEvidence{},err}
-	e.Restricted=e.Restricted||hadRestrictions!=0
-	appContainer,err:=queryInstallerTokenDword(token,nativeTokenIsAppContainer)
+	e.Restricted=e.Restricted||hadRestrictions
+	e.AppContainer,err=queryInstallerTokenBoolean(token,nativeTokenIsAppContainer)
 	if err!=nil{return InstallerTokenEvidence{},err}
-	e.AppContainer=appContainer!=0
 	e.Privileges,err=installerTokenPrivilegesBounded(token)
 	if err!=nil{return InstallerTokenEvidence{},err}
 	e.PrivilegesInspected=true
