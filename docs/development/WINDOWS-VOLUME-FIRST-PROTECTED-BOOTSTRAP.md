@@ -41,3 +41,8 @@ Native Windows negative-path tests require an actual temporary parent rename *be
 ## Read-only Windows system-parent identity evidence (2026-11-11)
 
 `freshinstall/system_parent_policy.go` and `system_parent_windows.go` now collect independent read-only OS `ProgramData` and shared Windows directory paths, retain system-volume root/ProgramData/Windows handles, and compare native NTFS 64-bit serials and 128-bit FILE_ID_INFO directory IDs. `verifyRetained()` checks original handles against freshly reopened names and re-queries the OS path mappings, refusing replaced/renamed objects. See [system parent evidence](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-EVIDENCE.md). **This observer is not connected to `reserveProtectedBootstrap` or installer apply, and does not make a supplied parent trustworthy.**
+
+
+## System parent ACL inspection (2026-11-11)
+
+The private branch now separately observes owner and DACL on the **preexisting Windows volume root and common ProgramData**, via native `GetSecurityInfo` on retained identity-checked handles. The policy conservatively refuses nonprivileged create/write/delete/owner ACEs and unknown ACL forms; a stock Windows parent can remain BLOCKED without changing its ACL. The handle-relative FI-Installer creation experiment **is not connected** to this inspector. See [System Parent ACL Audit](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-ACL.md).

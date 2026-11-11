@@ -35,3 +35,8 @@ The GitHub runner is **not the privileged `adminbox` acceptance host**. These te
 The private `reserveProtectedBootstrap(parentPath)` still accepts an arbitrary caller path and **is not connected to this read-only observer**. Connecting them merely by comparing strings would recreate a TOCTOU or issuer-trust gap. A future authorized installer must use trusted system-root provenance, independently verified owner/DACL and token/issuer/consent state, then create children relative to the exact retained and authenticated handle under a complete write-ahead creation transaction.
 
 No independent cryptographic installed-grant commitment, disabled-service creation, recovery and restart acceptance, or tested native Windows Server token authorization exists. **A05 remains P0/open; V14/V16 remain NOT RUN. ISS-FS-22A removal and reinstall remain NO-GO.**
+
+
+## Root and ProgramData owner/DACL exposure observation — 2026-11-11
+
+The branch now has `system_parent_acl_policy.go` and `system_parent_acl_windows.go` for **read-only** root/common ProgramData owner/DACL checks through the same native retained handles. The conservative policy blocks unknown ACE semantics or potentially unprivileged create/write/delete/owner rights, including `INHERIT_ONLY` grants. Normal ProgramData ACLs can be classified as **BLOCKED**; no ACL repair is authorized. This is **not** a real-token AccessCheck or verified system issuer, and it is not wired to installer apply. See [System Parent ACL Audit](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-ACL.md).

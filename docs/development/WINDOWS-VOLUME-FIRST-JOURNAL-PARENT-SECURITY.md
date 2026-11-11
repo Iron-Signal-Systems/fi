@@ -66,3 +66,8 @@ See [creation journal](WINDOWS-VOLUME-FIRST-CREATION-JOURNAL.md), [fresh-install
 ## Read-only system ProgramData identity observation (2026-11-11)
 
 The branch now includes a separate native Windows read-only observer of the OS-known `ProgramData` path, shared Windows directory, system-volume NTFS status, and independent full-width FILE_ID_INFO on retained root/parent/Windows handles, plus a recheck against fresh name lookups. The observer rejects moved/replaced objects and nonstandard/redirected paths. It is **not a trusted issuer or permission to run the private bootstrap**. Real parent owner/DACL/ancestor provenance and transaction authorization remain blockers. See [system parent evidence](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-EVIDENCE.md).
+
+
+## Distinct ACL rule for preexisting Windows directories — 2026-11-11
+
+The exact protected two-ACE rule applies to **new FI-Installer**, NOT to `C:` or shared `C:\ProgramData`. A new read-only native exposure audit checks those preexisting directories' owner/DACL via retained native handles and conservatively blocks unprivileged create/write/delete permissions or unknown ACEs; it permits known read-only inherited ACEs. It is not a trusted issuer or token effective-rights check. **Never rewrite or take ownership of the host's existing root/ProgramData ACLs to satisfy an FI development check.** See [System Parent ACL Audit](WINDOWS-VOLUME-FIRST-SYSTEM-PARENT-ACL.md).
