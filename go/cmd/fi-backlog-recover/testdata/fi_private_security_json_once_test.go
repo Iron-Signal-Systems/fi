@@ -18,7 +18,7 @@ func legacySecurityPayloadSelection(raw []byte) bool {
         raw[len(raw)-1]!='\n'||raw[len(raw)-2]!='}' {return false}
     body:=raw[:len(raw)-1]
     if bytes.Contains(body,[]byte{'\n'}) {return false}
-    written,payload,unique:=findSinglePassSecurityEnvelopeKeys(body)
+    written,payload,unique:=legacySinglePassSecurityEnvelopeKeys(body)
     if !unique||written<=len(securityEnvelopePrefix)||
         payload<=written+len(securityWrittenAtKey) {return false}
     scope:=body[len(securityEnvelopePrefix):written]
@@ -55,6 +55,8 @@ func TestPrivateSecurityJSONOnceSelectionParity(t *testing.T) {
         ",\"payload\" : {}}",
         ",\"unknown\":{\"x\":1}}",
         ",\"record_kind\":\"WindowsSecurityEvent\"}",
+        ",\"\\u0070ayload\":{}}",
+        ", \"payload\":{}}",
     } {
         b:=append([]byte(nil),original[:len(original)-2]...)
         b=append(b,[]byte(extra)...)
