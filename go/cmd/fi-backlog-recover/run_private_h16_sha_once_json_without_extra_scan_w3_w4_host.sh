@@ -222,7 +222,7 @@ jsonassets=/home/jwood/fi-h16-json-once-assets
 for spec in \
  "security_single_pass_candidate.go 9a70be536f0a07687640fe1e2e48459d85430073" \
  "security_json_once_test.go 9250302470679dd9c23ce7daca92a9f7fbb22596" \
- "security_json_once_signed_cache_test.go af5710cfe4557c29ed1dcff76e570280c6b47236"; do
+ "security_json_once_signed_cache_test.go e2926386e039f05ce52d9cd44b75c56e81133d53"; do
     set -- $spec
     [ -f "$jsonassets/$1" ] && [ ! -L "$jsonassets/$1" ] ||
         fail "JSON-once asset missing: $1"
