@@ -5,10 +5,10 @@
 # Source runner: go/cmd/fi-backlog-recover/run_private_hash_h16_ab10_host.sh at bbe90168ed6807d348a9550a4a282fdce89c33d1.
 # The relay executable guard is patched to the exact isolated cluster path
 # (the proven fix already present in the accepted locally tested runner).
-# Both variants use the same pinned source and same binary; only H16 flag differs.
-# Security-field insert-vacuum candidate option stays the same in both.
-# Collect process high-water RSS and Go GC trace as resource evidence.
-# GC tracing and PostgreSQL sampling enabled, may affect absolute timing.
+# One pinned H16 build; CPU sampling is enabled only in this diagnostic.
+# The accepted leaf-only VACUUM policy stays unchanged.
+# Collect process high-water RSS, CPU pprof and PostgreSQL read-only stats.
+# CPU profiling adds overhead; these rates are not acceptance comparisons.
 # Exactly one private PostgreSQL fixture: clone-11-08-26.
 # The 32,768-record processing chunk is still active. Never touches fi-sor-db.
 set -eu
@@ -24,11 +24,10 @@ for command in jexec jls ps awk grep find wc sha256 iostat vmstat tar; do
 done
 
 case "${1:-}" in
-    baseline) hashmode=baseline; short=b ;;
-    h16) hashmode=h16; short=h ;;
-    *) fail 'usage: sh run_private_hash_h16_ab10_host.sh baseline|h16' ;;
+    h16) hashmode=h16 ;;
+    *) fail 'usage: sh run_private_h16_cpu_profile_w3_w4_host.sh h16' ;;
 esac
-[ "$#" -eq 1 ] || fail 'exactly one hash variant required'
+[ "$#" -eq 1 ] || fail 'exactly one H16 argument required'
 mode=candidate
 name=clone-11-08-26
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
@@ -361,14 +360,14 @@ hash_variant=$hashmode
 vacuum_variant=$mode
 candidate_ddl_commit=$ddlref
 baseline_commit=9e0e6e236c95d9af91bc67a065efb47ce2318579
-source_instrumentation=only_hash_H16_flag_and_F3_hash_context
+source_instrumentation=pinned_H16_overlay_plus_private_runtime_CPU_pprof
 vacuum_experiment_scope=only_new_private_security_field_leaves
 PostgreSQL_global_autovacuum=unchanged
-manual_vacuum_after_timed_replay=planned_for_all_10_new_leaves
+manual_vacuum_after_timed_replay=not_part_of_CPU_diagnostic
 optimizations=reusable_security_event_scope_source_file_rows_and_envelope_scan
-GODEBUG_gctrace=enabled_for_recover_only
+GODEBUG_gctrace=disabled_for_CPU_diagnostic
 process_rusage=FreeBSD_time_l_peak_RSS
-GC_trace_overhead=instrumented_trial_not_untraced_baseline
+CPU_pprof_overhead=instrumented_diagnostic_not_throughput_baseline
 checkpoint_log_override=none
 host_iostat_sample_seconds=5
 host_vmstat_sample_seconds=5
@@ -467,7 +466,7 @@ snapshot_relations before
 
 # The observers read host-wide counters; they do not trace or modify FI,
 # PostgreSQL or the replay process. The first sample may be since boot.
-# Go GC trace is enabled only for the replay process; host monitors are passive.
+# Go CPU profiling is enabled inside the disposable recovery binary only.
 iostat -x -w 5 > "$out/$name/host-iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/host-vmstat.txt" 2>&1 &
