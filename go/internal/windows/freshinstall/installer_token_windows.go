@@ -137,8 +137,12 @@ func installerTokenPrivilegesBounded(token windows.Token) ([]InstallerPrivilegeO
 // absence result. Any other failure or attached impersonation token blocks
 // use of the process token as FI installer-user evidence.
 func isInstallerThreadImpersonating() (bool,error) {
+	thread,err:=windows.GetCurrentThread()
+	if err!=nil {
+		return false,fmt.Errorf("%w: obtain pinned OS thread for token preflight: %v",ErrUnqualifiedInstallerToken,err)
+	}
 	var threadToken windows.Token
-	err:=windows.OpenThreadToken(windows.GetCurrentThread(),windows.TOKEN_QUERY,true,&threadToken)
+	err=windows.OpenThreadToken(thread,windows.TOKEN_QUERY,true,&threadToken)
 	if err==nil {
 		defer threadToken.Close()
 		return true,nil
