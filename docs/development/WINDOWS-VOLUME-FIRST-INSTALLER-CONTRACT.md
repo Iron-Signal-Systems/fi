@@ -69,4 +69,4 @@ See `WINDOWS-VOLUME-FIRST-FRESH-INSTALL.md`, `WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.
 
 **Noninterference:** Keep all changes in the development branch. Do not modify `main` or the installed `ISS-FS-22A` source; do not start FISender.
 
-**2026-11-11 implementation note:** `freshinstall/bootstrap_windows.go` now has an unexported Windows `CreateDirectoryW` protected-parent experiment, with local temporary-directory tests. This does not enable installer apply and MUST NOT replace the fresh-host preflight, signed authorization, write-ahead creation journal or trusted system-parent identity. See `WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md`.
+**2026-11-11 implementation note:** `freshinstall/bootstrap_windows.go` now has an unexported Windows parent-handle-relative `NtCreateFile(FILE_CREATE)` protected-child experiment, with local temporary-directory tests. This does not enable installer apply and MUST NOT replace the fresh-host preflight, signed authorization, write-ahead creation journal or trusted system-parent identity. See `WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md`.

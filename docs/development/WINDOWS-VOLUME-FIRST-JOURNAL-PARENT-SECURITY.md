@@ -41,7 +41,7 @@ There is no production API accepting an arbitrary user-supplied path and elevati
 
 ## New protected bootstrap child creation experiment
 
-`freshinstall/bootstrap_windows.go` now has a separate **private** create-only `FI-Installer` child reservation. It retains parent/child native directory handles, uses the exact protected SYSTEM/Administrators descriptor at `CreateDirectoryW` time, refuses a preexisting child, verifies the resulting child handle's owner/DACL, and never deletes an in-doubt directory. This is a code-level native primitive, **not an installer entry point or trusted system-parent attestation**. The operator approval and installed-grant transaction are not connected. See [bootstrap experiment contract](WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md).
+`freshinstall/bootstrap_windows.go` now has a separate **private** create-only `FI-Installer` child reservation. It retains parent/child native directory handles, uses the exact protected SYSTEM/Administrators descriptor in a native parent-handle-relative `NtCreateFile(FILE_CREATE)` call, refuses a preexisting child, verifies the resulting child handle's owner/DACL, and never deletes an in-doubt directory. This is a code-level native primitive, **not an installer entry point or trusted system-parent attestation**. The operator approval and installed-grant transaction are not connected. See [bootstrap experiment contract](WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md).
 
 ## New journal FILE effective-DACL contract
 
@@ -51,7 +51,7 @@ There is no production API accepting an arbitrary user-supplied path and elevati
 
 A correct-looking DACL does not, by itself, prove that the directory was created by FI's authorized installer or that the parent path, ancestors, issuer, token or signing key have not been compromised. In particular:
 
-1. A package-private native experiment now creates the bootstrap child with `CreateDirectoryW` and explicit protected security attributes **at creation time** (see `WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md`). A future installer must still prove that the parent is independently trusted on the local system volume; do not create with inherited or broad access and attempt post-create repair.
+1. A package-private native experiment now creates the bootstrap child with **parent-handle-relative `NtCreateFile(FILE_CREATE)` and an explicit protected `OBJECT_ATTRIBUTES.SecurityDescriptor` at creation time** (see `WINDOWS-VOLUME-FIRST-PROTECTED-BOOTSTRAP.md`). A future installer must still prove that the parent is independently trusted on the local system volume; do not create with inherited or broad access and attempt post-create repair.
 2. After creation, it must verify the owner's SID, DACL, directory identity, actual parent handle, and journal's effective inherited security **from native handles**, not merely by path strings or self-reported config.
 3. It must establish and retain exclusive installation ownership, reject preexisting or reparse-point bootstrap roots, and persist crash evidence without automatic deletion or retry.
 4. The future protected grant, signer public-key trust, native operator identity, and creation-only FI backend must all be bound to this installation. A protected directory is not a cryptographic signing authority.
