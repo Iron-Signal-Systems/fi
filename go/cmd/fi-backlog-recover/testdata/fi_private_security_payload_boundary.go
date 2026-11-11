@@ -19,7 +19,8 @@ func privateSingleJSONObjectBoundary(value []byte) bool {
     }
     // Separate object/array stack ensures a malformed nesting sequence is
     // never mistaken for a complete canonical object.
-    var stack []byte
+    var stack [64]byte // bounded, allocation-free for canonical Security JSON
+    depth := 0
     var inString, escaped bool
     for i, b := range value {
         if inString {
@@ -36,23 +37,27 @@ func privateSingleJSONObjectBoundary(value []byte) bool {
         case '"':
             inString = true
         case '{', '[':
-            stack = append(stack, b)
+            if depth == len(stack) {
+                return false // uncommon deep input takes original decoder path
+            }
+            stack[depth] = b
+            depth++
         case '}', ']':
-            if len(stack) == 0 {
+            if depth == 0 {
                 return false
             }
             expected := byte('{')
             if b == ']' {
                 expected = '['
             }
-            if stack[len(stack)-1] != expected {
+            if stack[depth-1] != expected {
                 return false
             }
-            stack = stack[:len(stack)-1]
-            if len(stack) == 0 && i != len(value)-1 {
+            depth--
+            if depth == 0 && i != len(value)-1 {
                 return false
             }
         }
     }
-    return !inString && !escaped && len(stack) == 0
+    return !inString && !escaped && depth == 0
 }
