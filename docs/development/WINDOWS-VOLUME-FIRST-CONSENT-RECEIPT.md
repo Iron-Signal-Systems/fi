@@ -59,3 +59,8 @@ CI exercises cryptographic verification, canonical parsing, wrong-signer and wro
 References: [Microsoft CNG key storage and P-256 support](https://learn.microsoft.com/en-us/windows/win32/seccng/key-storage-and-retrieval) and [Microsoft CNG signing](https://learn.microsoft.com/en-us/windows/win32/seccng/signing-data-with-cng). See `WINDOWS-VOLUME-FIRST-SCOPE-REVIEW.md`, `WINDOWS-VOLUME-FIRST-INSTALLER-CONTRACT.md`, `WINDOWS-VOLUME-FIRST-USN-BROKER.md` and `WINDOWS-VOLUME-FIRST-VALIDATION-MATRIX.md`.
 
 **Noninterference:** No changes to `main`, deployed FI services on `ISS-FS-22A`, stored configuration/PKI, or the deliberately stopped FISender.
+
+
+## 2026-11-11 — Signed approver / native process-token binding (A05 open)
+
+The development branch adds `volumeconsent.VerifyFreshInstallForOperator`: it first verifies the entire canonical signed first-install receipt, independently trusted host/issuer and fresh scope review, then rejects an `approver_sid` different from the **independently observed current installer process-token SID**. A private Windows-native bridge additionally requires `AssessInstallerTokenEvidence` on the actual primary process token. Negative tests cover mismatched/absent/malformed SIDs, forged signature, wrong host, stale receipt and changed NTFS identity. This is a read-only identification consistency test, not authenticated interactive consent or CNG signing issuance. A05 remains P0; installer apply stays blocked. See `WINDOWS-VOLUME-FIRST-INSTALLER-OPERATOR-BINDING.md`.
