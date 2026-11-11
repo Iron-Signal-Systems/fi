@@ -132,6 +132,38 @@ func installerTokenPrivilegesBounded(token windows.Token) ([]InstallerPrivilegeO
 	return result,nil
 }
 
+// enabledInstallerAdministratorsGroup inspects TokenGroups directly from the
+// queried PRIMARY process token. CheckTokenMembership/Token.IsMember can
+// require an impersonation token; we must NOT impersonate or duplicate a
+// privileged token merely to answer this read-only preflight question.
+//
+// The enabled Administrators SID must not be deny-only. Group enumeration
+// is bounded, and ambiguous duplicates fail rather than granting authority.
+func enabledInstallerAdministratorsGroup(token windows.Token) (bool,error) {
+	groups,err:=token.GetTokenGroups()
+	if err!=nil || groups==nil {
+		return false,fmt.Errorf("%w: query primary token groups: %v",ErrUnqualifiedInstallerToken,err)
+	}
+	if groups.GroupCount==0 || groups.GroupCount>512 {
+		return false,fmt.Errorf("%w: missing or excessive native group inventory (%d)",ErrUnqualifiedInstallerToken,groups.GroupCount)
+	}
+	seen:=false
+	enabled:=false
+	for _,g:=range groups.AllGroups() {
+		if g.Sid==nil || !g.Sid.IsValid() {
+			return false,fmt.Errorf("%w: malformed token group SID",ErrUnqualifiedInstallerToken)
+		}
+		if g.Sid.String()!=journalAdministratorsSID {continue}
+		if seen {
+			return false,fmt.Errorf("%w: duplicate built-in Administrators SID",ErrUnqualifiedInstallerToken)
+		}
+		seen=true
+		enabled=g.Attributes&windows.SE_GROUP_ENABLED!=0 &&
+			g.Attributes&windows.SE_GROUP_USE_FOR_DENY_ONLY==0
+	}
+	return enabled,nil
+}
+
 // isInstallerThreadImpersonating observes the CURRENT pinned OS thread,
 // not just the process primary token. ERROR_NO_TOKEN is the only clean
 // absence result. Any other failure or attached impersonation token blocks
@@ -195,10 +227,11 @@ func inspectNativeInstallerProcessToken() (InstallerTokenEvidence,error) {
 	e.IntegrityRID,err=installerTokenIntegrityRID(token)
 	if err!=nil{return InstallerTokenEvidence{},err}
 
-	admins,err:=windows.StringToSid(journalAdministratorsSID)
-	if err!=nil{return InstallerTokenEvidence{},fmt.Errorf("%w: construct Administrators SID: %v",ErrUnqualifiedInstallerToken,err)}
-	e.AdministratorsEnabled,err=token.IsMember(admins)
-	if err!=nil{return InstallerTokenEvidence{},fmt.Errorf("%w: query enabled Administrators membership: %v",ErrUnqualifiedInstallerToken,err)}
+	// Read the primary token's group attributes directly. Do not call
+	// CheckTokenMembership on the primary handle (which can require an
+	// impersonation token) or temporarily impersonate an elevated user.
+	e.AdministratorsEnabled,err=enabledInstallerAdministratorsGroup(token)
+	if err!=nil{return InstallerTokenEvidence{},err}
 
 	restricted,err:=token.IsRestricted()
 	if err!=nil{return InstallerTokenEvidence{},fmt.Errorf("%w: query token restrictions: %v",ErrUnqualifiedInstallerToken,err)}
