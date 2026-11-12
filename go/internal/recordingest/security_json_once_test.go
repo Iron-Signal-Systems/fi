@@ -123,9 +123,9 @@ func TestSecurityJSONOnceStrictDecodeRejectsMalformedStrings(t *testing.T) {
 		needle []byte
 		replacement []byte
 	}{
-		{"scope", []byte(`"scope_id":"test-scope"`), []byte(`"scope_id":"bad\\q"`)},
-		{"written-at", []byte(`"written_at":"2026`), []byte(`"written_at":"\\q2026`)},
-		{"payload", []byte(`"event_id":"4663"`), []byte(`"event_id":"bad\\q"`)},
+		{"scope", []byte(`"scope_id":"test-scope"`), []byte(`"scope_id":"bad\q"`)},
+		{"written-at", []byte(`"written_at":"2026`), []byte(`"written_at":"\q2026`)},
+		{"payload", []byte(`"event_id":"4663"`), []byte(`"event_id":"bad\q"`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
