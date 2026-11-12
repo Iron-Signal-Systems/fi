@@ -109,7 +109,16 @@ func (s *privateContinuousPostgresSink) FlushFamily(ctx context.Context,
     if _,err=tx.Exec(ctx,"SELECT pg_advisory_xact_lock($1::bigint)",
         int64(binary.BigEndian.Uint64(s.receipt[:8])));err!=nil{return err}
     shadow:=privateProjectionTx{Tx:tx}
+
+    // SQL proof uses ONE indexed, exact-key lookup for the complete bounded
+    // family batch. A per-record round trip would cost over half a million
+    // queries in the first real W3-W4 replay. The UNNEST arrays are zipped,
+    // never independent ANY filters that could cross-match source ordinals.
     rows:=make([]privateContinuousSQLRow,len(batch))
+    batchIndexes:=make([]int32,len(batch))
+    ordinals:=make([]int64,len(batch))
+    type sourceKey struct { batch int; ordinal int64 }
+    positions:=make(map[sourceKey]int,len(batch))
     for i,item:=range batch {
         if item.WindowIndex<0 || item.WindowIndex>=len(s.windows) ||
             item.SignedBatchIndex<0 || item.SignedBatchIndex>=len(s.batchIDs) ||
@@ -117,50 +126,87 @@ func (s *privateContinuousPostgresSink) FlushFamily(ctx context.Context,
             item.Prepared.RecordBytes<=0 || item.Ordinal<=0 {
             return fmt.Errorf("FI continuous SQL: bad original custody identity at row %d",i)
         }
-        mapped,err:=privateFamilyForRecordKind(item.Prepared.Record.RecordKind)
-        if err!=nil || mapped!=family{return fmt.Errorf("FI continuous SQL: family mismatch at row %d",i)}
-        // A trusted source-window marker is required even on a replay. The
-        // immutable staged metadata must agree with the exact signed row.
-        var storedDigest []byte
-        var storedBytes int
-        var storedKind,storedScope,storedVersion string
-        err=tx.QueryRow(ctx,`SELECT record_sha256,record_bytes,record_kind,scope_id,version
-            FROM fi_recovery.pending_source_record
-            WHERE receipt_sha256=$1 AND window_index=$2 AND batch_index=$3 AND record_ordinal=$4`,
-            s.receipt,item.WindowIndex,item.SignedBatchIndex,item.Ordinal).
-            Scan(&storedDigest,&storedBytes,&storedKind,&storedScope,&storedVersion)
-        if err!=nil{return fmt.Errorf("FI continuous SQL: missing staged custody row %d: %w",i,err)}
-        if subtle.ConstantTimeCompare(storedDigest,item.Prepared.RecordDigest[:])!=1 ||
-            storedBytes!=item.Prepared.RecordBytes ||
-            storedKind!=item.Prepared.Record.RecordKind ||
-            storedScope!=item.Prepared.Record.ScopeID ||
-            storedVersion!=item.Prepared.Record.Version {
-            return fmt.Errorf("FI continuous SQL: signed source digest or envelope mismatch at row %d",i)
+        mapped,e:=privateFamilyForRecordKind(item.Prepared.Record.RecordKind)
+        if e!=nil || mapped!=family {
+            return fmt.Errorf("FI continuous SQL: family mismatch at row %d",i)
         }
-        var prevDigest []byte
-        var prevID int64
-        err=tx.QueryRow(ctx,`SELECT record_sha256,shadow_source_record_id
-            FROM fi_recovery.projected_source_record
-            WHERE receipt_sha256=$1 AND batch_index=$2 AND record_ordinal=$3`,
-            s.receipt,item.SignedBatchIndex,item.Ordinal).Scan(&prevDigest,&prevID)
-        if err==nil {
-            if subtle.ConstantTimeCompare(prevDigest,item.Prepared.RecordDigest[:])!=1 || prevID<=0 {
-                return errors.New("FI continuous SQL: committed projection receipt collision")
-            }
-            var matched bool
-            err=shadow.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM fi.source_record
-                WHERE source_record_id=$1 AND source_batch_id=$2 AND record_ordinal=$3
-                AND record_sha256=$4 AND record_kind=$5 AND record_bytes=$6)`,
-                prevID,item.SourceBatchID,item.Ordinal,item.Prepared.RecordDigest[:],
-                item.Prepared.Record.RecordKind,item.Prepared.RecordBytes).Scan(&matched)
-            if err!=nil || !matched {return errors.New("FI continuous SQL: committed receipt missing matching shadow source row")}
-            rows[i]=privateContinuousSQLRow{item:item,id:prevID,done:true}
-            continue
+        key:=sourceKey{batch:item.SignedBatchIndex,ordinal:item.Ordinal}
+        if _,exists:=positions[key];exists {
+            return errors.New("FI continuous SQL: repeated signed batch/ordinal in family flush")
         }
-        if !errors.Is(err,pgx.ErrNoRows) {return err}
+        positions[key]=i
         rows[i]=privateContinuousSQLRow{item:item}
+        batchIndexes[i]=int32(item.SignedBatchIndex)
+        ordinals[i]=item.Ordinal
     }
-
+    proofs,err:=tx.Query(ctx,`
+SELECT p.batch_index,p.record_ordinal,p.window_index,p.record_bytes,p.record_kind,
+       p.scope_id,p.version,p.record_sha256,
+       r.window_index,r.record_sha256,r.shadow_source_record_id,
+       sr.source_batch_id,sr.record_ordinal,sr.record_sha256,sr.record_kind,sr.record_bytes
+FROM unnest($2::integer[],$3::bigint[]) AS requested(batch_index,record_ordinal)
+JOIN fi_recovery.pending_source_record AS p
+  ON p.receipt_sha256=$1 AND p.batch_index=requested.batch_index
+ AND p.record_ordinal=requested.record_ordinal
+LEFT JOIN fi_recovery.projected_source_record AS r
+  ON r.receipt_sha256=p.receipt_sha256 AND r.batch_index=p.batch_index
+ AND r.record_ordinal=p.record_ordinal
+LEFT JOIN fi_recovery_projection.source_record AS sr
+  ON sr.source_record_id=r.shadow_source_record_id
+`,s.receipt,batchIndexes,ordinals)
+    if err!=nil{return fmt.Errorf("FI continuous SQL: signed source batch lookup: %w",err)}
+    seen:=0
+    for proofs.Next() {
+        var batchIndex int
+        var ordinal int64
+        var win,storedBytes int
+        var kind,scope,version string
+        var storedDigest,receiptDigest,shadowDigest []byte
+        var receiptWindow *int
+        var receiptID,shadowBatchID,shadowOrdinal *int64
+        var shadowKind *string
+        var shadowBytes *int
+        if err=proofs.Scan(&batchIndex,&ordinal,&win,&storedBytes,&kind,
+            &scope,&version,&storedDigest,&receiptWindow,&receiptDigest,&receiptID,
+            &shadowBatchID,&shadowOrdinal,&shadowDigest,&shadowKind,&shadowBytes);err!=nil {
+            proofs.Close()
+            return fmt.Errorf("FI continuous SQL: malformed signed custody lookup: %w",err)
+        }
+        i,found:=positions[sourceKey{batch:batchIndex,ordinal:ordinal}]
+        if !found {proofs.Close();return errors.New("FI continuous SQL: unexpected SQL custody row")}
+        item:=rows[i].item
+        if win!=item.WindowIndex || storedBytes!=item.Prepared.RecordBytes ||
+            kind!=item.Prepared.Record.RecordKind || scope!=item.Prepared.Record.ScopeID ||
+            version!=item.Prepared.Record.Version ||
+            subtle.ConstantTimeCompare(storedDigest,item.Prepared.RecordDigest[:])!=1 {
+            proofs.Close()
+            return fmt.Errorf("FI continuous SQL: signed staged custody mismatch at row %d",i)
+        }
+        if receiptID!=nil || receiptDigest!=nil || receiptWindow!=nil {
+            if receiptID==nil || receiptDigest==nil || receiptWindow==nil ||
+                shadowBatchID==nil || shadowOrdinal==nil || shadowKind==nil ||
+                shadowBytes==nil || *receiptID<=0 ||
+                *receiptWindow!=item.WindowIndex ||
+                *shadowBatchID!=item.SourceBatchID ||
+                *shadowOrdinal!=item.Ordinal ||
+                *shadowKind!=item.Prepared.Record.RecordKind ||
+                *shadowBytes!=item.Prepared.RecordBytes ||
+                subtle.ConstantTimeCompare(receiptDigest,item.Prepared.RecordDigest[:])!=1 ||
+                subtle.ConstantTimeCompare(shadowDigest,item.Prepared.RecordDigest[:])!=1 {
+                proofs.Close()
+                return fmt.Errorf("FI continuous SQL: committed typed receipt/shadow record mismatch at row %d",i)
+            }
+            rows[i].id=*receiptID
+            rows[i].done=true
+        }
+        seen++
+    }
+    readErr:=proofs.Err()
+    proofs.Close()
+    if readErr!=nil{return fmt.Errorf("FI continuous SQL: custody lookup rows: %w",readErr)}
+    if seen!=len(batch) {
+        return fmt.Errorf("FI continuous SQL: source proof count %d differs from %d queued records",seen,len(batch))
+    }
     // All deferred child writers live inside ONE family SQL transaction.
     // Do not carry their caches across commits or accept partial children.
     projectCtx:=context.WithValue(ctx,privateContinuousFamilyWriterKey{},true)
@@ -255,16 +301,25 @@ func (s *privateContinuousPostgresSink) FlushFamily(ctx context.Context,
     if err=usnCopy.flushAll(projectCtx,shadow);err!=nil{return err}
     if err=hashCopy.flush(projectCtx,shadow);err!=nil{return err}
     if err=aceCopy.flushAll(projectCtx,shadow);err!=nil{return err}
-    for i,row:=range rows {
+
+    // One COPY transactionally binds all newly projected source identities to
+    // the pre-staged signed records. If any child, FK or COPY fails, the full
+    // family transaction and every completion receipt roll back together.
+    receiptRows:=make([][]any,0,len(rows))
+    for _,row:=range rows {
         if row.done {continue}
         if row.id<=0 {return errors.New("FI continuous SQL: projected source missing generated ID")}
-        _,err=tx.Exec(ctx,`INSERT INTO fi_recovery.projected_source_record
-            (receipt_sha256,window_index,batch_index,record_ordinal,record_sha256,shadow_source_record_id)
-            VALUES($1,$2,$3,$4,$5,$6)`,
-            s.receipt,row.item.WindowIndex,row.item.SignedBatchIndex,row.item.Ordinal,
-            row.item.Prepared.RecordDigest[:],row.id)
-        if err!=nil{return err}
-        _=i
+        receiptRows=append(receiptRows,[]any{s.receipt,row.item.WindowIndex,
+            row.item.SignedBatchIndex,row.item.Ordinal,row.item.Prepared.RecordDigest[:],row.id})
+    }
+    if len(receiptRows)>0 {
+        copied,err:=tx.CopyFrom(ctx,pgx.Identifier{"fi_recovery","projected_source_record"},
+            []string{"receipt_sha256","window_index","batch_index","record_ordinal",
+                "record_sha256","shadow_source_record_id"},pgx.CopyFromRows(receiptRows))
+        if err!=nil{return fmt.Errorf("FI continuous SQL: atomic projection receipt COPY: %w",err)}
+        if copied!=int64(len(receiptRows)) {
+            return errors.New("FI continuous SQL: incomplete committed projection receipt batch")
+        }
     }
     return tx.Commit(ctx)
 }
