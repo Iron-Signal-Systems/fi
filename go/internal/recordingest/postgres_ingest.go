@@ -52,6 +52,9 @@ type ingestStageProfile struct {
 	CoverageBulk   securityCoverageBulkProfile
 	SecurityBulk   securityBulkTimingCounters
 	SinglePassSecurityRows int64 // private-P3 canonical Security decode only
+	PrivateDependencyFlushes int64 // private-only bounded USN queue flushes
+	PrivateDependencyRows int64 // source-bound USN boundaries and objects written
+	PrivateCoverageSecurityFencesAvoided int64 // coverage arrivals that formerly flushed pending Security
 	coverageBuffer *securityCoverageBulkState
 }
 
@@ -636,6 +639,11 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		// Only the private mixed-family candidate holds File and Security
 		// buffers across each other's record kinds. All remaining record
 		// families remain a hard ordering barrier for USN capture identity.
+		if privateDependencyBuffersEnabled(ctx) &&
+			prepared.Record.RecordKind == "WindowsSecurityCoverage" &&
+			len(pendingSecurity) != 0 {
+			profile.PrivateCoverageSecurityFencesAvoided++
+		}
 		decision := securityFileFlushBeforeKind(ctx, prepared.Record.RecordKind)
 		if decision.security {
 			if err := flushSecurity(); err != nil {
