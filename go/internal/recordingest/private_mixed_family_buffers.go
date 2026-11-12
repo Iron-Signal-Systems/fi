@@ -26,15 +26,29 @@ func WithPrivateMixedFamilyBuffers(ctx context.Context) (context.Context, error)
     return context.WithValue(ctx, privateMixedFamilyBuffersKey{}, true), nil
 }
 
+// Mode selection must never silently fall back to ordinary flushing.
+// The H16 setter validates the fixed profile; ingestSourceBatch validates
+// the presence of an active K32 buffer state once per signed batch.
 func privateMixedFamilyBuffersEnabled(ctx context.Context) bool {
-    if ctx == nil || ctx.Value(privateMixedFamilyBuffersKey{}) != true ||
-        !usePrivateSinglePassSecurity(ctx) ||
+    return ctx != nil && ctx.Value(privateMixedFamilyBuffersKey{}) == true
+}
+
+// Called before reading signed source rows. A broken K32 wiring is a hard
+// failure, not a hidden benchmark of the old transition-flush behavior.
+func validatePrivateFamilyRoute(ctx context.Context) error {
+    if ctx == nil || ctx.Value(privateMixedFamilyBuffersKey{}) != true {
+        return nil
+    }
+    if !usePrivateSinglePassSecurity(ctx) ||
         joinedBacklogChunkRecords(ctx) != 32768 ||
         fileBulkLimitsFromContext(ctx).Name != "F3" {
-        return false
+        return errors.New("FI PRIVATE BUFFER ROUTE STOP: private H16 profile context changed")
     }
     chunk, ok := ctx.Value(backlogTypedChunkContextKey{}).(backlogTypedChunkDirective)
-    return ok && chunk.state != nil && chunk.state.fileBulk != nil
+    if !ok || chunk.state == nil || chunk.state.fileBulk == nil {
+        return errors.New("FI PRIVATE BUFFER ROUTE STOP: signed batch has no active K32 typed buffer")
+    }
+    return nil
 }
 
 // This decision is exercised by ingestSourceBatch itself. A transition
