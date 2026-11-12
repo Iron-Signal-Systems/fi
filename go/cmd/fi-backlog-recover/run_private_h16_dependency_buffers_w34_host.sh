@@ -262,7 +262,7 @@ depassets=/home/jwood/fi-h16-dependency-buffer-assets
 [ -d "$depassets" ] && [ ! -L "$depassets" ] || fail 'dependency asset directory missing'
 for spec in \
  "private_dependency_buffers.go 089bbf0af7ef50d1c5815cbd59e13833068236c2" \
- "private_dependency_buffers_test.go 8c69b63a050d7772d557652ef0904e270f2333b5" \
+ "private_dependency_buffers_test.go 1b3b4deed8a9ee02047b06d4b0dbe76b514b1148" \
  "private_mixed_family_buffers.go 5dbf8d3d62ed6e21580128a8041630bc8bac7384" \
  "patch_private_dependency_buffers.go 709eba3e28d81f6f5888a36c5bdb931ff261dca6"; do
     set -- $spec
@@ -293,7 +293,7 @@ done
 grep -Fq 'recordingest.WithPrivateDependencyBuffers(ctx)' "$src/go/cmd/fi-backlog-recover/main_freebsd.go" ||
   fail 'dependency CLI context not wired'
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
-  -run '^(TestPrivateDependency|TestPrivateMixed|TestMixedBulk)' -count=1 -v) \
+  -run '^(TestPrivateDependency|TestPrivateMixed|TestMixedBulk|TestUSNBoundaryLegacyAndCaptureContracts|TestUSNCaptureBindingScopeSourceGenerationAndCounts)' -count=1 -v) \
   > "$root/dependency-buffer-go-tests.log" 2>&1 ||
   { cat "$root/dependency-buffer-go-tests.log" >&2; fail 'dependency/mixed regression tests failed'; }
 printf 'FI PRIVATE DEPENDENCY BUFFER GO GATE PASS source_wired=true signed_source_order=true coverage_independent=true\n'
