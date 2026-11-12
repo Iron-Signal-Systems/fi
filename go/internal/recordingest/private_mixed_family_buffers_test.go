@@ -49,8 +49,11 @@ func TestPrivateMixedFamilyBuffersFailClosed(t *testing.T) {
     // A caller cannot enable mixed buffering merely by setting the private
     // marker: it must also run inside an active, bounded K32 chunk.
     noChunk := context.WithValue(ctx, backlogTypedChunkContextKey{}, backlogTypedChunkDirective{})
-    if privateMixedFamilyBuffersEnabled(noChunk) {
-        t.Fatal("mixed buffering without valid K32 state")
+    if err := validatePrivateFamilyRoute(noChunk); err == nil {
+        t.Fatal("missing K32 state silently allowed mixed buffering")
+    }
+    if err := validatePrivateFamilyRoute(ctx); err != nil {
+        t.Fatalf("active K32 route rejected: %v", err)
     }
 }
 
