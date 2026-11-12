@@ -82,7 +82,7 @@ func TestPrivateDependencyBoundedSourceOrder(t *testing.T) {
             kind = "USNReadBoundary"
         }
         var err error
-        rows, size, err = privateDependencyAppend(rows, size, 41, int64(i),
+        rows, size, err = privateDependencyAppend(rows, size, 41, 3, int64(i),
             privateDependencyTestRecord(kind, 100))
         if err != nil { t.Fatal(err) }
     }
@@ -92,7 +92,7 @@ func TestPrivateDependencyBoundedSourceOrder(t *testing.T) {
         t.Fatal("dependency queue did not enforce record bound")
     }
     if _, _, err := privateDependencyAppend(rows, size, 41,
-        privateDependencyMaxRecords+1,
+        3, privateDependencyMaxRecords+1,
         privateDependencyTestRecord("USNObjectObservation", 100)); err == nil {
         t.Fatal("dependency queue exceeded record limit")
     }
@@ -100,35 +100,38 @@ func TestPrivateDependencyBoundedSourceOrder(t *testing.T) {
     rows = nil
     size = 0
     var err error
-    rows, size, err = privateDependencyAppend(rows, size, 41, 800,
+    rows, size, err = privateDependencyAppend(rows, size, 41, 3, 800,
         privateDependencyTestRecord("USNReadBoundary", 90))
     if err != nil { t.Fatal(err) }
-    rows, size, err = privateDependencyAppend(rows, size, 42, 1,
+    rows, size, err = privateDependencyAppend(rows, size, 42, 4, 1,
         privateDependencyTestRecord("USNObjectObservation", 90))
     if err != nil { t.Fatal(err) }
     if len(rows) != 2 || rows[0].sourceBatchID != 41 ||
-        rows[1].sourceBatchID != 42 || size != 180 {
+        rows[0].signedBatchIndex != 3 ||
+        rows[1].sourceBatchID != 42 ||
+        rows[1].signedBatchIndex != 4 || size != 180 {
         t.Fatal("USN dependent source identities lost across signed batches")
     }
 }
 
 func TestPrivateDependencyRejectsForwardOrDuplicateSources(t *testing.T) {
-    first := privateDependencySourceRecord{sourceBatchID: 42, ordinal: 7,
+    first := privateDependencySourceRecord{sourceBatchID: 42, signedBatchIndex: 4, ordinal: 7,
         prepared: privateDependencyTestRecord("USNReadBoundary", 100)}
     for _, tc := range []struct {
         name string
         batch, ordinal int64
+        signedIndex int
         kind string
     }{
-        {"duplicate", 42, 7, "USNObjectObservation"},
-        {"reverse-in-batch", 42, 6, "USNObjectObservation"},
-        {"reverse-batch", 41, 100, "USNObjectObservation"},
-        {"invalid-kind", 42, 8, "WindowsSecurityEvent"},
+        {"duplicate", 42, 7, 4, "USNObjectObservation"},
+        {"reverse-in-batch", 42, 6, 4, "USNObjectObservation"},
+        {"reverse-batch", 41, 100, 3, "USNObjectObservation"},
+        {"invalid-kind", 42, 8, 4, "WindowsSecurityEvent"},
     } {
         t.Run(tc.name, func(t *testing.T) {
             if _, _, err := privateDependencyAppend(
                 []privateDependencySourceRecord{first}, 100,
-                tc.batch, tc.ordinal,
+                tc.batch, tc.signedIndex, tc.ordinal,
                 privateDependencyTestRecord(tc.kind, 100)); err == nil {
                 t.Fatal("invalid dependency queue entry accepted")
             }
@@ -140,7 +143,7 @@ func TestPrivateDependencyRejectsForwardOrDuplicateSources(t *testing.T) {
     if privateDependencyShouldFlushBefore(1, privateDependencyMaxBytes-100, 100) {
         t.Fatal("dependency buffer incorrectly required flush at exact byte budget")
     }
-    if _, _, err := privateDependencyAppend(nil, 0, 41, 1,
+    if _, _, err := privateDependencyAppend(nil, 0, 41, 3, 1,
         privateDependencyTestRecord("USNReadBoundary", 0)); err == nil {
         t.Fatal("zero-byte USN boundary accepted")
     }
@@ -148,7 +151,7 @@ func TestPrivateDependencyRejectsForwardOrDuplicateSources(t *testing.T) {
 
 func TestPrivateDependencyNoSQLWriterCannotClaimSuccess(t *testing.T) {
     rows := []privateDependencySourceRecord{{
-        sourceBatchID: 41, ordinal: 1,
+        sourceBatchID: 41, signedBatchIndex: 3, ordinal: 1,
         prepared: privateDependencyTestRecord("USNReadBoundary", 100),
     }}
     if err := flushPrivateDependencies(privateDependencyTestContext(t), nil,
