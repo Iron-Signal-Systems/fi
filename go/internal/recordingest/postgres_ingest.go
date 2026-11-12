@@ -608,13 +608,24 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				return ordinal, fmt.Errorf("%w: batch %s Security coverage COPY: %v", ErrSourceRecordRejected, batch.BatchID, err)
 			}
 		}
+		// Only the private mixed-family candidate holds File and Security
+		// buffers across each other's record kinds. All remaining record
+		// families remain a hard ordering barrier for USN capture identity.
+		decision := securityFileFlushBeforeKind(ctx, prepared.Record.RecordKind)
+		if decision.security {
+			if err := flushSecurity(); err != nil {
+				return ordinal, err
+			}
+		}
+		if decision.files {
+			if err := flushFiles(); err != nil {
+				return ordinal, err
+			}
+		}
 		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
 			contiguousSecurity++
 			if contiguousSecurity > profile.SecurityBulk.MaxContiguousSecurity {
 				profile.SecurityBulk.MaxContiguousSecurity = contiguousSecurity
-			}
-			if err := flushFiles(); err != nil {
-				return ordinal, err
 			}
 			securityPrepareStarted := time.Now()
 			var securityRecord securityBulkRecord
@@ -649,9 +660,6 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			continue
 		}
 		contiguousSecurity = 0
-		if err := flushSecurity(); err != nil {
-			return ordinal, err
-		}
 		if prepared.Record.RecordKind == "FileObservation" || prepared.Record.RecordKind == "USNObjectObservation" {
 			if len(pendingFiles) >= fileLimits.SourceMaxRecords ||
 				(len(pendingFiles) > 0 && int64(prepared.RecordBytes) > fileLimits.SourceMaxBytes-pendingFileBytes) {
@@ -670,9 +678,6 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
 			}
 			continue
-		}
-		if err := flushFiles(); err != nil {
-			return ordinal, err
 		}
 		var sourceRecordID int64
 		sqlStarted := time.Now()
