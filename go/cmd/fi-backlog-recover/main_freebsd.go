@@ -72,7 +72,11 @@ func run() error {
 	var maxWindows, startWindow, processingChunkRecords int
 	var testStopAfterWindows, testFieldFailWindow int
 	var securityProfile, windowProfile string
+
 	var optimizedK32 bool
+	var privateMixedBuffers, privateDependencyBuffers bool
+	flag.BoolVar(&privateMixedBuffers, "private-mixed-family-buffers", false, "DEV ONLY: independently buffer Security and File within isolated W128/K32")
+	flag.BoolVar(&privateDependencyBuffers, "private-dependency-buffers", false, "DEV ONLY: isolate Security coverage and USN capture/dependencies from Security/File flushes")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
 	flag.StringVar(&windowProfile, "window-profile", "W32", "PRIVATE recovery window W32=32768/256MiB, W64=65536/1GiB, W96=98304/1GiB, W128=131072/1GiB; checkpoints cannot be mixed")
 	flag.IntVar(&processingChunkRecords, "processing-chunk-records", 0, "experimental PRIVATE joined-source and cross-batch typed processing chunks (32768,65536,98304,131072) inside one W128 atomic window; P3/F3 COPY caps remain bounded")
@@ -220,9 +224,33 @@ func run() error {
 	if profileErr != nil {
 		return profileErr
 	}
+
 	ctx, profileErr = recordingest.WithFixedFileBulkProfile(ctx, fileProfile)
 	if profileErr != nil {
 		return profileErr
+	}
+	if privateDependencyBuffers && !privateMixedBuffers {
+		return errors.New("FI private dependency buffers require private mixed-family buffer mode")
+	}
+	if privateMixedBuffers {
+		if !enable || !continuousPrivate || !privateFieldPartitions ||
+			windowProfile != "W128" || processingChunkRecords != 32768 ||
+			securityProfile != "P3" || fileProfile != "F3" ||
+			verifiedCacheRoot == "" || startWindow != 3 || maxWindows != 0 ||
+			indexedPrivate || streamLoader || preflightOnly {
+			return errors.New("FI private family buffers require isolated W128/K32/P3/F3 signed-cache replay")
+		}
+		ctx, profileErr = recordingest.WithPrivateMixedFamilyBuffers(ctx)
+		if profileErr != nil {
+			return profileErr
+		}
+		if privateDependencyBuffers {
+			ctx, profileErr = recordingest.WithPrivateDependencyBuffers(ctx)
+			if profileErr != nil {
+				return profileErr
+			}
+			fmt.Println("FI PRIVATE DEPENDENCY BUFFERS ENABLED independent_coverage=true ordered_usn=true")
+		}
 	}
 	limits, err := privateWindowLimits(windowProfile)
 	if err != nil {
