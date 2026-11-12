@@ -655,6 +655,14 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				return ordinal, err
 			}
 		}
+		// Rare additional families (including continuity gaps) remain strict
+		// source-order fences. Drain queued USN dependencies before projecting
+		// those records; coverage, Security and File retain independent buffers.
+		if privateDependencyBuffersEnabled(ctx) && decision.security && decision.files {
+			if err := flushDependencies(); err != nil {
+				return ordinal, err
+			}
+		}
 		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
 			contiguousSecurity++
 			if contiguousSecurity > profile.SecurityBulk.MaxContiguousSecurity {
