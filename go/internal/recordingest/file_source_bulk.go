@@ -48,7 +48,8 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 		}
 		if batchID <= 0 || item.ordinal <= 0 || (item.prepared.Record.RecordKind != "FileObservation" && item.prepared.Record.RecordKind != "USNObjectObservation") ||
 			item.prepared.RecordBytes <= 0 || len(item.digest) != 32 ||
-			(i > 0 && batchID == previousBatch && item.ordinal != pending[i-1].ordinal+1) {
+			(i > 0 && batchID == previousBatch &&
+            fileOrdinalInvalidForBatch(ctx, item.ordinal, pending[i-1].ordinal)) {
 			return fmt.Errorf("FI FileObservation source COPY invalid record at index %d", i)
 		}
 	}
