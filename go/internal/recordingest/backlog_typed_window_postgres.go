@@ -316,6 +316,14 @@ WHERE receipt_sha256=$1 AND window_index=$2
 			batchCtx = context.WithValue(ctx, backlogTypedChunkContextKey{},
 				backlogTypedChunkDirective{state: typedChunk, finish: finishChunk})
 		}
+		if ctx.Value(privateDependencyBuffersKey{}) == true {
+			if !privateDependencyBuffersEnabled(batchCtx) {
+				return fmt.Errorf("FI PRIVATE BUFFER ROUTE STOP: signed batch %d lost explicit dependency mode", globalIndex)
+			}
+			if err := validatePrivateFamilyRoute(batchCtx); err != nil {
+				return fmt.Errorf("FI PRIVATE BUFFER ROUTE STOP: signed batch %d: %w", globalIndex, err)
+			}
+		}
 		seen, err := ingestSourceBatch(batchCtx, shadow, d.SourceID, batchIDs[offset], batch, &profile)
 		if err != nil {
 			return fmt.Errorf("FI typed window: batch %d: %w", globalIndex, err)
