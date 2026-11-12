@@ -60,13 +60,9 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 		"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id",
 		"written_at", "record_bytes", "record_sha256", "ingest_version",
 	}
-	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, columns,
-		pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
-			p := pending[i]
-			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version,
-				p.prepared.Record.RecordKind, p.prepared.Record.ScopeID,
-				p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
-		}))
+	// Preserve production COPY values; reuse rows only in private W128/P3.
+	sourceRows := fileSourceRecordCopyRows(ctx, pending, sourceBatchID)
+	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, columns, sourceRows)
 	if err != nil {
 		return fmt.Errorf("FI FileObservation source COPY: %w", err)
 	}
@@ -88,4 +84,21 @@ func copyFileSourceBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pen
 		pending[i].sourceRecordID = id
 	}
 	return nil
+}
+
+// fileSourceRecordCopyRows isolates the reusable-row selection from the transaction
+// and preserves the original callback for production P1 and ordinary P3.
+func fileSourceRecordCopyRows(ctx context.Context, pending []fileSourceBulkRecord, sourceBatchID int64) pgx.CopyFromSource {
+	var sourceRows pgx.CopyFromSource
+	if usePrivateSinglePassSecurity(ctx) {
+		sourceRows = newFileSourceRecordCopySource(pending, sourceBatchID)
+	} else {
+		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+			p := pending[i]
+			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version,
+				p.prepared.Record.RecordKind, p.prepared.Record.ScopeID,
+				p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
+		})
+	}
+	return sourceRows
 }
