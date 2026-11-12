@@ -74,7 +74,8 @@ func run() error {
 	var securityProfile, windowProfile string
 
 	var optimizedK32 bool
-	var privateMixedBuffers, privateDependencyBuffers bool
+	var privateMixedBuffers, privateDependencyBuffers, privateContinuousFamily bool
+	flag.BoolVar(&privateContinuousFamily, "private-continuous-family", false, "DEV ONLY: source-first capacity-flushed family SQL projection, isolated W128 indexed W3-W4")
 	flag.BoolVar(&privateMixedBuffers, "private-mixed-family-buffers", false, "DEV ONLY: independently buffer Security and File within isolated W128/K32")
 	flag.BoolVar(&privateDependencyBuffers, "private-dependency-buffers", false, "DEV ONLY: isolate Security coverage and USN capture/dependencies from Security/File flushes")
 	flag.BoolVar(&optimizedK32, "optimized-k32", false, "validated private W128/K32/P3/F3 preset; requires -private-field-partitions and existing verified cache")
@@ -138,7 +139,19 @@ func run() error {
 			return fmt.Errorf("private root %s must have exact 0700 permissions", p)
 		}
 	}
-	if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
+	if privateContinuousFamily {
+		// This is a distinct SQL transaction model, not the accepted H16
+		// window-atomic experiment. Do not inherit its chunk/partition modes.
+		if !enable || !indexedPrivate || windowProfile != "W128" ||
+			startWindow != 3 || maxWindows != 2 ||
+			securityProfile != "P3" || fileProfile != "F3" ||
+			continuousPrivate || streamLoader || preflightOnly ||
+			privateFieldPartitions || privateMixedBuffers || privateDependencyBuffers ||
+			optimizedK32 || verifiedCacheRoot != "" || processingChunkRecords != 0 ||
+			testStopAfterWindows != 0 || testFieldFailWindow != 0 {
+			return errors.New("FI continuous family mode requires isolated indexed W128 W3-W4 P3/F3 with no K32 or field partitions")
+		}
+	} else if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
 		return err
 	}
 	if verifiedCacheRoot != "" {
@@ -294,6 +307,18 @@ SELECT
 	}
 	if !ready {
 		return errors.New("FI private recovery schemas and append-only rights are not installed")
+	}
+	if privateContinuousFamily {
+		var receiptReady bool
+		if err := canonical.QueryRow(ctx, `SELECT
+			to_regclass('fi_recovery.projected_source_record') IS NOT NULL AND
+			has_table_privilege(current_user,'fi_recovery.projected_source_record','SELECT,INSERT') AND
+			NOT has_table_privilege(current_user,'fi_recovery.projected_source_record','UPDATE,DELETE,TRUNCATE')`).Scan(&receiptReady); err != nil {
+			return err
+		}
+		if !receiptReady {
+			return errors.New("FI continuous family SQL projection receipts are not installed with append-only grants")
+		}
 	}
 	var already bool
 	if err := canonical.QueryRow(ctx, `
@@ -491,6 +516,34 @@ SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 A
 	}
 	if preflightOnly {
 		fmt.Printf("FI REAL BACKLOG PREFLIGHT ONLY selected_windows=%d..%d; no private writes, no accepted record, no authoritative changes\n", startWindow, end-1)
+		return nil
+	}
+	if privateContinuousFamily {
+		fmt.Println("FI PRIVATE CONTINUOUS FAMILY START source_first=true boundary_flushes=forbidden profiles=P3/F3")
+		started := time.Now()
+		if err := recordingest.StageBacklogContinuousFamilyWindows(ctx, canonical, prepared, limits, startWindow, maxWindows, private); err != nil {
+			return fmt.Errorf("FI continuous family W3-W4: %w", err)
+		}
+		var gotRecords, gotSecurity, gotUSN, gotWindows, gotAuth int64
+		err := canonical.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM fi_recovery.projected_source_record
+			 WHERE window_index IN (3,4)),
+			(SELECT count(*) FROM fi_recovery.pending_source_record
+			 WHERE window_index IN (3,4) AND record_kind='WindowsSecurityEvent'),
+			(SELECT count(*) FROM fi_recovery.pending_source_record
+			 WHERE window_index = 4 AND record_kind IN ('USNReadBoundary','USNObjectObservation')),
+			(SELECT count(*) FROM fi_recovery.typed_window WHERE window_index IN (3,4)),
+			(SELECT count(*) FROM fi.recorded_generation) +
+			(SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')`).
+			Scan(&gotRecords,&gotSecurity,&gotUSN,&gotWindows,&gotAuth)
+		if err != nil {return err}
+		if gotRecords!=259178 || gotSecurity!=232879 || gotUSN!=29 ||
+			gotWindows!=2 || gotAuth!=0 {
+			return fmt.Errorf("FI continuous family W3-W4 SQL evidence invalid records=%d security=%d usn=%d windows=%d authoritative=%d",
+				gotRecords,gotSecurity,gotUSN,gotWindows,gotAuth)
+		}
+		fmt.Printf("FI PRIVATE CONTINUOUS W34 SQL PASS records=%d security=%d usn=%d windows=%d authoritative=%d accepted=0 elapsed=%s\n",
+			gotRecords,gotSecurity,gotUSN,gotWindows,gotAuth,time.Since(started).Round(time.Millisecond))
 		return nil
 	}
 	var records uint64
