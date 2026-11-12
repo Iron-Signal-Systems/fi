@@ -220,8 +220,8 @@ printf 'FI HASH ONCE GO GATE PASS pinned_source=true private_tests=true historic
 jsonassets=/home/jwood/fi-h16-json-once-assets
 [ -d "$jsonassets" ] && [ ! -L "$jsonassets" ] || fail 'JSON-once source assets missing'
 for spec in \
- "security_single_pass_candidate.go 9a70be536f0a07687640fe1e2e48459d85430073" \
- "security_json_once_test.go 9250302470679dd9c23ce7daca92a9f7fbb22596" \
+ "security_single_pass_candidate.go 9d7ba5fd99dc79d859023885810a95e869b8c1f1" \
+ "security_json_once_test.go d8b7603774f91209471ce42e311caf45f3d3fd9e" \
  "security_json_once_signed_cache_test.go e2926386e039f05ce52d9cd44b75c56e81133d53"; do
     set -- $spec
     [ -f "$jsonassets/$1" ] && [ ! -L "$jsonassets/$1" ] ||
@@ -248,7 +248,7 @@ cp "$jsonassets/security_json_once_signed_cache_test.go" \
     -run '^$' -bench '^(BenchmarkSecurityJSONOnceWholeRecord|BenchmarkSecuritySourceEnvelopeAndPayloadOnePass)$' \
     -benchtime=1s -count=2 -benchmem) > "$root/json-once-benchmark.log" 2>&1 ||
     { cat "$root/json-once-benchmark.log" >&2; fail 'JSON-once microbenchmark failed'; }
-printf 'FI SECURITY JSON ONCE GO GATE PASS source=exact_reviewed_blob strict_decoder=unchanged nested_scope_version_test=true seeded_mutations=12000 no_extra_payload_json_valid=true\n'
+printf 'FI SECURITY JSON ONCE GO GATE PASS source=exact_reviewed_blob strict_decoder=unchanged nested_scope_version_test=true seeded_mutations=12000 no_explicit_json_valid_checks=true\n'
 (cd "$src/go" && GOTOOLCHAIN=auto go test -c \
     -o "$root/fi-security-json-preflight.test" ./internal/recordingest) \
     > "$root/security-json-preflight-build.log" 2>&1 ||
