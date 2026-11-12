@@ -62,10 +62,10 @@ func lookupBulkSourceRecordIDs(ctx context.Context, tx pgx.Tx, batchIDs, ordinal
             return nil, fmt.Errorf("FI bulk source: invalid key at %d", i)
         }
     }
-    single := true
-    for _, batchID := range batchIDs[1:] {
-        if batchID != batchIDs[0] { single = false; break }
-    }
+    // The range lookup is valid ONLY for contiguous ordinals. Independent
+    // Security/File buffering produces legitimate gaps within one batch.
+    // Route those to the exact (batch ID, ordinal) keyed lookup instead.
+    single := bulkSourceIDsAreContiguousSingleBatch(batchIDs, ordinals)
     ids := make([]int64, len(batchIDs))
     if single {
         rows, err := tx.Query(ctx, `SELECT record_ordinal, source_record_id FROM fi.source_record
