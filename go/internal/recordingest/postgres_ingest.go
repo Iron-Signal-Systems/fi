@@ -693,10 +693,14 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 					return ordinal, err
 				}
 			}
+			joined := joinedBacklogSourceFromContext(ctx)
+			if joined == nil || joined.batchIndex < 0 {
+				return ordinal, errors.New("FI private dependency: original signed batch index is unavailable")
+			}
 			var queueErr error
 			pendingDependencies, pendingDependencyBytes, queueErr =
 				privateDependencyAppend(pendingDependencies, pendingDependencyBytes,
-					sourceBatchID, ordinal, prepared)
+					sourceBatchID, joined.batchIndex, ordinal, prepared)
 			if queueErr != nil {
 				return ordinal, queueErr
 			}
