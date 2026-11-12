@@ -3,15 +3,16 @@
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
 // Development-only continuous source-first family router. This is the bounded
-// routing core; it is not yet a PostgreSQL worker or accepted H16 profile.
-// A durability-backed worker must implement the sink contract before enabling
-// this router in signed recovery.
+// routing core, wired to the private SQL family sink only by the isolated
+// -private-continuous-family experiment. It is not the accepted H16 profile.
+// All real relational writes require the signed durable source-window gate.
 package recordingest
 
 import (
     "context"
     "errors"
     "fmt"
+    "time"
 )
 
 type privateContinuousFamily uint8
@@ -184,7 +185,7 @@ func (r *privateContinuousFamilyRouter) Add(ctx context.Context, item privateCon
     }
     if len(lane.pending) >= limit.Records ||
         (len(lane.pending) > 0 && incoming > limit.Bytes-lane.bytes) {
-        if err := r.flush(ctx, family); err != nil {
+        if err := r.flush(ctx, family, "capacity"); err != nil {
             return err
         }
     }
@@ -197,7 +198,7 @@ func (r *privateContinuousFamilyRouter) Add(ctx context.Context, item privateCon
     // window can end on the exact limit, and capacity (not that later
     // window boundary) must be the recorded reason for SQL delivery.
     if len(lane.pending) == limit.Records || lane.bytes == limit.Bytes {
-        return r.flush(ctx, family)
+        return r.flush(ctx, family, "capacity")
     }
     return nil
 }
@@ -215,14 +216,27 @@ func (r *privateContinuousFamilyRouter) EndSourceWindow(ctx context.Context, win
     return r.markCompleted(ctx)
 }
 
-func (r *privateContinuousFamilyRouter) flush(ctx context.Context, family privateContinuousFamily) error {
+func (r *privateContinuousFamilyRouter) flush(ctx context.Context, family privateContinuousFamily, reason string) error {
     lane := &r.lanes[family]
     if len(lane.pending) == 0 {
         return nil
     }
+    if reason!="capacity" && reason!="end-of-input" {
+        return errors.New("FI continuous router: invalid SQL flush trigger")
+    }
+    records:=len(lane.pending)
+    bytes:=lane.bytes
+    first:=lane.pending[0]
+    last:=lane.pending[records-1]
+    started:=time.Now()
     if err := r.sink.FlushFamily(ctx, family, lane.pending); err != nil {
         return fmt.Errorf("FI continuous router: %s SQL flush: %w", family, err)
     }
+    // This proof line is emitted ONLY after PostgreSQL reports a committed
+    // family transaction, not at the caller's W128 or K32 source boundary.
+    fmt.Printf("FI PRIVATE CONTINUOUS FAMILY FLUSH family=%s trigger=%s records=%d bytes=%d first_window=%d last_window=%d first_batch=%d last_batch=%d elapsed=%s\n",
+        family,reason,records,bytes,first.WindowIndex,last.WindowIndex,
+        first.SignedBatchIndex,last.SignedBatchIndex,time.Since(started))
     // Release records ONLY after the sink reports its SQL transaction
     // committed. A failure keeps the original queue available for replay.
     for _, row := range lane.pending {
@@ -246,6 +260,7 @@ func (r *privateContinuousFamilyRouter) markCompleted(ctx context.Context) error
         }
         r.confirmedThrough = next
         delete(r.outstanding, next)
+        fmt.Printf("FI PRIVATE CONTINUOUS TYPED COMMIT window=%d outstanding=0\n",next)
     }
     return nil
 }
@@ -262,7 +277,7 @@ func (r *privateContinuousFamilyRouter) EndOfInput(ctx context.Context) error {
         return errors.New("FI continuous router: final signed source window has not closed")
     }
     for family := privateFamilySecurity; family <= privateFamilyOrderedOther; family++ {
-        if err := r.flush(ctx, family); err != nil {
+        if err := r.flush(ctx, family, "end-of-input"); err != nil {
             return err
         }
     }
