@@ -97,6 +97,8 @@ func flushPrivateDependencies(ctx context.Context, tx pgx.Tx, sourceID string,
         sourceID == "" || len(rows) > privateDependencyMaxRecords {
         return errors.New("FI private dependency flush: invalid active private context")
     }
+    profile.PrivateDependencyFlushes++
+    profile.PrivateDependencyRows += int64(len(rows))
     for i := range rows {
         p := &rows[i]
         if p.sourceBatchID <= 0 || p.ordinal <= 0 || p.prepared.RecordBytes <= 0 ||
