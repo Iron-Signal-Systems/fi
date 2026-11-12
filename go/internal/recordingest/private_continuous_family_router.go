@@ -105,16 +105,22 @@ type privateContinuousFamilyRouter struct {
     sourceDurable map[int]bool
     outstanding map[int]int64
     confirmedThrough int
+    windowOpen bool
+    sourceClosed map[int]bool
     finished bool
 }
 
-func newPrivateContinuousFamilyRouter(ctx context.Context, sink privateContinuousSink) (*privateContinuousFamilyRouter, error) {
-    if ctx == nil || sink == nil {
-        return nil, errors.New("FI continuous router: active context and durable sink required")
+// completedPrefix is the already verified contiguous typed-window prefix.
+// W3-W4 replay starts at 2; a fresh ingest starts at -1.
+func newPrivateContinuousFamilyRouter(ctx context.Context, sink privateContinuousSink,
+    completedPrefix int) (*privateContinuousFamilyRouter, error) {
+    if ctx == nil || sink == nil || completedPrefix < -1 {
+        return nil, errors.New("FI continuous router: context, durable sink and valid completed prefix required")
     }
     r := &privateContinuousFamilyRouter{
-        sink: sink, sourceDurable: make(map[int]bool), outstanding: make(map[int]int64),
-        confirmedThrough: -1,
+        sink: sink, sourceDurable: make(map[int]bool),
+        sourceClosed: make(map[int]bool), outstanding: make(map[int]int64),
+        confirmedThrough: completedPrefix, lastWindow: completedPrefix, lastBatch: -1,
     }
     r.lanes[privateFamilySecurity].limits = privateFamilyLimits{Records: 4096, Bytes: 16 << 20}
     r.lanes[privateFamilyFile].limits = privateFamilyLimits{Records: 8192, Bytes: 32 << 20}
@@ -126,24 +132,40 @@ func newPrivateContinuousFamilyRouter(ctx context.Context, sink privateContinuou
     return r, nil
 }
 
+// BeginSourceWindow checks that the source window has ALREADY committed in the
+// separate fi_recovery.source_window chain. SQL capacity flushes may now run
+// safely during record routing: the full signed source remains durable even if
+// the worker crashes before a typed marker is committed.
+func (r *privateContinuousFamilyRouter) BeginSourceWindow(ctx context.Context, windowIndex int) error {
+    if r == nil || ctx == nil || r.finished || r.windowOpen ||
+        windowIndex != r.lastWindow+1 {
+        return errors.New("FI continuous router: source windows must begin once and in order")
+    }
+    if err := r.sink.SourceWindowDurable(ctx, windowIndex); err != nil {
+        return fmt.Errorf("FI continuous router: source window %d not durable: %w", windowIndex, err)
+    }
+    r.sourceDurable[windowIndex] = true
+    r.lastWindow = windowIndex
+    r.lastBatch = -1
+    r.lastOrdinal = 0
+    r.started = true
+    r.windowOpen = true
+    return nil
+}
+
 func (r *privateContinuousFamilyRouter) Add(ctx context.Context, item privateContinuousRecord) error {
-    if r == nil || r.sink == nil || r.finished || ctx == nil {
-        return errors.New("FI continuous router: cannot add to inactive or finished stream")
+    if r == nil || r.sink == nil || r.finished || ctx == nil ||
+        !r.windowOpen || item.WindowIndex != r.lastWindow {
+        return errors.New("FI continuous router: records require a prior durable source-window checkpoint")
     }
     if item.WindowIndex < 0 || item.SignedBatchIndex < 0 ||
         item.Ordinal <= 0 || item.SourceBatchID <= 0 ||
         item.Prepared.RecordBytes <= 0 {
         return errors.New("FI continuous router: invalid original signed identity or byte length")
     }
-    if r.started &&
-        (item.WindowIndex < r.lastWindow ||
-            (item.WindowIndex == r.lastWindow &&
-                (item.SignedBatchIndex < r.lastBatch ||
-                    (item.SignedBatchIndex == r.lastBatch && item.Ordinal <= r.lastOrdinal)))) {
-        return errors.New("FI continuous router: signed source stream out of order")
-    }
-    if r.sourceDurable[item.WindowIndex] {
-        return errors.New("FI continuous router: source record arrived after its durable window close")
+    if item.SignedBatchIndex < r.lastBatch ||
+        (item.SignedBatchIndex == r.lastBatch && item.Ordinal <= r.lastOrdinal) {
+        return errors.New("FI continuous router: signed batch/ordinal sequence reversed")
     }
     family, err := privateFamilyForRecordKind(item.Prepared.Record.RecordKind)
     if err != nil {
@@ -170,23 +192,20 @@ func (r *privateContinuousFamilyRouter) Add(ctx context.Context, item privateCon
     lane.pending = append(lane.pending, item)
     lane.bytes += incoming
     r.outstanding[item.WindowIndex]++
-    r.lastWindow, r.lastBatch, r.lastOrdinal = item.WindowIndex, item.SignedBatchIndex, item.Ordinal
-    r.started = true
+    r.lastBatch, r.lastOrdinal = item.SignedBatchIndex, item.Ordinal
     return nil
 }
 
-// SourceWindowClosed DOES NOT flush any type buffer. It verifies a durable
-// source marker and leaves incomplete typed windows open; family buffers may
-// cross any number of W128 or K32 boundaries.
-func (r *privateContinuousFamilyRouter) SourceWindowClosed(ctx context.Context, windowIndex int) error {
-    if r == nil || ctx == nil || !r.started || r.finished ||
-        windowIndex != r.lastWindow || r.sourceDurable[windowIndex] {
-        return errors.New("FI continuous router: invalid or duplicate source checkpoint")
+// EndSourceWindow closes the INPUT range only. Neither K32 nor W128
+// empties a partial family buffer, and a typed marker is not created while
+// the source records of that window remain pending.
+func (r *privateContinuousFamilyRouter) EndSourceWindow(ctx context.Context, windowIndex int) error {
+    if r == nil || ctx == nil || r.finished || !r.windowOpen ||
+        windowIndex != r.lastWindow || !r.sourceDurable[windowIndex] {
+        return errors.New("FI continuous router: no such active durable source window")
     }
-    if err := r.sink.SourceWindowDurable(ctx, windowIndex); err != nil {
-        return fmt.Errorf("FI continuous router: durable source-window proof: %w", err)
-    }
-    r.sourceDurable[windowIndex] = true
+    r.windowOpen = false
+    r.sourceClosed[windowIndex] = true
     return r.markCompleted(ctx)
 }
 
@@ -214,7 +233,8 @@ func (r *privateContinuousFamilyRouter) flush(ctx context.Context, family privat
 func (r *privateContinuousFamilyRouter) markCompleted(ctx context.Context) error {
     // Typed-window markers remain contiguous. If one family still has a
     // partial buffer from W3, W3 stays pending even if W4 source is durable.
-    for next := r.confirmedThrough+1; r.sourceDurable[next] && r.outstanding[next] == 0; next++ {
+    for next := r.confirmedThrough+1; r.sourceClosed[next] &&
+        r.sourceDurable[next] && r.outstanding[next] == 0; next++ {
         if err := r.sink.MarkProjected(ctx, next); err != nil {
             return fmt.Errorf("FI continuous router: projected checkpoint %d: %w", next, err)
         }
@@ -231,8 +251,9 @@ func (r *privateContinuousFamilyRouter) EndOfInput(ctx context.Context) error {
     if r == nil || ctx == nil || r.finished {
         return errors.New("FI continuous router: invalid end-of-input")
     }
-    if !r.started || !r.sourceDurable[r.lastWindow] {
-        return errors.New("FI continuous router: final signed window not durably staged")
+    if !r.started || r.windowOpen || !r.sourceClosed[r.lastWindow] ||
+        !r.sourceDurable[r.lastWindow] {
+        return errors.New("FI continuous router: final signed source window has not closed")
     }
     for family := privateFamilySecurity; family <= privateFamilyOrderedOther; family++ {
         if err := r.flush(ctx, family); err != nil {
