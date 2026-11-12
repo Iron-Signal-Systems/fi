@@ -27,6 +27,8 @@ type backlogTypedChunkState struct {
     files []fileSourceBulkRecord
     fileBytes int64
     fileBulk *fileObservationBulkState
+    dependencies []privateDependencySourceRecord
+    dependencyBytes int64
 }
 func (s *backlogTypedChunkState) filesBytes() int64 {
     if s == nil { return -1 }
