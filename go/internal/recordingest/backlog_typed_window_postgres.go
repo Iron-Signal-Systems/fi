@@ -274,6 +274,12 @@ WHERE receipt_sha256=$1 AND window_index=$2
 	// All chunks still belong to this ONE transaction and marker.
 	var typedChunk *backlogTypedChunkState
 	chunkLimit := joinedBacklogChunkRecords(ctx)
+	if ctx.Value(privateDependencyBuffersKey{}) == true {
+		if !joined || chunkLimit != 32768 || !privateMixedFamilyBuffersEnabled(ctx) {
+			return errors.New("FI PRIVATE BUFFER ROUTE STOP: W128/K32 source and family configuration invalid")
+		}
+		fmt.Printf("FI PRIVATE BUFFER ROUTE WINDOW START window=%d joined=%t K32=%d dependency_mode=true\n", index, joined, chunkLimit)
+	}
 	if joined && chunkLimit > backlogDefaultJoinedSourceChunkRecords {
 		typedChunk = &backlogTypedChunkState{fileBulk: newFileObservationBulkState()}
 	}
@@ -443,10 +449,13 @@ INSERT INTO fi_recovery.typed_window (
 			joinedSource.copyTime.Round(time.Millisecond), joinedSource.verifyTime.Round(time.Millisecond))
 	}
 	if ctx.Value(privateDependencyBuffersKey{}) == true {
-		fmt.Printf("FI PRIVATE DEPENDENCY BUFFER PROOF window=%d dependency_records=%d dependency_flushes=%d coverage_security_flushes_avoided=%d security_source_copy_calls=%d security_event_copy_calls=%d\n",
+		fmt.Printf("FI PRIVATE DEPENDENCY BUFFER PROOF window=%d dependency_records=%d dependency_flushes=%d coverage_security_flushes_avoided=%d security_source_copy_calls=%d security_event_copy_calls=%d security_capacity_flushes=%d security_boundary_flushes=%d security_barrier_flushes=%d\n",
 			index, profile.PrivateDependencyRows, profile.PrivateDependencyFlushes,
 			profile.PrivateCoverageSecurityFencesAvoided,
-			profile.SecurityBulk.SourceLatency.Calls, profile.SecurityBulk.EventLatency.Calls)
+			profile.SecurityBulk.SourceLatency.Calls, profile.SecurityBulk.EventLatency.Calls,
+			profile.PrivateSecurityCapacityFlushes,
+			profile.PrivateSecurityBoundaryFlushes,
+			profile.PrivateSecurityBarrierFlushes)
 	}
 	for i, chunk := range chunkSamples {
 		fmt.Printf("FI TYPED CHUNK COMMITTED window=%d chunk=%d limit=%d batches=%d..%d records=%d processing=%s\n",
