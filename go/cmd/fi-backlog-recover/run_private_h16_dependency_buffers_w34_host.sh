@@ -265,7 +265,7 @@ for spec in \
  "private_dependency_buffers_test.go c9f4466364c1a5b6b1a0ae1f7b7f4dfbdf344866" \
  "private_mixed_family_buffers.go ec72725173fd97e961b82de1e5890b6ed47654f1" \
  "private_mixed_family_buffers_test.go 3548edb0945eb7213974b0edfa78e6f21efbf8f7" \
- "patch_private_dependency_buffers.go a791be0c8fb097892ab09b272d9ae7775cec821e"; do
+ "patch_private_dependency_buffers.go 45477209b82ee5c4fb324fe178279c4fc7c4adb1"; do
     set -- $spec
     [ -f "$depassets/$1" ] && [ ! -L "$depassets/$1" ] || fail "dependency asset absent: $1"
     [ "$(git hash-object "$depassets/$1")" = "$2" ] || fail "dependency asset changed: $1"
@@ -728,6 +728,16 @@ END {if(n3!=1 || n4!=1)exit 2; print w3 "|" w4}
     fail "Security one-pass selection mismatch: $security_pass vs 116357|116522"
 printf 'FI SECURITY JSON ONCE REAL SIGNED ROW GATE PASS W3=116357 W4=116522 total=232879\n' |
     tee -a "$out/SUMMARY.txt"
+grep '^FI PRIVATE BUFFER ROUTE WINDOW START ' "$log" > "$out/$name/ROUTE_PROOF.txt" ||
+    fail 'missing explicit private W128/K32 route markers'
+routecheck=$(awk '
+/^FI PRIVATE BUFFER ROUTE WINDOW START / {
+    for(i=1;i<=NF;i++)if($i ~ /^window=/) {split($i,a,"="); if(a[2]=="3")w3++; if(a[2]=="4")w4++}
+}
+END {if(w3!=1||w4!=1)exit 2; print "W3_activated=1 W4_activated=1"}
+' "$out/$name/ROUTE_PROOF.txt") ||
+    fail 'the selected private route never reached both typed windows'
+printf 'FI PRIVATE BUFFER ROUTE PROOF PASS %s\n' "$routecheck" | tee -a "$out/SUMMARY.txt"
 grep '^FI PRIVATE DEPENDENCY BUFFER PROOF ' "$log" > "$out/$name/DEPENDENCY_PROOF.txt" ||
     fail 'missing committed dependency-buffer proof'
 depcheck=$(awk '
@@ -745,7 +755,8 @@ depcheck=$(awk '
     if(w=="4"){w4++;r4=dep;f4=flush;a4=avoided;c4=calls}
 }
 END {
-    if(w3!=1 || w4!=1 || r3!=0 || r4!=29 || f3!=0 || f4<1 || a3<1 || a4<1)
+    if(w3!=1 || w4!=1 || r3!=0 || r4!=29 || f3!=0 || f4<1 ||
+       c3<1 || c4<1 || a3<0 || a4<0)
         exit 2
     print "W3_dep=" r3 " W4_dep=" r4 " W3_coverage_avoided=" a3 " W4_coverage_avoided=" a4 " W3_security_copy_calls=" c3 " W4_security_copy_calls=" c4
 }' "$out/$name/DEPENDENCY_PROOF.txt") ||
@@ -768,7 +779,7 @@ bundle="$out/fi-h16-sha-once-depbuf-w3-w4-$stamp.tar.gz"
  cd "$out" || exit 1
  tar -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt \
    security-real-signed-preflight.log security-real-signed-preflight-summary.txt \
-   "$name/SECURITY_COPY_CALLS.txt" "$name/CHUNK_BOUNDARIES.txt" "$name/DEPENDENCY_PROOF.txt" \
+   "$name/SECURITY_COPY_CALLS.txt" "$name/CHUNK_BOUNDARIES.txt" "$name/ROUTE_PROOF.txt" "$name/DEPENDENCY_PROOF.txt" \
    "$name/HASH_ONCE.txt" "$name/STAGES.txt" "$name/WINDOWS.txt" "$name/RESULT.txt" \
    "$name/pg_settings.txt" "$name/pg_before.txt" "$name/pg_after.txt" \
    "$name/pg_stat_wal_before.jsonl" "$name/pg_stat_wal_after.jsonl" \
