@@ -55,6 +55,9 @@ type ingestStageProfile struct {
 	PrivateDependencyFlushes int64 // private-only bounded USN queue flushes
 	PrivateDependencyRows int64 // source-bound USN boundaries and objects written
 	PrivateCoverageSecurityFencesAvoided int64 // coverage arrivals that formerly flushed pending Security
+	PrivateSecurityCapacityFlushes int64 // P3 reached its own record or byte cap
+	PrivateSecurityBoundaryFlushes int64 // trial-only K32/W128 end drains
+	PrivateSecurityBarrierFlushes int64 // conservative unaudited kind
 	coverageBuffer *securityCoverageBulkState
 }
 
@@ -649,6 +652,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		}
 		decision := securityFileFlushBeforeKind(ctx, prepared.Record.RecordKind)
 		if decision.security {
+			if privateDependencyBuffersEnabled(ctx) && len(pendingSecurity) != 0 {
+				profile.PrivateSecurityBarrierFlushes++
+			}
 			if err := flushSecurity(); err != nil {
 				return ordinal, err
 			}
@@ -689,6 +695,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			if securityLimits.shouldFlushBefore(
 				len(pendingSecurity), pendingSecurityBytes, int64(prepared.RecordBytes),
 			) {
+				if privateDependencyBuffersEnabled(ctx) && len(pendingSecurity) != 0 {
+					profile.PrivateSecurityCapacityFlushes++
+				}
 				if err := flushSecurity(); err != nil {
 					return ordinal, err
 				}
@@ -798,6 +807,9 @@ RETURNING source_record_id
 	if !hasChunk || chunk.finish {
 		if err := flushFiles(); err != nil {
 			return ordinal, err
+		}
+		if privateDependencyBuffersEnabled(ctx) && len(pendingSecurity) != 0 {
+			profile.PrivateSecurityBoundaryFlushes++
 		}
 		if err := flushSecurity(); err != nil {
 			return ordinal, err
