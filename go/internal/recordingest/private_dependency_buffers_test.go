@@ -34,9 +34,13 @@ func TestPrivateDependencyBuffersFailClosed(t *testing.T) {
         t.Fatal("mixed buffer experiment unexpectedly enabled dependency path")
     }
     private := privateDependencyTestContext(t)
-    if privateDependencyBuffersEnabled(context.WithValue(private,
-        backlogTypedChunkContextKey{}, backlogTypedChunkDirective{})) {
-        t.Fatal("dependency buffering without an active bounded chunk")
+    brokenChunk := context.WithValue(private,
+        backlogTypedChunkContextKey{}, backlogTypedChunkDirective{})
+    if err := validatePrivateFamilyRoute(brokenChunk); err == nil {
+        t.Fatal("dependency mode silently accepted invalid typed chunk")
+    }
+    if err := validatePrivateFamilyRoute(private); err != nil {
+        t.Fatalf("valid dependency route rejected: %v", err)
     }
 }
 
