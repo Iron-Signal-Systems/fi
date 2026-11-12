@@ -6,6 +6,7 @@ package recordingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
@@ -102,9 +103,10 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 
 	sqlStarted := time.Now()
 	sourceColumns := []string{"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id", "written_at", "record_bytes", "record_sha256", "ingest_version"}
+	// Preserve production COPY values; reuse rows only in private W128/P3.
+	sourceRows := securitySourceRecordCopyRows(ctx, pending, sourceBatchID)
 	sourceCopyStarted := time.Now()
-	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns,
-		newSecuritySourceCopySource(pending, sourceBatchID))
+	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns, sourceRows)
 	elapsedSourceCopy := time.Since(sourceCopyStarted)
 	profile.SecurityBulk.SourceCopy += elapsedSourceCopy
 	profile.SecurityBulk.SourceLatency.observe(elapsedSourceCopy)
@@ -140,9 +142,11 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		"share_name", "share_local_path", "relative_target_name", "old_security_descriptor", "new_security_descriptor", "subcategory_guid", "audit_policy_changes",
 		"raw_xml_bytes", "raw_xml_sha256",
 	}
+	// The experimental W128/P3 path reuses the already-tested forty-column
+	// row buffer. Production P1 and ordinary P3 retain their original writer.
+	eventRows := securityEventCopyRows(ctx, pending)
 	eventCopyStarted := time.Now()
-	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns,
-		newSecurityEventCopySource(pending))
+	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns, eventRows)
 	elapsedEventCopy := time.Since(eventCopyStarted)
 	profile.SecurityBulk.EventCopy += elapsedEventCopy
 	profile.SecurityBulk.EventLatency.observe(elapsedEventCopy)
@@ -159,14 +163,27 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		scopeCount += len(p.value.MatchedScopes)
 		fieldCount += len(p.value.Fields)
 	}
-	// Matched scopes are already validated and held by their parent events.
-	// Stream them directly to pgx rather than allocating one []any per child.
+	var scopeRows pgx.CopyFromSource
+	if scopeCount > 0 {
+		if usePrivateSinglePassSecurity(ctx) {
+			// Private W128/P3 reuses a four-column row rather than retaining
+			// all matched scopes in an additional [][]any matrix.
+			scopeRows = newSecurityScopeCopySource(pending)
+		} else {
+			// Preserve the established P1 and ordinary P3 COPY behavior.
+			scopes := make([][]any, 0, scopeCount)
+			for _, p := range pending {
+				for i, scope := range p.value.MatchedScopes {
+					scopes = append(scopes, []any{p.sourceRecordID, i + 1, scope.ScopeID, scope.GovernedRoot})
+				}
+			}
+			scopeRows = pgx.CopyFromSlice(len(scopes), func(i int) ([]any, error) { return scopes[i], nil })
+		}
+	}
 	profile.SecurityBulk.ChildPrepare += time.Since(childPrepareStarted)
 	if scopeCount > 0 {
 		scopeCopyStarted := time.Now()
-		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"},
-			[]string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"},
-			newSecurityScopeCopySource(pending))
+		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"}, []string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"}, scopeRows)
 		elapsedScopeCopy := time.Since(scopeCopyStarted)
 		profile.SecurityBulk.ScopeCopy += elapsedScopeCopy
 		profile.SecurityBulk.ScopeLatency.observe(elapsedScopeCopy)
@@ -210,4 +227,41 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	profile.Projection += elapsedProjection
 	profile.SecurityProjection += elapsedProjection
 	return nil
+}
+
+// securityEventCopyRows keeps the exact established callback for ordinary
+// ingestion. Only the isolated private-field W128/P3 path can select the
+// reusable forty-column row source, reducing per-event allocation pressure
+// without changing validations, column values, COPY order or transaction scope.
+func securityEventCopyRows(ctx context.Context, pending []securityBulkRecord) pgx.CopyFromSource {
+	if usePrivateSinglePassSecurity(ctx) {
+		return newSecurityEventCopySource(pending)
+	}
+	return pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+		p := pending[i]
+		v := p.value
+		rawXML := []byte(v.RawXML)
+		digest := sha256.Sum256(rawXML)
+		return []any{
+			p.sourceRecordID, p.observedAt, v.CollectionMethod, v.Channel, v.Provider, p.eventID, nullString(v.Version), p.eventRecordID, p.timeCreated, v.Computer, nullString(v.Keywords),
+			string(v.AuditResult), string(v.ScopeBasis), nullString(v.SubjectUserSID), nullString(v.SubjectUserName), nullString(v.SubjectDomainName), nullString(v.SubjectLogonID), nullString(v.ObjectServer), nullString(v.ObjectType), nullString(v.ObjectName),
+			nullString(v.HandleID), nullString(v.ProcessID), nullString(v.ProcessName), nullString(v.AccessMask), nullString(v.AccessList), nullString(v.AccessReason), nullString(v.TransactionID), nullString(v.FileName), nullString(v.LinkName), nullString(v.SourceIP), nullString(v.SourcePort),
+			nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
+		}, nil
+	})
+}
+
+// securitySourceRecordCopyRows isolates the reusable-row selection from the transaction
+// and preserves the original callback for production P1 and ordinary P3.
+func securitySourceRecordCopyRows(ctx context.Context, pending []securityBulkRecord, sourceBatchID int64) pgx.CopyFromSource {
+	var sourceRows pgx.CopyFromSource
+	if usePrivateSinglePassSecurity(ctx) {
+		sourceRows = newSecuritySourceRecordCopySource(pending, sourceBatchID)
+	} else {
+		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+			p := pending[i]
+			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
+		})
+	}
+	return sourceRows
 }
