@@ -256,27 +256,6 @@ cp "$mixedassets/private_mixed_family_buffers.go" "$src/go/internal/recordingest
 cp "$mixedassets/private_mixed_family_buffers_test.go" "$src/go/internal/recordingest/private_mixed_family_buffers_test.go"
 (cd "$src/go" && GOTOOLCHAIN=auto go run "$mixedassets/patch_mixed_family_buffers.go" "$src") ||
     fail 'mixed buffer source patch rejected the pinned H16 code'
-(cd "$src/go" && gofmt -w \
- ./internal/recordingest/private_mixed_family_buffers.go \
- ./internal/recordingest/private_mixed_family_buffers_test.go \
- ./internal/recordingest/postgres_ingest.go \
- ./internal/recordingest/backlog_typed_chunks.go \
- ./internal/recordingest/file_source_bulk.go \
- ./cmd/fi-backlog-recover/main_freebsd.go) || fail 'mixed buffer gofmt failed'
-for check in \
- 'decision := securityFileFlushBeforeKind(ctx, prepared.Record.RecordKind)' \
- 'bulkSourceIDsAreContiguousSingleBatch(batchIDs, ordinals)' \
- 'fileOrdinalInvalidForBatch(ctx, item.ordinal, pending[i-1].ordinal)'; do
-  grep -Fq "$check" "$src/go/internal/recordingest/"*.go ||
-      fail "mixed buffer function missing: $check"
-done
-grep -Fq 'recordingest.WithPrivateMixedFamilyBuffers(ctx)' "$src/go/cmd/fi-backlog-recover/main_freebsd.go" ||
-    fail 'mixed buffer CLI selector is missing'
-(cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
-    -run '^(TestPrivateMixed|TestMixedBulk)' -count=1 -v) > "$root/mixed-buffer-go-tests.log" 2>&1 ||
-    { cat "$root/mixed-buffer-go-tests.log" >&2; fail 'mixed buffer or source ID tests failed'; }
-printf 'FI PRIVATE MIXED BUFFER GO GATE PASS active_ingest=true exact_keys=true usn_fences=true\n'
-
 # Apply the additional pinned dependency-buffer experiment only to the
 # disposable H16 code archive, after the original mixed-family patch.
 depassets=/home/jwood/fi-h16-dependency-buffer-assets
@@ -318,6 +297,28 @@ grep -Fq 'recordingest.WithPrivateDependencyBuffers(ctx)' "$src/go/cmd/fi-backlo
   > "$root/dependency-buffer-go-tests.log" 2>&1 ||
   { cat "$root/dependency-buffer-go-tests.log" >&2; fail 'dependency/mixed regression tests failed'; }
 printf 'FI PRIVATE DEPENDENCY BUFFER GO GATE PASS source_wired=true signed_source_order=true coverage_independent=true\n'
+
+(cd "$src/go" && gofmt -w \
+ ./internal/recordingest/private_mixed_family_buffers.go \
+ ./internal/recordingest/private_mixed_family_buffers_test.go \
+ ./internal/recordingest/postgres_ingest.go \
+ ./internal/recordingest/backlog_typed_chunks.go \
+ ./internal/recordingest/file_source_bulk.go \
+ ./cmd/fi-backlog-recover/main_freebsd.go) || fail 'mixed buffer gofmt failed'
+for check in \
+ 'decision := securityFileFlushBeforeKind(ctx, prepared.Record.RecordKind)' \
+ 'bulkSourceIDsAreContiguousSingleBatch(batchIDs, ordinals)' \
+ 'fileOrdinalInvalidForBatch(ctx, item.ordinal, pending[i-1].ordinal)'; do
+  grep -Fq "$check" "$src/go/internal/recordingest/"*.go ||
+      fail "mixed buffer function missing: $check"
+done
+grep -Fq 'recordingest.WithPrivateMixedFamilyBuffers(ctx)' "$src/go/cmd/fi-backlog-recover/main_freebsd.go" ||
+    fail 'mixed buffer CLI selector is missing'
+(cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
+    -run '^(TestPrivateMixed|TestMixedBulk)' -count=1 -v) > "$root/mixed-buffer-go-tests.log" 2>&1 ||
+    { cat "$root/mixed-buffer-go-tests.log" >&2; fail 'mixed buffer or source ID tests failed'; }
+printf 'FI PRIVATE MIXED BUFFER GO GATE PASS active_ingest=true exact_keys=true usn_fences=true\n'
+
 
 
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
