@@ -177,17 +177,16 @@ func (r *privateContinuousFamilyRouter) Add(ctx context.Context, item privateCon
     if limit.Records <= 0 || limit.Bytes <= 0 {
         return errors.New("FI continuous router: missing bounded lane limits")
     }
+    // Reject an oversized source record BEFORE draining an unrelated
+    // pending batch. Its rejection must not cause avoidable SQL work.
+    if incoming > limit.Bytes {
+        return fmt.Errorf("FI continuous router: record exceeds %s byte ceiling", family)
+    }
     if len(lane.pending) >= limit.Records ||
         (len(lane.pending) > 0 && incoming > limit.Bytes-lane.bytes) {
         if err := r.flush(ctx, family); err != nil {
             return err
         }
-    }
-    // A single oversized record cannot remain resident indefinitely.
-    // A real SQL sink must own its projection atomically and the router
-    // must keep a reference only as long as that bounded operation runs.
-    if incoming > limit.Bytes {
-        return fmt.Errorf("FI continuous router: record exceeds %s byte ceiling", family)
     }
     lane.pending = append(lane.pending, item)
     lane.bytes += incoming
