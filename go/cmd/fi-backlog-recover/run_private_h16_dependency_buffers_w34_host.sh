@@ -285,7 +285,7 @@ for spec in \
  "private_dependency_buffers.go 089bbf0af7ef50d1c5815cbd59e13833068236c2" \
  "private_dependency_buffers_test.go 8c69b63a050d7772d557652ef0904e270f2333b5" \
  "private_mixed_family_buffers.go 541213be66ff46758bd82fe1f800fa6ea3a824e8" \
- "patch_private_dependency_buffers.go f7bbf31897453390d2e2caeaaee1b6350e738907"; do
+ "patch_private_dependency_buffers.go 709eba3e28d81f6f5888a36c5bdb931ff261dca6"; do
     set -- $spec
     [ -f "$depassets/$1" ] && [ ! -L "$depassets/$1" ] || fail "dependency asset absent: $1"
     [ "$(git hash-object "$depassets/$1")" = "$2" ] || fail "dependency asset changed: $1"
