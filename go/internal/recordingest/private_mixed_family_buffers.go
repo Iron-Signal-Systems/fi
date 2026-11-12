@@ -40,9 +40,10 @@ func privateMixedFamilyBuffersEnabled(ctx context.Context) bool {
 // This decision is exercised by ingestSourceBatch itself. A transition
 // between Security and File/USN never flushes either partially filled buffer
 // in the private candidate. The existing bounded size/byte checks and K32
-// finish still flush them. All OTHER kinds (including USN read/capture
-// boundaries and Security coverage) remain an ordering barrier, to preserve
-// source_record_id ordering for USN source-bound capture relationships.
+// finish still flush them. In the first mixed-family experiment, other kinds
+// remain ordering barriers. The separate private dependency experiment permits
+// independent Security coverage and ordered USN queues, while unaudited kinds
+// remain conservative ordering fences. The ordinary paths are unchanged.
 type securityFileFlushDecision struct {
     security bool
     files    bool
