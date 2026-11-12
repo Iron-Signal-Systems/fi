@@ -318,6 +318,7 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		totalBytes += batch.Manifest.DataBytes
 		if finishChunk {
 			if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
+				len(typedChunk.dependencies) != 0 || typedChunk.dependencyBytes != 0 ||
 				len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
 				return errors.New("FI typed chunk: buffers remained after required flush")
 			}
