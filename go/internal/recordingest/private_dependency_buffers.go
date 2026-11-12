@@ -49,7 +49,8 @@ func privateUSNDependentKind(kind string) bool {
 // signed batches, the source loader itself supplies immutable batch ordering.
 // Parent USN read boundaries always execute before following USN objects.
 type privateDependencySourceRecord struct {
-    sourceBatchID int64
+    sourceBatchID int64 // relational FK; never used as source-order evidence
+    signedBatchIndex int // original signed custody index
     ordinal int64
     prepared SourceRecord
 }
@@ -59,9 +60,9 @@ func privateDependencyShouldFlushBefore(rows int, bytes, incoming int64) bool {
         (rows > 0 && incoming > privateDependencyMaxBytes-bytes)
 }
 
-func privateDependencyAppend(rows []privateDependencySourceRecord, bytes int64, sourceBatchID, ordinal int64,
-    prepared SourceRecord) ([]privateDependencySourceRecord, int64, error) {
-    if sourceBatchID <= 0 || ordinal <= 0 || prepared.RecordBytes <= 0 ||
+func privateDependencyAppend(rows []privateDependencySourceRecord, bytes int64, sourceBatchID int64,
+    signedBatchIndex int, ordinal int64, prepared SourceRecord) ([]privateDependencySourceRecord, int64, error) {
+    if sourceBatchID <= 0 || signedBatchIndex < 0 || ordinal <= 0 || prepared.RecordBytes <= 0 ||
         !privateUSNDependentKind(prepared.Record.RecordKind) ||
         len(rows) >= privateDependencyMaxRecords ||
         (len(rows) > 0 && int64(prepared.RecordBytes) > privateDependencyMaxBytes-bytes) {
@@ -69,13 +70,14 @@ func privateDependencyAppend(rows []privateDependencySourceRecord, bytes int64, 
     }
     if n := len(rows); n > 0 {
         prev := rows[n-1]
-        if sourceBatchID < prev.sourceBatchID ||
-            (sourceBatchID == prev.sourceBatchID && ordinal <= prev.ordinal) {
+        if signedBatchIndex < prev.signedBatchIndex ||
+            (signedBatchIndex == prev.signedBatchIndex && ordinal <= prev.ordinal) {
             return nil, bytes, errors.New("FI private dependency queue: source custody order reversed")
         }
     }
     rows = append(rows, privateDependencySourceRecord{
-        sourceBatchID: sourceBatchID, ordinal: ordinal, prepared: prepared,
+        sourceBatchID: sourceBatchID, signedBatchIndex: signedBatchIndex,
+        ordinal: ordinal, prepared: prepared,
     })
     return rows, bytes+int64(prepared.RecordBytes), nil
 }
