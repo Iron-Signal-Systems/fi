@@ -112,6 +112,18 @@ func TestPrivateDependencyBoundedSourceOrder(t *testing.T) {
         rows[1].signedBatchIndex != 4 || size != 180 {
         t.Fatal("USN dependent source identities lost across signed batches")
     }
+    // PostgreSQL batch IDs are not custody-order evidence: the queue must
+    // accept increasing SIGNED indices even if SQL FK numbers run backward.
+    rows = nil
+    size = 0
+    rows, size, err = privateDependencyAppend(rows, size, 99, 5, 42,
+        privateDependencyTestRecord("USNReadBoundary", 70))
+    if err != nil { t.Fatal(err) }
+    rows, size, err = privateDependencyAppend(rows, size, 7, 6, 1,
+        privateDependencyTestRecord("USNObjectObservation", 70))
+    if err != nil || len(rows) != 2 || size != 140 {
+        t.Fatal("dependency queue incorrectly sorts by database batch IDs")
+    }
 }
 
 func TestPrivateDependencyRejectsForwardOrDuplicateSources(t *testing.T) {
