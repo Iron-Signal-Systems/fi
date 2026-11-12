@@ -285,5 +285,53 @@ DROP CONSTRAINT fi_bootstrap_test_late_fail`);err!=nil{t.Fatal(err)}
  if err=reader.QueryRow(ctx,`SELECT count(*) FROM fi.ingest_journal
 WHERE source_id=$1 AND outcome='Accepted'`,source).Scan(&journalCount);err!=nil{t.Fatal(err)}
  if journalCount!=1 {t.Fatal("retry created another Accepted journal")}
+
+ // Additional isolated CI acceptance for the NEW source-first continuous
+ // family writer. This is separate from the canonical promotion above:
+ // a distinct signed fixture source, transfer hash and receipt identity.
+ t.Run("continuous-family-sql-commit-and-replay",func(t *testing.T){
+  fixture:=bootstrapCIFixture(t,"fi-continuous-family-ci.iss.local",false)
+  fixture.Receipt.Descriptor.GenerationID="20261112T140000.000000000Z-continuous-ci"
+  fixture.ReceiptSHA256=strings.Repeat("9",64)
+  fixture.Receipt.TransferSHA256=strings.Repeat("a",64)
+  root:=privateBacklogTestRoot(t)
+  if err:=StageBacklogContinuousFamilyWindows(ctx,writer,fixture,limits,0,2,root);err!=nil{
+   t.Fatalf("continuous first SQL replay: %v",err)
+  }
+  var sourceRows,receipts,markers,authoritative int64
+  if err:=writer.QueryRow(ctx,`SELECT
+    (SELECT count(*) FROM fi_recovery.pending_source_record WHERE receipt_sha256=decode($1,'hex')),
+    (SELECT count(*) FROM fi_recovery.projected_source_record WHERE receipt_sha256=decode($1,'hex')),
+    (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')),
+    (SELECT count(*) FROM fi.recorded_generation WHERE source_id=$2)
+   `,fixture.ReceiptSHA256,fixture.Receipt.Descriptor.SourceID).
+   Scan(&sourceRows,&receipts,&markers,&authoritative);err!=nil{t.Fatal(err)}
+  if sourceRows!=6 || receipts!=6 || markers!=2 || authoritative!=0 {
+   t.Fatalf("continuous SQL evidence source=%d receipts=%d typed=%d authoritative=%d",sourceRows,receipts,markers,authoritative)
+  }
+  if err:=StageBacklogContinuousFamilyWindows(ctx,writer,fixture,limits,0,2,root);err!=nil{
+   t.Fatalf("continuous exact signed restart: %v",err)
+  }
+  var after int64
+  if err:=writer.QueryRow(ctx,`SELECT count(*) FROM fi_recovery.projected_source_record
+    WHERE receipt_sha256=decode($1,'hex')`,fixture.ReceiptSHA256).Scan(&after);err!=nil{t.Fatal(err)}
+  if after!=6{t.Fatalf("replayed continuous family duplicated or lost signed identities: %d",after)}
+ })
+ t.Run("continuous-family-failed-child-rollback",func(t *testing.T){
+  invalid:=bootstrapCIFixture(t,"fi-continuous-family-invalid-ci.iss.local",true)
+  root:=privateBacklogTestRoot(t)
+  if err:=StageBacklogContinuousFamilyWindows(ctx,writer,invalid,limits,0,1,root);err==nil{
+   t.Fatal("invalid third typed child was committed")
+  }
+  var sourceRows,receipts,typed int64
+  if err:=writer.QueryRow(ctx,`SELECT
+    (SELECT count(*) FROM fi_recovery.pending_source_record WHERE receipt_sha256=decode($1,'hex')),
+    (SELECT count(*) FROM fi_recovery.projected_source_record WHERE receipt_sha256=decode($1,'hex')),
+    (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex'))
+   `,invalid.ReceiptSHA256).Scan(&sourceRows,&receipts,&typed);err!=nil{t.Fatal(err)}
+  if sourceRows!=3 || receipts!=0 || typed!=0{
+   t.Fatalf("invalid child left committed typed records/marker: source=%d receipts=%d typed=%d",sourceRows,receipts,typed)
+  }
+ })
  t.Log("PASS: 48-table SQL promotion, late rollback, one atomic Accepted, exact signed counts, idempotent retry")
 }
