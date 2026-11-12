@@ -442,6 +442,12 @@ INSERT INTO fi_recovery.typed_window (
 			index, joinedSource.chunkRows, joinedSource.copyCalls, joinedSource.records,
 			joinedSource.copyTime.Round(time.Millisecond), joinedSource.verifyTime.Round(time.Millisecond))
 	}
+	if ctx.Value(privateDependencyBuffersKey{}) == true {
+		fmt.Printf("FI PRIVATE DEPENDENCY BUFFER PROOF window=%d dependency_records=%d dependency_flushes=%d coverage_security_flushes_avoided=%d security_source_copy_calls=%d security_event_copy_calls=%d\n",
+			index, profile.PrivateDependencyRows, profile.PrivateDependencyFlushes,
+			profile.PrivateCoverageSecurityFencesAvoided,
+			profile.SecurityBulk.SourceLatency.Calls, profile.SecurityBulk.EventLatency.Calls)
+	}
 	for i, chunk := range chunkSamples {
 		fmt.Printf("FI TYPED CHUNK COMMITTED window=%d chunk=%d limit=%d batches=%d..%d records=%d processing=%s\n",
 			index, i, chunkLimit, chunk.firstBatch, chunk.endBatch, chunk.records, chunk.duration)
