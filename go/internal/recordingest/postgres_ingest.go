@@ -468,6 +468,9 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	// It carries bounded typed COPY buffers across intact signed batches,
 	// without creating another durability or trust boundary.
 	chunk, hasChunk := ctx.Value(backlogTypedChunkContextKey{}).(backlogTypedChunkDirective)
+	if err := validatePrivateFamilyRoute(ctx); err != nil {
+		return 0, err
+	}
 	if hasChunk {
 		if chunk.state == nil || chunk.state.fileBulk == nil {
 			return 0, errors.New("FI typed chunk: invalid shared buffer")
