@@ -370,6 +370,64 @@ SELECT
 	t.Run("whole-generation-recovery-after-reconnect", func(t *testing.T) {
 		exerciseBacklogRecoveryRunner(t, ctx, reader, writer)
 	})
+	t.Run("continuous-family-durable-cross-window-replay", func(t *testing.T) {
+		// This fixture exercises the REAL isolated PostgreSQL family writer,
+		// not the fake state-machine sink. Both signed source windows are
+		// staged first and their partial buffers cross W0 -> W1 without COPY.
+		continuous := privateTypedFixture(t, "fi-continuous-family-isolated.iss.local", false)
+		continuous.ReceiptSHA256 = strings.Repeat("9", 64)
+		continuous.Receipt.TransferSHA256 = strings.Repeat("a", 64)
+		continuous.Receipt.Descriptor.GenerationID = "20261101T140000.000000000Z-continuous"
+		root := privateBacklogTestRoot(t)
+		if err := StageBacklogContinuousFamilyWindows(ctx, writer, continuous, limits, 0, 2, root); err != nil {
+			t.Fatalf("continuous SQL W0-W1: %v", err)
+		}
+		var receipts, typedWindows, stagedRows, authoritative int64
+		if err := writer.QueryRow(ctx, `
+SELECT
+ (SELECT count(*) FROM fi_recovery.projected_source_record WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery.pending_source_record WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi.recorded_generation WHERE source_id=$2)
+`, continuous.ReceiptSHA256, continuous.Receipt.Descriptor.SourceID).
+			Scan(&receipts, &typedWindows, &stagedRows, &authoritative); err != nil {
+			t.Fatal(err)
+		}
+		if receipts != 6 || stagedRows != 6 || typedWindows != 2 || authoritative != 0 {
+			t.Fatalf("continuous receipts=%d staged=%d typed=%d authoritative=%d", receipts, stagedRows, typedWindows, authoritative)
+		}
+		// A second complete replay must prove the signed identities and the
+		// already committed relational receipts, not duplicate any source.
+		if err := StageBacklogContinuousFamilyWindows(ctx, writer, continuous, limits, 0, 2, root); err != nil {
+			t.Fatalf("continuous SQL idempotent restart: %v", err)
+		}
+		var again int64
+		if err := writer.QueryRow(ctx, `SELECT count(*) FROM fi_recovery.projected_source_record
+WHERE receipt_sha256=decode($1,'hex')`, continuous.ReceiptSHA256).Scan(&again); err != nil {
+			t.Fatal(err)
+		}
+		if again != 6 {
+			t.Fatalf("continuous SQL restart duplicated or lost receipts: %d", again)
+		}
+	})
+	t.Run("continuous-family-rollback-on-invalid-typed-child", func(t *testing.T) {
+		// The earlier late fixture has durable source W0, but its last
+		// NTFSCollectionError payload is invalid. The full OrderedOther
+		// transaction must roll back including all projection receipts.
+		if err := StageBacklogContinuousFamilyWindows(ctx, writer, late, limits, 0, 1, lateRoot); err == nil {
+			t.Fatal("continuous family accepted invalid typed payload")
+		}
+		var receipts, typed int64
+		if err := writer.QueryRow(ctx, `SELECT
+ (SELECT count(*) FROM fi_recovery.projected_source_record WHERE receipt_sha256=decode($1,'hex')),
+ (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex'))`,
+			late.ReceiptSHA256).Scan(&receipts, &typed); err != nil {
+			t.Fatal(err)
+		}
+		if receipts != 0 || typed != 0 {
+			t.Fatalf("continuous family failed transaction leaked projected receipts=%d typed=%d", receipts, typed)
+		}
+	})
 	t.Run("complete-private-to-atomic-canonical-ingest", func(t *testing.T) {
 		exerciseBacklogAuthoritativeBridge(t, ctx, admin, reader, writer)
 	})
