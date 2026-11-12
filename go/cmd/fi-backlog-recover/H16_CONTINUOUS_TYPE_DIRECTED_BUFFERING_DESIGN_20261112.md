@@ -1,6 +1,6 @@
 # FI ingest: source-first continuous type-directed buffering
 
-**Engineering status (2026-11-12):** branch-only design plus an implemented, test-authored bounded router. This is **NOT yet a runnable PostgreSQL ingest experiment**; the durable PostgreSQL family sink, staged-source replay/restart logic, and field-partition integration remain implementation blockers. In particular, the existing W3–W4 H16/dependency runner still forcibly flushes at K32/W128 and must **not** be presented as acceptance of the cross-window design. The original 89.931 s SHA-once/JSON-once H16 remains the reference.
+**Engineering status (2026-11-12):** development-branch-only source-first continuous router, PostgreSQL family sink, signed-window replay driver, append-only per-record SQL completion receipts, and strictly isolated W3-W4 CLI gate are implemented. The disposable PostgreSQL 18 CI fixture validates two-window family commits, exact replay, and late-child rollback. This is **NOT a signed W3-W4 acceptance**, and is **NOT ready for the 10-window benchmark**. The private W3-W4 database clone runner and real USN, File and Security cross-window correctness/throughput proof remain mandatory. H16 (89.931 s reference) is untouched.
 
 ## Required behavior
 
@@ -47,7 +47,21 @@ Typed buffering therefore also changes the SQL transaction unit from **W128 full
 
 **Important:** These tests use a fake durable sink; passing them would establish routing behavior **only**. They do not establish PostgreSQL SQL/PKI correctness, equality of signed record/hash evidence, or runtime speedup.
 
-## PostgreSQL work that must be implemented before a host run
+## PostgreSQL source-first implementation and remaining host acceptance work
+
+Implemented on the experimental work branch:
+
+- `go/internal/recordingest/private_continuous_postgres_sink.go`: initializes only the private shadow generation; verifies committed signed custody identities in bounded exact-key SQL batches; commits one family at a time with existing 49-table projectors; inserts append-only `fi_recovery.projected_source_record` receipts in the SAME SQL transaction. Replay verifies matching signed digest and shadow source before skipping committed identities. SQL fail closes without a typed marker.
+- `go/internal/recordingest/private_continuous_family_replay.go`: stages signed source windows durably BEFORE routing; carries partial typed buffers over W128; drains at real end-of-input and verifies contiguous typed markers.
+- `go/internal/recordingest/backlog_artifact_ledger_schema.sql`: separate append-only projection receipt table in the isolated recovery namespace; no deployed SoR migration.
+- `go/cmd/fi-backlog-recover/main_freebsd.go`: `-private-continuous-family` is fail-closed to isolated, indexed W128 W3-W4 with P3/F3, and is incompatible with legacy K32, partitioned Security field mode, and legacy dependency modes.
+- `go/internal/recordingest/backlog_bootstrap_promote_ci_integration_test.go`: PostgreSQL 18 CI synthetic tests for two-window durable typed completion, idempotent replay, and rollback on invalid child. The separate FreeBSD-only fixture tests compile but are not executed by GitHub Actions.
+
+**Still required for a real signed W3-W4 run:** generate and audit a dedicated disposable clone runner (the existing pinned H16 runner does not install this code/schema); verify all Security/File/USN typed child and FK coverage, cross-window capture prerequisites, source identity and receipt equality, restart after partially committed families, WAL/checkpoint behavior, and actual copy counts. Existing H16 SHA/JSON optimizations must be compared without conflating a new transaction boundary with old W128 atomic commits. The 29 W4 USN rows and 232,879 Security records are hard acceptance gates. Report timing only from the real signed test.
+
+A projected `source_record` root without complete typed children is NOT sufficient. A final marker requires complete per-window projection receipts and the existing relational coverage queries; an entire generation with USN captures must additionally pass the generation-level capture completeness proof. Detached W128-scoped Security field partitions are intentionally disabled for continuous mode until their cross-window semantics are audited.
+
+## Outstanding PostgreSQL hardening and validation before acceptance
 
 1. A concrete `privateContinuousSink` backed by private `pgx` transactions that verifies each staged source row against the exact signed record hash. It must handle every typed parent/child together and initialize/flush deferred NTFS, content hash, ACE, USN and Security field writers inside the same atomic family commit.
 2. Strict idempotent replay from verified cache. If a family buffer committed but the worker stopped, do not attempt duplicate inserts; verify the exact source identities and all relational evidence. Reject partial/inconsistent buffers rather than masking them with an upsert.
@@ -63,3 +77,12 @@ Typed buffering therefore also changes the SQL transaction unit from **W128 full
 - **Then:** compile and run the complete continuous source-first SQL sink on the disposable W3–W4 clone. Require 259,178 records and 232,879 Security records, 111 signed batches, original SHA evidence, exact SQL coverage, 29 USN dependency rows in W4, zero authoritative/Accepted writes, and observable capacity-only flush reasons. W3/W4 partial buffers may flush at the **actual end of the requested test input**; there may be no automatic flush at W3→W4.
 - **Only after W3–W4 passes correctness and produces a meaningful timing comparison:** pin the exact same configuration for W3–W12 **ten windows** and require acceptance on all ten signed windows, cross-window buffers, restart/failure injection, sustained rec/s, WAL/checkpoint/I/O evidence, and zero custody or FK mismatch.
 - No change to main or accepted H16 until this evidence is reviewed.
+
+## Recorded development CI and caveats
+
+- PostgreSQL 18 CI test `TestBacklogBootstrapPromoteFreshIsolatedPostgres/continuous-family-sql-commit-and-replay`: passed on a disposable synthetic source, including replay after committed typed windows.
+- PostgreSQL 18 CI test `TestBacklogBootstrapPromoteFreshIsolatedPostgres/continuous-family-failed-child-rollback`: passed; durable source remained, failed typed transaction left no completion receipts or typed marker.
+- FreeBSD cross-build and legacy typed-chunk PostgreSQL workflow: passed at the earlier CI fixture commit. These do not execute the real W3-W4 signed cache.
+- Independent `govulncheck` security workflow reports GO-2026-6865 and GO-2026-6859 in existing transitive/standard-library call paths. A build/test success does not resolve these advisories.
+- The optimized batched-custody-query variant requires its own CI results; no performance claim is based on synthetic tests.
+- Until the signed W3-W4 candidate passes **correctness, USN dependency coverage, crash/restart verification, and a measured comparison with H16**, the 10-window W3-W12 run is **not authorized** by the acceptance criteria.
