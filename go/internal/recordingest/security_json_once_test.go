@@ -112,6 +112,36 @@ func TestSecurityJSONOnceNestedSecurityMembersRemainSelected(t *testing.T) {
 	}
 }
 
+// The sender validated the original JSON. Ingest still has to reject a
+// malformed signed cache item; one strict decode is enough. None of these
+// records may pass either decoder, and the Security path must not run a
+// preliminary syntax-validation pass to discover that.
+func TestSecurityJSONOnceStrictDecodeRejectsMalformedStrings(t *testing.T) {
+	raw := singlePassSecurityTestRecord(t, 24, 8192)
+	cases := []struct {
+		name string
+		needle []byte
+		replacement []byte
+	}{
+		{"scope", []byte(`"scope_id":"test-scope"`), []byte(`"scope_id":"bad\\q"`)},
+		{"written-at", []byte(`"written_at":"2026`), []byte(`"written_at":"\\q2026`)},
+		{"payload", []byte(`"event_id":"4663"`), []byte(`"event_id":"bad\\q"`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !bytes.Contains(raw, tc.needle) { t.Fatal("fixture anchor missing") }
+			mutated := bytes.Replace(raw, tc.needle, tc.replacement, 1)
+			_, _, selected, err := tryPrepareSinglePassSecurity(mutated)
+			if !selected || err == nil {
+				t.Fatalf("malformed JSON reached successful fast path: selected=%t err_nil=%t", selected, err == nil)
+			}
+			if _, err := prepareOwnedSourceRecord(mutated); err == nil {
+				t.Fatal("legacy strict decoder admitted malformed JSON")
+			}
+		})
+	}
+}
+
 // Selection is allowed to be *more conservative* for abnormal signed JSON,
 // but cannot accept an unsafe fast-path slice that was invalid under the
 // original json.Valid gate. The fallback must preserve original acceptance,
@@ -149,9 +179,12 @@ func TestSecurityJSONOnceNoncanonicalAndMalformedFallback(t *testing.T) {
 	for i, record := range variants {
 		originalFastSelection := legacySecurityJSONSelection(record)
 		got, security, selected, fastErr := tryPrepareSinglePassSecurity(record)
-		if selected && !originalFastSelection {
-			t.Fatalf("case %d: fast-path selected an input that failed original JSON validity", i)
+		if selected && !originalFastSelection && fastErr == nil {
+			t.Fatalf("case %d: fast-path accepted an input rejected by original syntax gate", i)
 		}
+		// Selection itself is an implementation detail. With redundant JSON
+		// syntax prechecks removed, malformed canonical-shaped JSON may reach
+		// the one strict decoder, but it MUST still be rejected.
 		if selected {
 			if fastErr == nil {
 				legacy, err := prepareOwnedSourceRecord(record)
