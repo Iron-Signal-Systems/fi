@@ -262,9 +262,10 @@ depassets=/home/jwood/fi-h16-dependency-buffer-assets
 [ -d "$depassets" ] && [ ! -L "$depassets" ] || fail 'dependency asset directory missing'
 for spec in \
  "private_dependency_buffers.go 089bbf0af7ef50d1c5815cbd59e13833068236c2" \
- "private_dependency_buffers_test.go 1b3b4deed8a9ee02047b06d4b0dbe76b514b1148" \
- "private_mixed_family_buffers.go 5dbf8d3d62ed6e21580128a8041630bc8bac7384" \
- "patch_private_dependency_buffers.go 709eba3e28d81f6f5888a36c5bdb931ff261dca6"; do
+ "private_dependency_buffers_test.go c9f4466364c1a5b6b1a0ae1f7b7f4dfbdf344866" \
+ "private_mixed_family_buffers.go ec72725173fd97e961b82de1e5890b6ed47654f1" \
+ "private_mixed_family_buffers_test.go 3548edb0945eb7213974b0edfa78e6f21efbf8f7" \
+ "patch_private_dependency_buffers.go a791be0c8fb097892ab09b272d9ae7775cec821e"; do
     set -- $spec
     [ -f "$depassets/$1" ] && [ ! -L "$depassets/$1" ] || fail "dependency asset absent: $1"
     [ "$(git hash-object "$depassets/$1")" = "$2" ] || fail "dependency asset changed: $1"
@@ -272,6 +273,7 @@ done
 cp "$depassets/private_dependency_buffers.go" "$src/go/internal/recordingest/private_dependency_buffers.go"
 cp "$depassets/private_dependency_buffers_test.go" "$src/go/internal/recordingest/private_dependency_buffers_test.go"
 cp "$depassets/private_mixed_family_buffers.go" "$src/go/internal/recordingest/private_mixed_family_buffers.go"
+cp "$depassets/private_mixed_family_buffers_test.go" "$src/go/internal/recordingest/private_mixed_family_buffers_test.go"
 (cd "$src/go" && GOTOOLCHAIN=auto go run "$depassets/patch_private_dependency_buffers.go" "$src") ||
   fail 'dependency patch rejected pinned H16 source'
 (cd "$src/go" && gofmt -w \
