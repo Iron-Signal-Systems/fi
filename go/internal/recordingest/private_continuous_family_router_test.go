@@ -204,3 +204,81 @@ func TestPrivateContinuousEverySupportedKindHasAnExplicitLane(t *testing.T) {
         t.Fatal("unknown record kind silently routed")
     }
 }
+
+/*
+Exact-limit regression: the capacity write must happen upon receipt of the
+limit-filling record, not upon a later record or a K32/W128 boundary. It
+exercises both independent threshold types and protects the durable-projection
+contract when the final record of a source window happens to fill a buffer.
+*/
+func TestPrivateContinuousFlushesAtExactCapacity(t *testing.T) {
+    ctx := context.Background()
+    for _, tc := range []struct {
+        name string
+        records int
+        size int
+    }{
+        {name: "record-count-4096", records: 4096, size: 128},
+        {name: "byte-limit-16MiB", records: 2048, size: 8192},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            probe := newPrivateContinuousSinkProbe()
+            probe.durable[3] = true
+            router, err := newPrivateContinuousFamilyRouter(ctx, probe, 2)
+            if err != nil { t.Fatal(err) }
+            if err := router.BeginSourceWindow(ctx, 3); err != nil { t.Fatal(err) }
+            for i := 1; i <= tc.records; i++ {
+                row := privateContinuousFixture(3, 111, int64(i), "WindowsSecurityEvent", tc.size)
+                if err := router.Add(ctx, row); err != nil { t.Fatal(err) }
+                if i != tc.records && probe.flushes[privateFamilySecurity] != 0 {
+                    t.Fatalf("premature capacity flush at record %d", i)
+                }
+            }
+            if probe.flushes[privateFamilySecurity] != 1 ||
+                len(probe.committed) != tc.records ||
+                len(router.lanes[privateFamilySecurity].pending) != 0 ||
+                router.outstanding[3] != 0 {
+                t.Fatalf("exact limit was not committed: flushes=%v committed=%d pending=%d outstanding=%d",
+                    probe.flushes, len(probe.committed),
+                    len(router.lanes[privateFamilySecurity].pending), router.outstanding[3])
+            }
+            // The source window remains INPUT-open, so an early SQL capacity
+            // commit must never publish its typed_window completion marker.
+            if len(probe.projected) != 0 { t.Fatalf("marker published before close: %v", probe.projected) }
+            if err := router.EndSourceWindow(ctx, 3); err != nil { t.Fatal(err) }
+            if len(probe.projected) != 1 || probe.projected[0] != 3 {
+                t.Fatalf("committed source not marked at input close: %v", probe.projected)
+            }
+            if err := router.EndOfInput(ctx); err != nil { t.Fatal(err) }
+            if probe.flushes[privateFamilySecurity] != 1 {
+                t.Fatalf("end-of-input caused duplicate capacity write: %v", probe.flushes)
+            }
+        })
+    }
+}
+
+func TestPrivateContinuousExactCapacityFailureKeepsEntireBuffer(t *testing.T) {
+    ctx := context.Background()
+    probe := newPrivateContinuousSinkProbe()
+    probe.durable[3] = true
+    probe.failFamily = privateFamilySecurity
+    router, err := newPrivateContinuousFamilyRouter(ctx, probe, 2)
+    if err != nil { t.Fatal(err) }
+    if err := router.BeginSourceWindow(ctx, 3); err != nil { t.Fatal(err) }
+    for i := 1; i < 4096; i++ {
+        if err := router.Add(ctx, privateContinuousFixture(3, 110, int64(i), "WindowsSecurityEvent", 128)); err != nil {
+            t.Fatal(err)
+        }
+    }
+    if err := router.Add(ctx, privateContinuousFixture(3, 110, 4096, "WindowsSecurityEvent", 128)); err == nil {
+        t.Fatal("capacity SQL failure not propagated")
+    }
+    if len(router.lanes[privateFamilySecurity].pending) != 4096 ||
+        router.outstanding[3] != 4096 ||
+        len(probe.projected) != 0 ||
+        len(probe.committed) != 0 {
+        t.Fatal("failed exact-capacity SQL write lost records or published checkpoint")
+    }
+    // After a failed Add, the owning worker must stop and recover from
+    // durable signed input; the queue still holds the complete failed batch.
+}
