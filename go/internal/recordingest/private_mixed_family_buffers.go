@@ -49,6 +49,13 @@ type securityFileFlushDecision struct {
 }
 
 func securityFileFlushBeforeKind(ctx context.Context, kind string) securityFileFlushDecision {
+    // Coverage already has its own bounded projection buffer. The dedicated
+    // USN dependency queue retains source-custody order, so neither family
+    // needs to force unrelated Security/File COPY when explicitly enabled.
+    if privateDependencyBuffersEnabled(ctx) &&
+        (kind == "WindowsSecurityCoverage" || privateUSNDependentKind(kind)) {
+        return securityFileFlushDecision{}
+    }
     mixed := privateMixedFamilyBuffersEnabled(ctx)
     switch kind {
     case "WindowsSecurityEvent":
