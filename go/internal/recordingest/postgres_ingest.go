@@ -478,15 +478,22 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	var contiguousSecurity int
 	var pendingFiles []fileSourceBulkRecord
 	var pendingFileBytes int64
+	// A third, independently bounded family queues USN capture boundaries and
+	// dependent objects in original signed order inside the same K32 chunk.
+	var pendingDependencies []privateDependencySourceRecord
+	var pendingDependencyBytes int64
 	fileLimits := fileBulkLimitsFromContext(ctx)
 	fileBulk := newFileObservationBulkState()
 	if hasChunk {
 		pendingFiles = chunk.state.files
 		pendingFileBytes = chunk.state.fileBytes
 		fileBulk = chunk.state.fileBulk
+		pendingDependencies = chunk.state.dependencies
+		pendingDependencyBytes = chunk.state.dependencyBytes
 		defer func() {
 			chunk.state.security, chunk.state.securityBytes = pendingSecurity, pendingSecurityBytes
 			chunk.state.files, chunk.state.fileBytes = pendingFiles, pendingFileBytes
+			chunk.state.dependencies, chunk.state.dependencyBytes = pendingDependencies, pendingDependencyBytes
 		}()
 	}
 	ctx = context.WithValue(ctx, fileObservationBulkContextKey{}, fileBulk)
@@ -552,6 +559,23 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 		pendingSecurityBytes = 0
 		return nil
 	}
+	flushDependencies := func() error {
+		if len(pendingDependencies) == 0 {
+			return nil
+		}
+		// The USN projector may resolve NTFS identities. File writes are
+		// prerequisite work here; unrelated Security/coverage are NOT.
+		if err := flushFiles(); err != nil {
+			return err
+		}
+		if err := flushPrivateDependencies(ctx, tx, sourceID, pendingDependencies, profile); err != nil {
+			return fmt.Errorf("%w: batch %s USN dependency COPY: %v",
+				ErrSourceRecordRejected, batch.BatchID, err)
+		}
+		pendingDependencies = nil
+		pendingDependencyBytes = 0
+		return nil
+	}
 	for {
 		readStarted := time.Now()
 		raw, readErr := reader.ReadBytes('\n')
@@ -603,7 +627,8 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 				return ordinal, fmt.Errorf("FI joined source: %w", err)
 			}
 		}
-		if prepared.Record.RecordKind != "WindowsSecurityCoverage" {
+		if prepared.Record.RecordKind != "WindowsSecurityCoverage" &&
+			!privateDependencyBuffersEnabled(ctx) {
 			if err := profile.coverageBuffer.flush(ctx, tx); err != nil {
 				return ordinal, fmt.Errorf("%w: batch %s Security coverage COPY: %v", ErrSourceRecordRejected, batch.BatchID, err)
 			}
@@ -660,6 +685,34 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			continue
 		}
 		contiguousSecurity = 0
+		if privateDependencyBuffersEnabled(ctx) &&
+			privateUSNDependentKind(prepared.Record.RecordKind) {
+			incoming := int64(prepared.RecordBytes)
+			if privateDependencyShouldFlushBefore(len(pendingDependencies), pendingDependencyBytes, incoming) {
+				if err := flushDependencies(); err != nil {
+					return ordinal, err
+				}
+			}
+			var queueErr error
+			pendingDependencies, pendingDependencyBytes, queueErr =
+				privateDependencyAppend(pendingDependencies, pendingDependencyBytes,
+					sourceBatchID, ordinal, prepared)
+			if queueErr != nil {
+				return ordinal, queueErr
+			}
+			if pendingDependencyBytes > privateDependencyMaxBytes {
+				if err := flushDependencies(); err != nil {
+					return ordinal, err
+				}
+			}
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
+				}
+				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+			}
+			continue
+		}
 		if prepared.Record.RecordKind == "FileObservation" || prepared.Record.RecordKind == "USNObjectObservation" {
 			if len(pendingFiles) >= fileLimits.SourceMaxRecords ||
 				(len(pendingFiles) > 0 && int64(prepared.RecordBytes) > fileLimits.SourceMaxBytes-pendingFileBytes) {
@@ -724,6 +777,9 @@ RETURNING source_record_id
 			return ordinal, err
 		}
 		if err := flushSecurity(); err != nil {
+			return ordinal, err
+		}
+		if err := flushDependencies(); err != nil {
 			return ordinal, err
 		}
 		fileFlushStarted := time.Now()
