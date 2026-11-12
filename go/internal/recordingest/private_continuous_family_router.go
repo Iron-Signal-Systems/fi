@@ -192,6 +192,13 @@ func (r *privateContinuousFamilyRouter) Add(ctx context.Context, item privateCon
     lane.bytes += incoming
     r.outstanding[item.WindowIndex]++
     r.lastBatch, r.lastOrdinal = item.SignedBatchIndex, item.Ordinal
+    // A buffer is full as soon as this record fills its record or byte
+    // ceiling. Do not wait for another source record to arrive: a signed
+    // window can end on the exact limit, and capacity (not that later
+    // window boundary) must be the recorded reason for SQL delivery.
+    if len(lane.pending) == limit.Records || lane.bytes == limit.Bytes {
+        return r.flush(ctx, family)
+    }
     return nil
 }
 
