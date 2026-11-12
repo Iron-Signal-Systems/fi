@@ -65,15 +65,13 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 		payload <= written+len(securityWrittenAtKey) {
 		return emptySource, emptySecurity, false, nil
 	}
-	// The two intervening values must be exactly one JSON string each;
-	// otherwise an inserted or reordered envelope member could be mistaken
-	// for the canonical layout.
+	// This is only a constant-time canonical-layout check. The already
+	// required strict typed decoder below parses the two strings and the
+	// payload together; repeating json.Valid on either string wastes work.
 	scopeValue := body[len(securityEnvelopePrefix):written]
 	writtenAtValue := body[written+len(securityWrittenAtKey):payload]
 	if len(scopeValue) < 2 || scopeValue[0] != '"' || scopeValue[len(scopeValue)-1] != '"' ||
-		!json.Valid(scopeValue) ||
-		len(writtenAtValue) < 2 || writtenAtValue[0] != '"' || writtenAtValue[len(writtenAtValue)-1] != '"' ||
-		!json.Valid(writtenAtValue) {
+		len(writtenAtValue) < 2 || writtenAtValue[0] != '"' || writtenAtValue[len(writtenAtValue)-1] != '"' {
 		return emptySource, emptySecurity, false, nil
 	}
 	rawPayload := body[payload+len(securityPayloadKey):len(body)-1]
@@ -87,12 +85,8 @@ func tryPrepareSinglePassSecurity(raw []byte) (SourceRecord, securityBulkRecord,
 
 	var parsed singlePassSecurityEnvelope
 	if err := decodeStrictPayload(json.RawMessage(body), &parsed); err != nil {
-		// Preserve legacy selection for invalid payload syntax. This full
-		// payload check is paid only on a strict decoder failure, never for
-		// an authenticated canonical Security event.
-		if !json.Valid(rawPayload) {
-			return emptySource, emptySecurity, false, nil
-		}
+		// The typed decoder already checked JSON syntax and member types.
+		// Reject invalid signed input without a redundant json.Valid pass.
 		return emptySource, emptySecurity, true, fmt.Errorf("decode FI ingest source record: %w", err)
 	}
 	if parsed.Version != SpoolRecordVersion || parsed.RecordKind != "WindowsSecurityEvent" {
