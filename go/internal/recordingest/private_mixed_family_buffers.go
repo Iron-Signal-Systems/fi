@@ -105,5 +105,9 @@ func fileOrdinalInvalidForBatch(ctx context.Context, current, previous int64) bo
     if current <= previous {
         return true
     }
-    return !privateMixedFamilyBuffersEnabled(ctx) && current != previous+1
+    // A continuous SQL family flush also contains sparse original ordinals:
+    // unrelated signed records were routed to other durable family lanes.
+    // The caller checks the exact (batch,ordinal,digest) identity in SQL.
+    continuous := ctx != nil && ctx.Value(privateContinuousFamilyWriterKey{}) == true
+    return !privateMixedFamilyBuffersEnabled(ctx) && !continuous && current != previous+1
 }
