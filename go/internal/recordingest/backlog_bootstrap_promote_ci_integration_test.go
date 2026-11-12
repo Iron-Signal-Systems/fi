@@ -295,8 +295,41 @@ WHERE source_id=$1 AND outcome='Accepted'`,source).Scan(&journalCount);err!=nil{
   fixture.ReceiptSHA256=strings.Repeat("9",64)
   fixture.Receipt.TransferSHA256=strings.Repeat("a",64)
   root:=privateBacklogTestRoot(t)
+  // Commit exactly one family record, then simulate an interrupted worker
+  // BEFORE its source W0 typed-completion marker exists. A fresh router must
+  // verify that committed receipt and replay all remaining signed records.
+  descriptors,err:=DescribeBacklogWindows(fixture,limits)
+  if err!=nil || len(descriptors)!=2 {t.Fatalf("invalid fixture W0-W1: %v",err)}
+  if _,err=MaterializeBacklogWindow(ctx,fixture,limits,0,root);err!=nil{t.Fatal(err)}
+  if err=RecordVerifiedBacklogArtifactWindow(ctx,writer,fixture,limits,0,root);err!=nil{t.Fatal(err)}
+  if err=StageVerifiedBacklogSourceWindow(ctx,writer,fixture,limits,0,root);err!=nil{t.Fatal(err)}
+  sink,err:=newPrivateContinuousPostgresSink(ctx,writer,fixture,limits)
+  if err!=nil{t.Fatal(err)}
+  var one privateContinuousRecord
+  var found bool
+  _,_,_,err=scanBacklogWindowRecords(ctx,fixture,descriptors[0],0,root,
+   func(batchIndex int,ordinal int64,item SourceRecord) error {
+    if batchIndex==0 && ordinal==1 {
+     found=true
+     one=privateContinuousRecord{WindowIndex:0,SignedBatchIndex:batchIndex,Ordinal:ordinal,
+      SourceBatchID:sink.batchIDs[batchIndex],Prepared:item}
+    }
+    return nil
+   })
+  if err!=nil || !found {t.Fatalf("missing first original signed record: %v",err)}
+  if err=sink.FlushFamily(ctx,privateFamilyOrderedOther,[]privateContinuousRecord{one});err!=nil{
+   t.Fatalf("partial durable family SQL commit: %v",err)
+  }
+  var partial,earlyTyped int64
+  if err=writer.QueryRow(ctx,`SELECT
+   (SELECT count(*) FROM fi_recovery.projected_source_record WHERE receipt_sha256=decode($1,'hex')),
+   (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=decode($1,'hex'))`,
+   fixture.ReceiptSHA256).Scan(&partial,&earlyTyped);err!=nil{t.Fatal(err)}
+  if partial!=1 || earlyTyped!=0 {
+   t.Fatalf("crash fixture published incomplete SQL window: receipt=%d marker=%d",partial,earlyTyped)
+  }
   if err:=StageBacklogContinuousFamilyWindows(ctx,writer,fixture,limits,0,2,root);err!=nil{
-   t.Fatalf("continuous first SQL replay: %v",err)
+   t.Fatalf("continuous partial-commit SQL recovery: %v",err)
   }
   var sourceRows,receipts,markers,authoritative int64
   if err:=writer.QueryRow(ctx,`SELECT
