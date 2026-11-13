@@ -11,6 +11,7 @@ on:
       - 'go/cmd/fi-backlog-recover/testdata/w512_2g_private_field_*.sql'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_pilot2_host.sh'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_wal_*_host.sh'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_inflight16_host.sh'
       - 'go/cmd/fi-backlog-recover/patchers/w512_inflight16/**'
       - '.github/workflows/fi-w512-2g-seed.yml'
@@ -211,6 +212,55 @@ jobs:
             exit 1
           fi
           echo "FI W512 TWO-WINDOW PILOT STATIC GATE PASS seed=offline_copy first_new_window=1 workers=2 signed_replay=not_run"
+
+      - name: W512 WAL 1GB versus 8GB four-credit A/B static invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=go/cmd/fi-backlog-recover
+          one="$base/run_private_h16_parallel_a_w512_wal_w1g_host.sh"
+          eight="$base/run_private_h16_parallel_a_w512_wal_w8g_host.sh"
+          both="$base/run_private_h16_parallel_a_w512_wal_ab_host.sh"
+          sh -n "$one"
+          sh -n "$eight"
+          sh -n "$both"
+          test "$(grep -cx "JAIL" "$one")" = 1
+          test "$(grep -cx "JAIL" "$eight")" = 1
+          grep -Fq 'sh "$script" h16' "$both"
+          grep -Fq 'FI_WAL_AB_STAMP="$stamp" sh "$script" h16' "$both"
+          grep -Fq "sha1=9e150d4e1186d25775ed9b232c17bb8b29de5b77" "$both"
+          grep -Fq "sha8=604c201e3f14ecd779bff0bf5152a1c278afe8ee" "$both"
+          grep -Fq 'signed_descriptors_identical=true' "$both"
+          for script in "$one" "$eight"; do
+            grep -Fq "track_io_timing=on -c track_wal_io_timing=on" "$script"
+            grep -Fq -- '-window-profile=W512' "$script"
+            grep -Fq -- '-test-stop-after-windows=2' "$script"
+            grep -Fq 'f["inflight_limit"]!=4' "$script"
+            grep -Fq 'f["reorder_peak"]+0>3' "$script"
+            grep -Fq "signed byte-identical readback" "$script"
+            grep -Fq 'W512_CHECKPOINTS.tsv' "$script"
+            grep -Fq 'pg_settings.txt' "$script"
+            grep -Fq 'max_wal_size' "$script"
+            grep -Fq 'track_wal_io_timing' "$script"
+            grep -Fq 'full_page_writes' "$script"
+            grep -Fq "coalesce(sum(committed_records),0)" "$script"
+            grep -Fq 'AND (SELECT committed_records FROM fi_recovery.typed_window WHERE window_index=1)=499052' "$script"
+            grep -Fq 'AND (SELECT committed_records FROM fi_recovery.typed_window WHERE window_index=2)=498382' "$script"
+            if grep -Fq 'pg_restore' "$script" || grep -Fq -- '-private-w512-verified-cache-seed' "$script"; then
+              echo "STOP: W512 WAL replay changed authenticated-cache provenance" >&2
+              exit 1
+            fi
+          done
+          python3 - "$one" "$eight" <<'PY'
+          import sys
+          a,b=[open(p,encoding="utf-8").read() for p in sys.argv[1:]]
+          def normalized(t):
+              return t.replace("w1g","WA").replace("w8g","WA").replace("1GB","WAL").replace("8GB","WAL")
+          if normalized(a) != normalized(b):
+              raise SystemExit("W512 WAL A/B STOP: additional script differences beyond WAL cap, arm identifiers, and evidence labels")
+          print("FI W512 WAL A/B SOURCE DIFF GATE PASS sole_variable=max_wal_size fixed_workers=2 fixed_credits=4")
+          PY
+          echo "FI W512 WAL A/B CI PASS shell=valid SQL_gates=retained signed_source=identical PG_io_timing=enabled signed_replay=not_executed"
 
       - name: W512 two-worker 4-to-16 credit experiment exact-anchor and FreeBSD source gate
         shell: bash
