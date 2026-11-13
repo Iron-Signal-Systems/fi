@@ -158,8 +158,8 @@ jobs:
           set -euo pipefail
           pair=go/cmd/fi-backlog-recover/run_private_h16_ab10_pair_host.sh
           sh -n "$pair"
-          grep -Fq '45d539d87c2c2d282360d82de210f68974eb70fb' "$pair"
-          grep -Fq '47380305f9da2e5616cac930189fbfac7aed8042' "$pair"
+          grep -Fq '02888bfe0245ead876d52b9fecac2ea0a532361c' "$pair"
+          grep -Fq '8ba5050b0c6500d22cb7ea2a1a4f51024faa4c5f' "$pair"
           grep -Fq 'combined W3-W12 failed; five-lane NOT started' "$pair"
           grep -Fq 'sh "$combined" h16 || die' "$pair"
           grep -Fq 'sh "$five" h16 || die' "$pair"
@@ -179,3 +179,10 @@ jobs:
           set -euo pipefail
           sh -n go/cmd/fi-backlog-recover/testdata/h16-ab10/test_pair_runtime.sh
           sh go/cmd/fi-backlog-recover/testdata/h16-ab10/test_pair_runtime.sh
+
+      - name: Execute BOTH jailed preflight hash predicates and reject incomplete POSIX bracket tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n go/cmd/fi-backlog-recover/testdata/h16-ab10/test_runner_preflight_guards.sh
+          sh go/cmd/fi-backlog-recover/testdata/h16-ab10/test_runner_preflight_guards.sh
