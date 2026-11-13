@@ -47,9 +47,10 @@ trap 'exit 130' 2
 trap 'exit 143' 15
 printf 'FI CONTINUOUS PRECHECK PASS signed_batches=8399 existing_seed=390387 source_pin=%s\n' "$pin"
 
-# All Git operations and Go builds use the normal jwood account inside fi-dev.
-# git fetch updates only Git objects/FETCH_HEAD, never the current worktree,
-# including the user's separate detached /home/jwood/fi-deferred-experiment.
+# The interactive jwood SSH session (with Mac-forwarded SSH agent) fetches
+# the pinned Git objects BEFORE this runner starts. This host-root jexec shell
+# MUST NOT contact GitHub; it has no forwarded SSH agent. The detached
+# /home/jwood/fi-deferred-experiment worktree is never changed.
 jexec -U jwood fi-dev sh -s "$root" "$seed" "$name" "$pin" <<'JAIL'
 set -eu
 umask 077
@@ -61,8 +62,6 @@ db=$root/$name
 [ "$(id -un)" = jwood ] || fail 'wrong jail user'
 [ "$(psql --version)" = 'psql (PostgreSQL) 18.6' ] || fail 'expected PostgreSQL 18.6'
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || fail 'expected ~/src/fi Git repo'
-git -C "$repo" fetch --no-tags origin refs/heads/work/fi-joined-private-performance-20261102 >/dev/null ||
- fail 'experiment branch fetch failed'
 git -C "$repo" cat-file -e "$pin^{commit}" || fail 'missing pinned experiment commit'
 [ ! -e "$root" ] || fail 'private clone destination exists'
 mkdir -m 700 "$root" "$src" "$db" "$db/socket"
