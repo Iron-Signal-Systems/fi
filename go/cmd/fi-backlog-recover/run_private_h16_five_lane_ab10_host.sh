@@ -192,8 +192,7 @@ mkdir -m 700 "$root" "$src" "$pgroot" "$socket"
 verifyrel=go/cmd/fi-backlog-recover/testdata/h16-ab10/validate_signed_ab10.sh
 git -C "$combinedrepo" show "$ab10ref:$verifyrel" > "$root/ab10_validate.sh" ||
     fail 'AB10 postrun script cannot be recovered'
-[ "$(git -C "$combinedrepo" hash-object "$root/ab10_validate.sh")" =
-  "16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e" ] ||
+[ "$(git -C "$combinedrepo" hash-object "$root/ab10_validate.sh")" = "16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e" ] ||
     fail 'AB10 postrun source hash mismatch'
 sh -n "$root/ab10_validate.sh" || fail 'AB10 postrun shell syntax rejected'
 
