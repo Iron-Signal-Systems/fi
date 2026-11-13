@@ -420,14 +420,25 @@ func indexedBacklogPreparedFromVerifiedCache(ctx context.Context, g *PreparedGen
 		}
 		manifest, err := spool.DecodeManifest(bytes.NewReader(raw))
 		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: manifest %d parse: %w", i, err) }
+		// PostgreSQL timestamp reserialization may remove insignificant
+		// fractional zeros. Compare authenticated instants, not textual
+		// RFC3339 spellings from the prior SQL source-batch index.
+		signedCreated, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt)
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: manifest %d created_at invalid: %w", i, err) }
+		indexedCreated, err := time.Parse(time.RFC3339Nano, b.Manifest.CreatedAt)
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: SQL batch %d created_at invalid: %w", i, err) }
+		signedCompleted, err := time.Parse(time.RFC3339Nano, manifest.CompletedAt)
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: manifest %d completed_at invalid: %w", i, err) }
+		indexedCompleted, err := time.Parse(time.RFC3339Nano, b.Manifest.CompletedAt)
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: SQL batch %d completed_at invalid: %w", i, err) }
 		if manifest.BatchID != b.BatchID || manifest.Version != b.Manifest.Version ||
 			manifest.DataFile != b.DataArtifactName || manifest.TargetBatchSize != b.Manifest.TargetBatchSize ||
 			manifest.RecordCount != b.Manifest.RecordCount || manifest.DataBytes != b.Manifest.DataBytes ||
 			manifest.DataSHA256 != b.Manifest.DataSHA256 ||
 			manifest.Collector.ExecutablePath != b.Manifest.Collector.ExecutablePath ||
 			manifest.Collector.ExecutableSHA256 != b.Manifest.Collector.ExecutableSHA256 ||
-			manifest.CreatedAt != b.Manifest.CreatedAt ||
-			manifest.CompletedAt != b.Manifest.CompletedAt {
+			!signedCreated.Equal(indexedCreated) ||
+			!signedCompleted.Equal(indexedCompleted) {
 			return nil, fmt.Errorf("FI indexed verified cache: manifest %d conflicts with recorded SQL source index", i)
 		}
 		path := backlogCacheBatchData(cacheDir, i)
