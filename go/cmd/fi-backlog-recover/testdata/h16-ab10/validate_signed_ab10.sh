@@ -192,14 +192,14 @@ awk '
     if(a[1]=="security_source_copy_calls")source=a[2]+0
     if(a[1]=="coverage_security_flushes_avoided")avoided=a[2]+0}
   if(w<3||w>12||seen[w]++||dep<0||calls<=0||source!=calls||avoided<0)bad=1
-  d[w]=dep;c[w]=calls;a[w]=avoided;n++
+  d[w]=dep;c[w]=calls;avoided_by_window[w]=avoided;n++
  }
  END {
   if(n!=10||d[3]!=0||d[4]!=29||c[3]!=30||c[4]!=30||
-     a[3]!=51||a[4]!=53)bad=1
+     avoided_by_window[3]!=51||avoided_by_window[4]!=53)bad=1
   for(w=3;w<=12;w++)if(seen[w]!=1)bad=1
   if(bad)exit 2
-  for(w=3;w<=12;w++){copies+=c[w];saved+=a[w]}
+  for(w=3;w<=12;w++){copies+=c[w];saved+=avoided_by_window[w]}
   printf "FI H16 AB10 SECURITY ROUTE PASS windows=10 copy_calls=%d coverage_flushes_avoided=%d\n",copies,saved
  }
 ' "$log" > "$out/$name/BUFFER_TOTALS.txt" ||
