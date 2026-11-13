@@ -72,7 +72,7 @@ preparation wall time without accounting for overlap.
 - H16 profile `e47b5383e19140090d691b7c20e8d6ef6e0113fa`.
 - Combined-buffer code `58f5d7341ba728b4696d05ba31199cb38226befc`.
 - Candidate A immutable three-file source pin
-  `cef6df894555f9c7bc10cb0957c2eb745487d2a2`:
+  `54e7ad82abb9e90402ee90a15f6a726f97e7ef0a`:
   - `testdata/h16-parallel-a/private_parallel_preparation.go`;
   - `testdata/h16-parallel-a/private_parallel_preparation_test.go`;
   - `patchers/h16_parallel_a/main.go`.
@@ -125,3 +125,38 @@ approved**. Revert to the pinned combined H16 and preserve the trial.
 
 Unmeasured speedup, missing raw signed proof, any SQL mismatch or
 authoritative write disqualifies the candidate.
+
+## Candidate A failed-path audit, November 13
+
+The first real signed W3–W4 invocation exited its timed worker but failed the
+postrun gate with `FI CLONE STOP: Candidate A no per-batch parallel preparation
+proof`. The new CLI flag printed as selected, while **zero parallel batch
+proofs** were emitted. Root cause: Candidate A's runtime
+`privateParallelAEnabled(ctx)` incorrectly required File profile `F3`.
+The original H16 preparation configuration, after candidate selection,
+converts exact F3 to `F3H16` using `WithPrivateFileHashH16`. That made
+parallel mode false at ingestion time, silently falling back to sequential
+preparation. The run must not be characterized as a valid Candidate A
+benchmark, even if the ordinary signed SQL checkpoint completed.
+
+Changes in reviewed private source pin
+`54e7ad82abb9e90402ee90a15f6a726f97e7ef0a`:
+
+- Candidate A is *selected* only under original exact F3 dependency context.
+- Candidate A *activates* only after exact `F3H16` hash COPY configuration;
+  the existing `privateH16CombinedFileProfileValid` verifies every other
+  hash, source, observation and child-row limit.
+- `privateParallelAActivationError` rejects a selected-but-inactive context
+  **before the signed batch is processed**, rather than running the existing
+  single-preparer code.
+- Regression tests explicitly reproduce F3 selection → F3H16 conversion
+  and require activation only after conversion; altered field limits,
+  dependency/Security context and ordinary FI modes are rejected.
+- Corrected signed W3–W4 host runner Git blob
+  `ffbe3e6441037f536d39fcfeb211dc5391e98b9a`;
+  runner prints explicit per-batch proof for all **111** batches and refuses
+  a nonparallel source replay.
+
+No authoritative SoR changes, Windows sender changes, buffer-cap changes
+or original H16 changes are introduced. This correction is not a measured
+performance gain until a new real signed W3–W4 run passes all gates.
