@@ -31,7 +31,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          stage="$(mktemp -d)"
+          # The historical SHA-once patcher deliberately refuses arbitrary
+          # working directories. Satisfy its already-established disposable
+          # fi-window-bench-*/optimized-source ownership contract in CI.
+          bench="$(mktemp -d /tmp/fi-window-bench-h16-ci-XXXXXXXX)"
+          stage="$bench/optimized-source"
+          mkdir -p "$stage"
           base=b01ff0d8cb6559797de052f34b18bd84a395dc4c
           overlay=e47b5383e19140090d691b7c20e8d6ef6e0113fa
           combined=2cee0b3e4ffd27d6519f844ba133d956a0962e18
