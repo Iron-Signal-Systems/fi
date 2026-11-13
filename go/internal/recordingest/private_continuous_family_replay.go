@@ -65,16 +65,30 @@ func StageBacklogContinuousFamilyWindows(ctx context.Context, writer *pgx.Conn,
             return fmt.Errorf("FI continuous family replay: source W%d: %w",index,err)
         }
         if err=router.BeginSourceWindow(ctx,index);err!=nil{return err}
+        chunk,chunkErr:=newPrivateContinuousK32Chunk(router,index)
+        if chunkErr!=nil{return fmt.Errorf("FI continuous family replay: K32 W%d setup: %w",index,chunkErr)}
         digest,records,bytes,err:=scanBacklogWindowRecords(ctx,generation,d,index,privateRoot,
             func(batchIndex int,ordinal int64,item SourceRecord) error {
-                return router.Add(ctx,privateContinuousRecord{
+                if batchIndex<0 || batchIndex>=len(sink.batchIDs) {
+                    return errors.New("FI continuous family replay: source batch outside authenticated index")
+                }
+                return chunk.Add(ctx,privateContinuousRecord{
                     WindowIndex:index,SignedBatchIndex:batchIndex,Ordinal:ordinal,
                     SourceBatchID:sink.batchIDs[batchIndex],Prepared:item})
             })
-        if err!=nil{return fmt.Errorf("FI continuous family replay: signed W%d: %w",index,err)}
+        if err!=nil{return fmt.Errorf("FI continuous family replay: signed W%d K32 routing: %w",index,err)}
         if records!=d.EndRecord-d.StartRecord || bytes!=d.DataBytes || len(digest)!=32 {
             return fmt.Errorf("FI continuous family replay: signed W%d totals invalid",index)
         }
+        if err=chunk.EndSourceWindow(ctx);err!=nil{return err}
+        if chunk.dispatched!=records || chunk.dispatchedBytes!=bytes || chunk.chunks==0 {
+            return fmt.Errorf("FI continuous family replay: W%d K32 totals differ dispatched=%d/%d source=%d/%d chunks=%d",
+                index,chunk.dispatched,chunk.dispatchedBytes,records,bytes,chunk.chunks)
+        }
+        // Ending the K32 work units is NOT ending processing. The family
+        // buffers remain live and may cross this W128 source boundary.
+        fmt.Printf("FI PRIVATE CONTINUOUS K32 WINDOW PASS window=%d chunks=%d records=%d bytes=%d family_buffers_preserved=true\n",
+            index,chunk.chunks,records,bytes)
         if err=router.EndSourceWindow(ctx,index);err!=nil{return err}
         fmt.Printf("FI PRIVATE CONTINUOUS SOURCE WINDOW window=%d records=%d bytes=%d pending=%d typed_through=%d\n",
             index,records,bytes,router.outstanding[index],router.confirmedThrough)
