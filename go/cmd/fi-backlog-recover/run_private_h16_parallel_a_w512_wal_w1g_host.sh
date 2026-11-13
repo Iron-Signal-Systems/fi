@@ -143,15 +143,12 @@ state=$(sql "SELECT count(*)::text||'|'||sum(committed_records)::text||'|'||
 [ "$(sql 'SHOW track_io_timing')" = on ] &&
 [ "$(sql 'SHOW track_wal_io_timing')" = on ] ||
     fail 'W512 WAL A/B PostgreSQL configuration or timing instrumentation mismatch'
-cat > "$out/$name/pg_settings.txt" <<'PGSET'
-wal_arm=1GB
-wal_buffers=4MB
-track_io_timing=on
-track_wal_io_timing=on
-fsync=on
-synchronous_commit=on
-full_page_writes=on
-PGSET
+{
+    printf 'wal_arm=%s\n' '1GB'
+    for setting in max_wal_size wal_buffers track_io_timing track_wal_io_timing fsync synchronous_commit full_page_writes; do
+        printf '%s=%s\n' "$setting" "$(sql "SHOW $setting")"
+    done
+} > "$out/$name/pg_settings.txt" || fail 'W512 actual PostgreSQL settings capture failed'
 printf 'FI W512 WAL 1GB PG SETTINGS PASS wal_buffers=4MB track_io_timing=on track_wal_io_timing=on durable=on\n'
 for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
@@ -237,6 +234,8 @@ integrity=$(sql "SELECT CASE WHEN
  AND (SELECT count(*) FROM fi_recovery.source_window)=3
  AND (SELECT count(*) FROM fi_recovery.verified_artifact_window)=3
  AND (SELECT count(*) FROM fi_recovery_projection.source_batch)=8399
+ AND (SELECT committed_records FROM fi_recovery.typed_window WHERE window_index=1)=499052
+ AND (SELECT committed_records FROM fi_recovery.typed_window WHERE window_index=2)=498382
  AND (SELECT count(*) FROM pg_inherits
    WHERE inhparent='fi_recovery_projection.windows_security_event_field'::regclass)=3
  AND (SELECT count(*) FROM fi_recovery.pending_source_record)=$total
@@ -253,6 +252,12 @@ integrity=$(sql "SELECT CASE WHEN
  AND (SELECT encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window WHERE window_index=0)='$seedhash'
  THEN 'PASS' ELSE 'FAIL' END")
 [ "$integrity" = PASS ] || fail 'W512 SQL source/typed/artifact integrity failed'
+sql "SELECT window_index::text||'|'||committed_records::text||'|'||
+    encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window
+    ORDER BY window_index" > "$out/$name/W512_CHECKPOINTS.tsv" ||
+    fail 'W512 per-window source descriptor readback failed'
+[ "$(wc -l < "$out/$name/W512_CHECKPOINTS.tsv" | tr -d ' ')" = 3 ] ||
+    fail 'W512 checkpoint descriptor matrix incomplete'
 grep '^FI PRIVATE PARALLEL PREP BATCH ' "$log" > "$out/$name/PARALLEL_PREP.txt" ||
     fail 'parallel batch proof absent'
 prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
@@ -310,7 +315,7 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/COPY_CALLS.txt" "$name/STAGES.txt" "$name/PARALLEL_PREP.txt" \
   "$name/HASH_ONCE.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
-  "$name/io_before.jsonl" "$name/io_after.jsonl" \
+  "$name/io_before.jsonl" "$name/io_after.jsonl" "$name/W512_CHECKPOINTS.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/pg_settings.txt" || fail 'W512 WAL A/B metrics bundle creation failed'
 [ -s "$bundle" ] || fail 'W512 metrics bundle absent'
 printf 'FI W512 WAL 1GB METRICS BUNDLE PASS path=%s sha256=%s\n' "$bundle" "$(sha256 -q "$bundle")"
