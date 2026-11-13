@@ -55,14 +55,14 @@ func main() {
         if _,err:=os.Stat(asset);err!=nil {fmt.Fprintln(os.Stderr,err);os.Exit(1)}
         target:=filepath.Join(root,"go/internal/recordingest",name)
         if _,err:=os.Stat(target);err==nil {
-            fmt.Fprintln(os.Stderr,"FI PRIVATE PARALLEL PREP A PATCH STOP: old five-lane file already present",name)
+            fmt.Fprintln(os.Stderr,"FI PRIVATE PARALLEL PREP A PATCH STOP: old candidate A private file already present",name)
             os.Exit(1)
         }
     }
     for full,data:=range updated {
         if err:=os.WriteFile(full,[]byte(data),0600);err!=nil {fmt.Fprintln(os.Stderr,err);os.Exit(1)}
     }
-    for _,name:=range []string{"private_h16_five_lane.go","private_h16_five_lane_test.go"} {
+    for _,name:=range []string{"private_parallel_preparation.go","private_parallel_preparation_test.go"} {
         asset:=filepath.Join(root,"go/cmd/fi-backlog-recover/testdata/h16-parallel-a",name)
         target:=filepath.Join(root,"go/internal/recordingest",name)
         b,err:=os.ReadFile(asset)
