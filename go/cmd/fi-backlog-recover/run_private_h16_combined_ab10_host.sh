@@ -31,7 +31,7 @@ esac
 mode=candidate
 name=clone-11-08-26
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
-ab10ref=2069a3a49d102b9d58125c8cf300a14ee29ad3b7
+ab10ref=67b53c42778319c15929f31d1f6c5004267f56ea
 variant=combined
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
@@ -140,7 +140,7 @@ src="$root/optimized-source"
 # callback. Require the reviewed verifier before touching a signed source.
 git -C "$combinedrepo" cat-file -e "$ab10ref^{commit}" ||
     fail 'AB10 signed postrun verifier commit unavailable; fetch dev branch'
-git -C "$combinedrepo" cat-file -e '636cf3fcae5567cb49b12027fcfbb1888f2dafd8^{blob}' ||
+git -C "$combinedrepo" cat-file -e '16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e^{blob}' ||
     fail 'AB10 source-verified postrun script object unavailable'
 
 pgroot="$root/$name"
@@ -179,7 +179,7 @@ verifyrel=go/cmd/fi-backlog-recover/testdata/h16-ab10/validate_signed_ab10.sh
 git -C "$combinedrepo" show "$ab10ref:$verifyrel" > "$root/ab10_validate.sh" ||
     fail 'AB10 postrun script cannot be recovered'
 [ "$(git -C "$combinedrepo" hash-object "$root/ab10_validate.sh")" =
-  "636cf3fcae5567cb49b12027fcfbb1888f2dafd8" ] ||
+  "16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e" ] ||
     fail 'AB10 postrun source hash mismatch'
 sh -n "$root/ab10_validate.sh" || fail 'AB10 postrun shell syntax rejected'
 
@@ -609,7 +609,7 @@ expected_new_signed_records=1297765
 expected_signed_batch_files=566
 expected_checkpoint=13|1688152|12
 ab10_verifier_git_commit=$ab10ref
-ab10_verifier_blob=636cf3fcae5567cb49b12027fcfbb1888f2dafd8
+ab10_verifier_blob=16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e
 number_of_new_windows=10
 max_runtime=none
 authoritative_writes=prohibited
@@ -754,6 +754,6 @@ grep -Fq 'FI PRIVATE DEPENDENCY BUFFERS ENABLED' "$out/$name/recover.log" ||
 validator="$jailroot$root/ab10_validate.sh"
 [ -f "$validator" ] && [ ! -L "$validator" ] ||
     fail 'AB10 reviewed private postrun validator unavailable'
-[ "$(jexec -U jwood fi-dev git hash-object "$root/ab10_validate.sh")" = "636cf3fcae5567cb49b12027fcfbb1888f2dafd8" ] ||
+[ "$(jexec -U jwood fi-dev git hash-object "$root/ab10_validate.sh")" = "16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e" ] ||
     fail 'AB10 reviewed private validator SHA mismatch'
 . "$validator"
