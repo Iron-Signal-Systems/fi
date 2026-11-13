@@ -22,11 +22,9 @@ five="$jailroot/home/jwood/fi-h16-five-ab10.sh"
 get_hash() {
     jexec -U jwood fi-dev git hash-object "$1"
 }
-[ "$(get_hash /home/jwood/fi-h16-combined-ab10.sh)" =
-    45d539d87c2c2d282360d82de210f68974eb70fb ] ||
+[ "$(get_hash /home/jwood/fi-h16-combined-ab10.sh)" = "45d539d87c2c2d282360d82de210f68974eb70fb" ] ||
     die 'combined ten-window runner differs from verified Git blob'
-[ "$(get_hash /home/jwood/fi-h16-five-ab10.sh)" =
-    47380305f9da2e5616cac930189fbfac7aed8042 ] ||
+[ "$(get_hash /home/jwood/fi-h16-five-ab10.sh)" = "47380305f9da2e5616cac930189fbfac7aed8042" ] ||
     die 'five-lane ten-window runner differs from verified Git blob'
 
 sh -n "$combined" && sh -n "$five" ||
