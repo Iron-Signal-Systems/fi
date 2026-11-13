@@ -223,7 +223,37 @@ prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
  }END{if(bad||n==0)exit 1;printf "%.0f",rows}' "$out/$name/PARALLEL_PREP.txt") ||
     fail 'W512 parallel preparation invariant failed'
 [ "$prep" = "$new" ] || fail "W512 prepared rows $prep do not equal $new"
-grep '^FI PRIVATE BATCH HASH ONCE window=' "$log" > "$out/$name/HASH_ONCE.txt"
+grep '^FI PRIVATE BATCH HASH ONCE window=' "$log" > "$out/$name/HASH_ONCE.txt" ||
+    fail 'SHA-once signed-batch accounting absent'
+trusted=$(awk '/^FI PRIVATE BATCH HASH ONCE window=/{
+ for(i=1;i<=NF;i++)if($i~/^trusted_batches=/){split($i,a,"=");n+=a[2]+0}
+}END{print n+0}' "$out/$name/HASH_ONCE.txt")
+prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
+[ "$trusted" = "$prepbatches" ] || fail 'W512 batch SHA reuse/parallel preparation counts disagree'
+expected_batches=$(sql 'SELECT coalesce(sum(end_batch-start_batch),0)
+ FROM fi_recovery.verified_artifact_window WHERE window_index BETWEEN 1 AND 2')
+checked=0
+for directory in "$out/$name/private"/receipt-*/window-*; do
+    [ -d "$directory" ] || fail 'private signed W512 batch directory absent'
+    namespace=$(basename "$(dirname "$directory")")
+    case "$namespace" in receipt-*) ;; *) fail 'signed receipt namespace invalid';; esac
+    for file in "$directory"/batch-*.data; do
+        [ -f "$file" ] || fail 'W512 signed batch payload absent'
+        original="$cache/$namespace/$(basename "$file")"
+        manifest=$(printf '%s\n' "$file" | sed 's/\.data$/.manifest/')
+        original_manifest=$(printf '%s\n' "$original" | sed 's/\.data$/.manifest/')
+        [ -f "$original" ] && [ -f "$manifest" ] && [ -f "$original_manifest" ] ||
+            fail 'W512 signed readback artifact path missing'
+        cmp -s "$file" "$original" || fail 'W512 payload changed from receiver-admitted cache'
+        cmp -s "$manifest" "$original_manifest" ||
+            fail 'W512 signed manifest changed from receiver-admitted cache'
+        checked=$((checked+1))
+    done
+done
+[ "$checked" = "$expected_batches" ] && [ "$checked" = "$trusted" ] ||
+    fail 'W512 signed byte-identical readback count mismatch'
+printf 'FI W512 SIGNED READBACK PASS batches=%s byte_identical=true manifests_identical=true\n' "$checked" |
+    tee -a "$out/SUMMARY.txt"
 grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt"
 grep '^FI REAL TYPED WINDOW ' "$log" > "$out/$name/COPY_CALLS.txt" ||
     fail 'W512 SQL COPY telemetry absent'
