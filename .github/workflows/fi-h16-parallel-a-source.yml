@@ -28,8 +28,6 @@ jobs:
       - name: Reconstruct frozen H16 combined ingest source in disposable tree
         shell: bash
         run: |
-                  shell: bash
-                  run: |
           set -euo pipefail
           # The historical SHA-once patcher deliberately refuses arbitrary
           # working directories. Satisfy its already-established disposable
