@@ -8,7 +8,7 @@ fail(){ printf 'FI CONTINUOUS STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(hostname)" = fi-backend-b ] && [ "$(id -un)" = root ] || fail 'requires fi-backend-b root'
 [ "$#" -eq 1 ] && [ "$1" = w34 ] || fail 'usage: sh run_private_continuous_family_w34_host.sh w34'
 for x in jls jexec sha256 ps awk tar cmp iostat vmstat; do command -v "$x" >/dev/null 2>&1 || fail "missing $x"; done
-pin=65c52e953245f4f14a07e6326b15ee655e44ea5f
+pin=40a2166803859d471ae8af8557ecfcdc09089e62
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor-db jid) || fail 'SoR JID missing'
