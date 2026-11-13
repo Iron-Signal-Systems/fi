@@ -8,7 +8,7 @@ fail(){ printf 'FI CONTINUOUS STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(hostname)" = fi-backend-b ] && [ "$(id -un)" = root ] || fail 'requires fi-backend-b root'
 [ "$#" -eq 1 ] && [ "$1" = w34 ] || fail 'usage: sh run_private_continuous_family_w34_host.sh w34'
 for x in jls jexec sha256 ps awk tar cmp iostat vmstat; do command -v "$x" >/dev/null 2>&1 || fail "missing $x"; done
-pin=a16af6f921a7b8f141688908b3c4e9db94add53f
+pin=5061bd1d0e52048532f8eb800b42c8a39054b246
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor-db jid) || fail 'SoR JID missing'
@@ -170,7 +170,7 @@ sql 'SELECT row_to_json(i)::text FROM pg_stat_io i' > "$out/$name/io-before.json
 iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 & iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 & vmstatpid=$!
 printf 'FI CONTINUOUS REAL SIGNED START source=iss-fs-22a.iss.local W3-W4 profile=P3/F3\n' | tee "$out/SUMMARY.txt"
-# This is a correctness probe, NOT an apples-to-apples H16 performance comparison:
+# Replay the ORIGINAL receiver-authenticated receipt-bound verified cache.\n# This is a correctness probe, NOT an apples-to-apples H16 performance comparison:
 # no older SHA-once overlays, K32 transaction chunks or detached field leaves.
 if ! /usr/bin/time -l "$worker" \
  -source=iss-fs-22a.iss.local \
@@ -179,6 +179,7 @@ if ! /usr/bin/time -l "$worker" \
  -custody-root=/var/db/fi/custody/generation \
  -recorded-root=/var/db/fi/custody/recorded \
  -source-namespaces=false -private-root="$out/$name/private" \
+ -verified-cache-root="$cache" \
  -private-writes -indexed-private -private-continuous-family \
  -window-profile=W128 -security-profile=P3 -file-profile=F3 \
  -start-window=3 -max-windows=2 -max-runtime=0 \
