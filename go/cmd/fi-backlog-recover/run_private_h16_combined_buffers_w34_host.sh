@@ -243,17 +243,26 @@ cp "$jsonassets/security_json_once_signed_cache_test.go" \
     ./internal/recordingest/security_json_once_test.go \
     ./internal/recordingest/security_json_once_signed_cache_test.go) ||
     fail 'JSON-once source formatting failed'
-# Apply private-only, pinned mixed buffer patch after SHA-once and JSON-once
-# overlays. Fail BEFORE any SQL replay when source or test anchors diverge.
-mixedassets=/home/jwood/fi-h16-mixed-buffer-assets
-[ -d "$mixedassets" ] && [ ! -L "$mixedassets" ] || fail 'mixed assets directory missing'
+# Apply private-only pinned mixed buffering after SHA-once and JSON-once.
+# Materialize exact immutable original Git objects into disposable fixture.
+# Fail BEFORE any SQL replay when source or test anchors diverge.
+# Build the exact original mixed-buffer patch assets from immutable Git
+# objects IN THIS disposable source fixture. Do not trust or overwrite
+# previously staged /home/jwood/*-assets files, which can belong to an
+# older experiment and may have different test hashes.
+mixedassets="$root/h16-mixed-assets"
+mkdir -m 700 "$mixedassets" || fail 'cannot create disposable mixed assets'
 for spec in \
  "private_mixed_family_buffers.go a1170aa8f7e3e40ee8f4702a54c6ced006386a23" \
  "private_mixed_family_buffers_test.go a841233fcaa176b49448434795141263ca163bae" \
  "patch_mixed_family_buffers.go 3f29c387c190ffdf8c6a331ceb4dc6a2b8d6609a"; do
     set -- $spec
-    [ -f "$mixedassets/$1" ] && [ ! -L "$mixedassets/$1" ] || fail "mixed asset absent: $1"
-    [ "$(git hash-object "$mixedassets/$1")" = "$2" ] || fail "mixed asset hash mismatch: $1"
+    git -C "$combinedrepo" cat-file -e "$2^{blob}" ||
+      fail "pinned mixed Git object not fetched: $1 ($2)"
+    git -C "$combinedrepo" cat-file blob "$2" > "$mixedassets/$1" ||
+      fail "cannot materialize pinned mixed asset: $1"
+    [ "$(git -C "$combinedrepo" hash-object "$mixedassets/$1")" = "$2" ] ||
+      fail "pinned mixed Git object hash mismatch: $1"
 done
 cp "$mixedassets/private_mixed_family_buffers.go" "$src/go/internal/recordingest/private_mixed_family_buffers.go"
 cp "$mixedassets/private_mixed_family_buffers_test.go" "$src/go/internal/recordingest/private_mixed_family_buffers_test.go"
@@ -261,8 +270,11 @@ cp "$mixedassets/private_mixed_family_buffers_test.go" "$src/go/internal/recordi
     fail 'mixed buffer source patch rejected the pinned H16 code'
 # Apply the additional pinned dependency-buffer experiment only to the
 # disposable H16 code archive, after the original mixed-family patch.
-depassets=/home/jwood/fi-h16-dependency-buffer-assets
-[ -d "$depassets" ] && [ ! -L "$depassets" ] || fail 'dependency asset directory missing'
+# The pinned dependency-buffer tests and patcher MUST be the exact
+# reviewed Git blobs, not leftovers from a prior staged experiment. An old
+# private_dependency_buffers_test.go caused the 2026-11-13 12:19Z stop.
+depassets="$root/h16-dependency-assets"
+mkdir -m 700 "$depassets" || fail 'cannot create disposable dependency assets'
 for spec in \
  "private_dependency_buffers.go 089bbf0af7ef50d1c5815cbd59e13833068236c2" \
  "private_dependency_buffers_test.go c9f4466364c1a5b6b1a0ae1f7b7f4dfbdf344866" \
@@ -270,8 +282,12 @@ for spec in \
  "private_mixed_family_buffers_test.go 3548edb0945eb7213974b0edfa78e6f21efbf8f7" \
  "patch_private_dependency_buffers.go b081f1c928e217d82e37ebbfb48025a863fbe3a7"; do
     set -- $spec
-    [ -f "$depassets/$1" ] && [ ! -L "$depassets/$1" ] || fail "dependency asset absent: $1"
-    [ "$(git hash-object "$depassets/$1")" = "$2" ] || fail "dependency asset changed: $1"
+    git -C "$combinedrepo" cat-file -e "$2^{blob}" ||
+      fail "pinned dependency Git object not fetched: $1 ($2)"
+    git -C "$combinedrepo" cat-file blob "$2" > "$depassets/$1" ||
+      fail "cannot materialize pinned dependency asset: $1"
+    [ "$(git -C "$combinedrepo" hash-object "$depassets/$1")" = "$2" ] ||
+      fail "pinned dependency Git object hash mismatch: $1"
 done
 cp "$depassets/private_dependency_buffers.go" "$src/go/internal/recordingest/private_dependency_buffers.go"
 cp "$depassets/private_dependency_buffers_test.go" "$src/go/internal/recordingest/private_dependency_buffers_test.go"
