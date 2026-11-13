@@ -36,6 +36,8 @@ jobs:
         run: go test -count=1 -v ./cmd/fi-backlog-pg-relay
       - name: Previously authenticated signed-cache replay and tamper rejection
         run: go test -count=1 -v ./internal/recordingest -run 'TestIndexedPrivate(VerifiedCacheNoCurrentCRLButExactOriginalHashes|WindowLimitsAllowed)'
+      - name: W128 to K32 independent family routing and durability
+        run: go test -count=1 -v ./internal/recordingest -run 'TestPrivateContinuous(K32|FamiliesDoNotFlush|SecurityCapacityFlush|SQLFailure|FlushesAtExactCapacity)'
       - name: FreeBSD recovery executable and typed-test cross compilation
         env:
           GOOS: freebsd
