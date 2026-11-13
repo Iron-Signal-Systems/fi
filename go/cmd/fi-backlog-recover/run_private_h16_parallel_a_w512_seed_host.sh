@@ -35,7 +35,7 @@ mode=candidate
 name=clone-w512-2g
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
 parallelref=54e7ad82abb9e90402ee90a15f6a726f97e7ef0a
-w512ref=2dd921deb62d43858f3eae798633b28a07cf723d
+w512ref=b78c2ddf9b659929ba6203df96ed94bc7f1aae1e
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
@@ -468,11 +468,13 @@ sha256 -q "$root/fi-security-json-preflight.test" > "$root/fi-security-json-pref
 w512patch=go/cmd/fi-backlog-recover/patchers/w512_2g/main.go
 w512test=go/internal/recordingest/backlog_window_plan_w512_test.go
 w512cache=go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go
+w512cachetest=go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed_test.go
 mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/w512_2g"
 for spec in \
   "f2e86f0f69476b5d7e6885a6687117e6d36c1703 $w512patch" \
   "7a2049a3a62464e336f33387877bf072dfd6ec55 $w512test" \
-  "f668d23a8c87a0a383e63ec78b3622091b8357fe $w512cache"; do
+  "f668d23a8c87a0a383e63ec78b3622091b8357fe $w512cache" \
+  "8bd4f7fd3534add74f8c072a3f93fbcc8fe417d2 $w512cachetest"; do
   set -- $spec
   git -C "$combinedrepo" show "$w512ref:$2" > "$src/$2" ||
     fail "W512 pinned Go asset not available: $2"
@@ -481,6 +483,8 @@ for spec in \
 done
 cp "$src/$w512cache" "$src/go/internal/recordingest/private_w512_verified_seed.go" ||
   fail 'W512 admitted cache seed source install failed'
+cp "$src/$w512cachetest" "$src/go/internal/recordingest/private_w512_verified_seed_test.go" ||
+  fail 'W512 admitted cache seed independent tamper tests missing'
 [ "$(git -C "$combinedrepo" hash-object "$src/go/internal/recordingest/private_w512_verified_seed.go")" =   "f668d23a8c87a0a383e63ec78b3622091b8357fe" ] ||
   fail 'W512 admitted cache seed code changed in disposable staging'
 (cd "$src/go" && GOTOOLCHAIN=auto go run "./cmd/fi-backlog-recover/patchers/w512_2g/main.go" "$src") ||
@@ -489,10 +493,11 @@ cp "$src/$w512cache" "$src/go/internal/recordingest/private_w512_verified_seed.g
     ./internal/recordingest/backlog_continuous_private.go \
     ./internal/recordingest/backlog_stream_load.go \
     ./internal/recordingest/backlog_window_plan_w512_test.go \
-    ./internal/recordingest/private_w512_verified_seed.go) ||
+    ./internal/recordingest/private_w512_verified_seed.go \
+    ./internal/recordingest/private_w512_verified_seed_test.go) ||
   fail 'W512 Go source formatting failed'
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
-    -run '^(TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)' \
+    -run '^(TestPrivateW512ReceiverAdmittedCache|TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)' \
     -count=1 -timeout=180s) > "$root/w512-unit-tests.log" 2>&1 ||
   { cat "$root/w512-unit-tests.log" >&2; fail 'W512 planner/H16 unit gate failed'; }
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./cmd/fi-backlog-recover -count=1) \
