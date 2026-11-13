@@ -29,16 +29,46 @@ func TestPrivateParallelARejectsOtherModes(t *testing.T) {
         t.Fatal("mixed only mode selected two-worker experiment")
     }
     ctx := privateDependencyTestContext(t)
-    enabled, err := WithPrivateParallelPreparationA(ctx)
-    if err != nil || !privateParallelAEnabled(enabled) {
-        t.Fatalf("valid isolated combined-H16 context rejected: %v", err)
+    selected, err := WithPrivateParallelPreparationA(ctx)
+    if err != nil {
+        t.Fatalf("valid isolated combined-F3 context rejected at CLI selection: %v", err)
+    }
+    if !privateParallelARequested(selected) || privateParallelAEnabled(selected) {
+        t.Fatal("initial F3 must select Candidate A but NOT activate workers before H16")
+    }
+    if err := privateParallelAActivationError(selected); err == nil {
+        t.Fatal("requested F3 profile silently allowed sequential fallback")
+    }
+    // CLI applies WithPrivateFileHashH16 after the two-worker selector.
+    // This precise F3 -> F3H16 conversion caused the signed benchmark to
+    // run sequentially and fail only AFTER the database had finished.
+    enabled, err := WithPrivateFileHashH16(selected)
+    if err != nil {
+        t.Fatalf("historical H16 conversion rejected: %v", err)
+    }
+    if got := fileBulkLimitsFromContext(enabled).Name; got != "F3H16" {
+        t.Fatalf("runtime profile is not F3H16: %s", got)
+    }
+    if !privateParallelAEnabled(enabled) || privateParallelAActivationError(enabled) != nil {
+        t.Fatal("exact F3H16 runtime did not activate two preparation workers")
     }
     mutated := context.WithValue(enabled, privateDependencyBuffersKey{}, false)
-    if privateParallelAEnabled(mutated) {
-        t.Fatal("missing dependency isolation accepted")
+    if privateParallelAEnabled(mutated) || privateParallelAActivationError(mutated) == nil {
+        t.Fatal("missing dependency isolation accepted instead of failing closed")
     }
-    if privateParallelAEnabled(context.Background()) {
-        t.Fatal("ordinary context enabled private stream")
+    caps := fileBulkLimitsFromContext(enabled)
+    caps.ObserveMaxBytes++
+    modifiedCaps := context.WithValue(enabled, fileBulkProfileContextKey{}, caps)
+    if privateParallelAEnabled(modifiedCaps) || privateParallelAActivationError(modifiedCaps) == nil {
+        t.Fatal("altered H16 File limit silently fell back to sequential")
+    }
+    noField := context.WithValue(enabled, privateSecurityFieldPartitionsKey{}, false)
+    if privateParallelAEnabled(noField) || privateParallelAActivationError(noField) == nil {
+        t.Fatal("missing Security field isolation did not fail closed")
+    }
+    if privateParallelAEnabled(context.Background()) ||
+        privateParallelAActivationError(context.Background()) != nil {
+        t.Fatal("ordinary context activated or rejected normal FI path")
     }
 }
 
