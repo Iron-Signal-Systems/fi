@@ -67,3 +67,61 @@ func TestH16CombinedCoverageDoesNotFlushSecurityOrFile(t *testing.T) {
         }
     }
 }
+
+// H16 intentionally modifies ONLY File content-hash COPY bounds, naming the
+// resulting profile F3H16. The mixed-buffer mode was enabled while still F3.
+// Validate the real per-batch context: never reject that exact H16 profile,
+// and never authorize mutated row, byte, or child limits.
+func TestH16CombinedAcceptsExactHashProfileButRejectsMutatedLimits(t *testing.T) {
+    initial := privateDependencyTestContext(t)
+    if !privateH16CombinedFileProfileValid(initial) {
+        t.Fatal("original F3 context rejected")
+    }
+    h16, err := WithPrivateFileHashH16(initial)
+    if err != nil { t.Fatal(err) }
+    if got := fileBulkLimitsFromContext(h16); got.Name != "F3H16" {
+        t.Fatalf("H16 did not select required hash profile: %s",got.Name)
+    }
+    if !privateH16CombinedFileProfileValid(h16) {
+        t.Fatal("exact H16 content-hash-only copy limits rejected")
+    }
+    active := context.WithValue(h16, backlogTypedChunkContextKey{},
+        backlogTypedChunkDirective{
+            state:&backlogTypedChunkState{fileBulk:newFileObservationBulkState()},
+            finish:false,
+        })
+    if err := validatePrivateFamilyRoute(active); err != nil {
+        t.Fatalf("real signed batch H16 profile was incorrectly rejected: %v",err)
+    }
+    original := fileBulkLimitsFromContext(h16)
+    for _,tc:=range []struct{name string; change func(*fileBulkLimits)}{
+        {"source_rows",func(x *fileBulkLimits){x.SourceMaxRecords++}},
+        {"source_bytes",func(x *fileBulkLimits){x.SourceMaxBytes++}},
+        {"observation_rows",func(x *fileBulkLimits){x.ObserveMaxRecords++}},
+        {"observation_bytes",func(x *fileBulkLimits){x.ObserveMaxBytes++}},
+        {"hash_rows",func(x *fileBulkLimits){x.HashMaxRows++}},
+        {"hash_bytes",func(x *fileBulkLimits){x.HashMaxBytes++}},
+        {"child_rows",func(x *fileBulkLimits){x.ChildMaxRows++}},
+        {"profile_name",func(x *fileBulkLimits){x.Name="UNKNOWN"}},
+    } {
+        t.Run(tc.name,func(t *testing.T){
+            altered:=original
+            tc.change(&altered)
+            broken:=context.WithValue(active,fileBulkProfileContextKey{},altered)
+            if privateH16CombinedFileProfileValid(broken) {
+                t.Fatal("altered file profile passed the exact source-route guard")
+            }
+            if err:=validatePrivateFamilyRoute(broken);err==nil {
+                t.Fatal("altered profile passed signed-batch H16 route")
+            }
+        })
+    }
+    noField:=context.WithValue(active,privateSecurityFieldPartitionsKey{},false)
+    if err:=validatePrivateFamilyRoute(noField);err==nil {
+        t.Fatal("missing isolated Security field-partition context accepted")
+    }
+    noChunk:=context.WithValue(active,backlogTypedChunkContextKey{},backlogTypedChunkDirective{})
+    if err:=validatePrivateFamilyRoute(noChunk);err==nil {
+        t.Fatal("missing K32 state accepted")
+    }
+}
