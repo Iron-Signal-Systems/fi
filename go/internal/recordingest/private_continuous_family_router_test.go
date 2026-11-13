@@ -282,3 +282,21 @@ func TestPrivateContinuousExactCapacityFailureKeepsEntireBuffer(t *testing.T) {
     // After a failed Add, the owning worker must stop and recover from
     // durable signed input; the queue still holds the complete failed batch.
 }
+
+func TestPrivateContinuousDependencyAndGapQueuesKeepTheirOriginalFamily(t *testing.T) {
+    cases:=map[string]privateContinuousFamily{
+        "USNReadBoundary":privateFamilyUSN,
+        "USNObjectObservation":privateFamilyUSN,
+        "USNContinuityGap":privateFamilyUSN,
+        "WindowsSecurityCoverage":privateFamilyCoverage,
+        "WindowsSecurityContinuityGap":privateFamilyCoverage,
+        "FileObservation":privateFamilyFile,
+        "WindowsSecurityEvent":privateFamilySecurity,
+    }
+    for kind,want:=range cases {
+        got,err:=privateFamilyForRecordKind(kind)
+        if err!=nil || got!=want {
+            t.Fatalf("record kind %s routed to %s instead of %s: %v",kind,got,want,err)
+        }
+    }
+}
