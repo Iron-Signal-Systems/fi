@@ -431,15 +431,35 @@ func indexedBacklogPreparedFromVerifiedCache(ctx context.Context, g *PreparedGen
 		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: manifest %d completed_at invalid: %w", i, err) }
 		indexedCompleted, err := time.Parse(time.RFC3339Nano, b.Manifest.CompletedAt)
 		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: SQL batch %d completed_at invalid: %w", i, err) }
-		if manifest.BatchID != b.BatchID || manifest.Version != b.Manifest.Version ||
-			manifest.DataFile != b.DataArtifactName || manifest.TargetBatchSize != b.Manifest.TargetBatchSize ||
-			manifest.RecordCount != b.Manifest.RecordCount || manifest.DataBytes != b.Manifest.DataBytes ||
-			manifest.DataSHA256 != b.Manifest.DataSHA256 ||
-			manifest.Collector.ExecutablePath != b.Manifest.Collector.ExecutablePath ||
-			manifest.Collector.ExecutableSHA256 != b.Manifest.Collector.ExecutableSHA256 ||
-			!signedCreated.Equal(indexedCreated) ||
-			!signedCompleted.Equal(indexedCompleted) {
-			return nil, fmt.Errorf("FI indexed verified cache: manifest %d conflicts with recorded SQL source index", i)
+		// The receiver recorded the original full manifest SHA-256. Its
+		// exact bytes are verified above BEFORE comparing to the SQL index.
+		// PostgreSQL TIMESTAMPTZ has microsecond resolution whereas Windows
+		// JSON timestamps can carry nanoseconds. Reject a meaningful change,
+		// but accept that database precision loss; never infer trust from
+		// an approximately equal timestamp alone.
+		var mismatches []string
+		if manifest.BatchID != b.BatchID { mismatches=append(mismatches,"batch_id") }
+		if manifest.Version != b.Manifest.Version { mismatches=append(mismatches,"version") }
+		if manifest.DataFile != b.DataArtifactName { mismatches=append(mismatches,"data_file") }
+		if manifest.TargetBatchSize != b.Manifest.TargetBatchSize { mismatches=append(mismatches,"target_batch_size") }
+		if manifest.RecordCount != b.Manifest.RecordCount { mismatches=append(mismatches,"record_count") }
+		if manifest.DataBytes != b.Manifest.DataBytes { mismatches=append(mismatches,"data_bytes") }
+		if manifest.DataSHA256 != b.Manifest.DataSHA256 { mismatches=append(mismatches,"data_sha256") }
+		if manifest.Collector.ExecutablePath != b.Manifest.Collector.ExecutablePath {
+			mismatches=append(mismatches,"collector_executable_path")
+		}
+		if manifest.Collector.ExecutableSHA256 != b.Manifest.Collector.ExecutableSHA256 {
+			mismatches=append(mismatches,"collector_executable_sha256")
+		}
+		if !privateIndexedTimestampEquivalent(signedCreated,indexedCreated) {
+			mismatches=append(mismatches,"created_at")
+		}
+		if !privateIndexedTimestampEquivalent(signedCompleted,indexedCompleted) {
+			mismatches=append(mismatches,"completed_at")
+		}
+		if len(mismatches)>0 {
+			return nil, fmt.Errorf("FI indexed verified cache: manifest %d conflicts with recorded SQL source index fields=%s",
+				i,strings.Join(mismatches,","))
 		}
 		path := backlogCacheBatchData(cacheDir, i)
 		info, err := os.Lstat(path)
@@ -466,4 +486,13 @@ func indexedBacklogPreparedFromVerifiedCache(ctx context.Context, g *PreparedGen
 		b.DataPath = path
 	}
 	return g, nil
+}
+
+// PostgreSQL stores UTC timestamps at microsecond precision. The original
+// signed manifest (protected by its exact SHA-256) may retain nanoseconds.
+// Accept ONLY the sub-microsecond difference introduced by SQL storage.
+// Neither source metadata, full manifest SHA nor data hash is waived.
+func privateIndexedTimestampEquivalent(signed,indexed time.Time) bool {
+	delta:=signed.Sub(indexed)
+	return delta>-time.Microsecond && delta<time.Microsecond
 }
