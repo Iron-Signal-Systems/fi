@@ -768,9 +768,9 @@ grep -Fq 'FI PRIVATE PARALLEL PREP A ENABLED workers=2 inflight=4 postgres_write
 log="$out/$name/recover.log"
 grep '^FI PRIVATE PARALLEL PREP BATCH ' "$log" > "$out/$name/PARALLEL_PREP_PROOF.txt" ||
   fail 'Candidate A no per-batch parallel preparation proof'
-awk '
+proof_message=$(awk '
 /^FI PRIVATE PARALLEL PREP BATCH / {
-  delete f
+  for(k in f) delete f[k]
   for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
   if(f["workers"]!=2 || f["inflight_limit"]!=4 || f["writers"]!=1 ||
      f["records"]+0<=0 || f["reorder_peak"]+0>3 || seen[f["batch"]]++)bad=1
@@ -779,9 +779,9 @@ awk '
 END{
   if(n!=111||rows!=259178||bad)exit 2
   printf "FI H16 PARALLEL A SIGNED PREP PROOF PASS batches=%d rows=%.0f workers=2 in_flight=4 writer=1\\n",n,rows
-}' "$out/$name/PARALLEL_PREP_PROOF.txt" |
-    tee -a "$out/SUMMARY.txt" ||
+}' "$out/$name/PARALLEL_PREP_PROOF.txt") ||
   fail 'Candidate A prepared source rows, worker count, or signed order invalid'
+printf '%s\n' "$proof_message" | tee -a "$out/SUMMARY.txt"
 stop_host_monitors
 snapshot_pg after
 snapshot_relations after
