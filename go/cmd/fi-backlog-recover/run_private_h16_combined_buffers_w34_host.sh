@@ -38,7 +38,7 @@ h16ref=e47b5383e19140090d691b7c20e8d6ef6e0113fa
 seed=/home/jwood/fi-window-bench-fieldpart-20261104T091019Z/W64
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-root=/home/jwood/fi-h16-combined-$stamp
+root=/home/jwood/fi-window-bench-combined-$stamp
 out=/var/tmp/fi-h16-combined-$stamp
 # Fail before touching the seed if either AF_UNIX socket would exceed FreeBSD sun_path.
 private_socket="$root/$name/socket/.s.PGSQL.55981"
