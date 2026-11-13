@@ -10,6 +10,7 @@ on:
       - 'go/cmd/fi-backlog-recover/testdata/w512-2g/**'
       - 'go/cmd/fi-backlog-recover/testdata/w512_2g_private_field_*.sql'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_pilot2_host.sh'
       - '.github/workflows/fi-w512-2g-seed.yml'
   workflow_dispatch:
 
@@ -180,3 +181,31 @@ jobs:
             exit 1
           fi
           echo "FI W512 SEED HOST SCRIPT STATIC GATE PASS fresh_w512_chain=true signed_run=not_executed"
+
+      - name: W512 offline seed-copy pilot shell and exact two-worker isolation gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          pilot=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_pilot2_host.sh
+          sh -n "$pilot"
+          test "$(grep -cx "JAIL" "$pilot")" = 1
+          grep -Fq 'seed=/home/jwood/fi-window-bench-w512-20261113T205026Z' "$pilot"
+          grep -Fq '0|493478|' "$pilot"
+          grep -Fq 'cp -R "$seed/$name/data" "$root/$name/data"' "$pilot"
+          grep -Fq -- '-private-w512-2g -private-hash-h16' "$pilot"
+          grep -Fq -- '-window-profile=W512' "$pilot"
+          grep -Fq -- '-processing-chunk-records=32768' "$pilot"
+          grep -Fq -- '-test-stop-after-windows=2' "$pilot"
+          grep -Fq -- '-start-window=1' "$pilot"
+          grep -Fq -- '-verified-cache-root="$cache"' "$pilot"
+          grep -Fq 'FI W512 SIGNED READBACK PASS' "$pilot"
+          grep -Fq 'FI W512 TWO-WINDOW PILOT ACCEPTED' "$pilot"
+          grep -Fq "source_window=W512 atomic=true" "$pilot"
+          if grep -Fq 'pg_restore' "$pilot" ||
+             grep -Fq 'accepted-prefix.dump' "$pilot" ||
+             grep -Fq -- '-stream-loader' "$pilot" ||
+             grep -Fq -- '-private-w512-verified-cache-seed' "$pilot"; then
+            echo "STOP: W512 pilot must only replay already admitted cached source" >&2
+            exit 1
+          fi
+          echo "FI W512 TWO-WINDOW PILOT STATIC GATE PASS seed=offline_copy first_new_window=1 workers=2 signed_replay=not_run"
