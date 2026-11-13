@@ -97,3 +97,43 @@ throughput result exists for this revised H16 candidate yet. The user must first
 
 **The continuous-family experiment remains separate and unpromoted.** Do not
 run ten windows or alter H16 until the surgical W3–W4 comparison is reviewed.
+
+## 2026-11-13 W3–W4 private source preflight regression and correction
+
+The isolated combined-H16 replay on `fi-backend-b` reached signed batch
+index 161 and stopped **before any typed W3 records committed**:
+
+```text
+FI PRIVATE BUFFER ROUTE STOP: signed batch 161:
+FI PRIVATE BUFFER ROUTE STOP: private H16 profile context changed
+```
+
+This was a **candidate-only gating defect**, not failed signed verification,
+SQL corruption, or a security failure. Original H16 intentionally uses
+`WithPrivateFileHashH16` to transform the fixed `F3` profile into
+`F3H16`, changing only content-hash COPY bounds from 8,192 rows/8 MiB
+to 16,384 rows/16 MiB. The private mixed/dependency context is selected
+before that transformation, but the old per-batch validator incorrectly
+insisted on the literal `F3` name.
+
+The patched **historical private replay code** now validates the entire
+exact F3 or F3H16 profile structure, including source, observation,
+hash and child row/byte limits. The function still rejects any modified
+bound or another name, absent Security field partition context, or a
+missing active K32 typed buffer. It does **not** change trust, COPY
+execution, row identity, W128 atomicity or the content-hash optimization.
+
+Private patcher commit: `ff4cc5cd5f04fcca5f2f5be83a9da05281761092`.
+The frozen-H16 source runner is pinned to code/test commit
+`58f5d7341ba728b4696d05ba31199cb38226befc`; host-runner
+content blob `2b9391227724126ebedec5889d89af96e035e92e`.
+The **frozen historical source GitHub Actions gate** successfully
+reconstructed and applied all 5 edits across 3 source files, ran
+the new H16 route-context limit-mutation tests and compiled the
+FreeBSD binary. Disposable mixed/dependency asset and PostgreSQL relay
+path tests also passed.
+
+**No new real signed W3–W4 acceptance result yet.** Do not interpret
+the source test as measured throughput. The authoritative SoR remains
+untouched; the next signed trial still requires exact SQL/signed
+readback and reduced Security COPY calls before performance comparison.
