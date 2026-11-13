@@ -53,7 +53,7 @@ func LoadIndexedBacklogPrivateWindows(
 	if startWindow < 0 || maxWindows < 1 || maxWindows > 2 {
 		return nil, errors.New("FI indexed private: only one or two bounded windows per trial")
 	}
-	if limits.MaxRecords == 0 || limits.MaxDataBytes == 0 || limits.MaxDataBytes > 256<<20 {
+	if !indexedPrivateWindowLimitsAllowed(limits) {
 		return nil, errors.New("FI indexed private: bounded window limits required")
 	}
 	var dbUser, dbName string
@@ -337,4 +337,19 @@ SELECT
 	g.stageLease = lease
 	keep = true
 	return g, nil
+}
+
+
+// indexedPrivateWindowLimitsAllowed preserves the legacy bounded W32 selection
+// while explicitly permitting the pinned W128/1GiB private continuous-family
+// experiment. Do not broaden the signed indexed loader to arbitrary limits:
+// this is a partial custody prefix scan, not full generation validation.
+func indexedPrivateWindowLimitsAllowed(limits BacklogWindowLimits) bool {
+	if limits.MaxRecords <= 0 || limits.MaxDataBytes <= 0 {
+		return false
+	}
+	if limits.MaxDataBytes <= 256<<20 {
+		return true
+	}
+	return limits.MaxRecords == 131072 && limits.MaxDataBytes == 1<<30
 }
