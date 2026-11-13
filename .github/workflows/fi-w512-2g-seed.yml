@@ -114,22 +114,26 @@ jobs:
           for file in \
             go/cmd/fi-backlog-recover/patchers/w512_2g/main.go \
             go/internal/recordingest/backlog_window_plan_w512_test.go \
-            go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go; do
+            go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go \
+            go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed_test.go; do
             mkdir -p "$stage/$(dirname "$file")"
             git show "HEAD:$file" > "$stage/$file"
             test "$(git hash-object "$stage/$file")" = "$(git rev-parse "HEAD:$file")"
           done
           cp "$stage/go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go" \
             "$stage/go/internal/recordingest/private_w512_verified_seed.go"
+          cp "$stage/go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed_test.go" \
+            "$stage/go/internal/recordingest/private_w512_verified_seed_test.go"
           (cd "$stage/go" && go run ./cmd/fi-backlog-recover/patchers/w512_2g/main.go "$stage")
           (cd "$stage/go" && gofmt -w \
             ./cmd/fi-backlog-recover/main_freebsd.go \
             ./internal/recordingest/backlog_continuous_private.go \
             ./internal/recordingest/backlog_stream_load.go \
             ./internal/recordingest/backlog_window_plan_w512_test.go \
-            ./internal/recordingest/private_w512_verified_seed.go)
+            ./internal/recordingest/private_w512_verified_seed.go \
+            ./internal/recordingest/private_w512_verified_seed_test.go)
           (cd "$stage/go" && go test -count=1 ./internal/recordingest \
-            -run '^(TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)')
+            -run '^(TestPrivateW512ReceiverAdmittedCache|TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)')
           (cd "$stage/go" && GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
             -o "$stage/fi-w512-candidate-a-freebsd" ./cmd/fi-backlog-recover)
           test -s "$stage/fi-w512-candidate-a-freebsd"
