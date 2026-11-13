@@ -164,3 +164,11 @@ jobs:
           grep -Fq 'sh "$combined" h16 || die' "$pair"
           grep -Fq 'sh "$five" h16 || die' "$pair"
           echo "FI H16 AB10 SERIAL EXECUTION GATE PASS combined_first=true five_after_cleanup=true exact_runner_pins=true"
+
+      - name: Exercise exact AB10 postrun validator for both modes and all 566 synthetic original-byte checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n go/cmd/fi-backlog-recover/testdata/h16-ab10/test_validator.sh
+          sh go/cmd/fi-backlog-recover/testdata/h16-ab10/test_validator.sh
+          echo "FI H16 AB10 SHARED VERIFIER SHELL CONTRACT PASS modes=2 synthetic_batches=566_each real_signed_replay_not_run=true"
