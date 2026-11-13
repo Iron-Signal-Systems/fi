@@ -70,10 +70,19 @@ or if the coverage-to-Security avoided-flush counters remain zero.
 ## Proofs and limitations
 
 Source audit checked that all three new historical-source patch anchors match
-exactly once **after** the previously pinned dependency overlay. Existing
-FreeBSD cross-build and PostgreSQL integration CI gate the branch; however,
-a green CI status alone does **not** establish successful real signed W3–W4
-throughput. The user must first run the isolated candidate and compare:
+exactly once **after** the previously pinned dependency overlay. The new
+**FI Frozen H16 Combined Buffer Source Gate** GitHub Actions workflow passed
+on 2026-11-13: it reconstructs the actual historical H16 archive, applies
+the exact historical SHA-once, JSON-once, mixed and dependency overlays,
+then patches the two original-H16 source files, runs Go unit tests and
+cross-compiles the FreeBSD recovery executable. Log evidence includes
+`FI H16 COMBINED BUFFER PATCH PASS files=2 edits=3` and
+`FI FROZEN H16 COMBINED SOURCE PASS`.
+
+The host runner's disposable archive MUST remain under
+`/home/jwood/fi-window-bench-combined-*/optimized-source` because the
+original SHA-once patcher checks that invariant. No real signed W3–W4
+throughput result exists for this revised H16 candidate yet. The user must first run the isolated candidate and compare:
 
 1. Original source record and Security child counts, including 8,111,457
    total Security field rows with the W0–W2 seed;
