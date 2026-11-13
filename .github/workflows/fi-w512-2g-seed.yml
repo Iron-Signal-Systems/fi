@@ -7,6 +7,7 @@ on:
     paths:
       - 'go/internal/recordingest/backlog_window_plan_w512_test.go'
       - 'go/cmd/fi-backlog-recover/patchers/w512_2g/**'
+      - 'go/cmd/fi-backlog-recover/testdata/w512-2g/**'
       - 'go/cmd/fi-backlog-recover/testdata/w512_2g_private_field_*.sql'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh'
       - '.github/workflows/fi-w512-2g-seed.yml'
@@ -112,23 +113,30 @@ jobs:
           stage="$bench_w512/optimized-source"
           for file in \
             go/cmd/fi-backlog-recover/patchers/w512_2g/main.go \
-            go/internal/recordingest/backlog_window_plan_w512_test.go; do
+            go/internal/recordingest/backlog_window_plan_w512_test.go \
+            go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go; do
             mkdir -p "$stage/$(dirname "$file")"
             git show "HEAD:$file" > "$stage/$file"
             test "$(git hash-object "$stage/$file")" = "$(git rev-parse "HEAD:$file")"
           done
+          cp "$stage/go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go" \
+            "$stage/go/internal/recordingest/private_w512_verified_seed.go"
           (cd "$stage/go" && go run ./cmd/fi-backlog-recover/patchers/w512_2g/main.go "$stage")
           (cd "$stage/go" && gofmt -w \
             ./cmd/fi-backlog-recover/main_freebsd.go \
             ./internal/recordingest/backlog_continuous_private.go \
             ./internal/recordingest/backlog_stream_load.go \
-            ./internal/recordingest/backlog_window_plan_w512_test.go)
+            ./internal/recordingest/backlog_window_plan_w512_test.go \
+            ./internal/recordingest/private_w512_verified_seed.go)
           (cd "$stage/go" && go test -count=1 ./internal/recordingest \
             -run '^(TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)')
           (cd "$stage/go" && GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
             -o "$stage/fi-w512-candidate-a-freebsd" ./cmd/fi-backlog-recover)
           test -s "$stage/fi-w512-candidate-a-freebsd"
           grep -Fq 'private-w512-2g' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
+          grep -Fq 'private-w512-verified-cache-seed' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
+          grep -Fq 'LoadPrivateW512FirstWindowFromAdmittedCache' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
+          grep -Fq 'LoadPrivateW512FirstWindowFromAdmittedCache' "$stage/go/internal/recordingest/private_w512_verified_seed.go"
           grep -Fq 'MaxRecords: 524288, MaxDataBytes: 2 << 30' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
           echo "FI W512 2G SOURCE GATE PASS records=524288 bytes=2147483648 workers=2 W128_control_unchanged=true signed_replay=not_run"
 
@@ -140,8 +148,11 @@ jobs:
           sh -n "$runner"
           test "$(grep -cx "JAIL" "$runner")" = 1
           grep -Fq -- '-private-w512-2g' "$runner"
+          grep -Fq -- '-private-w512-verified-cache-seed' "$runner"
+          grep -Fq -- '-verified-cache-root="$cache"' "$runner"
+          grep -Fq 'FI W512 RECEIVER-ADMITTED CACHE BOOTSTRAP PASS' "$runner"
           grep -Fq -- '-window-profile=W512' "$runner"
-          grep -Fq 'W512 SIGNED FIRST-WINDOW SEED START' "$runner"
+          grep -Fq 'W512 VERIFIED-CACHE FIRST-WINDOW SEED START' "$runner"
           grep -Fq 'FI W512/2G FRESH SIGNED SEED ACCEPTED' "$runner"
           grep -Fq 'original_W128_seed_reused=false' "$runner"
           grep -Fq 'W512 SECURITY DEFINER helper functions missing' "$runner"
