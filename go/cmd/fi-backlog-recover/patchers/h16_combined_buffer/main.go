@@ -31,12 +31,12 @@ var edits = []sourceEdit{
     {
         path:"go/internal/recordingest/backlog_typed_window_postgres.go",
         before:`        if finishChunk {
-            if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
-                len(typedChunk.dependencies) != 0 || typedChunk.dependencyBytes != 0 ||
-                len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
-                return errors.New("FI typed chunk: buffers remained after required flush")
-            }
-            chunkSamples = append(chunkSamples, backlogTypedChunkSample{`,
+			if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
+				len(typedChunk.dependencies) != 0 || typedChunk.dependencyBytes != 0 ||
+				len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
+				return errors.New("FI typed chunk: buffers remained after required flush")
+			}
+			chunkSamples = append(chunkSamples, backlogTypedChunkSample{`,
         after:`        if finishChunk {
             // The private H16 candidate retains Security/File/USN buffers
             // between K32 work units in the SAME original W128 transaction.
