@@ -30,7 +30,7 @@ esac
 [ "$#" -eq 1 ] || fail 'exactly one H16 argument required'
 mode=candidate
 name=clone-11-08-26
-combinedref=2cee0b3e4ffd27d6519f844ba133d956a0962e18
+combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
