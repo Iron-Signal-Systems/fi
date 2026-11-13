@@ -119,7 +119,8 @@ func LoadPrivateW512FirstWindowFromAdmittedCache(
         batches=append(batches,PreparedBatch{
             BatchID:m.BatchID,DataArtifactName:m.DataFile,
             Manifest:m,ManifestArtifactName:"batch-"+m.BatchID+".manifest.json",
-            ManifestBytes:len(original),ManifestSHA256:hex.EncodeToString(manifestHash[:]),
+            ManifestBytes:len(original),ManifestRawBytes:original,
+            ManifestSHA256:hex.EncodeToString(manifestHash[:]),
         })
     }
     g:=&PreparedGeneration{
@@ -152,11 +153,8 @@ func LoadPrivateW512FirstWindowFromAdmittedCache(
         if err=spool.VerifyManifestData(g.Batches[i].Manifest,inspected);err!=nil {
             return nil,fmt.Errorf("FI W512 admitted-cache seed: signed data %d: %w",i,err)
         }
-        // Preserve the verified, original exact-byte manifest as required by
-        // the private stage + source SQL writer, not a reserialized manifest.
-        manifestRaw,err:=backlogVerifiedCacheManifest(directory,i,g.Batches[i].ManifestSHA256,config.MaxManifestBytes)
-        if err!=nil{return nil,fmt.Errorf("FI W512 admitted-cache seed: original manifest %d: %w",i,err)}
-        g.Batches[i].ManifestRawBytes=manifestRaw
+        // Preserve the original manifest from the already validated cache:
+        // both original-byte content and durable SQL source metadata need it.
         g.Batches[i].DataPath=p
     }
     fmt.Printf("FI W512 RECEIVER-ADMITTED CACHE BOOTSTRAP PASS original_batches=%d source_records=%d first_window_batches=%d first_window_records=%d receipt=%s current_crl_admission=not_repeated selected_manifest_data_sha256=verified\n",
