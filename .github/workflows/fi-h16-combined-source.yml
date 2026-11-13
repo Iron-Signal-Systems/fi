@@ -39,7 +39,7 @@ jobs:
           mkdir -p "$stage"
           base=b01ff0d8cb6559797de052f34b18bd84a395dc4c
           overlay=e47b5383e19140090d691b7c20e8d6ef6e0113fa
-          combined=2cee0b3e4ffd27d6519f844ba133d956a0962e18
+          combined=58f5d7341ba728b4696d05ba31199cb38226befc
           git archive "$base" | tar -x -C "$stage"
           for path in \
             go/cmd/fi-backlog-recover/main_freebsd.go \
