@@ -42,6 +42,7 @@ jobs:
         run: |
           sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
           sh -n ./cmd/fi-backlog-recover/run_cached_wal_benchmarks.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_continuous_family_w34_host.sh
           sh -n ./cmd/fi-backlog-recover/provision_four_benchmark_clusters.sh
           go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
           go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
