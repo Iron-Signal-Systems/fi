@@ -8,7 +8,7 @@ fail(){ printf 'FI CONTINUOUS STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(hostname)" = fi-backend-b ] && [ "$(id -un)" = root ] || fail 'requires fi-backend-b root'
 [ "$#" -eq 1 ] && [ "$1" = w34 ] || fail 'usage: sh run_private_continuous_family_w34_host.sh w34'
 for x in jls jexec sha256 ps awk tar cmp iostat vmstat; do command -v "$x" >/dev/null 2>&1 || fail "missing $x"; done
-pin=40a2166803859d471ae8af8557ecfcdc09089e62
+pin=a16af6f921a7b8f141688908b3c4e9db94add53f
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor-db jid) || fail 'SoR JID missing'
@@ -78,7 +78,7 @@ sed -e 's/var profiles = \[\]string{"K32", "K64"}/var profiles = []string{"clone
  -e 's|!strings.HasPrefix(jailBinary,"/home/jwood/fi-window-bench-optfield-")|jailBinary != filepath.Join(clusterRoot,"fi-optfield-relay")|' \
  "$relay" > "$relay.tmp" && mv "$relay.tmp" "$relay"
 grep -Fq 'var profiles = []string{"clone-11-08-26"}' "$relay" || fail 'relay patch failed'
-(cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest -run '^TestPrivateContinuous' -count=1) \
+(cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest -run '^(TestPrivateContinuous|TestIndexedPrivateWindowLimitsAllowed)' -count=1) \
  > "$root/unit-tests.log" 2>&1 || { cat "$root/unit-tests.log" >&2; fail 'continuous router unit tests failed'; }
 (cd "$src/go" && GOTOOLCHAIN=auto go build -o "$root/fi-continuous" ./cmd/fi-backlog-recover) ||
  fail 'continuous worker build failed'
