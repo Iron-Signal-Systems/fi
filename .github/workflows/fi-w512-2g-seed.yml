@@ -11,6 +11,8 @@ on:
       - 'go/cmd/fi-backlog-recover/testdata/w512_2g_private_field_*.sql'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_pilot2_host.sh'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_inflight16_host.sh'
+      - 'go/cmd/fi-backlog-recover/patchers/w512_inflight16/**'
       - '.github/workflows/fi-w512-2g-seed.yml'
   workflow_dispatch:
 
@@ -209,3 +211,47 @@ jobs:
             exit 1
           fi
           echo "FI W512 TWO-WINDOW PILOT STATIC GATE PASS seed=offline_copy first_new_window=1 workers=2 signed_replay=not_run"
+
+      - name: W512 two-worker 4-to-16 credit experiment exact-anchor and FreeBSD source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_inflight16_host.sh
+          patcher=go/cmd/fi-backlog-recover/patchers/w512_inflight16/main.go
+          sh -n "$runner"
+          grep -Fq 'existing dev PostgreSQL' "$runner" || grep -Fq 'fi-dev PostgreSQL postmaster already running' "$runner"
+          grep -Fq 'source=copy_of_accepted_W512 workers=2 credits=16 sql_writers=1' "$runner"
+          grep -Fq 'accepted W512 seed must remain stopped' "$runner"
+          grep -Fq 'FI W512 INFLIGHT16 PILOT ACCEPTED' "$runner"
+          grep -Fq 'original_seed_unchanged' "$patcher" || grep -Fq 'original_seed_untouched' "$patcher"
+          test "$(grep -cx "JAIL" "$runner")" = 1
+          base="/home/jwood/fi-window-bench-w512-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/optimized-source"
+          test -d "$base/go/internal/recordingest"
+          target="/home/jwood/fi-window-bench-w512-inflight16-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$target"
+          mkdir -m 700 "$target"
+          cp -R "$base" "$target/optimized-source"
+          accepted=a75e18661b070e9c76cd00e18cf35ee8fd6d3d0a
+          git show "$accepted:go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_pilot2_host.sh" > "$target/pilot-inflight16.sh"
+          test "$(git hash-object "$target/pilot-inflight16.sh")" = 86a7543e4379f62209013ddd161bf6532c48f171
+          mkdir -p "$target/optimized-source/go/cmd/fi-backlog-recover/patchers/w512_inflight16"
+          cp "$patcher" "$target/optimized-source/$patcher"
+          (cd "$target/optimized-source/go" &&
+            go run ./cmd/fi-backlog-recover/patchers/w512_inflight16/main.go "$target")
+          sh -n "$target/pilot-inflight16.sh"
+          (cd "$target/optimized-source/go" &&
+            gofmt -w ./internal/recordingest/private_parallel_preparation.go               ./internal/recordingest/postgres_ingest.go               ./cmd/fi-backlog-recover/main_freebsd.go)
+          (cd "$target/optimized-source/go" &&
+            go test -count=1 -timeout=180s ./internal/recordingest -run '^TestPrivateParallelA')
+          (cd "$target/optimized-source/go" &&
+            go test -race -count=1 -timeout=180s ./internal/recordingest -run '^TestPrivateParallelA')
+          (cd "$target/optimized-source/go" &&
+            GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build               -o "$target/fi-optfield-recover-16" ./cmd/fi-backlog-recover)
+          test -s "$target/fi-optfield-recover-16"
+          grep -Fq 'privateParallelAMaxInFlight = 16'             "$target/optimized-source/go/internal/recordingest/private_parallel_preparation.go"
+          grep -Fq 'inflight_limit=16 writers=1'             "$target/optimized-source/go/internal/recordingest/postgres_ingest.go"
+          grep -Fq 'workers=2 inflight=16 postgres_writers=1 source_window=%s atomic=true'             "$target/optimized-source/go/cmd/fi-backlog-recover/main_freebsd.go"
+          grep -Fq 'FI W512 INFLIGHT16 PILOT ACCEPTED' "$target/pilot-inflight16.sh"
+          grep -Fq -- '-window-profile=W512' "$target/pilot-inflight16.sh"
+          grep -Fq -- '-test-stop-after-windows=2' "$target/pilot-inflight16.sh"
+          echo "FI W512 INFLIGHT16 CI PASS source=isolated W512=unchanged workers=2 in_flight=16 writer=1 FreeBSD=build only signed_replay=not_executed"
