@@ -151,6 +151,18 @@ jobs:
           runner=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh
           sh -n "$runner"
           test "$(grep -cx "JAIL" "$runner")" = 1
+          # Regression: the previous pinned runner failed before the W512
+          # source overlay because the nested testdata parent did not exist.
+          # Assert real parent-directory creation precedes Git extraction.
+          awk '
+            /^w512patch=/ { in_assets=1 }
+            in_assets && /testdata\/w512-2g" \\/ { parent_created=NR }
+            in_assets && /^for spec in \\/ {
+              if (parent_created && parent_created < NR) exit 0
+              exit 1
+            }
+          ' "$runner"
+          grep -Fq "W512 disposable Go asset directories unavailable" "$runner"
           grep -Fq -- '-private-w512-2g' "$runner"
           grep -Fq -- '-private-w512-verified-cache-seed' "$runner"
           grep -Fq -- '-verified-cache-root="$cache"' "$runner"
