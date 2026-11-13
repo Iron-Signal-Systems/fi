@@ -172,3 +172,10 @@ jobs:
           sh -n go/cmd/fi-backlog-recover/testdata/h16-ab10/test_validator.sh
           sh go/cmd/fi-backlog-recover/testdata/h16-ab10/test_validator.sh
           echo "FI H16 AB10 SHARED VERIFIER SHELL CONTRACT PASS modes=2 synthetic_batches=566_each real_signed_replay_not_run=true"
+
+      - name: Exercise actual pair coordinator as POSIX sh and verify failure stops
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n go/cmd/fi-backlog-recover/testdata/h16-ab10/test_pair_runtime.sh
+          sh go/cmd/fi-backlog-recover/testdata/h16-ab10/test_pair_runtime.sh
