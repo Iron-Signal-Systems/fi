@@ -36,13 +36,22 @@ func WithPrivateParallelPreparationA(ctx context.Context) (context.Context, erro
     return context.WithValue(ctx, privateParallelAKey{}, true), nil
 }
 
+// Selection intentionally takes place before WithPrivateFileHashH16
+// converts the original F3 limits into the validated F3H16 profile.
+// Runtime activation MUST occur only after that conversion. Distinguish
+// selection from activation so the ingest path can fail closed rather
+// than silently run the historical single-preparer implementation.
+func privateParallelARequested(ctx context.Context) bool {
+    return ctx != nil && ctx.Value(privateParallelAKey{}) == true
+}
+
 func privateParallelAEnabled(ctx context.Context) bool {
-    return ctx != nil && ctx.Value(privateParallelAKey{}) == true &&
+    return privateParallelARequested(ctx) &&
         privateDependencyBuffersEnabled(ctx) &&
         usePrivateSinglePassSecurity(ctx) &&
         joinedBacklogChunkRecords(ctx) == 32768 &&
         privateH16CombinedFileProfileValid(ctx) &&
-        fileBulkLimitsFromContext(ctx).Name == "F3" &&
+        fileBulkLimitsFromContext(ctx).Name == "F3H16" &&
         securityBulkLimitsFromContext(ctx).Name == "P3"
 }
 
