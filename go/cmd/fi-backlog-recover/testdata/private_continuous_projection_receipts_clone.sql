@@ -25,4 +25,27 @@ CREATE INDEX projected_source_record_window_idx
 ON fi_recovery.projected_source_record (receipt_sha256,window_index);
 REVOKE ALL ON fi_recovery.projected_source_record FROM PUBLIC;
 GRANT SELECT, INSERT ON fi_recovery.projected_source_record TO fi_ingest;
+-- The verified W0-W2 H16 seed has range-partitioned Security event fields.
+-- A capacity buffer may cross W128 and consequently cannot be attached as
+-- a single W128 range partition. The disposable clone gets one catch-all
+-- partition for NEW source IDs while retaining the verified W0-W2 leaves.
+-- The runtime role never receives DDL authority. This is NOT a SoR migration.
+DO $fi$
+BEGIN
+ IF (SELECT c.relkind FROM pg_class c
+     WHERE c.oid='fi_recovery_projection.windows_security_event_field'::regclass) <> 'p' THEN
+   RAISE EXCEPTION 'FI continuous trial expected a partitioned W0-W2 Security-field parent';
+ END IF;
+ IF EXISTS (SELECT 1 FROM pg_inherits i
+     JOIN pg_class child ON child.oid=i.inhrelid
+     WHERE i.inhparent='fi_recovery_projection.windows_security_event_field'::regclass
+       AND pg_get_expr(child.relpartbound,child.oid)='DEFAULT') THEN
+   RAISE EXCEPTION 'FI continuous trial refuses an existing default Security-field partition';
+ END IF;
+END
+$fi$;
+CREATE TABLE fi_recovery_projection.windows_security_event_field_continuous_default
+ PARTITION OF fi_recovery_projection.windows_security_event_field DEFAULT;
+REVOKE ALL ON fi_recovery_projection.windows_security_event_field_continuous_default FROM PUBLIC;
+GRANT SELECT, INSERT ON fi_recovery_projection.windows_security_event_field_continuous_default TO fi_ingest;
 COMMIT;
