@@ -521,7 +521,226 @@ for spec in \
     fail "W512 SQL fixture changed: $2"
 done
 git -C "$combinedrepo" show "$w512ref:go/cmd/fi-backlog-recover/testdata/private_field_partitions_isolated.sql" \
-  > "$root/private-field-functions.sql" || fail 'source field functions missing'
+  > "$root/private-field-functions.raw.sql" || fail 'source field functions missing'
+# Original field-function snapshot lacks semicolon after closing dollar quote.
+# Only this disposable copy is normalized.
+[ "$(grep -Fc '$function
+git -C "$repo" show "$ddlref:$ddlpath" \
+  > "$root/leaf-insert-vacuum.sql" || fail 'pinned leaf-only vacuum fixture missing'
+
+# Use immutable archived source migrations, not the fi-dev active worktree.
+schema="$src/database/schema"
+ledger="$src/go/internal/recordingest/backlog_artifact_ledger_schema.sql"
+for file in 0001_relational.sql 0002_source_families.sql 0003_usn_relational_identity.sql \
+            0004_security_field_name_index.sql 0005_usn_capture_binding.sql; do
+  [ -s "$schema/$file" ] || fail "frozen FI schema migration missing: $file"
+done
+(cd "$src/go" && GOTOOLCHAIN=auto go run ./cmd/fi-backlog-recovery-schema \
+    -ledger-sql="$ledger" -migrations-dir="$schema") \
+    > "$root/private-schema.sql" || fail 'private schema generation failed'
+grep -Fq 'CREATE SCHEMA fi_recovery;' "$root/private-schema.sql" ||
+  fail 'private schema emitter output invalid'
+[ ! -e "$pgroot/data" ] || fail 'fresh W512 PostgreSQL data directory already exists'
+initdb -D "$pgroot/data" -U fi_m1_admin -A trust --no-instructions \
+    > "$pgroot/initdb.log" 2>&1 || fail 'W512 private initdb failed'
+pg_ctl -D "$pgroot/data" -l "$pgroot/postgres.log" \
+    -o "-p $port -k $socket -c listen_addresses= -c unix_socket_permissions=0700" \
+    -w start > "$pgroot/start.log" 2>&1 || fail 'W512 private PostgreSQL start failed'
+adminpg="host=$socket port=$port user=fi_m1_admin dbname=postgres sslmode=disable"
+psql "$adminpg" -X -q -v ON_ERROR_STOP=1 \
+    -c 'CREATE ROLE fi_owner NOLOGIN' -c 'CREATE ROLE fi_ingest LOGIN' \
+    > "$pgroot/roles.log" 2>&1 || fail 'W512 private role setup failed'
+createdb -h "$socket" -p "$port" -U fi_m1_admin -O fi_owner fi ||
+    fail 'W512 private fi database create failed'
+admin="host=$socket port=$port user=fi_m1_admin dbname=fi sslmode=disable"
+for file in 0001_relational.sql 0002_source_families.sql 0003_usn_relational_identity.sql \
+            0004_security_field_name_index.sql 0005_usn_capture_binding.sql; do
+  psql "$admin" -X -q -v ON_ERROR_STOP=1 -f "$schema/$file" \
+     >> "$pgroot/canonical-schema.log" 2>&1 || fail "W512 clone schema $file failed"
+done
+psql "$admin" -X -q -v ON_ERROR_STOP=1 -f "$root/private-schema.sql" \
+  > "$pgroot/private-schema.log" 2>&1 || fail 'W512 new private projection schema failed'
+# Bootstrap a real partitioned field parent, seed partition 0, and the
+# original private SECURITY DEFINER helpers only in the new empty clone.
+psql "$admin" -X -q -v ON_ERROR_STOP=1 \
+  -f "$root/w512_2g_private_field_bootstrap.sql" \
+  > "$pgroot/w512-field-bootstrap.log" 2>&1 ||
+    { tail -n 30 "$pgroot/w512-field-bootstrap.log" >&2; fail 'W512 private field partition bootstrap failed'; }
+psql "$admin" -X -q -v ON_ERROR_STOP=1 \
+  -f "$root/private-field-functions.sql" \
+  > "$pgroot/field-functions.log" 2>&1 || fail 'W512 original field functions failed'
+psql "$admin" -X -q -v ON_ERROR_STOP=1 \
+  -f "$root/leaf-insert-vacuum.sql" \
+  > "$pgroot/leaf-insert-vacuum.log" 2>&1 || fail 'W512 pinned leaf vacuum SQL failed'
+
+function_count=$(psql "$admin" -X -qAt -v ON_ERROR_STOP=1 -c "
+SELECT count(*) FROM pg_proc WHERE
+ oid IN ('fi_recovery_projection.begin_security_field_window(integer)'::regprocedure,
+         'fi_recovery_projection.finish_security_field_window(integer,bigint)'::regprocedure)
+ AND prosecdef") || fail 'W512 private field function metadata query failed'
+[ "$function_count" -eq 2 ] || fail 'W512 required SECURITY DEFINER functions not installed'
+conn="host=$socket port=$port user=fi_ingest dbname=fi sslmode=disable"
+q() { psql "$conn" -X -qAt -v ON_ERROR_STOP=1 -c "$1"; }
+[ "$(q "SELECT count(*) FROM pg_tables WHERE schemaname='fi'")" = 49 ] ||
+  fail 'W512 fresh clone canonical schema count invalid'
+[ "$(q "SELECT count(*) FROM fi_recovery.typed_window")" = 0 ] ||
+  fail 'W512 fresh clone unexpectedly contains W128 typed checkpoints'
+[ "$(q "SELECT count(*) FROM fi_recovery_projection.source_record")" = 0 ] ||
+  fail 'W512 fresh clone unexpectedly contains source projections'
+[ "$(q "SELECT count(*) FROM fi.recorded_generation")" = 0 ] ||
+  fail 'W512 clone contains canonical SoR rows'
+[ "$(q "SHOW max_wal_size")" = 1GB ] || fail 'W512 max_wal_size not 1GB'
+[ "$(q "SHOW wal_buffers")" = 4MB ] || fail 'W512 wal_buffers not 4MB'
+for setting in fsync synchronous_commit full_page_writes; do
+  [ "$(q "SHOW $setting")" = on ] || fail "W512 durability $setting not enabled"
+done
+printf 'FI W512 FRESH CLONE PASS source=original_authenticated_custody windows=0 records=0 postgres_writers=1 authoritative=0 accepted=0\n'
+
+JAIL
+
+recover="$jailroot$root/fi-optfield-recover"
+relay="$jailroot$root/fi-optfield-relay"
+[ -x "$recover" ] && [ -x "$relay" ] || fail 'W512 pinned build binaries absent'
+[ "$(sha256 -q "$recover")" = "$(cat "$jailroot$root/recover.sha256")" ] ||
+  fail 'W512 recovery executable hash mismatch'
+[ "$(sha256 -q "$relay")" = "$(cat "$jailroot$root/relay.sha256")" ] ||
+  fail 'W512 relay executable hash mismatch'
+mkdir -m 700 "$out" "$out/$name" "$out/$name/private"
+cat > "$out/RUN_MANIFEST.txt" <<EOF
+FI CANDIDATE A W512/2GiB FRESH PRIVATE SIGNED SEED
+status=seed_only_no_performance_claim
+outer_records=524288
+outer_signed_source_data_bytes=2147483648
+seed_window_index=0
+seed_checkpoint_source=original_8399_receiver_signed_batches
+original_W128_seed_reused=false
+source_ref=$ref
+W512_overlay_ref=$w512ref
+parallel_ref=$parallelref
+verified_cache_existing=$cache
+canonical_authoritative_writes=forbidden
+server_jail=fi-dev
+host=fi-backend-b
+private_postgresql_port=55983
+private_root=$root
+fresh_field_schema=true
+W512_first_partition=w000000
+active_test_workers=seed_ingest_only
+future_worker_count=2
+K32_future_chunk=32768
+future_sql_writers=1
+WAL_max_size=1GB
+WAL_buffers=4MB
+recover_sha256=$(sha256 -q "$recover")
+relay_sha256=$(sha256 -q "$relay")
+EOF
+
+"$relay" -cluster-root="$root" -output-root="$out" \
+    -base-port=55983 -jail-binary="$root/fi-optfield-relay" \
+    > "$out/relay.log" 2>&1 &
+relaypid=$!
+ready=0
+tries=0
+while [ "$tries" -lt 30 ]; do
+  if grep -Fq "FI PG RELAY READY profile=$name port=55983" "$out/relay.log" 2>/dev/null; then
+    ready=1
+    break
+  fi
+  kill -0 "$relaypid" 2>/dev/null || fail "W512 relay exited: $(tail -n 8 "$out/relay.log")"
+  tries=$((tries+1))
+  sleep 1
+done
+[ "$ready" = 1 ] || fail 'W512 private relay did not become ready'
+cat "$out/relay.log"
+sql() {
+  jexec -U jwood fi-dev psql \
+    "host=$root/$name/socket port=55983 user=fi_ingest dbname=fi sslmode=disable" \
+    -X -qAt -v ON_ERROR_STOP=1 -c "$1"
+}
+[ "$(sql 'SELECT count(*) FROM fi_recovery.typed_window')" = 0 ] ||
+  fail 'W512 SQL seed database already has typed checkpoints'
+
+# The first W512 seed must be fully authenticated by the existing signed
+# transport loader; never substitute inherited W128 descriptor or field rows.
+# This full original-custody admission can fail on trust state; fail closed
+# rather than silently bypassing a current verification failure.
+printf 'FI W512 SIGNED FIRST-WINDOW SEED START records_max=524288 bytes_max=2147483648 signed_batches=8399\n' |
+  tee "$out/SUMMARY.txt"
+if ! /usr/bin/time -l "$recover" -private-w512-2g \
+  -source=iss-fs-22a.iss.local \
+  -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
+  -postgres="host=$out/pg-$name port=55983 user=fi_ingest dbname=fi sslmode=disable" \
+  -custody-root=/var/db/fi/custody/generation \
+  -recorded-root=/var/db/fi/custody/recorded \
+  -source-namespaces=false -private-root="$out/$name/private" \
+  -private-writes -stream-loader -start-window=0 -max-windows=1 \
+  -security-profile=P3 -file-profile=F3 -window-profile=W512 \
+  -max-runtime=0 > "$out/$name/seed-recover.log" 2>&1; then
+  tail -n 100 "$out/$name/seed-recover.log" >&2 || :
+  fail 'new signed W512 seed rejected; no benchmark or W128 seed modification'
+fi
+
+grep -Fq 'window_profile=W512 max_window_records=524288 max_window_data_bytes=2147483648' \
+    "$out/$name/seed-recover.log" || fail 'W512 runtime source window limit proof absent'
+grep -Fq 'FI REAL BACKLOG verified signed receipt records=15140785 batches=8399' \
+    "$out/$name/seed-recover.log" || fail 'full signed source receipt was not verified'
+[ "$(sql "SELECT count(*)::text || '|' || min(window_index)::text || '|' || max(window_index)::text FROM fi_recovery.typed_window")" = '1|0|0' ] ||
+  fail 'W512 first window checkpoint count/index invalid'
+[ "$(sql 'SELECT count(*) FROM fi_recovery.source_window')" = 1 ] ||
+  fail 'W512 source checkpoint not durable'
+[ "$(sql 'SELECT count(*) FROM fi_recovery.verified_artifact_window')" = 1 ] ||
+  fail 'W512 signed artifact checkpoint not durable'
+[ "$(sql 'SELECT count(*) FROM fi_recovery_projection.source_batch')" = 8399 ] ||
+  fail 'W512 private source metadata missing original 8399 batches'
+[ "$(sql 'SELECT count(*) FROM fi.recorded_generation')" = 0 ] ||
+  fail 'W512 seed unexpectedly modified authoritative generation'
+[ "$(sql "SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'")" = 0 ] ||
+  fail 'W512 seed unexpectedly marked Accepted'
+records=$(sql 'SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window') ||
+  fail 'W512 seed checkpoint record query failed'
+case "$records" in ''|*[!0-9]*) fail 'W512 seed record count malformed';; esac
+[ "$records" -gt 0 ] && [ "$records" -le 524288 ] ||
+  fail "W512 seed original signed record cap invalid: $records"
+fields_before=$(sql 'SELECT count(*) FROM fi_recovery_projection.windows_security_event_field') ||
+  fail 'W512 seed private field readback failed'
+[ "$fields_before" -gt 0 ] || fail 'W512 seed had no Security fields'
+printf 'FI W512 SIGNED SEED SQL PASS windows=1 index=0 records=%s security_fields=%s signed_batches=8399 authoritative=0 accepted=0\n' \
+  "$records" "$fields_before" | tee -a "$out/SUMMARY.txt"
+
+# Reattach the initial field partition with a finite verified source-id upper
+# bound. This is outside the future W512 performance timer.
+jexec -U jwood fi-dev psql \
+  "host=$root/$name/socket port=55983 user=fi_m1_admin dbname=fi sslmode=disable" \
+  -X -v ON_ERROR_STOP=1 -f "$root/w512_2g_private_field_postseed.sql" \
+  > "$out/$name/w512-field-postseed.log" 2>&1 ||
+  { tail -n 50 "$out/$name/w512-field-postseed.log" >&2; fail 'W512 field postseed range/row conservation rejected'; }
+[ "$(sql "SELECT count(*) FROM fi_recovery_projection.windows_security_event_field")" = "$fields_before" ] ||
+  fail 'W512 Security field row conservation mismatch after partition reattach'
+[ "$(sql "SELECT count(*) FROM pg_inherits WHERE inhparent='fi_recovery_projection.windows_security_event_field'::regclass")" = 1 ] ||
+  fail 'W512 seeded field parent partition count invalid'
+sql "SELECT window_index::text || '|' || committed_records::text || '|' || encode(descriptor_sha256,'hex')
+     FROM fi_recovery.typed_window ORDER BY window_index" > "$out/$name/W512_SEED_CHECKPOINT.tsv" ||
+  fail 'W512 checkpoint descriptor readback failed'
+cat "$out/$name/W512_SEED_CHECKPOINT.tsv"
+printf 'FI W512 FIELD PARTITION GATE PASS fields=%s leaf=1 seed_index=0\n' "$fields_before" |
+  tee -a "$out/SUMMARY.txt"
+[ "$(sql 'SELECT count(*) FROM fi.recorded_generation')" = 0 ] ||
+  fail 'W512 authoritative SoR changed after postseed'
+printf 'FI W512/2G FRESH SIGNED SEED ACCEPTED windows=1 typed_records=%s fields=%s authoritative=0 accepted=0\n' \
+  "$records" "$fields_before" | tee -a "$out/SUMMARY.txt"
+bundle="$out/fi-w512-private-seed-$stamp.tar.gz"
+tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log "$name/seed-recover.log" \
+  "$name/w512-field-postseed.log" "$name/W512_SEED_CHECKPOINT.tsv" ||
+  fail 'W512 seed diagnostics bundle creation failed'
+[ -s "$bundle" ] || fail 'W512 seed diagnostics missing'
+printf 'FI W512 SEED METRICS BUNDLE PASS path=%s sha256=%s\n' "$bundle" "$(sha256 -q "$bundle")"
+ "$root/private-field-functions.raw.sql")" -eq 4 ] ||
+  fail 'W512 historical SQL field function delimiters changed'
+awk '{ if ($0=="$function$") {print "$function$;"; next} print }' \
+  "$root/private-field-functions.raw.sql" > "$root/private-field-functions.sql" ||
+  fail 'W512 field fixture SQL normalization failed'
+[ "$(grep -Fc '$function$;' "$root/private-field-functions.sql")" -eq 2 ] ||
+  fail 'W512 field functions missing exactly two SQL terminators'
 git -C "$repo" show "$ddlref:$ddlpath" \
   > "$root/leaf-insert-vacuum.sql" || fail 'pinned leaf-only vacuum fixture missing'
 
