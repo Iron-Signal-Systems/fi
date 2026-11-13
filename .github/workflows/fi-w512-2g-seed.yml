@@ -1,0 +1,155 @@
+name: FI W512 2GiB Private Candidate A Source and Seed Runner Gate
+
+on:
+  push:
+    branches:
+      - experiment/fi-candidate-a-w512-2g-20261113
+    paths:
+      - 'go/internal/recordingest/backlog_window_plan_w512_test.go'
+      - 'go/cmd/fi-backlog-recover/patchers/w512_2g/**'
+      - 'go/cmd/fi-backlog-recover/testdata/w512_2g_private_field_*.sql'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh'
+      - '.github/workflows/fi-w512-2g-seed.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-parallel-a-w512:
+    runs-on: ubuntu-latest
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Reconstruct frozen H16 combined ingest source in disposable tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The historical SHA-once patcher deliberately refuses arbitrary
+          # working directories. Satisfy its already-established disposable
+          # fi-window-bench-*/optimized-source ownership contract in CI.
+          bench="$(mktemp -d /tmp/fi-window-bench-h16-ci-XXXXXXXX)"
+          stage="$bench/optimized-source"
+          mkdir -p "$stage"
+          base=b01ff0d8cb6559797de052f34b18bd84a395dc4c
+          overlay=e47b5383e19140090d691b7c20e8d6ef6e0113fa
+          combined=58f5d7341ba728b4696d05ba31199cb38226befc
+          git archive "$base" | tar -x -C "$stage"
+          for path in \
+            go/cmd/fi-backlog-recover/main_freebsd.go \
+            go/internal/recordingest/file_bulk_profiles.go \
+            go/internal/recordingest/private_file_hash_h16_test.go; do
+            git show "$overlay:$path" > "$stage/$path"
+          done
+          # Recreate the exact historical, reviewed SHA-once source overlay.
+          git cat-file blob 704ad5ae6d93f036fc821724834747d35f5ab7d2 > "$stage/go/internal/recordingest/private_batch_hash_once.go"
+          git cat-file blob fc437741ab4d7ae4a45099c1aa45f85a19735f10 > "$stage/go/internal/recordingest/private_batch_hash_once_test.go"
+          git cat-file blob bff7343872bbca3c214bce0a79c92ec2b8039d0f > "$stage/patch_private_batch_hash_once.go"
+          (cd "$stage/go" && go run "$stage/patch_private_batch_hash_once.go" "$stage")
+          # Historical Security JSON-once source and tests, unchanged.
+          git cat-file blob 9d7ba5fd99dc79d859023885810a95e869b8c1f1 > "$stage/go/internal/recordingest/security_single_pass_candidate.go"
+          git cat-file blob d8b7603774f91209471ce42e311caf45f3d3fd9e > "$stage/go/internal/recordingest/security_json_once_test.go"
+          git cat-file blob e2926386e039f05ce52d9cd44b75c56e81133d53 > "$stage/go/internal/recordingest/security_json_once_signed_cache_test.go"
+          # Existing frozen H16 mixed-buffer source patch.
+          git cat-file blob a1170aa8f7e3e40ee8f4702a54c6ced006386a23 > "$stage/go/internal/recordingest/private_mixed_family_buffers.go"
+          git cat-file blob a841233fcaa176b49448434795141263ca163bae > "$stage/go/internal/recordingest/private_mixed_family_buffers_test.go"
+          git cat-file blob 3f29c387c190ffdf8c6a331ceb4dc6a2b8d6609a > "$stage/patch_mixed_family_buffers.go"
+          (cd "$stage/go" && go run "$stage/patch_mixed_family_buffers.go" "$stage")
+          # Existing frozen H16 coverage/USN dependency patch.
+          git cat-file blob 089bbf0af7ef50d1c5815cbd59e13833068236c2 > "$stage/go/internal/recordingest/private_dependency_buffers.go"
+          git cat-file blob c9f4466364c1a5b6b1a0ae1f7b7f4dfbdf344866 > "$stage/go/internal/recordingest/private_dependency_buffers_test.go"
+          git cat-file blob ec72725173fd97e961b82de1e5890b6ed47654f1 > "$stage/go/internal/recordingest/private_mixed_family_buffers.go"
+          git cat-file blob 3548edb0945eb7213974b0edfa78e6f21efbf8f7 > "$stage/go/internal/recordingest/private_mixed_family_buffers_test.go"
+          git cat-file blob b081f1c928e217d82e37ebbfb48025a863fbe3a7 > "$stage/patch_private_dependency_buffers.go"
+          (cd "$stage/go" && go run "$stage/patch_private_dependency_buffers.go" "$stage")
+          # The ONLY new functional code: no K32-triggered partial family drain.
+          path=go/cmd/fi-backlog-recover/patchers/h16_combined_buffer/main.go
+          mkdir -p "$stage/$(dirname "$path")"
+          git show "$combined:$path" > "$stage/$path"
+          path=go/internal/recordingest/h16_combined_family_buffers_test.go
+          git show "$combined:$path" > "$stage/$path"
+          (cd "$stage/go" && go run ./cmd/fi-backlog-recover/patchers/h16_combined_buffer/main.go "$stage")
+          # Exact, previously exercised AB10 durable callback extension on
+          # Overlays affect only the temporary original-H16 source tree.
+          for path in \
+            go/cmd/fi-backlog-recover/patchers/h16_parallel_a/main.go \
+            go/cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation.go \
+            go/cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation_test.go; do
+            mkdir -p "$stage/$(dirname "$path")"
+            git show "HEAD:$path" > "$stage/$path"
+            [ "$(git hash-object "$stage/$path")" = "$(git rev-parse HEAD:"$path")" ]
+          done
+          (cd "$stage/go" && go run ./cmd/fi-backlog-recover/patchers/h16_parallel_a/main.go "$stage")
+          (cd "$stage/go" && gofmt -w \
+            internal/recordingest/private_parallel_preparation.go \
+            internal/recordingest/private_parallel_preparation_test.go \
+            internal/recordingest/postgres_ingest.go \
+            cmd/fi-backlog-recover/main_freebsd.go)
+          (cd "$stage/go" && go test -count=1 ./internal/recordingest \
+            -run '^(TestPrivateParallelA|TestH16Combined|TestPrivateDependency|TestPrivateMixed|TestMixedBulk|TestPrivateBatchHashOnce|TestSecurityJSONOnce)')
+          (cd "$stage/go" && go test -race -count=1 -timeout=120s ./internal/recordingest \
+            -run '^TestPrivateParallelA')
+          (cd "$stage/go" && GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
+            -o "$stage/fi-h16-parallel-a-freebsd" ./cmd/fi-backlog-recover)
+          test -s "$stage/fi-h16-parallel-a-freebsd"
+          grep -Fq 'private-parallel-prep-a' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
+          echo "FI H16 PARALLEL A SOURCE PASS workers=2 in_flight=4 postgres_writers=1 original_W128_atomic=true signed_W3_W4=not_run"
+
+          # W512 source patcher deliberately allows only the dedicated private
+          # FreeBSD fixture path. Relocate the disposable prepared tree there;
+          # neither the active repo checkout nor the W128 source is modified.
+          sudo install -d -m 0755 -o "$(id -un)" -g "$(id -gn)" /home/jwood
+          bench_w512="/home/jwood/fi-window-bench-w512-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$bench_w512"
+          mv "$bench" "$bench_w512"
+          stage="$bench_w512/optimized-source"
+          for file in \
+            go/cmd/fi-backlog-recover/patchers/w512_2g/main.go \
+            go/internal/recordingest/backlog_window_plan_w512_test.go; do
+            mkdir -p "$stage/$(dirname "$file")"
+            git show "HEAD:$file" > "$stage/$file"
+            test "$(git hash-object "$stage/$file")" = "$(git rev-parse "HEAD:$file")"
+          done
+          (cd "$stage/go" && go run ./cmd/fi-backlog-recover/patchers/w512_2g/main.go "$stage")
+          (cd "$stage/go" && gofmt -w \
+            ./cmd/fi-backlog-recover/main_freebsd.go \
+            ./internal/recordingest/backlog_continuous_private.go \
+            ./internal/recordingest/backlog_stream_load.go \
+            ./internal/recordingest/backlog_window_plan_w512_test.go)
+          (cd "$stage/go" && go test -count=1 ./internal/recordingest \
+            -run '^(TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)')
+          (cd "$stage/go" && GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
+            -o "$stage/fi-w512-candidate-a-freebsd" ./cmd/fi-backlog-recover)
+          test -s "$stage/fi-w512-candidate-a-freebsd"
+          grep -Fq 'private-w512-2g' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
+          grep -Fq 'MaxRecords: 524288, MaxDataBytes: 2 << 30' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
+          echo "FI W512 2G SOURCE GATE PASS records=524288 bytes=2147483648 workers=2 W128_control_unchanged=true signed_replay=not_run"
+
+      - name: W512 seed runner shell syntax and fail-closed isolation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_seed_host.sh
+          sh -n "$runner"
+          test "$(grep -cx "JAIL" "$runner")" = 1
+          grep -Fq -- '-private-w512-2g' "$runner"
+          grep -Fq -- '-window-profile=W512' "$runner"
+          grep -Fq 'W512 SIGNED FIRST-WINDOW SEED START' "$runner"
+          grep -Fq 'FI W512/2G FRESH SIGNED SEED ACCEPTED' "$runner"
+          grep -Fq 'original_W128_seed_reused=false' "$runner"
+          grep -Fq 'W512 SECURITY DEFINER helper functions missing' "$runner"
+          grep -Fq 'if basePort != 55981 {' "$runner"
+          grep -Fq 's/if basePort != 55981 {/if basePort != 55983 {/' "$runner"
+          if grep -Fq 'pg_restore' "$runner" ||
+             grep -Fq 'accepted-prefix.dump' "$runner"; then
+            echo "STOP: W512 seed runner refers to the W128 dump/restore chain" >&2
+            exit 1
+          fi
+          echo "FI W512 SEED HOST SCRIPT STATIC GATE PASS fresh_w512_chain=true signed_run=not_executed"
