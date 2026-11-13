@@ -137,6 +137,24 @@ port=55981
 (cd "$repo/go" && GOTOOLCHAIN=auto go version) || fail 'Go 1.27.3 toolchain is unavailable in fi-dev'
 [ ! -e "$root" ] || fail 'fixture path already exists'
 git -C "$repo" cat-file -e "$ref^{commit}" || fail 'pinned optimized source commit is not available locally'
+# Preflight all historical mixed/dependency assets BEFORE allocating the
+# fixture or restoring PostgreSQL. Their exact blob SHA-1 is an immutable
+# source-pin invariant; do not accept an older local staged test file.
+git -C "$combinedrepo" cat-file -e "$combinedref^{commit}" ||
+  fail 'FI H16 combined source pin missing: fetch the development branch in fi-dev'
+for blob in \
+ a1170aa8f7e3e40ee8f4702a54c6ced006386a23 \
+ a841233fcaa176b49448434795141263ca163bae \
+ 3f29c387c190ffdf8c6a331ceb4dc6a2b8d6609a \
+ 089bbf0af7ef50d1c5815cbd59e13833068236c2 \
+ c9f4466364c1a5b6b1a0ae1f7b7f4dfbdf344866 \
+ ec72725173fd97e961b82de1e5890b6ed47654f1 \
+ 3548edb0945eb7213974b0edfa78e6f21efbf8f7 \
+ b081f1c928e217d82e37ebbfb48025a863fbe3a7; do
+    git -C "$combinedrepo" cat-file -e "$blob^{blob}" ||
+      fail "FI H16 pinned source asset unavailable: $blob (fetch branch in fi-dev)"
+done
+printf 'FI H16 PINNED ASSET PREFLIGHT PASS mixed=3 dependency=5 source=git_objects staging=disposable\n'
 mkdir -m 700 "$root" "$src" "$pgroot" "$socket"
 git -C "$repo" archive --format=tar -o "$root/source.tar" "$ref" || fail 'cannot archive historical source'
 tar -xf "$root/source.tar" -C "$src" || fail 'cannot extract historical source'
