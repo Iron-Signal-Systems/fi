@@ -1,6 +1,31 @@
 # FI ingest: source-first continuous type-directed buffering
 
-**Engineering status (2026-11-12):** development-branch-only source-first continuous router, PostgreSQL family sink, signed-window replay driver, append-only per-record SQL completion receipts, and strictly isolated W3-W4 CLI gate are implemented. The disposable PostgreSQL 18 CI fixture validates two-window family commits, exact replay, and late-child rollback. This is **NOT a signed W3-W4 acceptance**, and is **NOT ready for the 10-window benchmark**. The private W3-W4 database clone runner and real USN, File and Security cross-window correctness/throughput proof remain mandatory. H16 (89.931 s reference) is untouched.
+**Engineering status (2026-11-13):** development-branch-only W128 source-first staging, bounded K32 input work-unit dispatcher, independent Security/File/coverage/ordered-USN PostgreSQL buffer commits, and per-record signed completion receipts are implemented. The isolated PostgreSQL 18 CI fixture validates source-first typed commits and rollback. The dedicated private W3-W4 runner has now started its isolated clone successfully in host trials, but has NOT completed a real signed W3-W4 projection. The two latest blockers were (a) inappropriate fresh signing-CRL verification of already accepted receiver input, now switched to the prior receipt-bound fully verified cache, and (b) overly strict source-index timestamp comparisons against PostgreSQL's microsecond precision, now limited to <1 microsecond with field-specific diagnostics. This is NOT a signed acceptance, NOT a ten-window authorization, and NOT a release claim. H16's 89.931-second reference is unchanged.
+
+## Pinned input hierarchy and SQL boundaries
+
+The **required** hierarchy is:
+
+```text
+Previously receiver-admitted, receipt-bound verified FIGT cache
+  -> verified W128 original source window (up to 131,072 / 1 GiB)
+    -> K32 input work units (up to 32,768 / 256 MiB)
+      -> persistent independent typed buffers
+         Security P3: 4,096 records / 16 MiB
+         File F3:     8,192 records / 32 MiB
+         Coverage:      512 records /  8 MiB
+         Ordered USN:   512 records /  8 MiB
+         Other:         512 records /  8 MiB
+          -> isolated private relational PostgreSQL buffer transaction
+```
+
+K32 is **a real bounded input work unit**. The worker temporarily groups signed source records into K32, then processes that unit into the existing independent family lanes. `EndSourceWindow` dispatches only a short last K32, **not** the outstanding typed family buffers. A full typed buffer commits solely due to its own byte/record capacity; an unfinished buffer crosses both K32 and W128; remaining families drain at actual EndOfInput. The recovery runner explicitly requires `-processing-chunk-records=32768`; it does not enable the old joined-source K32 transaction mode.
+
+**Trust distinction:** FI's receiver already authenticated the original transfer at admission. Replay reads the original receipt-bound `verified.json` cache marker, compares the receipt and transfer identity against the 8,399-batch private SQL index, verifies every selected ORIGINAL signed manifest SHA-256, exact data hash, record count and size. It **does not** demand today's batch-signing CRL remain current to process previously received bytes. This does not authorize any new transfer or bypass live trust enforcement at the receiver.
+
+**Durability distinction:** W128 remains the atomic **source** checkpoint, while one whole typed family buffer and all of its children plus completion receipts are written atomically. Typed W128 completion is marked only after all its family receipts exist, in contiguous original order. This is intentionally **not** the legacy single SQL transaction containing every typed child in a whole W128, and cannot be represented as such without changing the design.
+
+**Measured proof still needed:** a completed real signed W3-W4 run with K32 count/byte telemetry, at least one Security family buffer spanning W3 and W4, signed-byte readback, relational/FK and USN dependency checks, and a measured wall-time comparison. Prior attempts exited before typed projection, so no throughput improvement is established.
 
 ## Required behavior
 
@@ -54,10 +79,10 @@ Implemented on the experimental work branch:
 - `go/internal/recordingest/private_continuous_postgres_sink.go`: initializes only the private shadow generation; verifies committed signed custody identities in bounded exact-key SQL batches; commits one family at a time with existing 49-table projectors; inserts append-only `fi_recovery.projected_source_record` receipts in the SAME SQL transaction. Replay verifies matching signed digest and shadow source before skipping committed identities. SQL fail closes without a typed marker.
 - `go/internal/recordingest/private_continuous_family_replay.go`: stages signed source windows durably BEFORE routing; carries partial typed buffers over W128; drains at real end-of-input and verifies contiguous typed markers.
 - `go/internal/recordingest/backlog_artifact_ledger_schema.sql`: separate append-only projection receipt table in the isolated recovery namespace; no deployed SoR migration.
-- `go/cmd/fi-backlog-recover/main_freebsd.go`: `-private-continuous-family` is fail-closed to isolated, indexed W128 W3-W4 with P3/F3, and is incompatible with legacy K32, partitioned Security field mode, and legacy dependency modes.
+- `go/cmd/fi-backlog-recover/main_freebsd.go`: `-private-continuous-family` is fail-closed to isolated, indexed W128 W3-W4 with P3/F3, and is requires the new 32,768-record K32 work-unit dispatcher and rejects the old joined-source K32 transaction mode, detached Security field partition mode, and legacy dependency modes.
 - `go/internal/recordingest/backlog_bootstrap_promote_ci_integration_test.go`: PostgreSQL 18 CI synthetic tests for two-window durable typed completion, idempotent replay, and rollback on invalid child. The separate FreeBSD-only fixture tests compile but are not executed by GitHub Actions.
 
-**Still required for a real signed W3-W4 run:** generate and audit a dedicated disposable clone runner (the existing pinned H16 runner does not install this code/schema); verify all Security/File/USN typed child and FK coverage, cross-window capture prerequisites, source identity and receipt equality, restart after partially committed families, WAL/checkpoint behavior, and actual copy counts. Existing H16 SHA/JSON optimizations must be compared without conflating a new transaction boundary with old W128 atomic commits. The 29 W4 USN rows and 232,879 Security records are hard acceptance gates. Report timing only from the real signed test.
+**Still required for a real signed W3-W4 run:** execute and audit the existing, hash-pinned dedicated disposable clone runner (the prior H16 runner must not be substituted); verify all Security/File/USN typed child and FK coverage, cross-window capture prerequisites, source identity and receipt equality, restart after partially committed families, WAL/checkpoint behavior, and actual copy counts. Existing H16 SHA/JSON optimizations must be compared without conflating a new transaction boundary with old W128 atomic commits. The 29 W4 USN rows and 232,879 Security records are hard acceptance gates. Report timing only from the real signed test.
 
 A projected `source_record` root without complete typed children is NOT sufficient. A final marker requires complete per-window projection receipts and the existing relational coverage queries; an entire generation with USN captures must additionally pass the generation-level capture completeness proof. Detached W128-scoped Security field partitions are intentionally disabled for continuous mode until their cross-window semantics are audited.
 
