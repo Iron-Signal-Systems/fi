@@ -88,3 +88,29 @@ jobs:
           (cd "$stage/go" && GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o "$stage/fi-h16-combined-freebsd" ./cmd/fi-backlog-recover)
           sh -n go/cmd/fi-backlog-recover/run_private_h16_combined_buffers_w34_host.sh
           echo "FI FROZEN H16 COMBINED SOURCE PASS original_H16=unchanged new_SQL_layers=0 k32_partial_drains=0 real_signed_W34=not_run"
+      - name: Verify actual host runner materializes exact pinned assets without stale staged directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=go/cmd/fi-backlog-recover/run_private_h16_combined_buffers_w34_host.sh
+          tmp="$(mktemp -d)"
+          # Extract and execute the two REAL asset-install loops from the host
+          # runner under a clean, disposable directory. A mock or a manual
+          # 'git cat-file' reconstruction is insufficient: this step exercises
+          # exactly the code whose older version failed on fi-dev.
+          sed -n '/^mixedassets=/,/^done$/p' "$runner" > "$tmp/mixed.sh"
+          sed -n '/^depassets=/,/^done$/p' "$runner" > "$tmp/dependency.sh"
+          [ "$(grep -c '^done "$tmp/mixed.sh")" -eq 1 ]
+          [ "$(grep -c '^done "$tmp/dependency.sh")" -eq 1 ]
+          sh -n "$tmp/mixed.sh"
+          sh -n "$tmp/dependency.sh"
+          export root="$tmp" combinedrepo="$PWD"
+          fail() { echo "FI H16 DISPOSABLE ASSET FIXTURE STOP: $*" >&2; exit 1; }
+          . "$tmp/mixed.sh"
+          . "$tmp/dependency.sh"
+          [ "$(find "$tmp/h16-mixed-assets" -type f | wc -l)" -eq 3 ]
+          [ "$(find "$tmp/h16-dependency-assets" -type f | wc -l)" -eq 5 ]
+          [ "$(git hash-object "$tmp/h16-dependency-assets/private_dependency_buffers_test.go")" = c9f4466364c1a5b6b1a0ae1f7b7f4dfbdf344866 ]
+          ! grep -Fq 'depassets=/home/jwood/fi-h16-dependency-buffer-assets' "$runner"
+          ! grep -Fq 'mixedassets=/home/jwood/fi-h16-mixed-buffer-assets' "$runner"
+          echo "FI H16 HOST ASSET RECONSTRUCTION PASS mixed=3 dependency=5 stale_staged_files_ignored=true"
