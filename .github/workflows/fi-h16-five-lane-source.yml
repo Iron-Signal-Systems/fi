@@ -75,7 +75,7 @@ jobs:
           (cd "$stage/go" && go run ./cmd/fi-backlog-recover/patchers/h16_combined_buffer/main.go "$stage")
           # Add a distinct fifth independently drained lane, WITHOUT changing
           # the historically pinned H16 transaction, source ledger, or decoder.
-          five=866e1b70cf5916364da40bc5485c9caad325e122
+          five=394e06ca35a61e559c16909fae296d425ef8bb19
           mkdir -p "$stage/go/cmd/fi-backlog-recover/patchers/h16_five_lane"
           mkdir -p "$stage/go/cmd/fi-backlog-recover/testdata/h16-five-lane"
           for path in \
