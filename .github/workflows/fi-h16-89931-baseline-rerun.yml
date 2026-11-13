@@ -1,0 +1,89 @@
+name: FI Frozen 89.931s H16 Baseline Rerun Gate
+
+on:
+  push:
+    paths:
+      - 'go/cmd/fi-backlog-recover/run_private_h16_89931_control_rerun_w34_host.sh'
+      - '.github/workflows/fi-h16-89931-baseline-rerun.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-h16-original:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Reconstruct exact historical November 12 original H16 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          historical=97961a019d84859a558c2e6a1e0688e255ef8ec2
+          baseline=b01ff0d8cb6559797de052f34b18bd84a395dc4c
+          h16=e47b5383e19140090d691b7c20e8d6ef6e0113fa
+          stage_root="$(mktemp -d /tmp/fi-window-bench-original-control-XXXXXXXX)"
+          src="$stage_root/optimized-source"
+          mkdir -p "$src"
+          git archive "$baseline" | tar -xf - -C "$src"
+          for path in \
+            go/cmd/fi-backlog-recover/main_freebsd.go \
+            go/internal/recordingest/file_bulk_profiles.go \
+            go/internal/recordingest/private_file_hash_h16_test.go; do
+            git show "$h16:$path" > "$src/$path"
+          done
+          git cat-file blob 704ad5ae6d93f036fc821724834747d35f5ab7d2 > "$src/go/internal/recordingest/private_batch_hash_once.go"
+          git cat-file blob fc437741ab4d7ae4a45099c1aa45f85a19735f10 > "$src/go/internal/recordingest/private_batch_hash_once_test.go"
+          git cat-file blob bff7343872bbca3c214bce0a79c92ec2b8039d0f > "$stage_root/patch_private_batch_hash_once.go"
+          (cd "$src/go" && go run "$stage_root/patch_private_batch_hash_once.go" "$src")
+          for spec in \
+            "security_single_pass_candidate.go 9a70be536f0a07687640fe1e2e48459d85430073" \
+            "security_json_once_test.go 9250302470679dd9c23ce7daca92a9f7fbb22596" \
+            "security_json_once_signed_cache_test.go e2926386e039f05ce52d9cd44b75c56e81133d53"; do
+            set -- $spec
+            git cat-file blob "$2" > "$src/go/internal/recordingest/$1"
+            [ "$(git hash-object "$src/go/internal/recordingest/$1")" = "$2" ]
+          done
+          (cd "$src/go" && gofmt -w \
+            internal/recordingest/private_batch_hash_once.go \
+            internal/recordingest/private_batch_hash_once_test.go \
+            internal/recordingest/postgres_ingest.go \
+            internal/recordingest/backlog_typed_window_postgres.go \
+            internal/recordingest/security_single_pass_candidate.go \
+            internal/recordingest/security_json_once_test.go \
+            internal/recordingest/security_json_once_signed_cache_test.go)
+          (cd "$src/go" && go test -count=1 ./internal/recordingest \
+            -run '^(TestPrivateBatchHashOnce|TestPrivateHashH16|TestSecurityJSONOnce|TestSinglePassSecurity|TestFIJSONOneShot)')
+          (cd "$src/go" && GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o "$stage_root/fi-h16-original-freebsd" ./cmd/fi-backlog-recover)
+          echo "FI ORIGINAL 89.931 H16 SOURCE PASS pinned_20261112=true K32=32768 W128_atomic=true mixed_buffers=false original_json_blobs=true real_replay_not_run=true"
+      - name: Verify host runner differs only in private staging, output naming and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          historical=97961a019d84859a558c2e6a1e0688e255ef8ec2
+          old=go/cmd/fi-backlog-recover/run_private_h16_sha_once_json_without_extra_scan_w3_w4_host.sh
+          new=go/cmd/fi-backlog-recover/run_private_h16_89931_control_rerun_w34_host.sh
+          git show "$historical:$old" > /tmp/fi-original-runner.sh
+          sh -n /tmp/fi-original-runner.sh
+          sh -n "$new"
+          [ "$(git hash-object /tmp/fi-original-runner.sh)" = e2d01329e01c0df5ba20d00dcf5f9fc5c69c5679 ]
+          grep -Fq 'out=/var/tmp/fi-window-chunks-jonce2-recheck-$stamp' "$new"
+          grep -Fq 'root=/home/jwood/fi-window-bench-jonce2-recheck-$stamp' "$new"
+          ! grep -Fq 'private-mixed-family-buffers' "$new"
+          ! grep -Fq 'private-dependency-buffers' "$new"
+          grep -Fq 'security_single_pass_candidate.go 9a70be536f0a07687640fe1e2e48459d85430073' "$new"
+          grep -Fq 'security_json_once_test.go 9250302470679dd9c23ce7daca92a9f7fbb22596' "$new"
+          grep -Fq 'security_json_once_signed_cache_test.go e2926386e039f05ce52d9cd44b75c56e81133d53' "$new"
+          grep -Fq 'FI ORIGINAL H16 JSON BLOBS PASS' "$new"
+          grep -Fq 'if ! /usr/bin/time -l "$recover" -private-hash-h16' "$new"
+          grep -Fq -- '-processing-chunk-records=32768 -continuous-private -start-window=3' "$new"
+          grep -Fq -- '-max-windows=0 -max-runtime=0 -test-stop-after-windows=2' "$new"
+          echo "FI H16 89.931 RERUN RUNNER PASS historical_sha=e2d01329 original_options=true private_new_output=true"
