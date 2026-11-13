@@ -480,10 +480,19 @@ grep -Fq 'FI SECURITY JSON REAL SIGNED PREFLIGHT PASS' "$out/security-real-signe
 printf 'FI SECURITY JSON REAL SIGNED PREFLIGHT PASS records=512 strict_equivalent=true\n' |
     tee "$out/security-real-signed-preflight-summary.txt"
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI PRIVATE H16 SHA-ONCE, JSON-ONCE, SECURITY/FILE/COVERAGE/USN DEPENDENCY BUFFERS: W3-W4
-experiment=private_h16_independent_security_file_coverage_usn_dependency_buffers_w3_w4
+FI PRIVATE H16 SHA-ONCE, JSON-ONCE, SECURITY/FILE/COVERAGE/USN COMBINED BUFFERS: W3-W4
+experiment=private_h16_combined_security_coverage_k32_nonflushing_w3_w4
 source_commit=$ref
+combined_buffer_patch_commit=$combinedref
 hash_overlay_commit=$h16ref
+baseline_real_signed_seconds=89.931
+original_security_copy_calls_W3=52
+original_security_copy_calls_W4=54
+k32_partial_family_flushes=disabled
+w128_atomic_relational_transaction=unchanged
+cross_W128_partial_family_carry=not_in_this_atomic_trial
+new_source_staging=none
+new_sql_receipt_writes=none
 hash_variant=$hashmode
 vacuum_variant=$mode
 candidate_ddl_commit=$ddlref
@@ -808,6 +817,11 @@ END {
  print "w3=" c3 " w4=" c4 " avoided_w3=" a3 " avoided_w4=" a4
 }' "$log") || fail 'H16 combined buffer failed to reduce premature Security COPY calls'
 printf 'FI H16 COMBINED BUFFER REDUCTION PASS original_copies=52|54 %s\n' "$reduction" |
+ tee -a "$out/SUMMARY.txt"
+# Record timing independently from the accepted baseline. Passing reduced COPY
+# counts alone is not a performance promotion; exact wall/SQL integrity is
+# reviewed after this candidate's original signed W3-W4 checkpoint completes.
+printf 'FI H16 COMBINED BUFFER PERF GATE baseline_seconds=89.931 comparison=pending_wall_time_review\n' |
  tee -a "$out/SUMMARY.txt"
 grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
 grep '^FI REAL TYPED WINDOW ' "$log" > "$out/$name/SECURITY_COPY_CALLS.txt" ||
