@@ -360,7 +360,9 @@ WHERE source_id=$1 AND generation_id=$2)
 		}
 	}
 
-	if indexedPrivate {
+	if privateContinuousFamily {
+		fmt.Printf("FI REAL BACKLOG replaying original receiver-authenticated verified cache source=%s generation=%s; original manifest/data SHA-256 and recorded index required; NO new transfer admission\n",source,generation)
+	} else if indexedPrivate {
 		fmt.Printf("FI REAL BACKLOG reading authenticated shadow batch index and selected custody prefix source=%s generation=%s; NOT full-transfer validation\n", source, generation)
 	} else {
 		fmt.Printf("FI REAL BACKLOG loading authenticated custody source=%s generation=%s\n", source, generation)
