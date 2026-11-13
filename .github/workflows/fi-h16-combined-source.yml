@@ -114,3 +114,25 @@ jobs:
           ! grep -Fq 'depassets=/home/jwood/fi-h16-dependency-buffer-assets' "$runner"
           ! grep -Fq 'mixedassets=/home/jwood/fi-h16-mixed-buffer-assets' "$runner"
           echo "FI H16 HOST ASSET RECONSTRUCTION PASS mixed=3 dependency=5 stale_staged_files_ignored=true"
+      - name: Verify historical PostgreSQL relay output-root safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=go/cmd/fi-backlog-recover/run_private_h16_combined_buffers_w34_host.sh
+          relay="$(mktemp)"
+          git show b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/cmd/fi-backlog-recover/optfield/relay.go > "$relay"
+          grep -Fq '!strings.HasPrefix(outputRoot,"/var/tmp/fi-window-chunks-")' "$relay"
+          grep -Fq 'case "$out" in' "$runner"
+          grep -Fq '/var/tmp/fi-window-chunks-*) ;;' "$runner"
+          grep -Fq "out=/var/tmp/fi-window-chunks-h16-combined-" "$runner"
+          ! grep -Fq 'out=/var/tmp/fi-h16-combined-' "$runner"
+          # Evaluate ONLY the exact fixed, repository-reviewed output-variable
+          # assignment, not arbitrary runner code.
+          stamp=20261113T123444Z
+          out=/var/tmp/fi-window-chunks-h16-combined-$stamp
+          expected="$(sed -n 's/^out=//p' "$runner")"
+          [ "$expected" = '/var/tmp/fi-window-chunks-h16-combined-$stamp' ]
+          case "$out" in /var/tmp/fi-window-chunks-*) ;; *) exit 1 ;; esac
+          relay_socket="$out/pg-clone-11-08-26/.s.PGSQL.55981"
+          [ "${#relay_socket}" -le 103 ]
+          echo "FI H16 RELAY OUTPUT ROOT PASS historical_allowlist_unchanged=true socket_bytes=${#relay_socket} replay_not_run=true"
