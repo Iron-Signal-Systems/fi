@@ -11,6 +11,7 @@ import (
     "encoding/json"
     "os"
     "testing"
+    "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
@@ -34,12 +35,14 @@ func TestIndexedPrivateVerifiedCacheNoCurrentCRLButExactOriginalHashes(t *testin
         DataSHA256:hex.EncodeToString(dh[:]),DataFile:"batch-"+id+".jsonl",
         Collector:spool.CollectorIdentity{ExecutablePath:"C:\\FI\\Collector.exe",
             ExecutableSHA256:hex.EncodeToString(dh[:])},
-        CreatedAt:"2026-11-10T00:00:00.000000000Z",
-        CompletedAt:"2026-11-10T00:00:01.000000000Z",
+        CreatedAt:"2026-11-10T00:00:00.123456789Z",
+        CompletedAt:"2026-11-10T00:00:01.876543211Z",
     }
     sqlManifest:=manifest
-    sqlManifest.CreatedAt="2026-11-10T00:00:00Z"
-    sqlManifest.CompletedAt="2026-11-10T00:00:01Z"
+    // PostgreSQL TIMESTAMPTZ indexes have six fractional digits; signed
+    // original batch manifests have nine and must retain the exact bytes.
+    sqlManifest.CreatedAt="2026-11-10T00:00:00.123457Z"
+    sqlManifest.CompletedAt="2026-11-10T00:00:01.876543Z"
     raw,err:=json.Marshal(manifest)
     if err!=nil{t.Fatal(err)}
     mh:=sha256.Sum256(raw)
@@ -77,5 +80,16 @@ func TestIndexedPrivateVerifiedCacheNoCurrentCRLButExactOriginalHashes(t *testin
     if _,err=indexedBacklogPreparedFromVerifiedCache(context.Background(),g,cfg,
         t.TempDir(),0,1);err==nil{
         t.Fatal("missing prior receipt-bound cache marker accepted")
+    }
+}
+
+func TestPrivateIndexedTimestampOnlyAcceptsPostgreSQLMicrosecondRounding(t *testing.T) {
+    signed:=time.Date(2026,11,10,0,0,0,123456789,time.UTC)
+    indexed:=time.Date(2026,11,10,0,0,0,123457000,time.UTC)
+    if !privateIndexedTimestampEquivalent(signed,indexed) {
+        t.Fatal("signed nanosecond timestamp rejected after PostgreSQL microsecond rounding")
+    }
+    if privateIndexedTimestampEquivalent(signed,indexed.Add(2*time.Microsecond)) {
+        t.Fatal("significant SQL source timestamp divergence accepted")
     }
 }
