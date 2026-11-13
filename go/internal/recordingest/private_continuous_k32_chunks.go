@@ -14,7 +14,10 @@ import (
 )
 
 const (
-    privateContinuousK32MaxRecords = 32768
+    // PrivateContinuousK32Records pins the W128 sub-chunk scheduler's input bound.
+    // It is not a PostgreSQL flush or commit threshold.
+    PrivateContinuousK32Records = 32768
+    privateContinuousK32MaxRecords = PrivateContinuousK32Records
     privateContinuousK32MaxBytes int64 = 256 << 20
 )
 
