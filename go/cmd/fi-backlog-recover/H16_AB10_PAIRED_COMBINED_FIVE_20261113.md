@@ -32,14 +32,14 @@ SoR and receiver are NEVER written to. This is not a release criterion.
 - Five-lane File source/projection coordinator:
   `394e06ca35a61e559c16909fae296d425ef8bb19`.
 - Identical AB10 verifier commit:
-  `2069a3a49d102b9d58125c8cf300a14ee29ad3b7`
-  (script Git blob `636cf3fcae5567cb49b12027fcfbb1888f2dafd8`).
+  `67b53c42778319c15929f31d1f6c5004267f56ea`
+  (script Git blob `16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e`).
 - Combined ten-window runner:
   `go/cmd/fi-backlog-recover/run_private_h16_combined_ab10_host.sh`;
-  Git blob `c20ffe9789d0513185be575e57a0a945c174167c`.
+  Git blob `45d539d87c2c2d282360d82de210f68974eb70fb`.
 - Five-lane ten-window runner:
   `go/cmd/fi-backlog-recover/run_private_h16_five_lane_ab10_host.sh`;
-  Git blob `f28cbea5150a12f09c2a5cac2abc6f8291129086`.
+  Git blob `47380305f9da2e5616cac930189fbfac7aed8042`.
 - Optional sequential host coordinator:
   `go/cmd/fi-backlog-recover/run_private_h16_ab10_pair_host.sh`.
 - CI: `.github/workflows/fi-h16-ab10-pair-source.yml`.
