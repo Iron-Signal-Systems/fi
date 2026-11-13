@@ -35,7 +35,7 @@ mode=candidate
 name=clone-w512-2g
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
 parallelref=54e7ad82abb9e90402ee90a15f6a726f97e7ef0a
-w512ref=015af71e5d17b0c7c1fdefe1dd8fd241cd042773
+w512ref=2dd921deb62d43858f3eae798633b28a07cf723d
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
@@ -472,7 +472,7 @@ mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/w512_2g"
 for spec in \
   "f2e86f0f69476b5d7e6885a6687117e6d36c1703 $w512patch" \
   "7a2049a3a62464e336f33387877bf072dfd6ec55 $w512test" \
-  "f05fe5a4cfebd19f0d692f37630cc1e8462bc003 $w512cache"; do
+  "f668d23a8c87a0a383e63ec78b3622091b8357fe $w512cache"; do
   set -- $spec
   git -C "$combinedrepo" show "$w512ref:$2" > "$src/$2" ||
     fail "W512 pinned Go asset not available: $2"
@@ -481,7 +481,7 @@ for spec in \
 done
 cp "$src/$w512cache" "$src/go/internal/recordingest/private_w512_verified_seed.go" ||
   fail 'W512 admitted cache seed source install failed'
-[ "$(git -C "$combinedrepo" hash-object "$src/go/internal/recordingest/private_w512_verified_seed.go")" =   "f05fe5a4cfebd19f0d692f37630cc1e8462bc003" ] ||
+[ "$(git -C "$combinedrepo" hash-object "$src/go/internal/recordingest/private_w512_verified_seed.go")" =   "f668d23a8c87a0a383e63ec78b3622091b8357fe" ] ||
   fail 'W512 admitted cache seed code changed in disposable staging'
 (cd "$src/go" && GOTOOLCHAIN=auto go run "./cmd/fi-backlog-recover/patchers/w512_2g/main.go" "$src") ||
   fail 'W512 disposable Go source overlay failed'
