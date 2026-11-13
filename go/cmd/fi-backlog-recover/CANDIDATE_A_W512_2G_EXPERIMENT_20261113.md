@@ -30,6 +30,20 @@ Experiment B changes exactly the **outer transactional recovery window**:
 - No authoritative SoR writes, publication, Accepted outcomes, Windows code,
   or active working-tree modifications.
 
+## Separate future steady-state ingest time bound
+
+This W512 **backlog replay experiment is size-bound**, not a redesign of
+normal ingest scheduling. If a W512 window policy is later evaluated for
+low-volume steady-state sources, the proposed initial time bound is **15
+minutes from the first still-uncommitted record**, in addition to the
+524,288-record and 2 GiB limits. Any one of these boundaries closes a
+window. Never reset this deadline when new records arrive; otherwise a busy
+but under-capacity source could defer its oldest records indefinitely.
+Urgent security visibility may require stricter application-specific
+durability/processing limits. The established signed generation interval
+is a separate collection cadence, not a reason to force empty typed buffers
+to flush. Time-bound behavior is **not implemented by this seed-only runner**.
+
 ## Hard incompatibilities: do not change flags in the W128 runner
 
 The existing CLI only accepts W32/W64/W96/W128; it gates K32, verified-cache
