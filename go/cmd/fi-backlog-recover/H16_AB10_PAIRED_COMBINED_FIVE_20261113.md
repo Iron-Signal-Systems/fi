@@ -36,10 +36,10 @@ SoR and receiver are NEVER written to. This is not a release criterion.
   (script Git blob `16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e`).
 - Combined ten-window runner:
   `go/cmd/fi-backlog-recover/run_private_h16_combined_ab10_host.sh`;
-  Git blob `45d539d87c2c2d282360d82de210f68974eb70fb`.
+  Git blob `02888bfe0245ead876d52b9fecac2ea0a532361c`.
 - Five-lane ten-window runner:
   `go/cmd/fi-backlog-recover/run_private_h16_five_lane_ab10_host.sh`;
-  Git blob `47380305f9da2e5616cac930189fbfac7aed8042`.
+  Git blob `8ba5050b0c6500d22cb7ea2a1a4f51024faa4c5f`.
 - Optional sequential host coordinator:
   `go/cmd/fi-backlog-recover/run_private_h16_ab10_pair_host.sh`.
 - CI: `.github/workflows/fi-h16-ab10-pair-source.yml`.
@@ -100,3 +100,26 @@ or noisy, repeat in reversed order with fresh disposable fixtures before
 promoting one buffer model to the working H16 configuration. If either
 fails its signed/SQL gates, stop, preserve diagnostics, and do not treat
 its throughput as an accepted candidate.
+
+## 2026-11-13 shell preflight correction
+
+An initial serial coordinator incorrectly split POSIX `[ ... ]` hash equality
+predicates across physical lines; a second instance existed inside **both**
+ten-window runners' jailed hash verification. Both failed **before the private
+PostgreSQL seed was restored or any W3–W12 ingest ran**. Corrected files:
+
+- Combined AB10 host runner blob `02888bfe0245ead876d52b9fecac2ea0a532361c`.
+- Five-lane AB10 host runner blob `8ba5050b0c6500d22cb7ea2a1a4f51024faa4c5f`.
+- Sequential pair runner blob `37dce7eac08ab0287e560559d97be7441ea38844`.
+- All three present together at commit `0b1ca8b653efc051a9a82b6e7e5ebc11bc5374dd`.
+
+Both jailed hash assertions are now on one POSIX shell command line. CI's
+`test_runner_preflight_guards.sh` directly extracts and executes the real
+hash predicates, requiring acceptance of the unmodified Git blob, rejection
+of altered verifier bytes, and no unterminated bracket tests. The separate
+`test_pair_runtime.sh` executes the real pair wrapper under mocked host
+commands to require correct serial execution and rejection of wrong hashes
+or a failed first candidate. The paired source CI run `43461690532` passed
+both checks along with the original frozen-source FreeBSD build and 566-pair
+shared-verifier simulation. This establishes preflight-shell acceptance, not
+real W3-W12 throughput or signed SQL acceptance.
