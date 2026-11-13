@@ -314,7 +314,10 @@ WHERE receipt_sha256=$1 AND window_index=$2
 				return err
 			}
 			batchCtx = context.WithValue(ctx, backlogTypedChunkContextKey{},
-				backlogTypedChunkDirective{state: typedChunk, finish: finishChunk})
+				backlogTypedChunkDirective{
+					state: typedChunk,
+					finish: h16FamilyDrainAtBoundary(ctx, finishChunk, offset+1 == len(batchIDs)),
+				})
 		}
 		if ctx.Value(privateDependencyBuffersKey{}) == true {
 			if !privateDependencyBuffersEnabled(batchCtx) {
@@ -331,10 +334,14 @@ WHERE receipt_sha256=$1 AND window_index=$2
 		totalRecords += seen
 		totalBytes += batch.Manifest.DataBytes
 		if finishChunk {
-			if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
-				len(typedChunk.dependencies) != 0 || typedChunk.dependencyBytes != 0 ||
-				len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
-				return errors.New("FI typed chunk: buffers remained after required flush")
+			// The H16 combined-family candidate does not drain at K32.
+			// The original W128 transaction still requires all pending
+			// source and relational children before its typed marker.
+			if h16FamilyDrainAtBoundary(ctx, finishChunk, offset+1 == len(batchIDs)) &&
+				(len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
+					len(typedChunk.dependencies) != 0 || typedChunk.dependencyBytes != 0 ||
+					len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0) {
+				return errors.New("FI H16 family buffer: pending rows after mandatory W128 drain")
 			}
 			chunkSamples = append(chunkSamples, backlogTypedChunkSample{
 				firstBatch: chunkFirst, endBatch: globalIndex + 1,
