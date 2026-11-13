@@ -38,6 +38,10 @@ jobs:
         run: go test -count=1 -v ./internal/recordingest -run 'TestIndexedPrivate(VerifiedCacheNoCurrentCRLButExactOriginalHashes|WindowLimitsAllowed)'
       - name: W128 to K32 independent family routing and durability
         run: go test -count=1 -v ./internal/recordingest -run 'TestPrivateContinuous(K32|FamiliesDoNotFlush|SecurityCapacityFlush|SQLFailure|FlushesAtExactCapacity)'
+      - name: Original H16 combined Security/coverage buffering without SQL redesign
+        run: |
+          go test -count=1 -v ./internal/recordingest -run '^TestH16Combined'
+          go build -o /tmp/fi-h16-combined-patcher ./cmd/fi-backlog-recover/patchers/h16_combined_buffer
       - name: FreeBSD recovery executable and typed-test cross compilation
         env:
           GOOS: freebsd
