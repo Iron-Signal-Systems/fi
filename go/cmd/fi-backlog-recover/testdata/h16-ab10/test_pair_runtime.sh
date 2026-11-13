@@ -24,10 +24,10 @@ case "$*" in
    if [ "$FI_AB10_MOCK_BAD_SHA" = 1 ]; then
       printf 'broken-hash\n'
    else
-      printf '45d539d87c2c2d282360d82de210f68974eb70fb\n'
+      printf '02888bfe0245ead876d52b9fecac2ea0a532361c\n'
    fi ;;
  *fi-h16-five-ab10.sh*)
-   printf '47380305f9da2e5616cac930189fbfac7aed8042\n' ;;
+   printf '8ba5050b0c6500d22cb7ea2a1a4f51024faa4c5f\n' ;;
  *) exit 2 ;;
 esac
 MOCK
