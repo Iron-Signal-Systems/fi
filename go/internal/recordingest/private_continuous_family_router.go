@@ -48,13 +48,14 @@ func privateFamilyForRecordKind(kind string) (privateContinuousFamily, error) {
         return privateFamilySecurity, nil
     case "FileObservation":
         return privateFamilyFile, nil
-    case "WindowsSecurityCoverage":
+    case "WindowsSecurityCoverage", "WindowsSecurityContinuityGap":
         return privateFamilyCoverage, nil
-    case "USNReadBoundary", "USNObjectObservation":
+    // Preserve the original ordered USN stream, including continuity loss.
+    // A gap must never be delayed behind unrelated Security/File commits.
+    case "USNReadBoundary", "USNObjectObservation", "USNContinuityGap":
         return privateFamilyUSN, nil
     case "CollectorIdentity", "DirectoryPrincipalSnapshot", "LocalPrincipalSnapshot",
-        "NTFSCollectionError", "SMBShareSnapshot", "SupportingSourceCollectionError",
-        "USNContinuityGap", "WindowsSecurityContinuityGap":
+        "NTFSCollectionError", "SMBShareSnapshot", "SupportingSourceCollectionError":
         return privateFamilyOrderedOther, nil
     default:
         return 0, fmt.Errorf("FI continuous family: unrecognized record kind %q", kind)
