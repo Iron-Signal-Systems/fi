@@ -778,7 +778,7 @@ proof_message=$(awk '
 }
 END{
   if(n!=111||rows!=259178||bad)exit 2
-  printf "FI H16 PARALLEL A SIGNED PREP PROOF PASS batches=%d rows=%.0f workers=2 in_flight=4 writer=1\\n",n,rows
+  printf "FI H16 PARALLEL A SIGNED PREP PROOF PASS batches=%d rows=%.0f workers=2 in_flight=4 writer=1\n",n,rows
 }' "$out/$name/PARALLEL_PREP_PROOF.txt") ||
   fail 'Candidate A prepared source rows, worker count, or signed order invalid'
 printf '%s\n' "$proof_message" | tee -a "$out/SUMMARY.txt"
