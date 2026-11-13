@@ -8,6 +8,7 @@ on:
       - 'go/cmd/fi-backlog-recover/testdata/h16-five-lane/**'
       - 'go/cmd/fi-backlog-recover/run_private_h16_five_lane_ab10_host.sh'
       - 'go/cmd/fi-backlog-recover/run_private_h16_combined_ab10_host.sh'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_ab10_pair_host.sh'
       - '.github/workflows/fi-h16-ab10-pair-source.yml'
   workflow_dispatch:
 
@@ -150,3 +151,16 @@ jobs:
           grep -Fq "expected_checkpoint=13|1688152|12" "$combined"
           grep -Fq "expected_checkpoint=13|1688152|12" "$five"
           echo "FI H16 AB10 PAIRED RUNNERS PASS identical_verifier=true W3_W12=true isolation=true"
+
+      - name: Verify sequential host coordinator fails closed on exact pinned runner bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          pair=go/cmd/fi-backlog-recover/run_private_h16_ab10_pair_host.sh
+          sh -n "$pair"
+          grep -Fq 'c20ffe9789d0513185be575e57a0a945c174167c' "$pair"
+          grep -Fq 'f28cbea5150a12f09c2a5cac2abc6f8291129086' "$pair"
+          grep -Fq 'combined W3-W12 failed; five-lane NOT started' "$pair"
+          grep -Fq 'sh "$combined" h16 || die' "$pair"
+          grep -Fq 'sh "$five" h16 || die' "$pair"
+          echo "FI H16 AB10 SERIAL EXECUTION GATE PASS combined_first=true five_after_cleanup=true exact_runner_pins=true"
