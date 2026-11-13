@@ -116,3 +116,21 @@ ORDER BY w.seq`, batchIDs, ordinals)
     if i != len(ids) { return nil, errors.New("FI bulk source: incomplete cross-batch IDs") }
     return ids, nil
 }
+
+// h16FamilyDrainAtBoundary preserves the existing atomic W128 transaction
+// while allowing the already selected independent Security/File/coverage/USN
+// buffers to retain partial rows between K32 processing chunks. K32 is a
+// SOURCE processing unit, not an SQL COPY or transaction boundary.
+//
+// Ordinary H16 and all other private profiles keep their historical K32
+// flushing. In the specifically enabled private dependency-buffer candidate,
+// the final W128 batch is the sole mandatory buffer drain (in addition to each
+// family's own record/byte capacity and audited dependency barriers).
+// Carrying typed buffers into the next W128 would change H16's atomic commit
+// contract and is deliberately NOT introduced here.
+func h16FamilyDrainAtBoundary(ctx context.Context, k32Finished, finalWindowBatch bool) bool {
+    if !privateDependencyBuffersEnabled(ctx) {
+        return k32Finished
+    }
+    return finalWindowBatch
+}
