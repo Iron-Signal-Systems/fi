@@ -31,7 +31,7 @@ esac
 mode=candidate
 name=clone-11-08-26
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
-parallelref=cef6df894555f9c7bc10cb0957c2eb745487d2a2
+parallelref=54e7ad82abb9e90402ee90a15f6a726f97e7ef0a
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
@@ -168,7 +168,7 @@ printf 'FI H16 PINNED ASSET PREFLIGHT PASS mixed=3 dependency=5 source=git_objec
 # the first private PostgreSQL seed clone or SQL writer.
 git -C "$combinedrepo" cat-file -e "$parallelref^{commit}" ||
   fail 'FI Candidate A exact reviewed source commit missing; fetch dev branch'
-for blob in bf1fbe3ac41ef35e5f42ed2b22d955c8b9a21371 70ed2388971cc573a76fcc260edd644c9edd625a eff45a5ebfff7645c490e0d1c2312d60eabfd48e; do
+for blob in a31d62e95b6a37a0aa2ca739a6ca00e0cb95e071 d946c69e0a580cb0e959654116ed7ebbe2401c37 e65aaa7cddd1beacd724a697af06dc5da53f7594; do
   git -C "$combinedrepo" cat-file -e "$blob^{blob}" ||
     fail "FI Candidate A signed-source prep asset missing: $blob"
 done
@@ -359,9 +359,9 @@ mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/h16_parallel_a" \
   "$src/go/cmd/fi-backlog-recover/testdata/h16-parallel-a" ||
   fail 'Candidate A disposable source asset directories unavailable'
 for spec in \
- "bf1fbe3ac41ef35e5f42ed2b22d955c8b9a21371 $parallelpatch" \
- "70ed2388971cc573a76fcc260edd644c9edd625a go/cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation.go" \
- "eff45a5ebfff7645c490e0d1c2312d60eabfd48e go/cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation_test.go"; do
+ "a31d62e95b6a37a0aa2ca739a6ca00e0cb95e071 $parallelpatch" \
+ "d946c69e0a580cb0e959654116ed7ebbe2401c37 go/cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation.go" \
+ "e65aaa7cddd1beacd724a697af06dc5da53f7594 go/cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation_test.go"; do
   set -- $spec
   git -C "$combinedrepo" show "$parallelref:$2" > "$src/$2" ||
     fail "Candidate A pinned source file cannot be recovered: $2"
