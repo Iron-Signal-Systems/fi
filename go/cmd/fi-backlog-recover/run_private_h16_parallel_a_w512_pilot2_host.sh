@@ -35,6 +35,18 @@ grep -Fq 'FI W512/2G FRESH SIGNED SEED ACCEPTED windows=1 typed_records=493478 f
     fail 'W512 accepted seed record gate missing'
 jexec -U jwood fi-dev pg_ctl -D "$seed/$name/data" status >/dev/null 2>&1 &&
     fail 'W512 seed PostgreSQL must be stopped'
+# The private seed contains millions of field rows. Require filesystem room
+# for the apparent offline copy plus at least 8 GiB for replay WAL/index growth.
+# This is intentionally conservative and runs before creating any destination.
+seed_kib=$(jexec -U jwood fi-dev du -Aks "$seed/$name/data" | awk '{print $1}') ||
+    fail 'cannot determine private seed apparent size'
+free_kib=$(jexec -U jwood fi-dev df -Pk "$seed" | awk 'END{print $4}') ||
+    fail 'cannot determine available private storage'
+case "$seed_kib:$free_kib" in *[!0-9:]*|:*) fail 'invalid storage preflight figures';; esac
+need_kib=$((seed_kib+8388608))
+[ "$seed_kib" -gt 0 ] && [ "$free_kib" -gt "$need_kib" ] ||
+    fail "insufficient space for private seed copy and 8GiB headroom (need_kib=$need_kib free_kib=$free_kib)"
+printf 'FI W512 PILOT STORAGE PREFLIGHT PASS seed_apparent_kib=%s available_kib=%s required_kib=%s\n' "$seed_kib" "$free_kib" "$need_kib"
 socket="$root/$name/socket/.s.PGSQL.$port"
 rsocket="$out/pg-$name/.s.PGSQL.$port"
 [ "$(printf %s "$socket" | wc -c)" -le 103 ] &&
