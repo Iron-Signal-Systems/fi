@@ -17,6 +17,7 @@ test_variant() (
  sql(){
    case "$1" in
      *"coalesce(sum(committed_records),0)::text"* ) printf '13|1688152|12\n' ;;
+     *"sum(end_batch-start_batch)"* ) printf '566\n' ;;
      *"window_index BETWEEN 3 AND 12"* )
        if printf '%s' "$1" | grep -q 'chr(9)'; then
          w=3
@@ -32,7 +33,6 @@ test_variant() (
      *"SELECT CASE WHEN"* ) printf 'PASS\n' ;;
      *"w0000(0[3-9]|1[0-2])"* ) printf '10|10\n' ;;
      *"w00000[1-2]"* ) printf '2|0\n' ;;
-     *"sum(end_batch-start_batch)"* ) printf '566\n' ;;
      * ) fail "unexpected mocked SQL: $1" ;;
    esac
  }
