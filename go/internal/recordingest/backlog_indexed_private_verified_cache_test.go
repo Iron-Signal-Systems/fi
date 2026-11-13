@@ -34,13 +34,17 @@ func TestIndexedPrivateVerifiedCacheNoCurrentCRLButExactOriginalHashes(t *testin
         DataSHA256:hex.EncodeToString(dh[:]),DataFile:"batch-"+id+".jsonl",
         Collector:spool.CollectorIdentity{ExecutablePath:"C:\\FI\\Collector.exe",
             ExecutableSHA256:hex.EncodeToString(dh[:])},
-        CreatedAt:"2026-11-10T00:00:00Z",CompletedAt:"2026-11-10T00:00:01Z",
+        CreatedAt:"2026-11-10T00:00:00.000000000Z",
+        CompletedAt:"2026-11-10T00:00:01.000000000Z",
     }
+    sqlManifest:=manifest
+    sqlManifest.CreatedAt="2026-11-10T00:00:00Z"
+    sqlManifest.CompletedAt="2026-11-10T00:00:01Z"
     raw,err:=json.Marshal(manifest)
     if err!=nil{t.Fatal(err)}
     mh:=sha256.Sum256(raw)
     g:=&PreparedGeneration{
-        Batches:[]PreparedBatch{{BatchID:id,Manifest:manifest,
+        Batches:[]PreparedBatch{{BatchID:id,Manifest:sqlManifest,
             ManifestSHA256:hex.EncodeToString(mh[:]),ManifestBytes:len(raw),
             DataArtifactName:manifest.DataFile}},
         ReceiptSHA256:receiptHex,
