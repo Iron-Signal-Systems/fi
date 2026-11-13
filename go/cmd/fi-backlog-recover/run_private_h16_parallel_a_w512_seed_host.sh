@@ -35,7 +35,7 @@ mode=candidate
 name=clone-w512-2g
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
 parallelref=54e7ad82abb9e90402ee90a15f6a726f97e7ef0a
-w512ref=f0617de20f61b5f8826a4e2b0a38316b47ec2455
+w512ref=015af71e5d17b0c7c1fdefe1dd8fd241cd042773
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
@@ -467,22 +467,29 @@ sha256 -q "$root/fi-security-json-preflight.test" > "$root/fi-security-json-pref
 # gates, and ONLY in the disposable archive.
 w512patch=go/cmd/fi-backlog-recover/patchers/w512_2g/main.go
 w512test=go/internal/recordingest/backlog_window_plan_w512_test.go
+w512cache=go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go
 mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/w512_2g"
 for spec in \
-  "b63c4674158691b10473641ac5c8ab660118d77a $w512patch" \
-  "7a2049a3a62464e336f33387877bf072dfd6ec55 $w512test"; do
+  "f2e86f0f69476b5d7e6885a6687117e6d36c1703 $w512patch" \
+  "7a2049a3a62464e336f33387877bf072dfd6ec55 $w512test" \
+  "f05fe5a4cfebd19f0d692f37630cc1e8462bc003 $w512cache"; do
   set -- $spec
   git -C "$combinedrepo" show "$w512ref:$2" > "$src/$2" ||
     fail "W512 pinned Go asset not available: $2"
   [ "$(git -C "$combinedrepo" hash-object "$src/$2")" = "$1" ] ||
     fail "W512 Go asset changed: $2"
 done
+cp "$src/$w512cache" "$src/go/internal/recordingest/private_w512_verified_seed.go" ||
+  fail 'W512 admitted cache seed source install failed'
+[ "$(git -C "$combinedrepo" hash-object "$src/go/internal/recordingest/private_w512_verified_seed.go")" =   "f05fe5a4cfebd19f0d692f37630cc1e8462bc003" ] ||
+  fail 'W512 admitted cache seed code changed in disposable staging'
 (cd "$src/go" && GOTOOLCHAIN=auto go run "./cmd/fi-backlog-recover/patchers/w512_2g/main.go" "$src") ||
   fail 'W512 disposable Go source overlay failed'
 (cd "$src/go" && gofmt -w ./cmd/fi-backlog-recover/main_freebsd.go \
     ./internal/recordingest/backlog_continuous_private.go \
     ./internal/recordingest/backlog_stream_load.go \
-    ./internal/recordingest/backlog_window_plan_w512_test.go) ||
+    ./internal/recordingest/backlog_window_plan_w512_test.go \
+    ./internal/recordingest/private_w512_verified_seed.go) ||
   fail 'W512 Go source formatting failed'
 (cd "$src/go" && GOTOOLCHAIN=auto go test ./internal/recordingest \
     -run '^(TestBacklogWindowsW512TwoGiB|TestBacklogWindows128K|TestPrivateParallelA|TestH16Combined)' \
@@ -599,7 +606,7 @@ q() { psql "$conn" -X -qAt -v ON_ERROR_STOP=1 -c "$1"; }
 for setting in fsync synchronous_commit full_page_writes; do
   [ "$(q "SHOW $setting")" = on ] || fail "W512 durability $setting not enabled"
 done
-printf 'FI W512 FRESH CLONE PASS source=original_authenticated_custody windows=0 records=0 postgres_writers=1 authoritative=0 accepted=0\n'
+printf 'FI W512 FRESH CLONE PASS source=prior_receiver_admitted_verified_cache windows=0 records=0 postgres_writers=1 authoritative=0 accepted=0\n'
 
 JAIL
 
@@ -617,7 +624,7 @@ status=seed_only_no_performance_claim
 outer_records=524288
 outer_signed_source_data_bytes=2147483648
 seed_window_index=0
-seed_checkpoint_source=original_8399_receiver_signed_batches
+seed_checkpoint_source=receiver_authenticated_verified_cache_8399_original_batches
 original_W128_seed_reused=false
 source_ref=$ref
 W512_overlay_ref=$w512ref
@@ -665,13 +672,14 @@ sql() {
 [ "$(sql 'SELECT count(*) FROM fi_recovery.typed_window')" = 0 ] ||
   fail 'W512 SQL seed database already has typed checkpoints'
 
-# The first W512 seed must be fully authenticated by the existing signed
-# transport loader; never substitute inherited W128 descriptor or field rows.
-# This full original-custody admission can fail on trust state; fail closed
-# rather than silently bypassing a current verification failure.
-printf 'FI W512 SIGNED FIRST-WINDOW SEED START records_max=524288 bytes_max=2147483648 signed_batches=8399\n' |
+# Reconstruct original W512 descriptors from the previously receiver-admitted
+# immutable signed receipt and complete verified-cache publication marker.
+# Selected original manifest/data bytes MUST rehash before private SQL staging.
+# This is historical replay, not a second certificate admission. Fail closed
+# on absent cache, identity, manifest, data hash or total-record mismatch.
+printf 'FI W512 VERIFIED-CACHE FIRST-WINDOW SEED START records_max=524288 bytes_max=2147483648 receiver_admitted_batches=8399\n' |
   tee "$out/SUMMARY.txt"
-if ! /usr/bin/time -l "$recover" -private-w512-2g \
+if ! /usr/bin/time -l "$recover" -private-w512-2g -private-w512-verified-cache-seed \
   -source=iss-fs-22a.iss.local \
   -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
   -postgres="host=$out/pg-$name port=55983 user=fi_ingest dbname=fi sslmode=disable" \
@@ -679,16 +687,18 @@ if ! /usr/bin/time -l "$recover" -private-w512-2g \
   -recorded-root=/var/db/fi/custody/recorded \
   -source-namespaces=false -private-root="$out/$name/private" \
   -private-writes -stream-loader -start-window=0 -max-windows=1 \
+  -verified-cache-root="$cache" \
   -security-profile=P3 -file-profile=F3 -window-profile=W512 \
   -max-runtime=0 > "$out/$name/seed-recover.log" 2>&1; then
   tail -n 100 "$out/$name/seed-recover.log" >&2 || :
-  fail 'new signed W512 seed rejected; no benchmark or W128 seed modification'
+  fail 'receiver-admitted W512 cache bootstrap rejected; no benchmark or W128 seed modification'
 fi
 
 grep -Fq 'window_profile=W512 max_window_records=524288 max_window_data_bytes=2147483648' \
     "$out/$name/seed-recover.log" || fail 'W512 runtime source window limit proof absent'
-grep -Fq 'FI REAL BACKLOG verified signed receipt records=15140785 batches=8399' \
-    "$out/$name/seed-recover.log" || fail 'full signed source receipt was not verified'
+grep -Fq 'FI W512 RECEIVER-ADMITTED CACHE BOOTSTRAP PASS original_batches=8399 source_records=15140785' \
+    "$out/$name/seed-recover.log" ||
+  fail 'W512 receiver-admitted immutable receipt/cache verification proof absent'
 [ "$(sql "SELECT count(*)::text || '|' || min(window_index)::text || '|' || max(window_index)::text FROM fi_recovery.typed_window")" = '1|0|0' ] ||
   fail 'W512 first window checkpoint count/index invalid'
 [ "$(sql 'SELECT count(*) FROM fi_recovery.source_window')" = 1 ] ||
