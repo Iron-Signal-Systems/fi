@@ -35,23 +35,7 @@ jobs:
       - name: PostgreSQL relay wire-protocol unit tests
         run: go test -count=1 -v ./cmd/fi-backlog-pg-relay
       - name: Previously authenticated signed-cache replay and tamper rejection
-        run: go test -count=1 -v ./internal/recordingest -run '^TestIndexedPrivate(VerifiedCacheNoCurrentCRLButExactOriginalHashes|WindowLimitsAllowed)      - name: FreeBSD recovery executable and typed-test cross compilation
-        env:
-          GOOS: freebsd
-          GOARCH: amd64
-          CGO_ENABLED: '0'
-        run: |
-          sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
-          sh -n ./cmd/fi-backlog-recover/run_cached_wal_benchmarks.sh
-          sh -n ./cmd/fi-backlog-recover/run_private_continuous_family_w34_host.sh
-          sh -n ./cmd/fi-backlog-recover/provision_four_benchmark_clusters.sh
-          go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
-          go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
-          go build -o /tmp/fi-crl-publish-freebsd ./cmd/fi-crl-publish
-          go build -o /tmp/fi-backlog-publish-freebsd ./cmd/fi-backlog-publish
-          go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
-          go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest
-
+        run: go test -count=1 -v ./internal/recordingest -run 'TestIndexedPrivate(VerifiedCacheNoCurrentCRLButExactOriginalHashes|WindowLimitsAllowed)'
       - name: FreeBSD recovery executable and typed-test cross compilation
         env:
           GOOS: freebsd
