@@ -141,15 +141,17 @@ func run() error {
 	}
 	if privateContinuousFamily {
 		// This is a distinct SQL transaction model, not the accepted H16
-		// window-atomic experiment. Do not inherit its chunk/partition modes.
+		// window-atomic experiment. K32 input work units use the new
+		// independent family router, NOT the legacy joined-source chunker.
 		if !enable || !indexedPrivate || windowProfile != "W128" ||
 			startWindow != 3 || maxWindows != 2 ||
 			securityProfile != "P3" || fileProfile != "F3" ||
 			continuousPrivate || streamLoader || preflightOnly ||
 			privateFieldPartitions || privateMixedBuffers || privateDependencyBuffers ||
-			optimizedK32 || verifiedCacheRoot == "" || processingChunkRecords != 0 ||
+			optimizedK32 || verifiedCacheRoot == "" ||
+			processingChunkRecords != recordingest.PrivateContinuousK32Records ||
 			testStopAfterWindows != 0 || testFieldFailWindow != 0 {
-			return errors.New("FI continuous family mode requires isolated indexed W128 W3-W4 P3/F3 with no K32 or field partitions")
+			return errors.New("FI continuous family mode requires isolated indexed W128 W3-W4 P3/F3 K32=32768 with independent buffers and no field partitions")
 		}
 	} else if err := validatePrivateWindowMode(windowProfile, enable, streamLoader, continuousPrivate, indexedPrivate, preflightOnly, startWindow, maxWindows); err != nil {
 		return err
@@ -173,8 +175,8 @@ func run() error {
 		}
 	}
 	if processingChunkRecords != 0 {
-		if windowProfile != "W128" || !continuousPrivate {
-			return errors.New("FI processing-chunk-records requires W128 continuous-private; existing paths remain unchanged")
+		if windowProfile != "W128" || (!continuousPrivate && !privateContinuousFamily) {
+			return errors.New("FI processing-chunk-records requires W128 continuous-private or pinned source-first K32 family mode")
 		}
 		switch processingChunkRecords {
 		case 32768, 65536, 98304, 131072:
@@ -223,7 +225,9 @@ func run() error {
 			return failErr
 		}
 	}
-	if processingChunkRecords != 0 {
+	if processingChunkRecords != 0 && !privateContinuousFamily {
+		// The source-first K32 dispatcher is owned by the replay driver and
+		// must never enable the legacy joined-source chunk context.
 		var chunkErr error
 		ctx, chunkErr = recordingest.WithBacklogJoinedSourceChunkRecords(ctx, processingChunkRecords)
 		if chunkErr != nil {
@@ -525,7 +529,7 @@ SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 A
 		return nil
 	}
 	if privateContinuousFamily {
-		fmt.Println("FI PRIVATE CONTINUOUS FAMILY START source_first=true boundary_flushes=forbidden profiles=P3/F3")
+		fmt.Printf("FI PRIVATE CONTINUOUS FAMILY START source_first=true outer=W128 processing_chunk=K32 chunk_records=%d boundary_flushes=forbidden profiles=P3/F3\n",processingChunkRecords)
 		started := time.Now()
 		if err := recordingest.StageBacklogContinuousFamilyWindows(ctx, canonical, prepared, limits, startWindow, maxWindows, private); err != nil {
 			return fmt.Errorf("FI continuous family W3-W4: %w", err)
