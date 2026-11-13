@@ -23,6 +23,40 @@ type sourceEdit struct {
 
 var edits = []sourceEdit{
     {
+        path:"go/internal/recordingest/private_mixed_family_buffers.go",
+        before:`func validatePrivateFamilyRoute(ctx context.Context) error {`,
+        after:`// Only the two EXACT reviewed source/child COPY profiles are permitted.
+ // The private H16 hash writer deliberately changes the F3 profile name
+ // from F3 to F3H16 AFTER mixed/dependency mode selection. A name-only F3
+ // assertion in the per-batch route incorrectly rejected this valid mode.
+ // Never accept arbitrary F3H16 limits or a different Security/USN route.
+ func privateH16CombinedFileProfileValid(ctx context.Context) bool {
+     got := fileBulkLimitsFromContext(ctx)
+     f3 := fileBulkLimits{
+         Name: "F3", SourceMaxRecords: 8192, SourceMaxBytes: 32 << 20,
+         ObserveMaxRecords: 8192, ObserveMaxBytes: 32 << 20,
+         HashMaxRows: 8192, HashMaxBytes: 8 << 20, ChildMaxRows: 4096,
+     }
+     if got == f3 { return true }
+     f3.Name = "F3H16"
+     f3.HashMaxRows = 16384
+     f3.HashMaxBytes = 16 << 20
+     return got == f3
+ }
+ func validatePrivateFamilyRoute(ctx context.Context) error {`,
+    },
+    {
+        path:"go/internal/recordingest/private_mixed_family_buffers.go",
+        before:`    if !usePrivateSinglePassSecurity(ctx) ||
+        joinedBacklogChunkRecords(ctx) != 32768 ||
+        fileBulkLimitsFromContext(ctx).Name != "F3" {
+        return errors.New("FI PRIVATE BUFFER ROUTE STOP: private H16 profile context changed")`,
+        after:`    if !usePrivateSinglePassSecurity(ctx) ||
+        joinedBacklogChunkRecords(ctx) != 32768 ||
+        !privateH16CombinedFileProfileValid(ctx) {
+        return errors.New("FI PRIVATE BUFFER ROUTE STOP: private H16 Security/K32/File profile context changed")`,
+    },
+    {
         path:"go/internal/recordingest/backlog_typed_window_postgres.go",
         before:`backlogTypedChunkDirective{state: typedChunk, finish: finishChunk}`,
         after:`backlogTypedChunkDirective{state: typedChunk,
