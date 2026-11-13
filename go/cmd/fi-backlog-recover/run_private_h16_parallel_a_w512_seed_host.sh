@@ -35,7 +35,7 @@ mode=candidate
 name=clone-w512-2g
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
 parallelref=54e7ad82abb9e90402ee90a15f6a726f97e7ef0a
-w512ref=68919fd4cb4971cca0da3a5092dd7ab3f04042a3
+w512ref=f0617de20f61b5f8826a4e2b0a38316b47ec2455
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
@@ -469,7 +469,7 @@ w512patch=go/cmd/fi-backlog-recover/patchers/w512_2g/main.go
 w512test=go/internal/recordingest/backlog_window_plan_w512_test.go
 mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/w512_2g"
 for spec in \
-  "05e31f46bad4b43685346ef620407edc92bd2a7a $w512patch" \
+  "b63c4674158691b10473641ac5c8ab660118d77a $w512patch" \
   "7a2049a3a62464e336f33387877bf072dfd6ec55 $w512test"; do
   set -- $spec
   git -C "$combinedrepo" show "$w512ref:$2" > "$src/$2" ||
