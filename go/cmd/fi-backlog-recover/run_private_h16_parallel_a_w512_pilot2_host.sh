@@ -210,6 +210,8 @@ integrity=$(sql "SELECT CASE WHEN
  AND (SELECT count(*) FROM fi_recovery.source_window)=3
  AND (SELECT count(*) FROM fi_recovery.verified_artifact_window)=3
  AND (SELECT count(*) FROM fi_recovery_projection.source_batch)=8399
+ AND (SELECT count(*) FROM pg_inherits
+   WHERE inhparent='fi_recovery_projection.windows_security_event_field'::regclass)=3
  AND (SELECT count(*) FROM fi_recovery.pending_source_record)=$total
  AND (SELECT count(*) FROM fi_recovery_projection.source_record)=$total
  AND (SELECT count(*) FROM fi_recovery_projection.windows_security_event_field)>6194967
