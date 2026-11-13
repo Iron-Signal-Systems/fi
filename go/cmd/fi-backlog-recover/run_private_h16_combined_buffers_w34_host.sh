@@ -39,11 +39,18 @@ seed=/home/jwood/fi-window-bench-fieldpart-20261104T091019Z/W64
 cache=/var/tmp/fi-window-chunks-20261103T172254Z/verified-cache
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 root=/home/jwood/fi-window-bench-combined-$stamp
-out=/var/tmp/fi-h16-combined-$stamp
+out=/var/tmp/fi-window-chunks-h16-combined-$stamp
 # Fail before touching the seed if either AF_UNIX socket would exceed FreeBSD sun_path.
 private_socket="$root/$name/socket/.s.PGSQL.55981"
 relay_socket="$out/pg-$name/.s.PGSQL.55981"
 [ "${#private_socket}" -le 103 ] || fail "private socket path too long: ${#private_socket}"
+# The historical, pinned relay strictly allows only this output subtree.
+# Keep the relay's original allowlist unchanged; reject a bad runner path
+# before provisioning a disposable database or compiling any source.
+case "$out" in
+    /var/tmp/fi-window-chunks-*) ;;
+    *) fail 'output root rejected by historical FI PostgreSQL relay allowlist' ;;
+esac
 [ "${#relay_socket}" -le 103 ] || fail "relay socket path too long: ${#relay_socket}"
 printf 'FI EFFICIENCY SOCKET PASS private_bytes=%s relay_bytes=%s\n' "${#private_socket}" "${#relay_socket}"
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
