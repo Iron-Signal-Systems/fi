@@ -171,7 +171,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 & iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 & vmstatpid=$!
 printf 'FI CONTINUOUS REAL SIGNED START source=iss-fs-22a.iss.local W3-W4 profile=P3/F3\n' | tee "$out/SUMMARY.txt"
 # Replay the ORIGINAL receiver-authenticated receipt-bound verified cache.\n# This is a correctness probe, NOT an apples-to-apples H16 performance comparison:
-# no older SHA-once overlays, K32 transaction chunks or detached field leaves.
+# no older SHA-once overlays, K32 SQL transaction commits or detached field leaves.
 if ! /usr/bin/time -l "$worker" \
  -source=iss-fs-22a.iss.local \
  -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
@@ -194,8 +194,7 @@ sql 'SELECT row_to_json(w)::text FROM pg_stat_wal w' > "$out/$name/wal-after.jso
 sql 'SELECT row_to_json(i)::text FROM pg_stat_io i' > "$out/$name/io-after.jsonl"
 grep -Fq 'FI PRIVATE CONTINUOUS W34 SQL PASS records=259178 security=232879 usn=29 windows=2 authoritative=0 accepted=0' \
  "$out/$name/recover.log" || fail 'expected signed SQL acceptance marker missing'
-# The experiment must have actually executed W128 -> K32 dispatch. Merely
-# setting -processing-chunk-records is not evidence of a working scheduler.
+# Explicitly prove the W128 -> K32 -> persistent family path ran.
 for window in 3 4; do
  grep -F "FI PRIVATE CONTINUOUS K32 WINDOW PASS window=$window " "$out/$name/recover.log" >/dev/null ||
   fail "W$window K32 dispatch missing"
@@ -204,70 +203,7 @@ k32_count=$(grep -c '^FI PRIVATE CONTINUOUS K32 DISPATCH ' "$out/$name/recover.l
  fail 'no real K32 input chunks recorded'
 [ "$k32_count" -ge 6 ] || fail "W3-W4 expected several K32 work units; got $k32_count"
 if grep '^FI PRIVATE CONTINUOUS K32 DISPATCH ' "$out/$name/recover.log" |
-  grep -v ' family_boundary_flush=false
-state=$(sql "SELECT count(*)::text||'|'||coalesce(sum(committed_records),0)::text||'|'||max(window_index)::text FROM fi_recovery.typed_window")
-[ "$state" = '5|649565|4' ] || fail "signed typed checkpoint incorrect: $state"
-integrity=$(sql "
-SELECT CASE WHEN
- (SELECT count(*) FROM fi_recovery.verified_artifact_window)=5
- AND (SELECT count(*) FROM fi_recovery.source_window)=5
- AND (SELECT count(*) FROM fi_recovery.typed_window)=5
- AND (SELECT count(*) FROM fi_recovery.projected_source_record WHERE window_index IN (3,4))=259178
- AND (SELECT count(*) FROM fi_recovery_projection.source_record)=649565
- AND (SELECT count(*) FROM fi_recovery_projection.windows_security_event_field)=8111457
- AND (SELECT count(*) FROM fi.recorded_generation)=0
- AND (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')=0
- AND (SELECT count(*) FROM fi_recovery.pending_source_record WHERE window_index=3 AND record_kind='WindowsSecurityEvent')=116357
- AND (SELECT count(*) FROM fi_recovery.pending_source_record WHERE window_index=4 AND record_kind='WindowsSecurityEvent')=116522
- AND (SELECT count(*) FROM fi_recovery.pending_source_record WHERE window_index=4 AND record_kind IN ('USNReadBoundary','USNObjectObservation'))=29
- AND (SELECT count(*) FROM fi_recovery_projection.usn_read_boundary b JOIN fi_recovery.projected_source_record r ON r.shadow_source_record_id=b.source_record_id WHERE r.window_index=4)
-  +(SELECT count(*) FROM fi_recovery_projection.usn_object_observation o JOIN fi_recovery.projected_source_record r ON r.shadow_source_record_id=o.source_record_id WHERE r.window_index=4)=29
- AND NOT EXISTS (SELECT 1 FROM fi_recovery.typed_window t JOIN fi_recovery.source_window s USING(receipt_sha256,window_index) WHERE t.descriptor_sha256<>s.descriptor_sha256)
- THEN 'PASS' ELSE 'FAIL' END")
-[ "$integrity" = PASS ] || fail 'signed/relational integrity mismatch'
-grep '^FI PRIVATE CONTINUOUS FAMILY FLUSH ' "$out/$name/recover.log" \
- > "$out/$name/FLUSHES.txt" || fail 'missing durable capacity/EOF family flushes'
-if grep -Ev ' trigger=(capacity|end-of-input) ' "$out/$name/FLUSHES.txt" >/dev/null; then
- fail 'a non-capacity/non-EOF flush was recorded'
-fi
-grep -F ' family=Security trigger=capacity ' "$out/$name/FLUSHES.txt" >/dev/null ||
- fail 'Security never flushed at real P3 capacity'
-# W3->W4 must NOT implicitly empty a Security buffer: at least one durable
-# family transaction must include original signed records on both sides.
-grep -E '^FI PRIVATE CONTINUOUS FAMILY FLUSH family=Security .*first_window=3 last_window=4 ' \
- "$out/$name/FLUSHES.txt" >/dev/null ||
- fail 'no proven Security buffer carrying source records across W128'
-[ "$(grep -c '^FI PRIVATE CONTINUOUS TYPED COMMIT window=' "$out/$name/recover.log")" = 2 ] ||
- fail 'expected W3 and W4 typed completion proof'
-
-checked=0
-for dir in "$out/$name/private"/receipt-*/window-*; do
- [ -d "$dir" ] || fail 'materialized signed window missing'
- receipt=$(basename "$(dirname "$dir")")
- for batch in "$dir"/batch-*.data; do
-  [ -f "$batch" ] || fail 'signed batch data missing'
-  f=$(basename "$batch")
-  orig="$cache/$receipt/$f"
-  [ -f "$orig" ] || fail "original verified batch missing: $f"
-  cmp -s "$batch" "$orig" || fail "signed byte readback differs: $f"
-  manifest=$(printf '%s\n' "$batch" | sed 's/\.data$/.manifest/')
-  origmanifest=$(printf '%s\n' "$orig" | sed 's/\.data$/.manifest/')
-  cmp -s "$manifest" "$origmanifest" || fail "signed manifest differs: $f"
-  checked=$((checked+1))
- done
-done
-[ "$checked" = 111 ] || fail "signed cache batch count $checked not 111"
-printf 'FI CONTINUOUS REAL SIGNED W34 PASS checkpoint=%s records=259178 security=232879 W4_USN=29 signed_readback=%s authoritative=0 accepted=0\n' \
- "$state" "$checked" | tee -a "$out/SUMMARY.txt"
-grep '^FI PRIVATE CONTINUOUS ' "$out/$name/recover.log" > "$out/$name/TELEMETRY.txt"
-bundle="$out/fi-continuous-w34-$stamp.tar.gz"
-(cd "$out" && tar -czf "$bundle" MANIFEST.txt SUMMARY.txt relay.log \
- "$name/recover.log" "$name/FLUSHES.txt" "$name/TELEMETRY.txt" \
- "$name/wal-before.jsonl" "$name/wal-after.jsonl" \
- "$name/io-before.jsonl" "$name/io-after.jsonl" \
- "$name/iostat.txt" "$name/vmstat.txt") || fail 'diagnostics bundle failed'
-printf 'FI CONTINUOUS METRICS BUNDLE PASS path=%s\n' "$bundle"
- >/dev/null; then
+  grep -v ' family_boundary_flush=false$' >/dev/null; then
  fail 'K32 processing incorrectly caused a family boundary flush'
 fi
 state=$(sql "SELECT count(*)::text||'|'||coalesce(sum(committed_records),0)::text||'|'||max(window_index)::text FROM fi_recovery.typed_window")
@@ -297,6 +233,11 @@ if grep -Ev ' trigger=(capacity|end-of-input) ' "$out/$name/FLUSHES.txt" >/dev/n
 fi
 grep -F ' family=Security trigger=capacity ' "$out/$name/FLUSHES.txt" >/dev/null ||
  fail 'Security never flushed at real P3 capacity'
+# A Security lane containing signed records from both W3 and W4 demonstrates
+# W128 boundaries did not discard/drain the partially filled family lane.
+grep -E '^FI PRIVATE CONTINUOUS FAMILY FLUSH family=Security .*first_window=3 last_window=4 ' \
+ "$out/$name/FLUSHES.txt" >/dev/null ||
+ fail 'Security buffer did not cross W128 as required'
 [ "$(grep -c '^FI PRIVATE CONTINUOUS TYPED COMMIT window=' "$out/$name/recover.log")" = 2 ] ||
  fail 'expected W3 and W4 typed completion proof'
 
