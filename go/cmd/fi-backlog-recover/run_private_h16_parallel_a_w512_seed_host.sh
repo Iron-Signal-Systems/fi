@@ -469,7 +469,13 @@ w512patch=go/cmd/fi-backlog-recover/patchers/w512_2g/main.go
 w512test=go/internal/recordingest/backlog_window_plan_w512_test.go
 w512cache=go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed.go
 w512cachetest=go/cmd/fi-backlog-recover/testdata/w512-2g/private_w512_verified_seed_test.go
-mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/w512_2g"
+# All fetched Git assets must have real parent directories before the shell
+# opens stdout redirection. These directories live ONLY in the disposable
+# archived source tree; never modify the active fi-dev checkout.
+mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/w512_2g" \
+  "$src/go/cmd/fi-backlog-recover/testdata/w512-2g" \
+  "$src/go/internal/recordingest" ||
+  fail 'W512 disposable Go asset directories unavailable'
 for spec in \
   "f2e86f0f69476b5d7e6885a6687117e6d36c1703 $w512patch" \
   "7a2049a3a62464e336f33387877bf072dfd6ec55 $w512test" \
