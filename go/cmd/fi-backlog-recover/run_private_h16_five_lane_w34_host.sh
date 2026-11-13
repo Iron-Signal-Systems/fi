@@ -31,7 +31,7 @@ esac
 mode=candidate
 name=clone-11-08-26
 combinedref=58f5d7341ba728b4696d05ba31199cb38226befc
-fiveref=866e1b70cf5916364da40bc5485c9caad325e122
+fiveref=394e06ca35a61e559c16909fae296d425ef8bb19
 ddlref=dc556813d450f7ab79121d05e10e54c6d2732d01
 ddlpath=go/cmd/fi-backlog-recover/testdata/private_field_insert_vacuum_candidate.sql
 ref=b01ff0d8cb6559797de052f34b18bd84a395dc4c
@@ -169,7 +169,7 @@ printf 'FI H16 PINNED ASSET PREFLIGHT PASS mixed=3 dependency=5 source=git_objec
 git -C "$combinedrepo" cat-file -e "$fiveref^{commit}" ||
     fail 'FI five-lane reviewed source commit missing; fetch development branch in fi-dev'
 for blob in \
- 8fd594d381caba42de6377660d7353486c5206be \
+ b93cc631768d02e70edfd5f2a2caf3501be56a3c \
  c6d030273c320c51f25762579be4b2546cb4e939 \
  397a48459e6f310d0f9dbd5bc45b0ac3e90c79bb; do
     git -C "$combinedrepo" cat-file -e "$blob^{blob}" ||
