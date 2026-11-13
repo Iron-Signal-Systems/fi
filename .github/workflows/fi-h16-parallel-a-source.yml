@@ -98,3 +98,27 @@ jobs:
           test -s "$stage/fi-h16-parallel-a-freebsd"
           grep -Fq 'private-parallel-prep-a' "$stage/go/cmd/fi-backlog-recover/main_freebsd.go"
           echo "FI H16 PARALLEL A SOURCE PASS workers=2 in_flight=4 postgres_writers=1 original_W128_atomic=true signed_W3_W4=not_run"
+
+      - name: Execute exact W3-W4 runner signed batch/worker proof and negative shell tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w34_host.sh
+          sh -n "$runner"
+          sh -n go/cmd/fi-backlog-recover/testdata/h16-parallel-a/test_parallel_runner_proof.sh
+          grep -Fq -- '-private-parallel-prep-a' "$runner"
+          grep -Fq -- '-test-stop-after-windows=2' "$runner"
+          grep -Fq 'private-writes -private-field-partitions' "$runner"
+          grep -Fq 'original_W128=true signed_order=true no_second_sql_writer=true' "$runner"
+          awk '
+          /^[[:space:]]*\[[[:space:]]/ {
+            if ($0 !~ /\][[:space:]]*($|\|\||&&|;)/ &&
+                $0 !~ /\\[[:space:]]*$/) {
+              printf "Unterminated POSIX test on line %d: %s\n", NR,$0 > "/dev/stderr"
+              bad=1
+            }
+          }
+          END { if(bad)exit 1 }
+          ' "$runner"
+          sh go/cmd/fi-backlog-recover/testdata/h16-parallel-a/test_parallel_runner_proof.sh
+          echo "FI H16 CANDIDATE A HOST RUNNER SOURCE GATE PASS W3_W4_only=true two_workers=true verified_h16_frozen=true real_signed_replay_not_run=true"
