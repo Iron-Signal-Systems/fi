@@ -147,7 +147,7 @@ func run() error {
 			securityProfile != "P3" || fileProfile != "F3" ||
 			continuousPrivate || streamLoader || preflightOnly ||
 			privateFieldPartitions || privateMixedBuffers || privateDependencyBuffers ||
-			optimizedK32 || verifiedCacheRoot != "" || processingChunkRecords != 0 ||
+			optimizedK32 || verifiedCacheRoot == "" || processingChunkRecords != 0 ||
 			testStopAfterWindows != 0 || testFieldFailWindow != 0 {
 			return errors.New("FI continuous family mode requires isolated indexed W128 W3-W4 P3/F3 with no K32 or field partitions")
 		}
@@ -157,7 +157,8 @@ func run() error {
 	if verifiedCacheRoot != "" {
 		if windowProfile != "W128" || !enable ||
 			!((streamLoader && startWindow == 0 && maxWindows == 1) ||
-				(continuousPrivate && startWindow >= 1 && maxWindows == 0)) {
+				(continuousPrivate && startWindow >= 1 && maxWindows == 0) ||
+				(privateContinuousFamily && indexedPrivate && startWindow == 3 && maxWindows == 2)) {
 			return errors.New("verified-cache-root is restricted to W128 signed seed or verified cached continuous private trial")
 		}
 		if !filepath.IsAbs(verifiedCacheRoot) {
@@ -460,7 +461,12 @@ SELECT (SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= $1 A
 		return nil
 	}
 	var prepared *recordingest.PreparedGeneration
-	if indexedPrivate {
+	if privateContinuousFamily {
+		fmt.Printf("FI REAL BACKLOG INDEXED VERIFIED CACHE source_admission=receiver_prior_authentication transfer_validation=previously_completed root=%s start_window=%d count=%d current_crl_check=not_applicable\n",
+			verifiedCacheRoot, startWindow, maxWindows)
+		prepared, err = recordingest.LoadIndexedBacklogPrivateVerifiedCacheWindows(ctx,
+			canonical, loadConfig, generation, limits, startWindow, maxWindows, verifiedCacheRoot)
+	} else if indexedPrivate {
 		fmt.Printf("FI REAL BACKLOG INDEXED PRIVATE selective custody prefix start_window=%d count=%d; full FIGT verification deferred to final acceptance\n", startWindow, maxWindows)
 		prepared, err = recordingest.LoadIndexedBacklogPrivateWindows(ctx, canonical, loadConfig, generation, limits, startWindow, maxWindows)
 	} else if streamLoader {
