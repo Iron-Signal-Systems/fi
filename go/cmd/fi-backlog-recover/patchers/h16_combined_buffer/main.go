@@ -30,7 +30,7 @@ var edits = []sourceEdit{
     },
     {
         path:"go/internal/recordingest/backlog_typed_window_postgres.go",
-        before:`        if finishChunk {
+        before:`		if finishChunk {
 			if len(typedChunk.files) != 0 || len(typedChunk.security) != 0 ||
 				len(typedChunk.dependencies) != 0 || typedChunk.dependencyBytes != 0 ||
 				len(typedChunk.fileBulk.records) != 0 || typedChunk.filesBytes() != 0 {
@@ -51,9 +51,9 @@ var edits = []sourceEdit{
     },
     {
         path:"go/internal/recordingest/backlog_typed_window_postgres.go",
-        before:`fmt.Printf("FI PRIVATE BUFFER ROUTE WINDOW START window=%d joined=%t K32=%d dependency_mode=true\\n", index, joined, chunkLimit)`,
-        after:`fmt.Printf("FI PRIVATE BUFFER ROUTE WINDOW START window=%d joined=%t K32=%d dependency_mode=true\\n", index, joined, chunkLimit)
-        fmt.Printf("FI PRIVATE H16 COMBINED BUFFER ROUTE window=%d K32=32768 k32_partial_flushes=0 W128_atomic=true source=original_H16\\n", index)`,
+        before:`fmt.Printf("FI PRIVATE BUFFER ROUTE WINDOW START window=%d joined=%t K32=%d dependency_mode=true\n", index, joined, chunkLimit)`,
+        after:`fmt.Printf("FI PRIVATE BUFFER ROUTE WINDOW START window=%d joined=%t K32=%d dependency_mode=true\n", index, joined, chunkLimit)
+        fmt.Printf("FI PRIVATE H16 COMBINED BUFFER ROUTE window=%d K32=32768 k32_partial_flushes=0 W128_atomic=true source=original_H16\n", index)`,
     },
 }
 
