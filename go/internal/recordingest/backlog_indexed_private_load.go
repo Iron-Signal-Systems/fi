@@ -41,6 +41,34 @@ func LoadIndexedBacklogPrivateWindows(
 	ctx context.Context, conn *pgx.Conn, config GenerationLoadConfig,
 	generationID string, limits BacklogWindowLimits, startWindow, maxWindows int,
 ) (*PreparedGeneration, error) {
+	return loadIndexedBacklogPrivateWindows(ctx, conn, config,
+		generationID, limits, startWindow, maxWindows, "")
+}
+
+// LoadIndexedBacklogPrivateVerifiedCacheWindows is exclusively for replay of
+// previously receiver-authenticated, receipt-bound FIGT bytes in a disposable
+// private SQL clone. It does not reauthorize the historical signing certificate
+// against TODAY's CRL: that is the receiver's admission responsibility.
+// It DOES fail closed on a missing cache publication marker, changed signed
+// manifest/data SHA, mismatched recorded receipt, or incomplete W0..start-1
+// durable private checkpoint prefix. No ordinary ingest path calls this API.
+func LoadIndexedBacklogPrivateVerifiedCacheWindows(
+	ctx context.Context, conn *pgx.Conn, config GenerationLoadConfig,
+	generationID string, limits BacklogWindowLimits, startWindow, maxWindows int,
+	cacheRoot string,
+) (*PreparedGeneration, error) {
+	if cacheRoot == "" {
+		return nil, errors.New("FI indexed verified cache: required authenticated cache root missing")
+	}
+	return loadIndexedBacklogPrivateWindows(ctx, conn, config,
+		generationID, limits, startWindow, maxWindows, cacheRoot)
+}
+
+func loadIndexedBacklogPrivateWindows(
+	ctx context.Context, conn *pgx.Conn, config GenerationLoadConfig,
+	generationID string, limits BacklogWindowLimits, startWindow, maxWindows int,
+	cacheRoot string,
+) (*PreparedGeneration, error) {
 	if ctx == nil || conn == nil {
 		return nil, errors.New("FI indexed private: context and SQL connection required")
 	}
@@ -190,6 +218,14 @@ SELECT
 	}
 	if previous != 1 || sourceRows != 1 || typedRows != 1 {
 		return nil, errors.New("FI indexed private: previous complete checkpoint not present")
+	}
+
+	// The verified cache can only be opened after both the immutable receipt
+	// and the already committed W0..W(start-1) SQL identity are established.
+	// It is NOT a substitute for admission verification at the receiver.
+	if cacheRoot != "" {
+		return indexedBacklogPreparedFromVerifiedCache(ctx, g, config,
+			cacheRoot, fromBatch, endBatch)
 	}
 
 	trust, err := loadInstalledGenerationTrust(config.SourceID)
@@ -352,4 +388,71 @@ func indexedPrivateWindowLimitsAllowed(limits BacklogWindowLimits) bool {
 		return true
 	}
 	return limits.MaxRecords == 131072 && limits.MaxDataBytes == 1<<30
+}
+
+// indexedBacklogPreparedFromVerifiedCache rechecks the selected portion of a
+// previously fully authenticated transfer using the original durable signed
+// source index. No current CRL is involved: the receiver established trust
+// before it published the recorded receipt and verified-cache marker.
+// All checks are read-only; the caller's existing W0..W2 private SQL seed
+// remains the mandatory replay prerequisite.
+func indexedBacklogPreparedFromVerifiedCache(ctx context.Context, g *PreparedGeneration,
+	config GenerationLoadConfig, cacheRoot string, fromBatch, endBatch int,
+) (*PreparedGeneration, error) {
+	if ctx == nil || g == nil || g.ReceiptSHA256 == "" ||
+		fromBatch < 0 || endBatch > len(g.Batches) || fromBatch >= endBatch {
+		return nil, errors.New("FI indexed verified cache: invalid bounded batch selection")
+	}
+	cacheDir, err := backlogVerifiedCacheOpen(cacheRoot, g.ReceiptSHA256,
+		g.Receipt.TransferSHA256, g.Receipt.BatchCount, g.Receipt.RecordCount,
+		g.Receipt.DataBytes)
+	if err != nil {
+		return nil, fmt.Errorf("FI indexed verified cache: prior receiver-authenticated publication missing: %w", err)
+	}
+	for i := fromBatch; i < endBatch; i++ {
+		if err := ctx.Err(); err != nil { return nil, err }
+		b := &g.Batches[i]
+		raw, err := backlogVerifiedCacheManifest(cacheDir, i,
+			b.ManifestSHA256, uint64(config.MaxManifestBytes))
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: manifest %d: %w", i, err) }
+		if len(raw) != b.ManifestBytes {
+			return nil, fmt.Errorf("FI indexed verified cache: manifest %d byte length changed", i)
+		}
+		manifest, err := spool.DecodeManifest(bytes.NewReader(raw))
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: manifest %d parse: %w", i, err) }
+		if manifest.BatchID != b.BatchID || manifest.Version != b.Manifest.Version ||
+			manifest.DataFile != b.DataArtifactName || manifest.TargetBatchSize != b.Manifest.TargetBatchSize ||
+			manifest.RecordCount != b.Manifest.RecordCount || manifest.DataBytes != b.Manifest.DataBytes ||
+			manifest.DataSHA256 != b.Manifest.DataSHA256 ||
+			manifest.Collector.ExecutablePath != b.Manifest.Collector.ExecutablePath ||
+			manifest.Collector.ExecutableSHA256 != b.Manifest.Collector.ExecutableSHA256 ||
+			manifest.CreatedAt != b.Manifest.CreatedAt ||
+			manifest.CompletedAt != b.Manifest.CompletedAt {
+			return nil, fmt.Errorf("FI indexed verified cache: manifest %d conflicts with recorded SQL source index", i)
+		}
+		path := backlogCacheBatchData(cacheDir, i)
+		info, err := os.Lstat(path)
+		if err != nil { return nil, err }
+		if !info.Mode().IsRegular() || info.Mode().Perm() & 0022 != 0 {
+			return nil, fmt.Errorf("FI indexed verified cache: unsafe batch %d inode", i)
+		}
+		fd, err := os.Open(path)
+		if err != nil { return nil, err }
+		fdInfo, err := fd.Stat()
+		if err == nil && !os.SameFile(info, fdInfo) {
+			err = errors.New("FI indexed verified cache: batch inode changed between Lstat and open")
+		}
+		var inspected spool.DataInspection
+		if err == nil { inspected, err = spool.InspectData(fd) }
+		err = errors.Join(err, fd.Close())
+		if err != nil { return nil, fmt.Errorf("FI indexed verified cache: batch %d source verification: %w", i, err) }
+		if err = spool.VerifyManifestData(manifest, inspected); err != nil {
+			return nil, fmt.Errorf("FI indexed verified cache: batch %d signed data hash mismatch: %w", i, err)
+		}
+		// The verification above is completed BEFORE publishing any selected
+		// batch path to the source-window materializer.
+		b.ManifestRawBytes = raw
+		b.DataPath = path
+	}
+	return g, nil
 }
