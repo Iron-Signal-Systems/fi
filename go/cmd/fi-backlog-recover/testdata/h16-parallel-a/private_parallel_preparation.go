@@ -55,6 +55,19 @@ func privateParallelAEnabled(ctx context.Context) bool {
         securityBulkLimitsFromContext(ctx).Name == "P3"
 }
 
+// FI must never accept a requested benchmark that silently falls back to
+// sequential preparation. Check this before reading a signed source batch,
+// and therefore before any of that batch's source COPY or projections.
+func privateParallelAActivationError(ctx context.Context) error {
+    if !privateParallelARequested(ctx) {
+        return nil
+    }
+    if !privateParallelAEnabled(ctx) {
+        return errors.New("FI candidate A STOP: two-worker preparation requested but exact F3H16 runtime profile or signed dependency context unavailable")
+    }
+    return nil
+}
+
 // Only the pure signed-record preparation function runs in either worker.
 // This is the exact sequential order of calls from the original ingest loop:
 // canonical Security fast path first; unchanged generic fallback second.
