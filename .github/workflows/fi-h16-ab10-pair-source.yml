@@ -132,11 +132,11 @@ jobs:
           combined=go/cmd/fi-backlog-recover/run_private_h16_combined_ab10_host.sh
           five=go/cmd/fi-backlog-recover/run_private_h16_five_lane_ab10_host.sh
           verifier=go/cmd/fi-backlog-recover/testdata/h16-ab10/validate_signed_ab10.sh
-          [ "$(git hash-object "$verifier")" = 636cf3fcae5567cb49b12027fcfbb1888f2dafd8 ]
+          [ "$(git hash-object "$verifier")" = 16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e ]
           for runner in "$combined" "$five"; do
             sh -n "$runner"
-            grep -Fq 'ab10ref=2069a3a49d102b9d58125c8cf300a14ee29ad3b7' "$runner"
-            grep -Fq '636cf3fcae5567cb49b12027fcfbb1888f2dafd8' "$runner"
+            grep -Fq 'ab10ref=67b53c42778319c15929f31d1f6c5004267f56ea' "$runner"
+            grep -Fq '16cc4ff9a850a0a52d23b54e4f9212644ddd3c1e' "$runner"
             grep -Fq -- '-test-stop-after-windows=10' "$runner"
             grep -Fq -- '-continuous-private -start-window=3' "$runner"
             grep -Fq -- '-max-windows=0 -max-runtime=0' "$runner"
@@ -158,8 +158,8 @@ jobs:
           set -euo pipefail
           pair=go/cmd/fi-backlog-recover/run_private_h16_ab10_pair_host.sh
           sh -n "$pair"
-          grep -Fq 'c20ffe9789d0513185be575e57a0a945c174167c' "$pair"
-          grep -Fq 'f28cbea5150a12f09c2a5cac2abc6f8291129086' "$pair"
+          grep -Fq '45d539d87c2c2d282360d82de210f68974eb70fb' "$pair"
+          grep -Fq '47380305f9da2e5616cac930189fbfac7aed8042' "$pair"
           grep -Fq 'combined W3-W12 failed; five-lane NOT started' "$pair"
           grep -Fq 'sh "$combined" h16 || die' "$pair"
           grep -Fq 'sh "$five" h16 || die' "$pair"
