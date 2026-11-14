@@ -43,7 +43,7 @@ stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 suite=/var/tmp/fi-window-chunks-h16-w512-worker-sweep-$stamp
 [ ! -e "$suite" ] || fail 'worker sweep result path collision'
 mkdir -m 700 "$suite" || fail 'worker suite output init failed'
-ref=190367b60f1c3c933c17d4f9f6420b1b891230b3
+ref=41678c1e613274b96774efc655bdfe5dfc89be88
 baseline=b4364e0de3c1267545748ca739895a737c871a2c
 patcher=go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go
 pilot=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_wal_w8g_host.sh
@@ -74,7 +74,7 @@ repo=/home/jwood/src/fi
 git -C "$repo" cat-file -e "$ref^{commit}" || exit 1
 git -C "$repo" cat-file -e "$baseline^{commit}" || exit 1
 [ "$(git -C "$repo" rev-parse "$ref:$patcher")" = \
-  04827a985d16bbd11a4757434aaa572dbf457432 ] || exit 1
+  a3d4b2e3c695b18d0178c9b28b125059993ed598 ] || exit 1
 [ "$(git -C "$repo" rev-parse "$baseline:$pilot")" = \
   604c201e3f14ecd779bff0bf5152a1c278afe8ee ] || exit 1
 mkdir -m 700 "$stage" || exit 1
@@ -85,7 +85,7 @@ git -C "$repo" show "$baseline:$pilot" > "$stage/pilot-worker$workers.sh" || exi
 mkdir -p "$stage/optimized-source/go/cmd/fi-backlog-recover/patchers/w512_worker_sweep"
 git -C "$repo" show "$ref:$patcher" > "$stage/optimized-source/$patcher" || exit 1
 [ "$(git -C "$repo" hash-object "$stage/optimized-source/$patcher")" = \
-  04827a985d16bbd11a4757434aaa572dbf457432 ] || exit 1
+  a3d4b2e3c695b18d0178c9b28b125059993ed598 ] || exit 1
 (cd "$stage/optimized-source/go" &&
   GOTOOLCHAIN=auto go run ./cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go "$stage" "$workers") || exit 1
 (cd "$stage/optimized-source/go" &&
