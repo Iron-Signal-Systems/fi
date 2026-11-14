@@ -48,7 +48,7 @@ baseline=b4364e0de3c1267545748ca739895a737c871a2c
 patcher=go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go
 pilot=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_wal_w8g_host.sh
 echo "FI W512 WORKER SWEEP START workers=2,4,8,16 credits=32 fixed_wal=8GB fixed_writer=1 signed_windows=1,2 output=$suite"
-echo 'workers,records,elapsed_seconds,records_per_second,postgresql_max_wal_size,credits,sql_writers,wal_bytes,requested_checkpoints' \
+echo 'workers,records,elapsed_seconds,records_per_second,postgresql_max_wal_size,credits,sql_writers,wal_bytes,requested_checkpoints,cpu_seconds,max_rss_kib' \
     > "$suite/RESULTS.csv"
 for workers in 2 4 8 16; do
     stage=/home/jwood/fi-window-bench-w512-worker$workers-$stamp
@@ -187,13 +187,32 @@ JAIL
         END{if(a<b)exit 3;printf "%.0f",a-b}
     ' "$d/checkpointer_before.jsonl" "$d/checkpointer_after.jsonl") ||
         fail "W512 $workers-worker checkpoint accounting invalid"
-    awk -v w="$workers" -v sec="$elapsed" -v wb="$counters" -v chk="$checkpoints" '
+    # FreeBSD /usr/bin/time -l records CPU time and peak process RSS.
+    # Compare resource COST as well as throughput. These are process-only
+    # metrics; the PostgreSQL worker processes are accounted for separately
+    # in pg_stat_io and WAL/checkpoint counters.
+    cpu_seconds=$(awk '
+        $2=="real" && $4=="user" && $6=="sys" {
+            total=($3+0)+($5+0)
+            seen++
+        }
+        END {if(seen!=1)exit 4;printf "%.3f",total}
+    ' "$d/recover.log") || fail "W512 worker $workers CPU time missing"
+    peak_rss=$(awk '
+        $2=="maximum" && $3=="resident" && $4=="set" && $5=="size" {
+            value=$1+0
+            seen++
+        }
+        END {if(seen!=1)exit 4;printf "%.0f",value}
+    ' "$d/recover.log") || fail "W512 worker $workers max RSS missing"
+    awk -v w="$workers" -v sec="$elapsed" -v wb="$counters" -v chk="$checkpoints" \
+        -v cpu="$cpu_seconds" -v rss="$peak_rss" '
         BEGIN {
-            if(sec<=0)exit 4
-            printf "%d,997434,%.6f,%.2f,8GB,32,1,%s,%s\n",
-                w,sec,997434/sec,wb,chk
-            printf "FI W512 WORKER RESULT workers=%d records=997434 elapsed=%.3fs throughput=%.2f records_per_second WAL_bytes=%s checkpoints=%s\n",
-                w,sec,997434/sec,wb,chk > "/dev/stderr"
+            if(sec<=0||cpu<=0||rss<=0)exit 4
+            printf "%d,997434,%.6f,%.2f,8GB,32,1,%s,%s,%.3f,%s\n",
+                w,sec,997434/sec,wb,chk,cpu,rss
+            printf "FI W512 WORKER RESULT workers=%d records=997434 elapsed=%.3fs throughput=%.2f records_per_second WAL_bytes=%s checkpoints=%s recovery_cpu_seconds=%.3f max_rss_kib=%s\n",
+                w,sec,997434/sec,wb,chk,cpu,rss > "/dev/stderr"
         }
     ' >> "$suite/RESULTS.csv" || fail 'worker sweep performance comparison calculation failed'
     cp "$summary" "$suite/SUMMARY-worker$workers.txt" ||
