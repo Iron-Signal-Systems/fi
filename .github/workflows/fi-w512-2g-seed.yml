@@ -14,6 +14,8 @@ on:
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_wal_*_host.sh'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_inflight16_host.sh'
       - 'go/cmd/fi-backlog-recover/patchers/w512_inflight16/**'
+      - 'go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/**'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_worker_sweep_host.sh'
       - '.github/workflows/fi-w512-2g-seed.yml'
   workflow_dispatch:
 
@@ -305,3 +307,62 @@ jobs:
           grep -Fq -- '-window-profile=W512' "$target/pilot-inflight16.sh"
           grep -Fq -- '-test-stop-after-windows=2' "$target/pilot-inflight16.sh"
           echo "FI W512 INFLIGHT16 CI PASS source=isolated W512=unchanged workers=2 in_flight=16 writer=1 FreeBSD=build only signed_replay=not_executed"
+
+      - name: W512 four-arm worker concurrency sweep source, ordering and FreeBSD build
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_worker_sweep_host.sh
+          patcher=go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go
+          sh -n "$runner"
+          grep -Fq 'workers=2,4,8,16 credits=32' "$runner"
+          grep -Fq 'for workers in 2 4 8 16' "$runner"
+          grep -Fq 'W512_CHECKPOINTS.tsv' "$runner"
+          grep -Fq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifests_identical=true' "$runner"
+          grep -Fq 'sql_writers=1' "$runner"
+          grep -Fq 'max_wal_size=8GB' "$runner"
+          grep -Fq 'RESULTS.csv' "$runner"
+          test "$(grep -cx "JAIL" "$runner")" = 1
+          source="/home/jwood/fi-window-bench-w512-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/optimized-source"
+          test -f "$source/go/internal/recordingest/private_parallel_preparation.go"
+          for n in 2 4 8 16; do
+            stage="/home/jwood/fi-window-bench-w512-worker${n}-${GITHUB_RUN_ID}T${GITHUB_RUN_ATTEMPT}Z"
+            test ! -e "$stage"
+            mkdir -m 700 "$stage"
+            cp -R "$source" "$stage/optimized-source"
+            git show "b4364e0de3c1267545748ca739895a737c871a2c:go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_wal_w8g_host.sh" \
+              > "$stage/pilot-worker$n.sh"
+            test "$(git hash-object "$stage/pilot-worker$n.sh")" = 604c201e3f14ecd779bff0bf5152a1c278afe8ee
+            mkdir -p "$stage/optimized-source/go/cmd/fi-backlog-recover/patchers/w512_worker_sweep"
+            cp "$patcher" "$stage/optimized-source/$patcher"
+            (cd "$stage/optimized-source/go" &&
+              go run ./cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go "$stage" "$n")
+            sh -n "$stage/pilot-worker$n.sh"
+            (cd "$stage/optimized-source/go" &&
+              gofmt -w ./internal/recordingest/private_parallel_preparation.go \
+                ./internal/recordingest/postgres_ingest.go \
+                ./cmd/fi-backlog-recover/main_freebsd.go)
+            (cd "$stage/optimized-source/go" &&
+              go test -count=1 -timeout=180s ./internal/recordingest -run '^TestPrivateParallelA')
+            if [ "$n" = 16 ]; then
+              (cd "$stage/optimized-source/go" &&
+                go test -race -count=1 -timeout=180s ./internal/recordingest -run '^TestPrivateParallelA')
+            fi
+            (cd "$stage/optimized-source/go" &&
+              GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
+                -o "$stage/fi-optfield-recover-w$n" ./cmd/fi-backlog-recover)
+            test -s "$stage/fi-optfield-recover-w$n"
+            grep -Fq "privateParallelAPreparers = $n" "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go"
+            grep -Fq 'privateParallelAMaxInFlight = 32' "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go"
+            grep -Fq "workers=$n inflight=32 postgres_writers=1 source_window=%s atomic=true" "$stage/optimized-source/go/cmd/fi-backlog-recover/main_freebsd.go"
+            grep -Fq "workers=$n inflight_limit=32 writers=1" "$stage/optimized-source/go/internal/recordingest/postgres_ingest.go"
+            grep -Fq "FI W512 WORKER $n PILOT ACCEPTED" "$stage/pilot-worker$n.sh"
+            grep -Fq 'FI W512 SIGNED READBACK PASS' "$stage/pilot-worker$n.sh"
+            grep -Fq -- '-start-window=1' "$stage/pilot-worker$n.sh"
+            grep -Fq -- '-test-stop-after-windows=2' "$stage/pilot-worker$n.sh"
+            grep -Fq 'track_io_timing=on -c track_wal_io_timing=on' "$stage/pilot-worker$n.sh"
+            grep -Fq "f[\"workers\"]!=$n||f[\"inflight_limit\"]!=32" "$stage/pilot-worker$n.sh"
+            grep -Fq 'f["reorder_peak"]+0>31' "$stage/pilot-worker$n.sh"
+            echo "FI W512 WORKER SWEEP STATIC ARM PASS workers=$n credits=32 source_order=maintained sql_writer=1 build=freebsd"
+          done
+          echo "FI W512 WORKER SWEEP CI PASS workers=2,4,8,16 credits=32 same_signed_windows=true 8GB_WAL=true authoritative=0 signed_replay=not_executed"
