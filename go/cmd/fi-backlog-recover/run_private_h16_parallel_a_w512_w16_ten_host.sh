@@ -210,11 +210,11 @@ prior_2window_candidate_sha256=$candidate_sha
 EOF
 stats(){
     phase=$1
-    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_wal) x' > "$out/$name/wal_$phase.jsonl"
-    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_checkpointer) x' > "$out/$name/checkpointer_$phase.jsonl"
-    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_io) x' > "$out/$name/io_$phase.jsonl"
-    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_database WHERE datname=current_database()) x' > "$out/$name/database_$phase.jsonl"
-    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_user_tables) x' > "$out/$name/tables_$phase.jsonl"
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_wal) x' > "$out/$name/wal_$phase.jsonl" || return 1
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_checkpointer) x' > "$out/$name/checkpointer_$phase.jsonl" || return 1
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_io) x' > "$out/$name/io_$phase.jsonl" || return 1
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_database WHERE datname=current_database()) x' > "$out/$name/database_$phase.jsonl" || return 1
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_user_tables) x' > "$out/$name/tables_$phase.jsonl" || return 1
 }
 stats before || fail 'pre-run PostgreSQL stats unavailable'
 iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
@@ -254,7 +254,7 @@ grep -Fq 'FI PRIVATE PARALLEL PREP A ENABLED workers=16 inflight=32 postgres_wri
 [ "$(grep -c '^FI PRIVATE BATCH HASH ONCE window=' "$log")" = 10 ] ||
     fail 'W512 per-window instrumentation incomplete'
 grep -q '^FI PRIVATE EXACT WINDOW STOP start=1 windows=10 last=10 records=' "$log" ||
-    fail 'W512 exact two-window stop missing'
+    fail 'W512 exact ten-window stop missing'
 new=$(sql 'SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window WHERE window_index BETWEEN 1 AND 10')
 case "$new" in ''|*[!0-9]*) fail 'invalid W512 new record count';; esac
 [ "$new" -ge 997434 ] && [ "$new" -le 5242880 ] || fail "invalid W512 record count $new"
