@@ -319,7 +319,7 @@ jobs:
           grep -Fq 'for workers in 2 4 8 16' "$runner"
           grep -Fq 'W512_CHECKPOINTS.tsv' "$runner"
           grep -Fq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifests_identical=true' "$runner"
-          grep -Fq 'sql_writers=1' "$runner"
+          grep -Fq 'postgres_writers=1' "$runner"
           grep -Fq 'max_wal_size=8GB' "$runner"
           grep -Fq 'RESULTS.csv' "$runner"
           test "$(grep -cx "JAIL" "$runner")" = 1
