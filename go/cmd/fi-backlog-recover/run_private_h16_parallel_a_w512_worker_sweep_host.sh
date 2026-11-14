@@ -43,7 +43,7 @@ stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 suite=/var/tmp/fi-window-chunks-h16-w512-worker-sweep-$stamp
 [ ! -e "$suite" ] || fail 'worker sweep result path collision'
 mkdir -m 700 "$suite" || fail 'worker suite output init failed'
-ref=301b397f59c5c5a8db0a46fc0616748ce9475e53
+ref=2d75d29509f371e069891ae655dbc4a09d5d1354
 baseline=b4364e0de3c1267545748ca739895a737c871a2c
 patcher=go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go
 pilot=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_wal_w8g_host.sh
@@ -74,7 +74,7 @@ repo=/home/jwood/src/fi
 git -C "$repo" cat-file -e "$ref^{commit}" || exit 1
 git -C "$repo" cat-file -e "$baseline^{commit}" || exit 1
 [ "$(git -C "$repo" rev-parse "$ref:$patcher")" = \
-  6f9ddce628358b923cfff338ccc67e0531dd76ab ] || exit 1
+  e85580c4452a5650b8cd8a0ddab6acdb1987fb9b ] || exit 1
 [ "$(git -C "$repo" rev-parse "$baseline:$pilot")" = \
   604c201e3f14ecd779bff0bf5152a1c278afe8ee ] || exit 1
 mkdir -m 700 "$stage" || exit 1
@@ -85,7 +85,7 @@ git -C "$repo" show "$baseline:$pilot" > "$stage/pilot-worker$workers.sh" || exi
 mkdir -p "$stage/optimized-source/go/cmd/fi-backlog-recover/patchers/w512_worker_sweep"
 git -C "$repo" show "$ref:$patcher" > "$stage/optimized-source/$patcher" || exit 1
 [ "$(git -C "$repo" hash-object "$stage/optimized-source/$patcher")" = \
-  6f9ddce628358b923cfff338ccc67e0531dd76ab ] || exit 1
+  e85580c4452a5650b8cd8a0ddab6acdb1987fb9b ] || exit 1
 (cd "$stage/optimized-source/go" &&
   GOTOOLCHAIN=auto go run ./cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go "$stage" "$workers") || exit 1
 (cd "$stage/optimized-source/go" &&
@@ -99,7 +99,7 @@ git -C "$repo" show "$ref:$patcher" > "$stage/optimized-source/$patcher" || exit
   GOTOOLCHAIN=auto go build -o "$stage/fi-optfield-recover-w$workers" ./cmd/fi-backlog-recover) || exit 1
 sha256 -q "$stage/fi-optfield-recover-w$workers" > "$stage/fi-optfield-recover-w$workers.sha256"
 sh -n "$stage/pilot-worker$workers.sh" || exit 1
-grep -Fq "privateParallelAPreparers = $workers" \
+grep -Eq "privateParallelAPreparers[[:space:]]+=[[:space:]]+$workers" \
   "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go" || exit 1
 grep -Fq 'privateParallelAMaxInFlight = 32' \
   "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go" || exit 1
