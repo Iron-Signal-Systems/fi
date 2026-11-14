@@ -70,7 +70,7 @@ func run(stage string, workers int) error {
     replacements := []replace{
         {
             filepath.Join(ingest, "private_parallel_preparation.go"),
-            "privateParallelAPreparers = 2",
+            "privateParallelAPreparers  = 2",
             "privateParallelAPreparers = " + w,
         },
         {
