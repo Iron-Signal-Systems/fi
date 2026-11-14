@@ -16,6 +16,7 @@ on:
       - 'go/cmd/fi-backlog-recover/patchers/w512_inflight16/**'
       - 'go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/**'
       - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_worker_sweep_host.sh'
+      - 'go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_w16_ten_host.sh'
       - '.github/workflows/fi-w512-2g-seed.yml'
   workflow_dispatch:
 
@@ -374,3 +375,49 @@ jobs:
             echo "FI W512 WORKER SWEEP STATIC ARM PASS workers=$n credits=32 source_order=maintained sql_writer=1 build=freebsd"
           done
           echo "FI W512 WORKER SWEEP CI PASS workers=2,4,8,16 credits=32 same_signed_windows=true 8GB_WAL=true authoritative=0 signed_replay=not_executed"
+
+      - name: W512 H16 16-worker ten-window signed private replay runner gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          pilot=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_w16_ten_host.sh
+          sh -n "$pilot"
+          test "$(grep -cx 'JAIL' "$pilot")" = 1
+          grep -Fq 'candidate_sha=5607898abaec33dd5bc64fae774f8bde02384209a6bd5eca08c651fca3de45ac' "$pilot"
+          grep -Fq 'fi-window-bench-w512-worker16-20261114T025452Z/fi-optfield-recover-w16' "$pilot"
+          grep -Fq 'FI W512 WORKER 16 PILOT ACCEPTED windows=2 new_records=997434' "$pilot"
+          grep -Fq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifests_identical=true' "$pilot"
+          grep -Fq 'need_kib=$((seed_kib+134217728))' "$pilot"
+          grep -Fq 'FI PRIVATE PARALLEL PREP A ENABLED workers=16 inflight=32 postgres_writers=1 source_window=W512 atomic=true' "$pilot"
+          grep -Fq 'FI W512 W16 TEN START start_index=1 windows=10 workers=16 writer=1 credits=32 K32=32768' "$pilot"
+          grep -Fq -- '-test-stop-after-windows=10' "$pilot"
+          grep -Fq -- '-window-profile=W512' "$pilot"
+          grep -Fq -- '-processing-chunk-records=32768' "$pilot"
+          grep -Fq 'max_wal_size=$walmax -c wal_buffers=4MB -c track_io_timing=on -c track_wal_io_timing=on' "$pilot"
+          grep -Fq 'WHERE window_index BETWEEN 1 AND 10' "$pilot"
+          grep -Fq '(SELECT count(*) FROM fi_recovery.typed_window)=11' "$pilot"
+          grep -Fq '(SELECT count(*) FROM fi_recovery.source_window)=11' "$pilot"
+          grep -Fq '(SELECT count(*) FROM fi_recovery.verified_artifact_window)=11' "$pilot"
+          grep -Fq 'committed_records BETWEEN 1 AND 524288)=10' "$pilot"
+          grep -Fq '(SELECT count(*) FROM fi.recorded_generation)=0' "$pilot"
+          grep -Fq 'FI W512 W16 TEN ACCEPTED windows=10' "$pilot"
+          grep -Fq 'W512_PREVIOUS_THREE.tsv' "$pilot"
+          grep -Fq 'cmp -s "$out/$name/W512_PREVIOUS_THREE.tsv" "$prior/$name/W512_CHECKPOINTS.tsv"' "$pilot"
+          grep -Fq 'f["workers"]!=16||f["inflight_limit"]!=32||f["writers"]!=1' "$pilot"
+          grep -Fq 'f["reorder_peak"]+0>31' "$pilot"
+          grep -Fq 'byte_identical=true manifests_identical=true' "$pilot"
+          grep -Fq 'expected_batches=$(sql' "$pilot"
+          grep -Fq 'database_$phase.jsonl" || return 1' "$pilot"
+          grep -Fq 'tables_$phase.jsonl" || return 1' "$pilot"
+          grep -Fq 'wal_$phase.jsonl" || return 1' "$pilot"
+          grep -Fq 'checkpointer_$phase.jsonl" || return 1' "$pilot"
+          grep -Fq 'io_$phase.jsonl" || return 1' "$pilot"
+          grep -Fq 'SHOW $f' "$pilot"
+          for setting in fsync synchronous_commit full_page_writes; do
+            grep -Fq "$setting=on" "$pilot"
+          done
+          if grep -Fq -- '-test-stop-after-windows=2' "$pilot"; then
+            echo 'STOP: W512 ten-window script still stops after two windows' >&2
+            exit 1
+          fi
+          echo "FI W512 W16 TEN CI PASS workers=16 credits=32 windows=10 signed_immutable=true SQL_gate=extended postgres_durable=true signed_replay=not_executed"
