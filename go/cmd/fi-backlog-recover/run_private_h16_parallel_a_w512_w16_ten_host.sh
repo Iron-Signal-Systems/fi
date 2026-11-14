@@ -16,10 +16,10 @@ name=clone-w512-2g
 candidate=/home/jwood/fi-window-bench-w512-worker16-20261114T025452Z/fi-optfield-recover-w16
 candidate_sha=5607898abaec33dd5bc64fae774f8bde02384209a6bd5eca08c651fca3de45ac
 prior=/var/tmp/fi-window-chunks-h16-w512-sweep-w16-20261114T025452Z
-stamp=${FI_WAL_AB_STAMP:-$(date -u '+%Y%m%dT%H%M%SZ')}
+stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 case "$stamp" in
     ????????T??????Z) ;;
-    *) fail 'invalid W512 WAL A/B timestamp' ;;
+    *) fail 'invalid ten-window W512 timestamp' ;;
 esac
 root=/home/jwood/fi-window-bench-w512-w16-ten-$stamp
 out=/var/tmp/fi-window-chunks-h16-w512-w16-ten-$stamp
@@ -176,7 +176,7 @@ state=$(sql "SELECT count(*)::text||'|'||sum(committed_records)::text||'|'||
         printf '%s=%s\n' "$setting" "$(sql "SHOW $setting")"
     done
 } > "$out/$name/pg_settings.txt" || fail 'W512 actual PostgreSQL settings capture failed'
-printf 'FI W512 WAL 8GB PG SETTINGS PASS wal_buffers=4MB track_io_timing=on track_wal_io_timing=on durable=on\n'
+printf 'FI W512 W16 TEN PG SETTINGS PASS wal_buffers=4MB track_io_timing=on track_wal_io_timing=on durable=on\n'
 for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
 done
