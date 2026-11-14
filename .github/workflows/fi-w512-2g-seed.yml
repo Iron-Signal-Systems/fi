@@ -315,6 +315,14 @@ jobs:
           runner=go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_worker_sweep_host.sh
           patcher=go/cmd/fi-backlog-recover/patchers/w512_worker_sweep/main.go
           sh -n "$runner"
+          # Regression: the real FreeBSD host has no git executable.
+          # Git is required inside fi-dev only, where the pinned source resides.
+          grep -Fq 'for command in jls jexec sha256 awk grep sed cmp ps; do' "$runner"
+          grep -Fq 'command -v git >/dev/null 2>&1' "$runner"
+          if grep -Fq 'for command in jls jexec git ' "$runner"; then
+            echo "STOP: worker sweep incorrectly requires Git on FreeBSD host" >&2
+            exit 1
+          fi
           grep -Fq 'workers=2,4,8,16 credits=32' "$runner"
           grep -Fq 'for workers in 2 4 8 16' "$runner"
           grep -Fq 'W512_CHECKPOINTS.tsv' "$runner"
