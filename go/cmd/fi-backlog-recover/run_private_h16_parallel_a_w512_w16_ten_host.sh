@@ -293,6 +293,10 @@ sql "SELECT window_index::text||'|'||committed_records::text||'|'||
     fail 'W512 per-window source descriptor readback failed'
 [ "$(wc -l < "$out/$name/W512_CHECKPOINTS.tsv" | tr -d ' ')" = 11 ] ||
     fail 'W512 checkpoint descriptor matrix incomplete'
+sed -n '1,3p' "$out/$name/W512_CHECKPOINTS.tsv" > "$out/$name/W512_PREVIOUS_THREE.tsv" ||
+    fail 'cannot extract source descriptor prefix'
+cmp -s "$out/$name/W512_PREVIOUS_THREE.tsv" "$prior/$name/W512_CHECKPOINTS.tsv" ||
+    fail 'source descriptor prefix differs from previous signed 16-worker pilot'
 grep '^FI PRIVATE PARALLEL PREP BATCH ' "$log" > "$out/$name/PARALLEL_PREP.txt" ||
     fail 'parallel batch proof absent'
 prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
@@ -351,6 +355,7 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/HASH_ONCE.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" "$name/W512_CHECKPOINTS.tsv" \
+  "$name/W512_PREVIOUS_THREE.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/pg_settings.txt" \
   "$name/database_before.jsonl" "$name/database_after.jsonl" \
   "$name/tables_before.jsonl" "$name/tables_after.jsonl" || fail 'W512 ten-window metrics bundle creation failed'
