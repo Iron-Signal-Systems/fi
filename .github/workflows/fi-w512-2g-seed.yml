@@ -352,7 +352,7 @@ jobs:
               GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
                 -o "$stage/fi-optfield-recover-w$n" ./cmd/fi-backlog-recover)
             test -s "$stage/fi-optfield-recover-w$n"
-            grep -Fq "privateParallelAPreparers = $n" "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go"
+            grep -Eq "privateParallelAPreparers[[:space:]]+=[[:space:]]+$n" "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go"
             grep -Fq 'privateParallelAMaxInFlight = 32' "$stage/optimized-source/go/internal/recordingest/private_parallel_preparation.go"
             grep -Fq "workers=$n inflight=32 postgres_writers=1 source_window=%s atomic=true" "$stage/optimized-source/go/cmd/fi-backlog-recover/main_freebsd.go"
             grep -Fq "workers=$n inflight_limit=32 writers=1" "$stage/optimized-source/go/internal/recordingest/postgres_ingest.go"
