@@ -10,7 +10,9 @@ umask 077
 fail() { printf 'FI W512 WORKER SWEEP STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$#" -eq 1 ] && [ "$1" = h16 ] ||
     fail 'run as root on fi-backend-b with exactly h16'
-for command in jls jexec git sha256 awk grep sed cmp ps; do
+# Git is intentionally not required on the FreeBSD host. Every Git
+# operation executes inside fi-dev as jwood against a pinned repository object.
+for command in jls jexec sha256 awk grep sed cmp ps; do
     command -v "$command" >/dev/null 2>&1 ||
         fail "required command missing: $command"
 done
@@ -69,6 +71,7 @@ baseline=$5
 patcher=$6
 pilot=$7
 [ "$(id -un)" = jwood ] || exit 1
+command -v git >/dev/null 2>&1 || { echo 'FI W512 WORKER SWEEP STOP: git missing inside fi-dev' >&2; exit 1; }
 repo=/home/jwood/src/fi
 [ ! -e "$stage" ] || exit 1
 git -C "$repo" cat-file -e "$ref^{commit}" || exit 1
