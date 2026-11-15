@@ -14,11 +14,22 @@ import (
 )
 
 func main() {
-  if len(os.Args)!=2 { fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP: expected isolated source root"); os.Exit(2) }
-  root:=filepath.Clean(os.Args[1])
-  if !filepath.IsAbs(root) || !strings.HasPrefix(root,"/home/jwood/fi-window-bench-w512-family-p3-") ||
-     !strings.HasSuffix(root,"/optimized-source") || strings.Contains(root,"..") {
-    fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP: root is not disposable W512 HF source");os.Exit(1)
+  // "audit" performs the same ordered, in-memory exact-anchor checks
+  // against the ORIGINAL read-only seed. It never writes even a temp file.
+  audit:=len(os.Args)==3 && os.Args[1]=="audit"
+  if len(os.Args)!=2 && !audit {
+    fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP: expected disposable root or audit original seed root")
+    os.Exit(2)
+  }
+  arg:=os.Args[1]
+  if audit {arg=os.Args[2]}
+  root:=filepath.Clean(arg)
+  disposable:=filepath.IsAbs(root) && strings.HasPrefix(root,"/home/jwood/fi-window-bench-w512-family-p3-") &&
+    strings.HasSuffix(root,"/optimized-source") && !strings.Contains(root,"..")
+  original:=root=="/home/jwood/fi-window-bench-w512-20261115T153532Z/optimized-source"
+  if (audit && !original) || (!audit && !disposable) {
+    fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP: root is not an allowed isolated source")
+    os.Exit(1)
   }
   // Match the unique struct declaration, independent of gofmt indentation.
   edits:=[]struct{path,old,new string}{
@@ -100,8 +111,28 @@ func main() {
       files[path]=string(b)
       perms[path]=stat.Mode().Perm()
     }
-    if n:=strings.Count(files[path],e.old);n!=1 {fail(fmt.Errorf("anchor %s count=%d wanted=1",e.path,n))}
+    if n:=strings.Count(files[path],e.old);n!=1 {
+      // Include the unique expected source fragment in error output. Merely
+      // reporting the file path concealed which of several edits failed.
+      fmt.Fprintf(os.Stderr,"FI FAMILY P3 ANCHOR MISMATCH path=%s expected=%q count=%d audit=%t\n",e.path,e.old,n,audit)
+      if n==0 {
+        for _,line:=range strings.Split(files[path],"\n") {
+          if strings.Contains(line,"parallelPrep") ||
+             strings.Contains(line,"ntfs.ValidateObservation") ||
+             strings.Contains(line,"decodeStrictPayload") ||
+             strings.Contains(line,"GovernedRoot.ScopeID") ||
+             strings.Contains(line,"readerTime") {
+            fmt.Fprintf(os.Stderr,"FI FAMILY P3 ANCHOR NEARBY %s: %s\n",e.path,strings.TrimSpace(line))
+          }
+        }
+      }
+      fail(fmt.Errorf("anchor %s count=%d wanted=1; original signed seed unchanged",e.path,n))
+    }
     files[path]=strings.Replace(files[path],e.old,e.new,1)
+  }
+  if audit {
+    fmt.Printf("FI FAMILY P3 ORIGINAL SEED ANCHOR AUDIT PASS edits=%d files=%d unchanged=true\n",len(edits),len(files))
+    return
   }
   // Require both classifier implementation and its fixture-bearing test.
   // Missing tests are failures, never grounds to weaken the Go test gate.
