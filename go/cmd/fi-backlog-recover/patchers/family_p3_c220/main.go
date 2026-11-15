@@ -72,6 +72,16 @@ func main() {
       "func (s *privateParallelPreparedStream) Close() {",
       "func (s *privateParallelPreparedStream) Close() {\n    if s != nil && s.privateFamilyBudget != nil {\n        defer func(){ used,peak:=s.privateFamilyBudget.stats(); fmt.Printf(\"FI FAMILY P3 BUDGET peak_pending_bytes=%d remaining_bytes=%d\\n\",peak,used) }()\n    }",
     },
+    {
+      "go/internal/recordingest/postgres_ingest.go",
+      "if err := ntfs.ValidateObservation(value.NTFS); err != nil {",
+      "if item.prepared.PrivateFamilyP3File == nil {\n                if err := ntfs.ValidateObservation(value.NTFS); err != nil {",
+    },
+    {
+      "go/internal/recordingest/postgres_ingest.go",
+      "if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {",
+      "}\n            if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
