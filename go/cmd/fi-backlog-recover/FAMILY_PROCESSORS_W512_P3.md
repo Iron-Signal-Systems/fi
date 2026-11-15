@@ -28,12 +28,12 @@ The prior private header-first branch and its accepted 431-batch signed readback
 
 ## Frozen source pins
 
-- Source / patcher **`01996c6d5b22f122c58a699cd40509bef5a3dfb1`**
-- C220 runner **`8f2b87f762f48d4f5649b3d648ccc06c63ea52d0`**
+- Source / patcher **`ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7`**
+- C220 runner **`11aa17354ba9585f257fd83e92bbe4bd2bcad412`**
 - Branch: `experiment/fi-family-processors-w512-20261115`
 - Seed: `20261115T153532Z` (the accepted private W512 seed, offline only)
 - All Git files are read by exact commit using the existing `fi-dev` staging checkout; no switching or editing that checkout.
-- The new runner stages source and tests into a disposable private copy, verifies the original pinned trust source, tests/builds Go 1.27 before it clones PostgreSQL, runs a single socket-only PostgreSQL 18.6 private clone, and stops it at the end. It leaves the authenticated signed cache and original seed untouched.
+- The new runner stages source and tests into a disposable private copy, runs its family tests under the Go race detector, verifies the original pinned trust source, tests/builds Go 1.27 before it clones PostgreSQL, runs a single socket-only PostgreSQL 18.6 private clone, and stops it at the end. It leaves the authenticated signed cache and original seed untouched.
 
 ## C220 test procedure (root@c220)
 
@@ -42,8 +42,8 @@ The prior private header-first branch and its accepted 431-batch signed readback
 set -eu
 repo=/home/jwood/fi-w512-c220-stage
 branch=experiment/fi-family-processors-w512-20261115
-sourcepin=01996c6d5b22f122c58a699cd40509bef5a3dfb1
-runnerpin=8f2b87f762f48d4f5649b3d648ccc06c63ea52d0
+sourcepin=ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7
+runnerpin=11aa17354ba9585f257fd83e92bbe4bd2bcad412
 runner=/var/tmp/fi-w512-family-p3-initial-c220.sh
 
 jexec -U jwood fi-dev git -C "$repo" fetch origin \
