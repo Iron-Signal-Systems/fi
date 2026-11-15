@@ -86,6 +86,21 @@ case "$out" in /var/tmp/fi-window-chunks-*) ;; *) fail 'relay path allowlist mis
   fail 'original authenticated receiver-admitted cache incomplete'
 [ "$(df -Pk /var/tmp | awk 'END {print $4}')" -gt 8388608 ] ||
   fail 'host /var/tmp needs at least 8 GiB spare'
+echo '===== VERIFY HOST C220 RECEIVER TRUST PATHS (PRIVATE BASELINE ONLY) ====='
+for trustinput in \
+  /work/fi-c220-20261114/ingest-config/pki/trust/fi-root-ca.crt.pem \
+  /work/fi-c220-20261114/ingest-config/pki/trust/fi-batch-signing-ca.crt.pem \
+  /work/fi-c220-20261114/config/receiver/pki/trust/fi-batch-signing-ca.crl.pem \
+  /work/fi-c220-20261114/ingest-config/sources/iss-fs-22a.iss.local.conf
+do
+  [ -f "$trustinput" ] && [ -r "$trustinput" ] && [ ! -L "$trustinput" ] ||
+    fail "historical FI trust input missing/unreadable: $trustinput"
+done
+openssl crl -in /work/fi-c220-20261114/config/receiver/pki/trust/fi-batch-signing-ca.crl.pem -noout -nextupdate ||
+  fail 'cannot parse current C220 CRL'
+[ -f "$jailroot$seed/optimized-source/go/internal/recordingest/generation_trust.go" ] ||
+  fail 'pinned W512 original seed source missing; cannot rebuild path-only private copy'
+echo 'FI C220 HISTORICAL TRUST PATH PREFLIGHT PASS C220-host-inputs=present no-host-trust-install=true'
 echo 'FI C220 EXACT HISTORICAL W512 TWO-WINDOW PREFLIGHT PASS workers=2 credits=4 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped'
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
@@ -131,6 +146,68 @@ for f in fi-optfield-recover fi-optfield-relay recover.sha256 relay.sha256; do
 done
 [ "$(sha256 -q "$root/fi-optfield-recover")" = "$(cat "$root/recover.sha256")" ] || exit 1
 [ "$(sha256 -q "$root/fi-optfield-relay")" = "$(cat "$root/relay.sha256")" ] || exit 1
+# Build a PRIVATE benchmark-only source copy; never change the historical
+# authenticated seed source, working Git checkout, or installed receiver trust.
+src="$root/optimized-source"
+cp -R "$seed/optimized-source" "$src" || exit 1
+trustfile="$src/go/internal/recordingest/generation_trust.go"
+expected=/home/jwood/fi-w512-c220-stage
+[ -f "$trustfile" ] || exit 1
+# Pin the original resolver source exactly BEFORE replacing four filesystem
+# path constants. Cryptographic signature, certificate and CRL logic is intact.
+git -C "$expected" show b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/generation_trust.go |
+    cmp -s - "$trustfile" || {
+    echo 'FI C220 PRIVATE TRUST PATCH STOP: historical resolver source differs' >&2
+    exit 1
+}
+for anchor in \
+  receivertrust.RootCAPath \
+  receivertrust.BatchIssuerPath \
+  receivertrust.BatchCRLPath \
+  receivertrust.SourceRegistryPath
+do
+  [ "$(grep -Foc "$anchor" "$trustfile")" = 1 ] || {
+    echo "FI C220 PRIVATE TRUST PATCH STOP: invalid source anchor $anchor" >&2
+    exit 1
+  }
+done
+# CERTIFICATES and ENROLLED SOURCE are the original C220 migration inputs.
+# CRL is the currently valid receiver trust, matching the accepted cache gate.
+sed \
+  -e 's|receivertrust.RootCAPath|"/work/fi-c220-20261114/ingest-config/pki/trust/fi-root-ca.crt.pem"|' \
+  -e 's|receivertrust.BatchIssuerPath|"/work/fi-c220-20261114/ingest-config/pki/trust/fi-batch-signing-ca.crt.pem"|' \
+  -e 's|receivertrust.BatchCRLPath|"/work/fi-c220-20261114/config/receiver/pki/trust/fi-batch-signing-ca.crl.pem"|' \
+  -e 's|receivertrust.SourceRegistryPath|"/work/fi-c220-20261114/ingest-config/sources"|' \
+  "$trustfile" > "$trustfile.c220" || exit 1
+# Verify four substitutions and no unresolved installed-trust path constants.
+for pinned in \
+  '/work/fi-c220-20261114/ingest-config/pki/trust/fi-root-ca.crt.pem' \
+  '/work/fi-c220-20261114/ingest-config/pki/trust/fi-batch-signing-ca.crt.pem' \
+  '/work/fi-c220-20261114/config/receiver/pki/trust/fi-batch-signing-ca.crl.pem' \
+  '/work/fi-c220-20261114/ingest-config/sources'
+do
+  grep -Fq "$pinned" "$trustfile.c220" || exit 1
+done
+if grep -Eq 'receivertrust\\.(RootCAPath|BatchIssuerPath|BatchCRLPath|SourceRegistryPath)' "$trustfile.c220"; then
+  echo 'FI C220 PRIVATE TRUST PATCH STOP: installed paths remain' >&2
+  exit 1
+fi
+mv "$trustfile.c220" "$trustfile" || exit 1
+(cd "$src/go" &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
+   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined)' -count=1 &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
+   -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover
+) > "$root/private-trust-path-build.log" 2>&1 || {
+  tail -n 60 "$root/private-trust-path-build.log" >&2
+  echo 'FI C220 PRIVATE TRUST PATCH STOP: tests/build failed' >&2
+  exit 1
+}
+[ -x "$root/fi-optfield-recover.c220" ] || exit 1
+mv "$root/fi-optfield-recover.c220" "$root/fi-optfield-recover" || exit 1
+sha256 -q "$root/fi-optfield-recover" > "$root/recover.sha256" || exit 1
+printf 'FI C220 PRIVATE TRUST PATH PATCH PASS source=pinned_b01ff0 benchmark_only=true compiler=go127 root_ca=migrated signing_ca=migrated crl=current_receiver source_registry=migrated\n'
+
 pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
   -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700" \
   -w start > "$root/$name/start.log" 2>&1 || exit 1
@@ -194,6 +271,11 @@ private_only=true
 authoritative_writes=forbidden
 accepted_publication=forbidden
 recover_sha256=$(sha256 -q "$recover")
+benchmark_trust_path_adaptation=host_migrated_readonly_sources_only
+benchmark_trust_source_base=b01ff0d8cb6559797de052f34b18bd84a395dc4c
+benchmark_certificate_root=/work/fi-c220-20261114/ingest-config/pki/trust
+benchmark_revocation_root=/work/fi-c220-20261114/config/receiver/pki/trust
+benchmark_enrollment_root=/work/fi-c220-20261114/ingest-config/sources
 EOF
 stats(){
     phase=$1
