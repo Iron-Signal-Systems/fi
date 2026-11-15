@@ -101,6 +101,7 @@ func main() {
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
+  mismatches:=0
   for _,e:=range edits {
     path:=filepath.Join(root,e.path)
     if _,ok:=files[path]; !ok {
@@ -126,10 +127,13 @@ func main() {
           }
         }
       }
-      fail(fmt.Errorf("anchor %s count=%d wanted=1; original signed seed unchanged",e.path,n))
+      if !audit { fail(fmt.Errorf("anchor %s count=%d wanted=1; original signed seed unchanged",e.path,n)) }
+      mismatches++
+      continue
     }
     files[path]=strings.Replace(files[path],e.old,e.new,1)
   }
+  if mismatches != 0 { fail(fmt.Errorf("read-only seed anchor audit found %d incompatible edits; no source changed",mismatches)) }
   if audit {
     fmt.Printf("FI FAMILY P3 ORIGINAL SEED ANCHOR AUDIT PASS edits=%d files=%d unchanged=true\n",len(edits),len(files))
     return
