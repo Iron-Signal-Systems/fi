@@ -67,7 +67,6 @@ func main() {
       "if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {",
       "if prepared.PrivateFamilyP3Coverage != nil {\n        value = prepared.PrivateFamilyP3Coverage.value\n    } else if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {",
     },
-  }
     {
       "go/internal/recordingest/private_parallel_preparation.go",
       "func (s *privateParallelPreparedStream) Close() {",
