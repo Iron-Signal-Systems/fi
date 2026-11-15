@@ -1,6 +1,6 @@
 # FI W512 independent family preparation P3 — private C220 candidate
 
-**Status (2026-11-15): source, isolated patcher, tests and benchmark runner committed. NOT C220-compiled, NOT benchmark-accepted, NOT released.** No production or authoritative SoR changes.
+**Status (2026-11-15): C220's first six-worker attempt passed host preflight but stopped at an isolated overlay exact-source anchor in `postgres_ingest.go`, before private PostgreSQL startup. A new, read-only original-seed anchor audit is committed; the exact incompatible source fragment has not yet been identified. NOT benchmark-accepted, NOT released.** No production or authoritative SoR changes.
 
 ## Why this candidate exists
 
@@ -28,8 +28,8 @@ The prior private header-first branch and its accepted 431-batch signed readback
 
 ## Frozen source pins
 
-- Source / patcher **`ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7`**
-- C220 runner **`11aa17354ba9585f257fd83e92bbe4bd2bcad412`**
+- Source / patcher **`e01ec785f02c4f2f409dbb98516e4e76169b11ba`**
+- C220 runner **`9783a5635f9de7f183f51c63584bd554846bb019`**
 - Branch: `experiment/fi-family-processors-w512-20261115`
 - Seed: `20261115T153532Z` (the accepted private W512 seed, offline only)
 - All Git files are read by exact commit using the existing `fi-dev` staging checkout; no switching or editing that checkout.
@@ -42,8 +42,8 @@ The prior private header-first branch and its accepted 431-batch signed readback
 set -eu
 repo=/home/jwood/fi-w512-c220-stage
 branch=experiment/fi-family-processors-w512-20261115
-sourcepin=ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7
-runnerpin=11aa17354ba9585f257fd83e92bbe4bd2bcad412
+sourcepin=e01ec785f02c4f2f409dbb98516e4e76169b11ba
+runnerpin=9783a5635f9de7f183f51c63584bd554846bb019
 runner=/var/tmp/fi-w512-family-p3-initial-c220.sh
 
 jexec -U jwood fi-dev git -C "$repo" fetch origin \
@@ -61,8 +61,11 @@ grep -Fq "sourcecommit=$sourcepin" "$runner"
 echo "===== FAMILY P3 C220 PREFLIGHT ====="
 sh "$runner" preflight 20261115T153532Z
 
-echo "===== FAMILY P3 PRIVATE TWO-WINDOW TEST ====="
-sh "$runner" family 20261115T153532Z
+echo "===== STOP AFTER READ-ONLY SEED AUDIT ====="
+# The original C220 attempt failed on an unspecified postgres_ingest.go anchor.
+# DO NOT start the SQL test until this audit passes and the diagnostics
+# have been reviewed. This stage is original-source READ-ONLY.
+
 )
 ```
 
@@ -80,3 +83,9 @@ The runner must observe:
 6. Preserve `iostat`, `vmstat`, PostgreSQL WAL/checkpointer/I/O before-after, per-window stages and COPY timing in the archived output. Compare to H16 (285.831s), header-first (285.709s), and their observed ~94% CPU idle.
 
 Only after acceptance should we propose deeper SQL-ready processing for Coverage, USN, Other and independently capacity-driven SQL handoff across durable W512 source boundaries, then a 10-window private replay.
+
+## First C220 stop and read-only diagnostic (2026-11-15)
+
+The first attempted source pin `ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7` compiled its patcher and passed the independent C220 host and canonical dispatcher preflights. The disposable overlay then failed with `FI FAMILY P3 PATCH STOP: anchor go/internal/recordingest/postgres_ingest.go count=0 wanted=1`. No PostgreSQL clone was started. The original private W512 seed was unchanged.
+
+Because there are several intended edits to `postgres_ingest.go`, the old error does not distinguish which one differed. The new P3 patcher has an explicit read-only `audit` mode for the exact original seed path `/home/jwood/fi-window-bench-w512-20261115T153532Z/optimized-source`. It verifies all ordered source anchors in-memory, emits each mismatching expected fragment and related source lines, and stops without writing any file. The runner now invokes this before its preflight can pass. **Do not retry a SQL run until the audit passes.** The failing source shape must be inspected and the overlay patcher updated/pinned to the real C220 source; never weaken or silently bypass an anchor to force a benchmark.
