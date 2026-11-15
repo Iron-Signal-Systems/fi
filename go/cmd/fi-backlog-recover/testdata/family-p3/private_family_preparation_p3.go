@@ -48,7 +48,15 @@ func (b *privateFamilyP3Budget) reserve(ctx context.Context, size int64) error {
     }
     b.mu.Lock()
     defer b.mu.Unlock()
-    stop:=context.AfterFunc(ctx,func(){b.mu.Lock(); b.changed.Broadcast();b.mu.Unlock()})
+    // Avoid registering a cancellation callback for the common case:
+    // most W512 records fit without waiting for the global byte budget.
+    if err:=ctx.Err();err!=nil{return err}
+    if size<=b.max-b.used {
+        b.used+=size
+        if b.used>b.peak {b.peak=b.used}
+        return nil
+    }
+    stop:=context.AfterFunc(ctx,func(){b.mu.Lock();b.changed.Broadcast();b.mu.Unlock()})
     defer stop()
     for size>b.max-b.used {
         if err:=ctx.Err();err!=nil {return err}
