@@ -80,8 +80,8 @@ jobs:
           import pathlib, sys
           p = pathlib.Path(sys.argv[1])
           src = p.read_text()
-          anchor = "type privateParallelLine struct {\\n    ordinal int64"
-          replacement = "type privateParallelLine struct {\\n    headerKind string\\n    headerFamily spoolDispatchFamily\\n    ordinal int64"
+          anchor = "type privateParallelLine struct {\n    ordinal int64"
+          replacement = "type privateParallelLine struct {\n    headerKind string\n    headerFamily spoolDispatchFamily\n    ordinal int64"
           if src.count(anchor) != 1:
               raise SystemExit("FI HEADER FIRST CI STOP: privateParallelLine anchor mismatch")
           p.write_text(src.replace(anchor, replacement, 1))
