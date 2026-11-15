@@ -43,15 +43,15 @@ This document records work implemented so far and remaining gates, not successfu
 
 ## C220 private run procedure — exact pinned sources
 
-This runner uses the existing accepted two-window W512 seed from `20261115T153532Z`. It **does not** touch authoritative SoR, Accepted publication, signed cache, or the live FI worker. It copies the private seed to an entirely new PostgreSQL clone and requires the existing signed-data readback, source and projection counts, immutable checkpoint digests, and original durability settings.
+This runner uses the existing accepted two-window W512 seed from `20261115T153532Z`. The initial private attempt stopped before PostgreSQL startup because its patcher used a gofmt-sensitive whitespace anchor; the updated pin matches the unique Go struct declaration instead. This correction is not yet a C220 pass. It **does not** touch authoritative SoR, Accepted publication, signed cache, or the live FI worker. It copies the private seed to an entirely new PostgreSQL clone and requires the existing signed-data readback, source and projection counts, immutable checkpoint digests, and original durability settings.
 
 The runner is committed to branch `experiment/fi-header-first-ingest-20261115`. It is designed to be launched as root on C220 only, after `fi-dev` has the pinned Git objects. Run the preflight first.
 
 ```sh
 # root@c220
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=aaf7c0c4737414f061f7c5e7a140cf746fd89914
-runnerpin=0cb359e2696839ff5ea340ac4abcf1abd8b83cf9
+sourcepin=0e28d5aeb350113db8c7143b4d3121c7b9fb9a20
+runnerpin=ffa09fdb60db7dca8a37de12f4bbf6227c3afac0
 branch=experiment/fi-header-first-ingest-20261115
 runner=/var/tmp/fi-w512-header-first-p2-host.sh
 
