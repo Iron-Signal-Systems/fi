@@ -39,7 +39,7 @@ private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 port=55984
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=e01ec785f02c4f2f409dbb98516e4e76169b11ba
+sourcecommit=e34787344b93b26ca695bbb14982d79dbb0f6215
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
