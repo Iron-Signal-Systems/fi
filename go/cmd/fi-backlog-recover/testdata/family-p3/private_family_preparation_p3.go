@@ -93,6 +93,7 @@ func newPrivateFamilyP3PreparedStream(
     if parent==nil || reader==nil || prepare==nil {
         return nil,errors.New("FI family P3: reader, context and preparer required")
     }
+    fmt.Printf("FI FAMILY P3 SCHEDULER lanes=5 workers=6 security_workers=2 credits=32 max_pending_bytes=%d sql_writers=1 atomic_window=true\n",privateFamilyP3Bytes)
     ctx,cancel:=context.WithCancel(parent)
     var lanes [spoolDispatchFamilyCount]chan privateParallelLine
     for i:=range lanes {lanes[i]=make(chan privateParallelLine,privateFamilyP3Credits)}
