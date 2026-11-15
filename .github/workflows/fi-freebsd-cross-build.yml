@@ -51,7 +51,7 @@ jobs:
           header_status=$?
           bash -n ./cmd/fi-backlog-recover/run_private_header_first_w512_c220_p2_host.sh
           bash_status=$?
-          printf 'FI SHELL SYNTAX baseline_posix=%s header_posix=%s header_bash=%s\\n' "$baseline_status" "$header_status" "$bash_status"
+          printf 'FI SHELL SYNTAX baseline_posix=%s header_posix=%s header_bash=%s\n' "$baseline_status" "$header_status" "$bash_status"
           [ "$header_status" = 0 ] || exit "$header_status"
           set -e
           for source in \
@@ -59,7 +59,7 @@ jobs:
             ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go \
             ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go; do
             echo "FI GO SYNTAX $source"
-            if ! gofmt -e -d "$source" >/tmp/fi-header-first-gofmt.log 2>&1; then
+            if ! gofmt -e "$source" >/tmp/fi-header-first-gofmt.log 2>&1; then
               echo "FI GO SYNTAX FAIL $source"
               cat /tmp/fi-header-first-gofmt.log
               exit 1
