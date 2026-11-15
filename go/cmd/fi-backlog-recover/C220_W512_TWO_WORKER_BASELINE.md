@@ -60,7 +60,59 @@ A passing seed must show `FI W512/2G FRESH SIGNED SEED ACCEPTED` with
 493,478 records, 6,194,967 Security field rows and zero authoritative/Accepted
 writes, plus exact descriptor and SHA evidence. Stop on any failure.
 
-## Stage 3: ten-window TWO-worker baseline
+## Stage 2.5: **EXACT historical 2-window baseline — run FIRST**
+
+This is now the first C220 measured baseline. Use the same original Candidate A
+pilot workload as the former fi-backend-b benchmark: windows 1–2, **997,434**
+signed records, TWO workers, FOUR credits, ONE SQL writer, K32, P3/F3, and
+PostgreSQL 18.6 max_wal_size=1GB. Historical 2-window result:
+**312.630s = 3,190.46 source records/s**.
+
+The C220 seed completed successfully on Nov 15 at
+`20261115T153532Z`: 493,478 records, 6,194,967 Security field rows,
+one W512 typed/source/artifact checkpoint, historical descriptor matched,
+zero authoritative/Accepted rows, and isolated PostgreSQL stopped cleanly.
+Its signed seed evidence bundle SHA-256 is:
+`52d45162719f56b26fa9cda739e746bfd7da488cfabd839c9b9f311196cd40cf`.
+
+Update the **separate** FI-dev Git checkout to this document's latest branch commit
+and retain the original historical Git objects already fetched there:
+
+```sh
+# Run ONLY inside SSH: jwood@fi-dev, NOT root@c220.
+cd /home/jwood/fi-w512-c220-stage
+git fetch --no-tags origin experiment/fi-candidate-a-w512-2g-20261113
+git checkout --detach FETCH_HEAD
+git rev-parse HEAD
+```
+
+Then, on the **C220 host**:
+
+```sh
+pilot=/fast/jails/roots/fi-dev/home/jwood/fi-w512-c220-stage/go/cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_c220_p2_host.sh
+seedstamp=20261115T153532Z
+sh -n "$pilot" || exit 1
+sh "$pilot" preflight "$seedstamp" || exit 1
+sh "$pilot" h16 "$seedstamp"
+```
+
+The runner is an additive C220 adaptation of the exact historical TWO-WINDOW
+pilot, **not** a shortened version of the ten-window runner. It verifies the
+accepted seed evidence SHA and offline database state, enforces original
+signed W0/W1/W2 descriptors, 997,434 additional records, exactly 431
+byte-identical signed batch artifacts, two prep workers/four credits/one writer,
+atomic SQL integrity, and zero Accepted/authoritative rows.
+
+The two-window metric uses the recovery log's
+`FI PRIVATE EXACT WINDOW STOP ... committed_window_time=...` rather than
+source build, fresh seed creation or offline seed database-copy time.
+Only after `FI C220 W512 TWO-WINDOW BASELINE ACCEPTED` and
+`FI W512 SIGNED READBACK PASS` should the exact C220 records/sec rate be
+compared with old backend's 3,190.46 source records/sec.
+
+**Do not run Stage 3 ten-window test before accepting Stage 2.5.**
+
+## Stage 3: extended ten-window TWO-worker experiment (later)
 
 Run on root@c220, with the EXACT timestamp printed by Stage 2:
 
@@ -88,8 +140,8 @@ and checks:
 - PostgreSQL 18.6 with durability on; max_wal_size=1GB and wal_buffers=4MB;
   collects WAL, I/O, checkpointer, CPU/memory and per-window timings.
 
-**Stage 2 and Stage 3 C220 adaptations are staged source; they have not been
-executed yet.** Run `sh -n`, inspect and pass the preflight before launching
+**Stage 2 seed was accepted on C220. Stage 2.5 pilot and Stage 3 extended
+experiment are staged source and have not been executed.** Run `sh -n`, inspect and pass the preflight before launching
 each workload. Each runner fails closed and stops only its own private PG
 cluster on exit. The original historical runner is unchanged.
 
