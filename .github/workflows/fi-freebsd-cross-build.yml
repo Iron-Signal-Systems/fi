@@ -1,4 +1,4 @@
-name: FI FreeBSD Cross Build
+name: FI FreeBSD Target Build (CI build host)
 
 on:
   push:
@@ -42,6 +42,14 @@ jobs:
         run: |
           go test -count=1 -v ./internal/recordingest -run '^TestH16Combined'
           go build -o /tmp/fi-h16-combined-patcher ./cmd/fi-backlog-recover/patchers/h16_combined_buffer
+      - name: Header-first W512 clone-only source and FreeBSD runner syntax
+        run: |
+          sh -n ./cmd/fi-backlog-recover/run_private_header_first_w512_c220_p2_host.sh
+          gofmt -e -d ./internal/recordingest/private_canonical_spool_dispatch.go >/dev/null
+          gofmt -e -d ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go >/dev/null
+          gofmt -e -d ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go >/dev/null
+          go test -count=1 ./internal/recordingest -run '^TestCanonicalDispatch'
+          go build -o /tmp/fi-header-first-w512-patcher ./cmd/fi-backlog-recover/patchers/header_first_c220
       - name: FreeBSD recovery executable and typed-test cross compilation
         env:
           GOOS: freebsd
