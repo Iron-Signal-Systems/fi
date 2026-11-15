@@ -99,7 +99,13 @@ func newPrivateHeaderFirstPreparedStream(
         fmt.Printf("FI HEADER FIRST BLOCK STREAM records=%d bytes=%d read_calls=%d cross_block=%d reader_time=%s\n",
             metrics.Records, metrics.Bytes, metrics.ReadCalls, metrics.CrossBlockRecords, metrics.ReadTime)
         if scanErr != nil && ctx.Err() == nil {
-            // Never turn a malformed source into normal EOF.
+            // The error is an ordered result as far as Next is concerned:
+            // reserve a credit or its normal return would deadlock when the
+            // credit channel is full. An error is NEVER silently treated as EOF.
+            select {
+            case <-s.credits:
+            case <-ctx.Done(): return
+            }
             select {
             case tasks <- privateParallelLine{ordinal: ordinal+1, readErr: fmt.Errorf("FI header-first signed spool: %w", scanErr)}:
             case <-ctx.Done():
