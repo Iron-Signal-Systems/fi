@@ -82,6 +82,11 @@ func main() {
       "if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {",
       "}\n            if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {",
     },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "s.readerTime += line.readTime",
+      "if s.privateFamilyBudget == nil {s.readerTime += line.readTime}",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
