@@ -39,7 +39,7 @@ private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-hf-clone-p2-$stamp"
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=0e28d5aeb350113db8c7143b4d3121c7b9fb9a20
+sourcecommit=0b5362e090a9dff2829f51972964869731f2f8e2
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -145,6 +145,20 @@ do
     fail "missing pinned experimental source asset $asset"
 done
 echo "FI HEADER FIRST SOURCE PREFLIGHT PASS commit=$sourcecommit assets=4 clone_only=true"
+# Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
+# This checks syntax in both preflight and benchmark modes, without switching
+# the staging Git checkout or modifying the historical source.
+jexec -U jwood fi-dev sh -s "$sourcecommit" <<'HF_GO_SYNTAX'
+set -eu
+umask 077
+tmp=$(mktemp -d /tmp/fi-hf-patcher-preflight.XXXXXX) || exit 1
+trap 'rm -rf "$tmp"' 0
+git -C /home/jwood/fi-w512-c220-stage show \
+  "$1:go/cmd/fi-backlog-recover/patchers/header_first_c220/main.go" \
+  > "$tmp/main.go" || exit 1
+GOTOOLCHAIN=local GO111MODULE=off go127 test "$tmp/main.go" >/dev/null || exit 1
+HF_GO_SYNTAX
+echo 'FI HEADER FIRST PATCHER COMPILE PREFLIGHT PASS pinned=true source_tree_unchanged=true'
 echo 'FI C220 HEADER FIRST W512 PREFLIGHT PASS workers=2 credits=4 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped'
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
