@@ -133,7 +133,7 @@ echo 'FI C220 HISTORICAL TRUST PATH PREFLIGHT PASS C220-host-inputs=present no-h
 # required during the private benchmark itself.
 staged_git="$jailroot/home/jwood/fi-w512-c220-stage"
 [ -d "$staged_git/.git" ] || fail 'C220 staging repository missing; do not use a fallback checkout'
-git -C "$staged_git" cat-file -e "$sourcecommit^{commit}" 2>/dev/null ||
+jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit^{commit}" 2>/dev/null ||
   fail "missing pinned header-first commit $sourcecommit; fetch experiment/fi-header-first-ingest-20261115 into C220 staging checkout"
 for asset in \
   go/internal/recordingest/private_canonical_spool_dispatch.go \
@@ -141,7 +141,7 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go \
   go/cmd/fi-backlog-recover/patchers/header_first_c220/main.go
 do
-  git -C "$staged_git" cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
+  jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
 echo "FI HEADER FIRST SOURCE PREFLIGHT PASS commit=$sourcecommit assets=4 clone_only=true"
