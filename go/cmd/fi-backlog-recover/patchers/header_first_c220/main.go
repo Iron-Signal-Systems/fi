@@ -53,9 +53,9 @@ func main() {
     if n:=strings.Count(files[path],e.old);n!=1 {fail(fmt.Errorf("anchor %s count=%d wanted=1",e.path,n))}
     files[path]=strings.Replace(files[path],e.old,e.new,1)
   }
-  // Exactly three pre-staged assets; reject old or missing source and refuse
-  // unintended duplication of new symbols in any existing file.
-  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_header_first_p2.go","private_header_first_p2_test.go"} {
+  // Require both classifier implementation and its fixture-bearing test.
+  // Missing tests are failures, never grounds to weaken the Go test gate.
+  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go"} {
     path:=filepath.Join(root,"go/internal/recordingest",n)
     st,err:=os.Lstat(path)
     if err!=nil||!st.Mode().IsRegular() {fail(fmt.Errorf("missing staged private asset %s: %v",n,err))}
