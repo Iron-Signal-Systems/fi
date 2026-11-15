@@ -134,7 +134,7 @@ echo 'FI C220 HISTORICAL TRUST PATH PREFLIGHT PASS C220-host-inputs=present no-h
 staged_git="$jailroot/home/jwood/fi-w512-c220-stage"
 [ -d "$staged_git/.git" ] || fail 'C220 staging repository missing; do not use a fallback checkout'
 jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit^{commit}" 2>/dev/null ||
-  fail "missing pinned header-first commit $sourcecommit; fetch experiment/fi-header-first-ingest-20261115 into C220 staging checkout"
+  fail "missing pinned family P3 commit $sourcecommit; fetch experiment/fi-family-processors-w512-20261115 into C220 staging checkout"
 for asset in \
   go/internal/recordingest/private_canonical_spool_dispatch.go \
   go/internal/recordingest/private_canonical_spool_dispatch_test.go \
@@ -147,7 +147,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P3 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=5 clone_only=true"
+echo "FI FAMILY P3 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=7 clone_only=true"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -466,7 +466,7 @@ sql "SELECT window_index::text || '|' || committed_records::text || '|' ||
 2|498382|3750b8827d8e89c4d02bfcbf7a345325fbdb80ec36832f6f5b06170b183894d9" ] ||
   fail 'C220 W512 immutable signed window checkpoint plan mismatch'
 grep '^FI FAMILY P3 BLOCK DISPATCH ' "$log" > "$out/$name/FAMILY_DISPATCH.txt" ||
-    fail 'header-first block stream proof missing'
+    fail 'family P3 block dispatcher proof missing'
 grep '^FI PRIVATE PARALLEL PREP BATCH ' "$log" > "$out/$name/PARALLEL_PREP.txt" ||
     fail 'parallel batch proof absent'
 prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
@@ -483,6 +483,17 @@ trusted=$(awk '/^FI PRIVATE BATCH HASH ONCE window=/{
  for(i=1;i<=NF;i++)if($i~/^trusted_batches=/){split($i,a,"=");n+=a[2]+0}
 }END{print n+0}' "$out/$name/HASH_ONCE.txt")
 prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
+[ "$prepbatches" = 431 ] ||
+    fail "W512 expected 431 signed preparation batches; observed $prepbatches"
+[ "$(grep -Fc 'FI FAMILY P3 SCHEDULER lanes=5 workers=6 security_workers=2 credits=32 max_pending_bytes=268435456 sql_writers=1 atomic_window=true' "$log")" = "$prepbatches" ] ||
+    fail 'independent family worker topology proof missing'
+awk '/^FI FAMILY P3 BLOCK DISPATCH /{
+  delete f
+  for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]+0}
+  if(f["security"]+f["file"]+f["coverage"]+f["usn"]+f["other"]!=f["records"])bad=1
+  n++
+}END{if(bad||n!=431)exit 1}' "$out/$name/FAMILY_DISPATCH.txt" ||
+    fail 'W512 family classification count mismatch'
 [ "$(wc -l < "$out/$name/FAMILY_DISPATCH.txt" | tr -d ' ')" = "$prepbatches" ] ||
     fail 'family P3 block dispatch batch count does not match signed preparation'
 header_records=$(awk '/^FI FAMILY P3 BLOCK DISPATCH /{
