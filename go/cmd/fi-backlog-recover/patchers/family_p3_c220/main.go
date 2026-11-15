@@ -68,6 +68,12 @@ func main() {
       "if prepared.PrivateFamilyP3Coverage != nil {\n        value = prepared.PrivateFamilyP3Coverage.value\n    } else if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {",
     },
   }
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "func (s *privateParallelPreparedStream) Close() {",
+      "func (s *privateParallelPreparedStream) Close() {\n    if s != nil && s.privateFamilyBudget != nil {\n        defer func(){ used,peak:=s.privateFamilyBudget.stats(); fmt.Printf(\"FI FAMILY P3 BUDGET peak_pending_bytes=%d remaining_bytes=%d\\n\",peak,used) }()\n    }",
+    },
+  }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
   for _,e:=range edits {
