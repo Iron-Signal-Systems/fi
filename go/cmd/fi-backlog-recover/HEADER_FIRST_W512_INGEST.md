@@ -43,17 +43,17 @@ This document records work implemented so far and remaining gates, not successfu
 
 ## C220 private run procedure — exact pinned sources
 
-This runner uses the existing accepted two-window W512 seed from `20261115T153532Z`. The initial private attempt stopped before PostgreSQL startup because its patcher used a gofmt-sensitive whitespace anchor; the updated pin matches the unique Go struct declaration instead. The second attempt exposed a malformed comment in the patcher that hid the Go edits declaration. The new pinned patcher compiles locally, and the updated C220 runner explicitly compiles its exact Git-pinned patcher during preflight, before creating any private database clone. This correction is not yet a C220 end-to-end pass. It **does not** touch authoritative SoR, Accepted publication, signed cache, or the live FI worker. It copies the private seed to an entirely new PostgreSQL clone and requires the existing signed-data readback, source and projection counts, immutable checkpoint digests, and original durability settings.
+This runner uses the existing accepted two-window W512 seed from `20261115T153532Z`. The initial private attempt stopped before PostgreSQL startup because its patcher used a gofmt-sensitive whitespace anchor; the updated pin matches the unique Go struct declaration instead. The second attempt exposed a malformed comment in the patcher that hid the Go edits declaration. The new pinned patcher compiles in C220 preflight. The next run then exposed a missing `canonicalDispatchFixture` test helper: the runner staged the header-first tests but omitted the canonical dispatcher's fixture-bearing test file. The latest runner stages both files and runs the dispatcher's tests during preflight, before the private clone; it now defers copying the private PostgreSQL seed until after integrated Go test/build succeeds. **These changes have not yet passed C220 end-to-end acceptance.** It **does not** touch authoritative SoR, Accepted publication, signed cache, or the live FI worker. It copies the private seed to an entirely new PostgreSQL clone and requires the existing signed-data readback, source and projection counts, immutable checkpoint digests, and original durability settings.
 
 The runner is committed to branch `experiment/fi-header-first-ingest-20261115`. It is designed to be launched as root on C220 only, after `fi-dev` has the pinned Git objects. Run the preflight first.
 
 ```sh
 # root@c220
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=0b5362e090a9dff2829f51972964869731f2f8e2
-runnerpin=0027af29f0d77cecb73588ef50d2faec0d6202eb
+sourcepin=eec914ee309a2c4e9e34e4441ce3011b85ed42c2
+runnerpin=5b6f7d7f378805376dc7769dfe1f9d3108d2c3ef
 branch=experiment/fi-header-first-ingest-20261115
-runner=/var/tmp/fi-w512-header-first-p2-host.sh
+runner=/var/tmp/fi-w512-header-first-p2-fixturechecked.sh
 
 # Fetch objects only; DO NOT switch C220's existing working checkout.
 jexec -U jwood fi-dev git -C "$repo" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
@@ -71,6 +71,9 @@ sh "$runner" hf 20261115T153532Z
 **Important**: The C220 staging repository is a Git checkout inside `fi-dev`. Git is invoked as its owner `jwood`, not through an unsafe root-owned working tree. Any missing pinned object, private seed, accepted source SHA, signed input, copy-on-write requirement, or off-host trust input stops before the SQL run.
 
 Expected successful first-run evidence:
+- `FI HEADER FIRST PATCHER COMPILE PREFLIGHT PASS`
+- `FI HEADER FIRST DISPATCH TEST PREFLIGHT PASS`
+- `FI HEADER FIRST POST-BUILD PRIVATE SEED COPY PASS`
 - `FI HEADER FIRST ISOLATED OVERLAY READY`
 - `FI HEADER FIRST BLOCK STREAM` entries matching the original signed batch count
 - All original `FI PRIVATE PARALLEL PREP BATCH`, `FI PRIVATE STAGE PROFILE`, and committed-window acceptance checks
