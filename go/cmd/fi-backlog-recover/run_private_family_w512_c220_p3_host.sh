@@ -39,7 +39,7 @@ private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 port=55984
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=0a5eabdcab4aff6e83f7b8d0c398f4c212caac96
+sourcecommit=e8b2a20d7966bd9e739d4c9bb0e87049e78d2d50
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -487,6 +487,18 @@ prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
     fail "W512 expected 431 signed preparation batches; observed $prepbatches"
 [ "$(grep -Fc 'FI FAMILY P3 SCHEDULER lanes=5 workers=6 security_workers=2 credits=32 max_pending_bytes=268435456 sql_writers=1 atomic_window=true' "$log")" = "$prepbatches" ] ||
     fail 'independent family worker topology proof missing'
+grep '^FI FAMILY P3 BUDGET ' "$log" > "$out/$name/FAMILY_BUDGET.txt" ||
+    fail 'private family admission budget proof missing'
+[ "$(wc -l < "$out/$name/FAMILY_BUDGET.txt" | tr -d ' ')" = "$prepbatches" ] ||
+    fail 'one memory-budget proof per signed batch is required'
+awk '/^FI FAMILY P3 BUDGET /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]+0}
+    if(f["peak_pending_bytes"]<0 || f["peak_pending_bytes"]>268435456 ||
+       f["remaining_bytes"]!=0)bad=1
+    n++
+}END{if(bad||n!=431)exit 1}' "$out/$name/FAMILY_BUDGET.txt" ||
+    fail 'family admission budget invariant failed'
 awk '/^FI FAMILY P3 BLOCK DISPATCH /{
   delete f
   for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]+0}
@@ -542,7 +554,7 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/HASH_ONCE.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
-  "$name/FAMILY_DISPATCH.txt" \
+  "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
 [ -s "$bundle" ] || fail 'W512 metrics bundle absent'
