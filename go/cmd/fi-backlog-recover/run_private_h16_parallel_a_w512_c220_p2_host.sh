@@ -1,0 +1,339 @@
+#!/bin/sh
+# C220 H16/W512 two-window EXACT HISTORICAL BASELINE, indices 1 and 2.
+# Adapted from original accepted two-worker pilot source at 650ca4595ccf6fb077ff2aadf2dddba64d720a07.
+# All signed-source/SQL gates preserved. No live ingest; private PG only.
+# Test ONLY against an OFFLINE COPY of the validated private W512 seed.
+# No W128 checkpoint, canonical SoR write or Accepted publication.
+set -eu
+umask 077
+fail(){ printf 'FI W512 PILOT STOP: %s\n' "$*" >&2; exit 1; }
+[ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] && [ "$#" -eq 2 ] ||
+    fail 'usage on root@c220: sh runner preflight|h16 YYYYMMDDTHHMMSSZ'
+case "$1" in
+  preflight|h16) mode=$1 ;;
+  *) fail 'mode must be preflight or h16' ;;
+esac
+seedstamp=$2
+case "$seedstamp" in
+  ????????T??????Z) ;;
+  *) fail 'seed timestamp must be YYYYMMDDTHHMMSSZ' ;;
+esac
+if jexec fi-ingest service fi_ingest_worker onestatus >/dev/null 2>&1; then
+  fail 'live FI-ingest service running; private benchmark forbidden'
+fi
+if jexec fi-ingest ps -axww -o command | grep -q '[f]i-ingest-worker'; then
+  fail 'live FI-ingest process running; private benchmark forbidden'
+fi
+seed=/home/jwood/fi-window-bench-w512-$seedstamp
+seedout=/var/tmp/fi-window-chunks-h16-w512-seed-$seedstamp
+cache=/fast/jails/roots/fi-dev/home/jwood/fi-w512-c220-verified-cache
+seedhash=ff58478b40ca35f1f6cc5e52aa0300de6371ed58243c41f34e4f20ad6d61a319
+name=clone-w512-2g
+stamp=$(date -u '+%Y%m%dT%H%M%SZ')
+root=/home/jwood/fi-window-bench-w512-p2-$stamp
+out=/var/tmp/fi-window-chunks-h16-w512-p2-$stamp
+port=55983
+jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
+devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
+sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
+[ "$devjid" != "$sorjid" ] || fail 'SoR and dev jails match'
+# NEVER connect to or interrogate authoritative SoR PostgreSQL.
+existing=$(ps -axww -o pid,jid,user,rss,command | awk -v jid="$devjid" '
+$2==jid && $5=="/usr/local/bin/postgres" && $6=="-D" {n++} END{print n+0}')
+[ "$existing" = 0 ] || fail 'existing dev PostgreSQL postmaster; pilot not started'
+[ -d "$jailroot$seed/$name/data" ] && [ ! -e "$jailroot$root" ] && [ ! -e "$out" ] ||
+    fail 'W512 seed unavailable or new pilot path collides'
+[ -d "$cache" ] && [ ! -L "$cache" ] || fail 'previous receiver-admitted verified cache missing'
+[ -s "$seedout/fi-w512-private-seed-$seedstamp.tar.gz" ] ||
+    fail 'C220 signed private seed metrics bundle missing'
+[ "$(sha256 -q "$seedout/fi-w512-private-seed-$seedstamp.tar.gz")" = \
+    "52d45162719f56b26fa9cda739e746bfd7da488cfabd839c9b9f311196cd40cf" ] ||
+    fail 'C220 accepted seed evidence bundle SHA changed'
+[ "$(sha256 -q "$jailroot$seed/fi-optfield-recover")" = \
+  "$(cat "$jailroot$seed/recover.sha256")" ] ||
+    fail 'C220 pinned seed executable SHA mismatch'
+[ "$(sha256 -q "$jailroot$seed/fi-optfield-relay")" = \
+  "$(cat "$jailroot$seed/relay.sha256")" ] ||
+    fail 'C220 pinned seed SQL relay SHA mismatch'
+[ "$(cat "$seedout/$name/W512_SEED_CHECKPOINT.tsv")" = "0|493478|$seedhash" ] ||
+    fail 'W512 accepted seed descriptor changed'
+grep -Fq 'FI W512/2G FRESH SIGNED SEED ACCEPTED windows=1 typed_records=493478 fields=6194967 authoritative=0 accepted=0' "$seedout/SUMMARY.txt" ||
+    fail 'W512 accepted seed record gate missing'
+jexec -U jwood fi-dev pg_ctl -D "$seed/$name/data" status >/dev/null 2>&1 &&
+    fail 'W512 seed PostgreSQL must be stopped'
+# The private seed contains millions of field rows. Require filesystem room
+# for the apparent offline copy plus at least 8 GiB for replay WAL/index growth.
+# This is intentionally conservative and runs before creating any destination.
+seed_kib=$(jexec -U jwood fi-dev du -Aks "$seed/$name/data" | awk '{print $1}') ||
+    fail 'cannot determine private seed apparent size'
+free_kib=$(jexec -U jwood fi-dev df -Pk "$seed" | awk 'END{print $4}') ||
+    fail 'cannot determine available private storage'
+case "$seed_kib:$free_kib" in *[!0-9:]*|:*) fail 'invalid storage preflight figures';; esac
+need_kib=$((seed_kib+8388608))
+[ "$seed_kib" -gt 0 ] && [ "$free_kib" -gt "$need_kib" ] ||
+    fail "insufficient space for private seed copy and 8GiB headroom (need_kib=$need_kib free_kib=$free_kib)"
+printf 'FI C220 W512 P2 STORAGE PREFLIGHT PASS seed_apparent_kib=%s available_kib=%s required_kib=%s\n' "$seed_kib" "$free_kib" "$need_kib"
+socket="$root/$name/socket/.s.PGSQL.$port"
+rsocket="$out/pg-$name/.s.PGSQL.$port"
+[ "$(printf %s "$socket" | wc -c)" -le 103 ] &&
+[ "$(printf %s "$rsocket" | wc -c)" -le 103 ] || fail 'socket length exceeds FreeBSD limit'
+case "$out" in /var/tmp/fi-window-chunks-*) ;; *) fail 'relay path allowlist mismatch';; esac
+[ "$jailroot" = /fast/jails/roots/fi-dev ] ||
+  fail 'wrong development jail filesystem'
+[ -d "$cache" ] && [ ! -L "$cache" ] &&
+[ "$(find "$cache" -type f -name 'batch-*.data' | wc -l | tr -d ' ')" = 8399 ] &&
+[ "$(find "$cache" -type f -name verified.json | wc -l | tr -d ' ')" = 1 ] ||
+  fail 'original authenticated receiver-admitted cache incomplete'
+[ "$(df -Pk /var/tmp | awk 'END {print $4}')" -gt 8388608 ] ||
+  fail 'host /var/tmp needs at least 8 GiB spare'
+echo 'FI C220 EXACT HISTORICAL W512 TWO-WINDOW PREFLIGHT PASS workers=2 credits=4 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped'
+if [ "$mode" = preflight ]; then
+  echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
+  exit 0
+fi
+relaypid=
+iostatpid=
+vmstatpid=
+cleanup(){
+    code=$?
+    trap - 0 1 2 15
+    for pid in "$iostatpid" "$vmstatpid" "$relaypid"; do
+        [ -n "$pid" ] || continue
+        kill -TERM "$pid" 2>/dev/null || :
+        wait "$pid" 2>/dev/null || :
+    done
+    if [ -d "$jailroot$root/$name/data" ] &&
+       jexec -U jwood fi-dev pg_ctl -D "$root/$name/data" status >/dev/null 2>&1; then
+        jexec -U jwood fi-dev pg_ctl -D "$root/$name/data" -m fast -w -t 60 stop ||
+            { echo 'WARNING: W512 pilot PostgreSQL failed to stop' >&2; code=1; }
+    fi
+    printf 'FI W512 PILOT FINISHED exit=%s outputs=%s private_clone=%s original_seed_unchanged=true\n' "$code" "$out" "$root"
+    exit "$code"
+}
+trap cleanup 0
+trap 'exit 130' 2
+trap 'exit 143' 15
+jexec -U jwood fi-dev sh -s "$seed" "$root" "$name" "$port" <<'JAIL'
+set -eu
+umask 077
+seed=$1
+root=$2
+name=$3
+port=$4
+[ "$(id -un)" = jwood ] && [ "$(psql --version)" = 'psql (PostgreSQL) 18.6' ] || exit 1
+[ ! -e "$root" ] && [ ! -e "$seed/$name/data/postmaster.pid" ] || exit 1
+pg_ctl -D "$seed/$name/data" status >/dev/null 2>&1 && exit 1
+mkdir -m 700 "$root" "$root/$name" "$root/$name/socket" || exit 1
+cp -R "$seed/$name/data" "$root/$name/data" || exit 1
+[ "$(cat "$root/$name/data/PG_VERSION")" = 18 ] || exit 1
+for f in fi-optfield-recover fi-optfield-relay recover.sha256 relay.sha256; do
+    cp "$seed/$f" "$root/$f" || exit 1
+done
+[ "$(sha256 -q "$root/fi-optfield-recover")" = "$(cat "$root/recover.sha256")" ] || exit 1
+[ "$(sha256 -q "$root/fi-optfield-relay")" = "$(cat "$root/relay.sha256")" ] || exit 1
+pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
+  -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700" \
+  -w start > "$root/$name/start.log" 2>&1 || exit 1
+echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
+JAIL
+mkdir -m 700 "$out" "$out/$name" "$out/$name/private" || fail 'private output initialization failed'
+recover="$jailroot$root/fi-optfield-recover"
+relay="$jailroot$root/fi-optfield-relay"
+[ "$(sha256 -q "$recover")" = "$(cat "$jailroot$root/recover.sha256")" ] ||
+    fail 'W512 recovery executable SHA mismatch'
+[ "$(sha256 -q "$relay")" = "$(cat "$jailroot$root/relay.sha256")" ] ||
+    fail 'W512 relay executable SHA mismatch'
+"$relay" -cluster-root="$root" -output-root="$out" \
+  -base-port="$port" -jail-binary="$root/fi-optfield-relay" > "$out/relay.log" 2>&1 &
+relaypid=$!
+tries=0
+while ! grep -Fq "FI PG RELAY READY profile=$name port=$port" "$out/relay.log" 2>/dev/null; do
+    kill -0 "$relaypid" 2>/dev/null || fail 'W512 relay exited'
+    [ "$tries" -lt 30 ] || fail 'W512 relay startup timeout'
+    tries=$((tries+1))
+    sleep 1
+done
+sql(){
+    jexec -U jwood fi-dev psql \
+      "host=$root/$name/socket port=$port user=fi_ingest dbname=fi sslmode=disable" \
+      -X -qAt -v ON_ERROR_STOP=1 -c "$1"
+}
+state=$(sql "SELECT count(*)::text||'|'||sum(committed_records)::text||'|'||
+  min(window_index)::text||'|'||max(window_index)::text||'|'||
+  min(encode(descriptor_sha256,'hex')) FROM fi_recovery.typed_window")
+[ "$state" = "1|493478|0|0|$seedhash" ] || fail "private W512 seed SQL state invalid: $state"
+[ "$(sql 'SELECT count(*) FROM fi_recovery.source_window')" = 1 ] &&
+[ "$(sql 'SELECT count(*) FROM fi_recovery.verified_artifact_window')" = 1 ] &&
+[ "$(sql 'SELECT count(*) FROM fi_recovery_projection.source_batch')" = 8399 ] &&
+[ "$(sql 'SELECT count(*) FROM fi_recovery_projection.windows_security_event_field')" = 6194967 ] ||
+    fail 'W512 copied seed schema, source metadata or field count invalid'
+[ "$(sql 'SELECT count(*) FROM fi.recorded_generation')" = 0 ] &&
+[ "$(sql "SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'")" = 0 ] ||
+    fail 'canonical or Accepted rows present in private seed'
+[ "$(sql 'SHOW max_wal_size')" = 1GB ] &&
+[ "$(sql 'SHOW wal_buffers')" = 4MB ] || fail 'PostgreSQL WAL settings changed'
+for f in fsync synchronous_commit full_page_writes; do
+    [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
+done
+cat > "$out/RUN_MANIFEST.txt" <<EOF
+FI W512 CANDIDATE A TWO-WINDOW PRIVATE PILOT
+source_seed=$seed
+seed_descriptor=$seedhash
+seed_records=493478
+signed_cache=$cache
+window_profile=W512
+window_records_max=524288
+window_source_bytes_max=2147483648
+start_window=1
+windows=2
+K32=32768
+workers=2
+inflight_limit=4
+sql_writers=1
+private_only=true
+authoritative_writes=forbidden
+accepted_publication=forbidden
+recover_sha256=$(sha256 -q "$recover")
+EOF
+stats(){
+    phase=$1
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_wal) x' > "$out/$name/wal_$phase.jsonl"
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_checkpointer) x' > "$out/$name/checkpointer_$phase.jsonl"
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_io) x' > "$out/$name/io_$phase.jsonl"
+}
+stats before || fail 'pre-run PostgreSQL stats unavailable'
+iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
+iostatpid=$!
+vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
+vmstatpid=$!
+printf 'FI W512 CANDIDATE A PILOT START start_index=1 windows=2 workers=2 writer=1 K32=32768\n' | tee "$out/SUMMARY.txt"
+if ! /usr/bin/time -l "$recover" \
+  -private-w512-2g -private-hash-h16 \
+  -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
+  -source=iss-fs-22a.iss.local \
+  -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
+  -postgres="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable" \
+  -custody-root=/work/fi-c220-20261114/custody/generation -recorded-root=/work/fi-c220-20261114/custody/recorded \
+  -source-namespaces=false -private-root="$out/$name/private" \
+  -private-writes -private-field-partitions \
+  -security-profile=P3 -file-profile=F3 -window-profile=W512 \
+  -processing-chunk-records=32768 -continuous-private -start-window=1 \
+  -max-windows=0 -max-runtime=0 -test-stop-after-windows=2 \
+  -deferred-verified-clone -verified-cache-root="$cache" > "$out/$name/recover.log" 2>&1; then
+    tail -n 100 "$out/$name/recover.log" >&2 || :
+    fail 'W512 two-worker recovery rejected'
+fi
+for pid in "$iostatpid" "$vmstatpid"; do
+    kill -TERM "$pid" 2>/dev/null || :
+    wait "$pid" 2>/dev/null || :
+done
+iostatpid=
+vmstatpid=
+stats after || fail 'postrun PostgreSQL stats unavailable'
+log="$out/$name/recover.log"
+grep -Fq 'FI PRIVATE PARALLEL PREP A ENABLED workers=2 inflight=4 postgres_writers=1 source_window=W512 atomic=true' "$log" ||
+    fail 'W512 Candidate A worker proof absent'
+[ "$(grep -c '^FI REAL BACKLOG DURABLE ' "$log")" = 2 ] &&
+[ "$(grep -c '^FI PRIVATE STAGE PROFILE ' "$log")" = 2 ] &&
+[ "$(grep -c '^FI PRIVATE DEPENDENCY BUFFER PROOF ' "$log")" = 2 ] &&
+[ "$(grep -c '^FI PRIVATE BATCH HASH ONCE window=' "$log")" = 2 ] ||
+    fail 'W512 per-window instrumentation incomplete'
+grep -q '^FI PRIVATE EXACT WINDOW STOP start=1 windows=2 last=2 records=' "$log" ||
+    fail 'W512 exact two-window stop missing'
+new=$(sql 'SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window WHERE window_index BETWEEN 1 AND 2')
+case "$new" in ''|*[!0-9]*) fail 'invalid W512 new record count';; esac
+[ "$new" = 997434 ] || fail "historical W512 2-window record invariant failed: $new != 997434"
+total=$((493478+new))
+integrity=$(sql "SELECT CASE WHEN
+ (SELECT count(*) FROM fi_recovery.typed_window)=3
+ AND (SELECT count(*) FROM fi_recovery.source_window)=3
+ AND (SELECT count(*) FROM fi_recovery.verified_artifact_window)=3
+ AND (SELECT count(*) FROM fi_recovery_projection.source_batch)=8399
+ AND (SELECT count(*) FROM pg_inherits
+   WHERE inhparent='fi_recovery_projection.windows_security_event_field'::regclass)=3
+ AND (SELECT count(*) FROM fi_recovery.pending_source_record)=$total
+ AND (SELECT count(*) FROM fi_recovery_projection.source_record)=$total
+ AND (SELECT count(*) FROM fi_recovery_projection.windows_security_event_field)>6194967
+ AND (SELECT count(*) FROM fi.recorded_generation)=0
+ AND (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')=0
+ AND NOT EXISTS(SELECT 1 FROM fi_recovery.typed_window t
+  LEFT JOIN fi_recovery.source_window s USING(receipt_sha256,window_index)
+  LEFT JOIN fi_recovery.verified_artifact_window a USING(receipt_sha256,window_index)
+  WHERE s.window_index IS NULL OR a.window_index IS NULL
+  OR t.descriptor_sha256 IS DISTINCT FROM s.descriptor_sha256
+  OR t.descriptor_sha256 IS DISTINCT FROM a.descriptor_sha256)
+ AND (SELECT encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window WHERE window_index=0)='$seedhash'
+ THEN 'PASS' ELSE 'FAIL' END")
+[ "$integrity" = PASS ] || fail 'W512 SQL source/typed/artifact integrity failed'
+sql "SELECT window_index::text || '|' || committed_records::text || '|' ||
+    encode(descriptor_sha256,'hex')
+    FROM fi_recovery.typed_window ORDER BY window_index" \
+    > "$out/$name/W512_CHECKPOINTS.tsv" ||
+  fail 'W512 C220 two-window checkpoint readback failed'
+[ "$(cat "$out/$name/W512_CHECKPOINTS.tsv")" = \
+"0|493478|$seedhash
+1|499052|bd093cdd14ad195e440fcf411d3baefcda670bbeb11e0f4d8a1aca715519c92c
+2|498382|3750b8827d8e89c4d02bfcbf7a345325fbdb80ec36832f6f5b06170b183894d9" ] ||
+  fail 'C220 W512 immutable signed window checkpoint plan mismatch'
+grep '^FI PRIVATE PARALLEL PREP BATCH ' "$log" > "$out/$name/PARALLEL_PREP.txt" ||
+    fail 'parallel batch proof absent'
+prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
+ delete f
+ for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+ if(f["workers"]!=2||f["inflight_limit"]!=4||f["writers"]!=1||
+    f["reorder_peak"]+0>3||seen[f["batch"]]++)bad=1
+ rows+=f["records"]+0;n++
+ }END{if(bad||n==0)exit 1;printf "%.0f",rows}' "$out/$name/PARALLEL_PREP.txt") ||
+    fail 'W512 parallel preparation invariant failed'
+[ "$prep" = "$new" ] || fail "W512 prepared rows $prep do not equal $new"
+grep '^FI PRIVATE BATCH HASH ONCE window=' "$log" > "$out/$name/HASH_ONCE.txt" ||
+    fail 'SHA-once signed-batch accounting absent'
+trusted=$(awk '/^FI PRIVATE BATCH HASH ONCE window=/{
+ for(i=1;i<=NF;i++)if($i~/^trusted_batches=/){split($i,a,"=");n+=a[2]+0}
+}END{print n+0}' "$out/$name/HASH_ONCE.txt")
+prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
+[ "$trusted" = "$prepbatches" ] || fail 'W512 batch SHA reuse/parallel preparation counts disagree'
+expected_batches=$(sql 'SELECT coalesce(sum(end_batch-start_batch),0)
+ FROM fi_recovery.verified_artifact_window WHERE window_index BETWEEN 1 AND 2')
+checked=0
+for directory in "$out/$name/private"/receipt-*/window-*; do
+    [ -d "$directory" ] || fail 'private signed W512 batch directory absent'
+    namespace=$(basename "$(dirname "$directory")")
+    case "$namespace" in receipt-*) ;; *) fail 'signed receipt namespace invalid';; esac
+    for file in "$directory"/batch-*.data; do
+        [ -f "$file" ] || fail 'W512 signed batch payload absent'
+        original="$cache/$namespace/$(basename "$file")"
+        manifest=$(printf '%s\n' "$file" | sed 's/\.data$/.manifest/')
+        original_manifest=$(printf '%s\n' "$original" | sed 's/\.data$/.manifest/')
+        [ -f "$original" ] && [ -f "$manifest" ] && [ -f "$original_manifest" ] ||
+            fail 'W512 signed readback artifact path missing'
+        cmp -s "$file" "$original" || fail 'W512 payload changed from receiver-admitted cache'
+        cmp -s "$manifest" "$original_manifest" ||
+            fail 'W512 signed manifest changed from receiver-admitted cache'
+        checked=$((checked+1))
+    done
+done
+[ "$checked" = 431 ] && [ "$checked" = "$expected_batches" ] && [ "$checked" = "$trusted" ] ||
+    fail 'W512 signed byte-identical readback count mismatch'
+printf 'FI W512 SIGNED READBACK PASS batches=%s byte_identical=true manifests_identical=true\n' "$checked" |
+    tee -a "$out/SUMMARY.txt"
+grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt"
+grep '^FI REAL TYPED WINDOW ' "$log" > "$out/$name/COPY_CALLS.txt" ||
+    fail 'W512 SQL COPY telemetry absent'
+grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
+grep '^FI PRIVATE EXACT WINDOW STOP ' "$log" > "$out/$name/RESULT.txt"
+elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
+[ -n "$elapsed" ] || fail 'W512 elapsed time missing'
+printf 'FI C220 W512 TWO-WINDOW BASELINE ACCEPTED windows=2 new_records=%s elapsed=%s workers=2 credits=4 writer=1 authoritative=0 accepted=0\n' \
+    "$new" "$elapsed" | tee -a "$out/SUMMARY.txt"
+bundle="$out/fi-w512-candidate-a-pilot2-$stamp.tar.gz"
+tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
+  "$name/recover.log" "$name/RESULT.txt" "$name/WINDOWS.txt" \
+  "$name/COPY_CALLS.txt" "$name/STAGES.txt" "$name/PARALLEL_PREP.txt" \
+  "$name/HASH_ONCE.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
+  "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
+  "$name/io_before.jsonl" "$name/io_after.jsonl" \
+  "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
+  fail 'W512 metrics bundle creation failed'
+[ -s "$bundle" ] || fail 'W512 metrics bundle absent'
+printf 'FI W512 PILOT METRICS BUNDLE PASS path=%s sha256=%s\n' "$bundle" "$(sha256 -q "$bundle")"
