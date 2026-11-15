@@ -112,6 +112,37 @@ compared with old backend's 3,190.46 source records/sec.
 
 **Do not run Stage 3 ten-window test before accepting Stage 2.5.**
 
+### 2026-11-15 C220 two-window trust-path correction
+
+The first two-window private pilot attempted at `20261115T155117Z`
+stopped before any window on the C220 host: the host-run FI recovery
+executable tried to open the FI root CA at the installed receiver path
+`/usr/local/etc/fi/pki/trust/fi-root-ca.crt.pem`, which is valid inside
+FI-dev but not populated on C220's host. The isolated seed remained intact,
+and the private copied PostgreSQL cluster shut down cleanly.
+
+The C220 two-window runner now uses a **second disposable build** from
+the exact archived seed source. Before any SQL replay, the original
+`generation_trust.go` source is compared byte-for-byte to historical
+commit `b01ff0d8cb6559797de052f34b18bd84a395dc4c`; only the four
+trust *filesystem path constants* are adapted for the host-run private
+binary. The root CA, signing issuer, current receiver CRL, and enrolled
+source config are all loaded from the read-only original C220 migrated
+directories. There is NO global host trust installation, no change to
+certificate/CRL validation semantics, no change to the original seed or
+Git working tree, and no live FI ingestion. The private compiled recovery
+binary's SHA is recorded in the baseline manifest. Compiler/tests are
+executed before starting the disposable PostgreSQL clone.
+
+The benchmark timer begins **after** this copy, compile, PostgreSQL clone
+and relay setup; its measured interval remains the exact original W512
+two-window replay (997,434 records, 2 workers, 4 credits, 1 writer).
+
+Run the newly staged branch commit on jwood@fi-dev, then rerun
+`sh "$pilot" preflight "$seedstamp"` on root@c220 before trying
+`sh "$pilot" h16 "$seedstamp"` again. Do NOT reuse the failed private copy,
+and do NOT modify `/usr/local/etc/fi` on the host.
+
 ## Stage 3: extended ten-window TWO-worker experiment (later)
 
 Run on root@c220, with the EXACT timestamp printed by Stage 2:
