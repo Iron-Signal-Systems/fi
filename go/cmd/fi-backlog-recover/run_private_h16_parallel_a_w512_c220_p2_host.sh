@@ -32,6 +32,11 @@ name=clone-w512-2g
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
 root=/home/jwood/fi-window-bench-w512-p2-$stamp
 out=/var/tmp/fi-window-chunks-h16-w512-p2-$stamp
+# Clone-only artifact bytes must share the verified cache's ZFS filesystem.
+# Keep /var/tmp only for timing, logs and AF_UNIX PostgreSQL relay sockets.
+# The private signed output is a separate fresh 0700 directory on the CACHE dataset.
+private_parent=/fast/jails/roots/fi-dev/home/jwood
+private_root="$private_parent/fi-w512-clone-p2-$stamp"
 port=55983
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
@@ -84,6 +89,26 @@ case "$out" in /var/tmp/fi-window-chunks-*) ;; *) fail 'relay path allowlist mis
 [ "$(find "$cache" -type f -name 'batch-*.data' | wc -l | tr -d ' ')" = 8399 ] &&
 [ "$(find "$cache" -type f -name verified.json | wc -l | tr -d ' ')" = 1 ] ||
   fail 'original authenticated receiver-admitted cache incomplete'
+[ -d "$private_parent" ] && [ ! -L "$private_parent" ] ||
+  fail 'trusted fast SSD private-artifact parent missing or symlink'
+[ ! -e "$private_root" ] && [ ! -L "$private_root" ] ||
+  fail 'private signed artifacts collide with a prior test: '"$private_root"
+# deferredFileStat requires independent inodes on an IDENTICAL st_dev;
+# compare filesystem IDs, not merely zpool names or capacity.
+cache_dev=$(stat -f %d "$cache") || fail 'cannot stat signed cache filesystem'
+dest_dev=$(stat -f %d "$private_parent") || fail 'cannot stat private artifact filesystem'
+[ "$cache_dev" = "$dest_dev" ] ||
+  fail "clone-only cache/output filesystem mismatch: cache_dev=$cache_dev dest_dev=$dest_dev"
+[ "$(sysctl -n vfs.zfs.bclone_enabled)" = 1 ] ||
+  fail 'ZFS block cloning disabled on C220 host'
+clone_feature=$(zpool get -H -o value feature@block_cloning fast) ||
+  fail 'cannot inspect fast ZFS block cloning feature'
+case "$clone_feature" in active|enabled) :;; *)
+  fail "fast ZFS block cloning feature unavailable: $clone_feature";; esac
+[ "$(df -Pk "$private_parent" | awk 'END {print $4}')" -gt 8388608 ] ||
+  fail 'fast private artifacts need at least 8 GiB available'
+printf 'FI C220 CLONE FS PREFLIGHT PASS cache_dev=%s destination_dev=%s zfs_pool=fast bclone_enabled=1 feature=%s root=%s\n' \
+ "$cache_dev" "$dest_dev" "$clone_feature" "$private_root"
 [ "$(df -Pk /var/tmp | awk 'END {print $4}')" -gt 8388608 ] ||
   fail 'host /var/tmp needs at least 8 GiB spare'
 echo '===== VERIFY HOST C220 RECEIVER TRUST PATHS (PRIVATE BASELINE ONLY) ====='
@@ -122,7 +147,7 @@ cleanup(){
         jexec -U jwood fi-dev pg_ctl -D "$root/$name/data" -m fast -w -t 60 stop ||
             { echo 'WARNING: W512 pilot PostgreSQL failed to stop' >&2; code=1; }
     fi
-    printf 'FI W512 PILOT FINISHED exit=%s outputs=%s private_clone=%s original_seed_unchanged=true\n' "$code" "$out" "$root"
+    printf 'FI W512 PILOT FINISHED exit=%s outputs=%s private_clone=%s private_artifacts=%s original_seed_unchanged=true\n' "$code" "$out" "$root" "$private_root"
     exit "$code"
 }
 trap cleanup 0
@@ -213,7 +238,13 @@ pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
   -w start > "$root/$name/start.log" 2>&1 || exit 1
 echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
 JAIL
-mkdir -m 700 "$out" "$out/$name" "$out/$name/private" || fail 'private output initialization failed'
+mkdir -m 700 "$out" "$out/$name" "$private_root" ||
+  fail 'private benchmark output initialization failed'
+[ "$(stat -f %d "$private_root")" = "$(stat -f %d "$cache")" ] ||
+  fail 'private signed artifact root differs from signed-cache filesystem'
+[ "$(stat -f %p "$private_root")" = "40700" ] ||
+  fail 'private artifact directory must be exactly 0700'
+printf 'FI C220 CLONE-ONLY PRIVATE OUTPUT PASS cache_fs=fast private_fs=fast separate_inode_required=true original_cache=unchanged\n'
 recover="$jailroot$root/fi-optfield-recover"
 relay="$jailroot$root/fi-optfield-relay"
 [ "$(sha256 -q "$recover")" = "$(cat "$jailroot$root/recover.sha256")" ] ||
@@ -268,6 +299,9 @@ workers=2
 inflight_limit=4
 sql_writers=1
 private_only=true
+private_signed_artifact_root=$private_root
+clone_only_same_filesystem_required=true
+host_relay_output_root=$out
 authoritative_writes=forbidden
 accepted_publication=forbidden
 recover_sha256=$(sha256 -q "$recover")
@@ -296,7 +330,7 @@ if ! /usr/bin/time -l "$recover" \
   -generation-id=20261030T000032.061323100Z-3e38b2210771462c \
   -postgres="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable" \
   -custody-root=/work/fi-c220-20261114/custody/generation -recorded-root=/work/fi-c220-20261114/custody/recorded \
-  -source-namespaces=false -private-root="$out/$name/private" \
+  -source-namespaces=false -private-root="$private_root" \
   -private-writes -private-field-partitions \
   -security-profile=P3 -file-profile=F3 -window-profile=W512 \
   -processing-chunk-records=32768 -continuous-private -start-window=1 \
@@ -378,7 +412,7 @@ prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
 expected_batches=$(sql 'SELECT coalesce(sum(end_batch-start_batch),0)
  FROM fi_recovery.verified_artifact_window WHERE window_index BETWEEN 1 AND 2')
 checked=0
-for directory in "$out/$name/private"/receipt-*/window-*; do
+for directory in "$private_root"/receipt-*/window-*; do
     [ -d "$directory" ] || fail 'private signed W512 batch directory absent'
     namespace=$(basename "$(dirname "$directory")")
     case "$namespace" in receipt-*) ;; *) fail 'signed receipt namespace invalid';; esac
