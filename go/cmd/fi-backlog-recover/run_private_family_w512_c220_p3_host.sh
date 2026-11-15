@@ -39,7 +39,7 @@ private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 port=55984
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=01996c6d5b22f122c58a699cd40509bef5a3dfb1
+sourcecommit=ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -290,6 +290,8 @@ mv "$trustfile.c220" "$trustfile" || exit 1
 (cd "$src/go" &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
    ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3)' -count=1 &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -race \
+   ./internal/recordingest -run '^TestPrivateFamilyP3' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover
 ) > "$root/private-trust-path-build.log" 2>&1 || {
