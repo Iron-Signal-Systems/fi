@@ -31,6 +31,12 @@ func main() {
     fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP: root is not an allowed isolated source")
     os.Exit(1)
   }
+  // The C220 seed already has its own optimized File validation pipeline
+  // (validated.observation), not the repository's older standalone
+  // ntfs.ValidateObservation(value.NTFS) call. Do NOT inject a second
+  // validation wrapper or replace scope validation blindly.
+  // Instead, reuse worker-decoded value at the exact JSON decode site;
+  // leave existing seed validation and relational constraints intact.
   // Match the unique struct declaration, independent of gofmt indentation.
   edits:=[]struct{path,old,new string}{
     {
@@ -82,16 +88,6 @@ func main() {
       "go/internal/recordingest/private_parallel_preparation.go",
       "func (s *privateParallelPreparedStream) Close() {",
       "func (s *privateParallelPreparedStream) Close() {\n    if s != nil && s.privateFamilyBudget != nil {\n        defer func(){ used,peak:=s.privateFamilyBudget.stats(); fmt.Printf(\"FI FAMILY P3 BUDGET peak_pending_bytes=%d remaining_bytes=%d\\n\",peak,used) }()\n    }",
-    },
-    {
-      "go/internal/recordingest/postgres_ingest.go",
-      "if err := ntfs.ValidateObservation(value.NTFS); err != nil {",
-      "if item.prepared.PrivateFamilyP3File == nil {\n                if err := ntfs.ValidateObservation(value.NTFS); err != nil {",
-    },
-    {
-      "go/internal/recordingest/postgres_ingest.go",
-      "if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {",
-      "}\n            if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {",
     },
     {
       "go/internal/recordingest/private_parallel_preparation.go",
