@@ -39,7 +39,7 @@ private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 port=55984
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=ed8ab373d6dea4bdc7c5d17fca7c9be1b5c3fab7
+sourcecommit=e01ec785f02c4f2f409dbb98516e4e76169b11ba
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -151,7 +151,7 @@ echo "FI FAMILY P3 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=7 clone_onl
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
-jexec -U jwood fi-dev sh -s "$sourcecommit" <<'HF_GO_SYNTAX'
+jexec -U jwood fi-dev sh -s "$sourcecommit" "$seed" <<'HF_GO_SYNTAX'
 set -eu
 umask 077
 tmp=$(mktemp -d /tmp/fi-hf-patcher-preflight.XXXXXX) || exit 1
@@ -167,9 +167,15 @@ done
 GOTOOLCHAIN=local GO111MODULE=off go127 test -count=1 \
   "$tmp/private_canonical_spool_dispatch.go" \
   "$tmp/private_canonical_spool_dispatch_test.go" >/dev/null || exit 1
+# Original C220 seed is examined ONLY in memory. The patcher checks all
+# ordered source anchors and reports the precise mismatching source fragment.
+# Fail in preflight, before allocating any disposable DB or overlay.
+GOTOOLCHAIN=local GO111MODULE=off go127 run "$tmp/main.go" \
+  audit "$2/optimized-source" || exit 1
 HF_GO_SYNTAX
 echo 'FI FAMILY P3 PATCHER COMPILE PREFLIGHT PASS pinned=true source_tree_unchanged=true'
 echo 'FI FAMILY P3 DISPATCH TEST PREFLIGHT PASS fixture=present standalone_tests=passed'
+echo 'FI FAMILY P3 ORIGINAL SOURCE ANCHOR AUDIT PASS seed_unchanged=true'
 echo 'FI C220 FAMILY P3 W512 PREFLIGHT PASS family_workers=6 credits=32 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped'
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
