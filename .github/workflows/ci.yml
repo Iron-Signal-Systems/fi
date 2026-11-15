@@ -1,47 +1,30 @@
-name: CI
+# Backend runtime target: FreeBSD 15.1 amd64.
+# Cross-build is checked by fi-freebsd-cross-build.yml (Ubuntu is a CI
+# build host there, not an FI deployment platform). Native FreeBSD replay
+# acceptance runs on a private C220 clone.
+# Collector runtime target remains Windows.
+name: FI Platform CI
 
 on:
   push:
-
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  linux:
-    name: Linux Tests
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: go
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.3'
-
-      - name: Test
-        run: go test ./...
-
   windows:
-    name: Windows Tests
+    name: Windows Collector Tests
     runs-on: windows-latest
-
     defaults:
       run:
         working-directory: go
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.3'
-
       - name: Test
         run: go test ./...
