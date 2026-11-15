@@ -11,6 +11,7 @@ import (
     "errors"
     "fmt"
     "io"
+    "time"
 )
 
 type spoolDispatchFamily uint8
@@ -80,6 +81,7 @@ func classifyCanonicalSpoolRecord(raw []byte) (string, spoolDispatchFamily, erro
 
 type spoolBlockDispatchMetrics struct {
     ReadCalls uint64
+    ReadTime time.Duration
     Records uint64
     Bytes uint64
     CrossBlockRecords uint64
@@ -124,7 +126,9 @@ func streamCanonicalSpoolBlocks(
 
     for {
         if err := ctx.Err(); err != nil { return metrics, err }
+        readStarted := time.Now()
         n, readErr := source.Read(block)
+        metrics.ReadTime += time.Since(readStarted)
         metrics.ReadCalls++
         if n < 0 || n > len(block) {
             return metrics, errors.New("FI block dispatch: invalid reader result")
