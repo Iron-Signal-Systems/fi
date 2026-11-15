@@ -20,11 +20,11 @@ func main() {
      !strings.HasSuffix(root,"/optimized-source") || strings.Contains(root,"..") {
     fmt.Fprintln(os.Stderr,"FI HEADER FIRST PATCH STOP: root is not disposable W512 HF source");os.Exit(1)
   }
-  edits:=[]struct{path,old,new string}{
+  // Match the declaration itself, not a gofmt-sensitive indentation prefix.\n  // The historical Candidate A runner formats this disposable source with tabs.\n  edits:=[]struct{path,old,new string}{
     {
       "go/internal/recordingest/private_parallel_preparation.go",
-      "type privateParallelLine struct {\n    ordinal int64",
-      "type privateParallelLine struct {\n    headerKind string\n    headerFamily spoolDispatchFamily\n    ordinal int64",
+      "type privateParallelLine struct {",
+      "type privateParallelLine struct {\n    headerKind string\n    headerFamily spoolDispatchFamily",
     },
     {
       "go/internal/recordingest/postgres_ingest.go",
