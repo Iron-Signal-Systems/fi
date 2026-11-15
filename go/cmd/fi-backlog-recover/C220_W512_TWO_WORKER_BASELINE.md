@@ -143,6 +143,47 @@ Run the newly staged branch commit on jwood@fi-dev, then rerun
 `sh "$pilot" h16 "$seedstamp"` again. Do NOT reuse the failed private copy,
 and do NOT modify `/usr/local/etc/fi` on the host.
 
+### Clone-only filesystem placement correction, 2026-11-15
+
+The C220 two-window attempt `20261115T155708Z` passed certificate-path
+validation, private seed PostgreSQL cloning, signed W512 configuration and
+worker gates, but stopped before its first record because FreeBSD returned
+`EOPNOTSUPP` on the explicit `COPY_FILE_RANGE_CLONE` syscall for
+authenticated batch 205.
+
+The original runner kept all output under host `/var/tmp`, while the C220
+authenticated signed cache is on the **fast ZFS jail-root filesystem**.
+`stageDeferredBacklogWindow` strictly requires copy-on-write cloning and
+independent cloned inodes with identical `st_dev`. Fallback to ordinary
+copying is NOT allowed. The failed private PostgreSQL clone was shut down;
+original W512 seed and signed cache remain untouched.
+
+The C220 two-window runner now explicitly separates:
+- PostgreSQL relay socket / CPU logs / benchmark statistics:
+  host `/var/tmp/fi-window-chunks-h16-w512-p2-TIMESTAMP` (unchanged).
+- Signed PRIVATE COW artifact root:
+  `/fast/jails/roots/fi-dev/home/jwood/fi-w512-clone-p2-TIMESTAMP`,
+  mode 0700, alongside the signed cache on the **same fast ZFS dataset**.
+
+Before provisioning, the runner checks that signed cache and private artifact
+parent have identical FreeBSD `stat -f %d` filesystem IDs, that
+`vfs.zfs.bclone_enabled=1`, that the `fast` ZFS pool supports block cloning,
+that there is space, that the private output path is unused, and that the
+authenticated 8,399-batch marker is unique. No global mounts, jail network
+settings, host trust, signed source bytes, or FI code are modified.
+
+The benchmark still requires `-deferred-verified-clone`; both source and
+destination are on the same filesystem and a failed copy remains a failure.
+The benchmark output path and signed-byte readback now both point to the new
+private artifact root. The PostgreSQL relay path restrictions are unchanged.
+This is a **path placement fix**, not an algorithm or timing-contract change.
+
+The updated runner is staged but not yet validated on C220. After updating
+the separate Git checkout inside SSH to FI-dev, on root@c220 use the same
+`seedstamp=20261115T153532Z`, run `sh -n` and
+`sh "$pilot" preflight "$seedstamp"`. Only run the timed pilot after the
+`FI C220 CLONE FS PREFLIGHT PASS` marker.
+
 ## Stage 3: extended ten-window TWO-worker experiment (later)
 
 Run on root@c220, with the EXACT timestamp printed by Stage 2:
