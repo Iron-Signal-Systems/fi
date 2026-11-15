@@ -39,7 +39,7 @@ private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-hf-clone-p2-$stamp"
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=0b5362e090a9dff2829f51972964869731f2f8e2
+sourcecommit=eec914ee309a2c4e9e34e4441ce3011b85ed42c2
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -137,6 +137,7 @@ jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$source
   fail "missing pinned header-first commit $sourcecommit; fetch experiment/fi-header-first-ingest-20261115 into C220 staging checkout"
 for asset in \
   go/internal/recordingest/private_canonical_spool_dispatch.go \
+  go/internal/recordingest/private_canonical_spool_dispatch_test.go \
   go/cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go \
   go/cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go \
   go/cmd/fi-backlog-recover/patchers/header_first_c220/main.go
@@ -144,7 +145,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI HEADER FIRST SOURCE PREFLIGHT PASS commit=$sourcecommit assets=4 clone_only=true"
+echo "FI HEADER FIRST SOURCE PREFLIGHT PASS commit=$sourcecommit assets=5 clone_only=true"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -157,8 +158,16 @@ git -C /home/jwood/fi-w512-c220-stage show \
   "$1:go/cmd/fi-backlog-recover/patchers/header_first_c220/main.go" \
   > "$tmp/main.go" || exit 1
 GOTOOLCHAIN=local GO111MODULE=off go127 test "$tmp/main.go" >/dev/null || exit 1
+for f in private_canonical_spool_dispatch.go private_canonical_spool_dispatch_test.go; do
+  git -C /home/jwood/fi-w512-c220-stage show \
+    "$1:go/internal/recordingest/$f" > "$tmp/$f" || exit 1
+done
+GOTOOLCHAIN=local GO111MODULE=off go127 test -count=1 \
+  "$tmp/private_canonical_spool_dispatch.go" \
+  "$tmp/private_canonical_spool_dispatch_test.go" >/dev/null || exit 1
 HF_GO_SYNTAX
 echo 'FI HEADER FIRST PATCHER COMPILE PREFLIGHT PASS pinned=true source_tree_unchanged=true'
+echo 'FI HEADER FIRST DISPATCH TEST PREFLIGHT PASS fixture=present standalone_tests=passed'
 echo 'FI C220 HEADER FIRST W512 PREFLIGHT PASS workers=2 credits=4 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped'
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
@@ -213,7 +222,7 @@ trustfile="$src/go/internal/recordingest/generation_trust.go"
 expected=/home/jwood/fi-w512-c220-stage
 [ -f "$trustfile" ] || exit 1
 # Stage ONLY the pinned, new experimental files into this disposable archive.
-for item in private_canonical_spool_dispatch.go; do
+for item in private_canonical_spool_dispatch.go private_canonical_spool_dispatch_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/internal/recordingest/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
