@@ -13,6 +13,9 @@ import (
     "fmt"
     "sync"
     "time"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/records"
+    "github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 )
 
 const (
@@ -172,4 +175,47 @@ func newPrivateFamilyP3PreparedStream(
     }
     go func(){workers.Wait();close(output);close(s.done)}()
     return s,nil
+}
+
+type privateFamilyP3CoverageValue struct {
+    value records.WindowsSecurityCoverageObservation
+    observedAt time.Time
+}
+
+// This function is used only in the C220 clone. File and Coverage payload
+// validation and decoding run on their independent lane workers rather than
+// consuming the serial SQL writer. The existing SQL projection validates
+// again where necessary and preserves all original relational semantics.
+func privateFamilyP3Prepare(raw []byte,kind string,family spoolDispatchFamily)(
+    SourceRecord,securityBulkRecord,bool,error,
+){
+    source,security,selected,err:=privateHeaderFirstPrepare(raw,kind,family)
+    if err!=nil{return source,security,selected,err}
+    switch kind {
+    case "FileObservation":
+        var value fileObservationPayload
+        if err=decodeStrictPayload(source.Record.Payload,&value);err!=nil {
+            return source,security,selected,projectionDecodeError(kind,err)
+        }
+        value.NTFS.ContentHashes=&value.ContentHashes
+        if err=ntfs.ValidateObservation(value.NTFS);err!=nil {
+            return source,security,selected,projectionValidationError(kind,err)
+        }
+        if value.NTFS.GovernedRoot.ScopeID!=source.Record.ScopeID {
+            return source,security,selected,errors.New("FI family P3: File governed-root scope differs from signed source")
+        }
+        source.PrivateFamilyP3File=&value
+    case "WindowsSecurityCoverage":
+        var value records.WindowsSecurityCoverageObservation
+        if err=decodeStrictPayload(source.Record.Payload,&value);err!=nil {
+            return source,security,selected,projectionDecodeError(kind,err)
+        }
+        if err=records.ValidateWindowsSecurityCoverageObservation(value);err!=nil{
+            return source,security,selected,projectionValidationError(kind,err)
+        }
+        observedAt,e:=parseRFC3339(value.ObservedAt,"windows_security_coverage.observed_at")
+        if e!=nil{return source,security,selected,e}
+        source.PrivateFamilyP3Coverage=&privateFamilyP3CoverageValue{value:value,observedAt:observedAt}
+    }
+    return source,security,selected,nil
 }
