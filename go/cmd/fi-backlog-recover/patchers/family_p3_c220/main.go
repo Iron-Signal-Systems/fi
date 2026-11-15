@@ -30,7 +30,7 @@ func main() {
     {
       "go/internal/recordingest/postgres_ingest.go",
       "parallelPrep, err = newPrivateParallelPreparedStream(ctx, reader, privateParallelAPrepare)",
-      "parallelPrep, err = newPrivateFamilyP3PreparedStream(ctx, reader, privateHeaderFirstPrepare)",
+      "parallelPrep, err = newPrivateFamilyP3PreparedStream(ctx, reader, privateFamilyP3Prepare)",
     },
     {
       "go/internal/recordingest/postgres_ingest.go",
@@ -51,6 +51,21 @@ func main() {
       "go/internal/recordingest/private_parallel_preparation.go",
       "func (s *privateParallelPreparedStream) record(line privateParallelLine) {",
       "func (s *privateParallelPreparedStream) record(line privateParallelLine) {\n    if s.privateFamilyBudget != nil {s.privateFamilyBudget.release(int64(len(line.raw)))}",
+    },
+    {
+      "go/internal/recordingest/record.go",
+      "type SourceRecord struct {",
+      "type SourceRecord struct {\n    PrivateFamilyP3File *fileObservationPayload\n    PrivateFamilyP3Coverage *privateFamilyP3CoverageValue",
+    },
+    {
+      "go/internal/recordingest/postgres_ingest.go",
+      "if err := decodeStrictPayload(item.prepared.Record.Payload, &value); err != nil {",
+      "if item.prepared.PrivateFamilyP3File != nil {\n                value = *item.prepared.PrivateFamilyP3File\n            } else if err := decodeStrictPayload(item.prepared.Record.Payload, &value); err != nil {",
+    },
+    {
+      "go/internal/recordingest/security_coverage_bulk.go",
+      "if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {",
+      "if prepared.PrivateFamilyP3Coverage != nil {\n        value = prepared.PrivateFamilyP3Coverage.value\n    } else if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {",
     },
   }
   files:=map[string]string{}
