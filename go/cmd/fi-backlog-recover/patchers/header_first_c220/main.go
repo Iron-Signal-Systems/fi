@@ -20,7 +20,8 @@ func main() {
      !strings.HasSuffix(root,"/optimized-source") || strings.Contains(root,"..") {
     fmt.Fprintln(os.Stderr,"FI HEADER FIRST PATCH STOP: root is not disposable W512 HF source");os.Exit(1)
   }
-  // Match the declaration itself, not a gofmt-sensitive indentation prefix.\n  // The historical Candidate A runner formats this disposable source with tabs.\n  edits:=[]struct{path,old,new string}{
+  // Match the unique struct declaration, independent of gofmt indentation.
+  edits:=[]struct{path,old,new string}{
     {
       "go/internal/recordingest/private_parallel_preparation.go",
       "type privateParallelLine struct {",
