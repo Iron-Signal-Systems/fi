@@ -198,7 +198,7 @@ for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
 done
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI W512 H16 W16 10-WINDOW PRIVATE SIGNED REPLAY
+FI W512 H16 TWO-WORKER 10-WINDOW PRIVATE SIGNED REPLAY
 source_seed=$seed
 seed_descriptor=$seedhash
 seed_records=493478
@@ -274,7 +274,7 @@ grep -q '^FI PRIVATE EXACT WINDOW STOP start=1 windows=10 last=10 records=' "$lo
     fail 'W512 exact ten-window stop missing'
 new=$(sql 'SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window WHERE window_index BETWEEN 1 AND 10')
 case "$new" in ''|*[!0-9]*) fail 'invalid W512 new record count';; esac
-[ "$new" -ge 997434 ] && [ "$new" -le 5242880 ] || fail "invalid W512 record count $new"
+[ "$new" = 4969466 ] || fail "C220 W512 10-window baseline expected exactly 4969466 signed source records, got $new"
 total=$((493478+new))
 integrity=$(sql "SELECT CASE WHEN
  (SELECT count(*) FROM fi_recovery.typed_window)=11
@@ -321,7 +321,7 @@ grep '^FI PRIVATE PARALLEL PREP BATCH ' "$log" > "$out/$name/PARALLEL_PREP.txt" 
 prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
  delete f
  for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
- if(f["workers"]!=16||f["inflight_limit"]!=32||f["writers"]!=1||
+ if(f["workers"]!=2||f["inflight_limit"]!=4||f["writers"]!=1||
     f["reorder_peak"]+0>3||seen[f["batch"]]++)bad=1
  rows+=f["records"]+0;n++
  }END{if(bad||n==0)exit 1;printf "%.0f",rows}' "$out/$name/PARALLEL_PREP.txt") ||
@@ -354,7 +354,7 @@ for directory in "$out/$name/private"/receipt-*/window-*; do
         checked=$((checked+1))
     done
 done
-[ "$checked" = "$expected_batches" ] && [ "$checked" = "$trusted" ] ||
+[ "$checked" = 2292 ] && [ "$checked" = "$expected_batches" ] && [ "$checked" = "$trusted" ] ||
     fail 'W512 signed byte-identical readback count mismatch'
 printf 'FI W512 SIGNED READBACK PASS batches=%s byte_identical=true manifests_identical=true\n' "$checked" |
     tee -a "$out/SUMMARY.txt"
