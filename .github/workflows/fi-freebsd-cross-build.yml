@@ -54,9 +54,17 @@ jobs:
           printf 'FI SHELL SYNTAX baseline_posix=%s header_posix=%s header_bash=%s\\n' "$baseline_status" "$header_status" "$bash_status"
           [ "$header_status" = 0 ] || exit "$header_status"
           set -e
-          gofmt -e -d ./internal/recordingest/private_canonical_spool_dispatch.go >/dev/null
-          gofmt -e -d ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go >/dev/null
-          gofmt -e -d ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go >/dev/null
+          for source in \
+            ./internal/recordingest/private_canonical_spool_dispatch.go \
+            ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go \
+            ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go; do
+            echo "FI GO SYNTAX $source"
+            if ! gofmt -e -d "$source" >/tmp/fi-header-first-gofmt.log 2>&1; then
+              echo "FI GO SYNTAX FAIL $source"
+              cat /tmp/fi-header-first-gofmt.log
+              exit 1
+            fi
+          done
           go test -count=1 ./internal/recordingest -run '^TestCanonicalDispatch'
           go build -o /tmp/fi-header-first-w512-patcher ./cmd/fi-backlog-recover/patchers/header_first_c220
       - name: FreeBSD recovery executable and typed-test cross compilation
