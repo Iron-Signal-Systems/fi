@@ -50,8 +50,8 @@ The runner is committed to branch `experiment/fi-header-first-ingest-20261115`. 
 ```sh
 # root@c220
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=e4b829462387f23e5defa8855c04bdeeeb721016
-runnerpin=b3ad6ebb0e8688127971172a085893e2064ab8c5
+sourcepin=aaf7c0c4737414f061f7c5e7a140cf746fd89914
+runnerpin=0cb359e2696839ff5ea340ac4abcf1abd8b83cf9
 branch=experiment/fi-header-first-ingest-20261115
 runner=/var/tmp/fi-w512-header-first-p2-host.sh
 
