@@ -77,7 +77,7 @@ func TestPrivateHeaderFirstP2RejectsInvalidRecordKind(t *testing.T) {
     s,err:=newPrivateHeaderFirstPreparedStream(context.Background(),
         bufio.NewReader(bytes.NewReader(data)),
         func(raw []byte, kind string, family spoolDispatchFamily)(SourceRecord,securityBulkRecord,bool,error){
-            return SourceRecord{},securityBulkRecord,false,nil
+            return SourceRecord{},securityBulkRecord{},false,nil
         })
     if err!=nil {t.Fatal(err)}
     defer s.Close()
