@@ -257,7 +257,9 @@ access is permitted.
 
 ## Initial platform scope
 
-Initial development targets **Windows Server and NTFS file services**.
+Initial development targets **Windows Server and NTFS file services** for collectors.
+
+The FI **backend runtime target is FreeBSD**, currently validated in development on the C220 FreeBSD 15.1 host. Linux is **not** an FI backend deployment target. Windows remains the collector target; it is not a PostgreSQL backend requirement. GitHub-hosted Ubuntu jobs may be used only as toolchain/CI hosts to cross-compile binaries for FreeBSD; cross-compilation is not a FreeBSD runtime acceptance test. Backend integration and performance acceptance must run on FreeBSD against disposable PostgreSQL clones before any authoritative changes.
 
 Monitoring is explicitly scope-driven. FI operates only against configured
 **governed roots**. Installing FI on a server does not mean the entire server,
