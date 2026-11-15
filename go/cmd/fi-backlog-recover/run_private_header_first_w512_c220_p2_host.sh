@@ -207,8 +207,8 @@ sourcecommit=$5
 [ ! -e "$root" ] && [ ! -e "$seed/$name/data/postmaster.pid" ] || exit 1
 pg_ctl -D "$seed/$name/data" status >/dev/null 2>&1 && exit 1
 mkdir -m 700 "$root" "$root/$name" "$root/$name/socket" || exit 1
-cp -R "$seed/$name/data" "$root/$name/data" || exit 1
-[ "$(cat "$root/$name/data/PG_VERSION")" = 18 ] || exit 1
+# Validate seed version now, but do NOT copy its database until Go tests/build pass.
+[ "$(cat "$seed/$name/data/PG_VERSION")" = 18 ] || exit 1
 for f in fi-optfield-recover fi-optfield-relay recover.sha256 relay.sha256; do
     cp "$seed/$f" "$root/$f" || exit 1
 done
@@ -295,6 +295,10 @@ mv "$root/fi-optfield-recover.c220" "$root/fi-optfield-recover" || exit 1
 sha256 -q "$root/fi-optfield-recover" > "$root/recover.sha256" || exit 1
 printf 'FI C220 PRIVATE TRUST PATH PATCH PASS source=pinned_b01ff0 benchmark_only=true compiler=go127 root_ca=migrated signing_ca=migrated crl=current_receiver source_registry=migrated\n'
 
+# All pinned overlay compilation and tests passed. Clone PostgreSQL only now.
+cp -R "$seed/$name/data" "$root/$name/data" || exit 1
+[ "$(cat "$root/$name/data/PG_VERSION")" = 18 ] || exit 1
+echo 'FI HEADER FIRST POST-BUILD PRIVATE SEED COPY PASS'
 pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
   -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700" \
   -w start > "$root/$name/start.log" 2>&1 || exit 1
