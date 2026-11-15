@@ -1,6 +1,6 @@
 # FI header-first W512 ingestion — development experiment
 
-Status: **first-stage code committed, NOT integrated with the SQL ingest path, NOT C220-accepted.**
+Status: **first runnable W512/P2 private A/B overlay staged, NOT C220-accepted.** The header-first reader is now available inside a disposable clone using the original H16 SQL writer. This is an intermediate routing/read-block experiment, not yet the independent SQL-ready family processor redesign.
 
 ## Intent
 
@@ -40,3 +40,47 @@ The canonical-only constraint is intentional for this early proof. The establish
 Never run against authoritative SoR. Keep `fsync`, `synchronous_commit`, and `full_page_writes` enabled for all clone comparison runs. Do not change `experiment/fi-candidate-a-w512-2g-20261113`, the accepted H16 signed-cache control, `main`, or live jails as part of this stage.
 
 This document records work implemented so far and remaining gates, not successful end-to-end performance qualification.
+
+## C220 private run procedure — exact pinned sources
+
+This runner uses the existing accepted two-window W512 seed from `20261115T153532Z`. It **does not** touch authoritative SoR, Accepted publication, signed cache, or the live FI worker. It copies the private seed to an entirely new PostgreSQL clone and requires the existing signed-data readback, source and projection counts, immutable checkpoint digests, and original durability settings.
+
+The runner is committed to branch `experiment/fi-header-first-ingest-20261115`. It is designed to be launched as root on C220 only, after `fi-dev` has the pinned Git objects. Run the preflight first.
+
+```sh
+# root@c220
+repo=/home/jwood/fi-w512-c220-stage
+sourcepin=e4b829462387f23e5defa8855c04bdeeeb721016
+runnerpin=b3ad6ebb0e8688127971172a085893e2064ab8c5
+branch=experiment/fi-header-first-ingest-20261115
+runner=/var/tmp/fi-w512-header-first-p2-host.sh
+
+# Fetch objects only; DO NOT switch C220's existing working checkout.
+jexec -U jwood fi-dev git -C "$repo" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" || exit 1
+jexec -U jwood fi-dev git -C "$repo" cat-file -e "$runnerpin^{commit}" || exit 1
+jexec -U jwood fi-dev git -C "$repo" show "$runnerpin:go/cmd/fi-backlog-recover/run_private_header_first_w512_c220_p2_host.sh" > "$runner" || exit 1
+chmod 0700 "$runner"
+sh -n "$runner" || exit 1
+sh "$runner" preflight 20261115T153532Z || exit 1
+
+# Run only AFTER the preflight passes, not if other private PG runs are active.
+sh "$runner" hf 20261115T153532Z
+```
+
+**Important**: The C220 staging repository is a Git checkout inside `fi-dev`. Git is invoked as its owner `jwood`, not through an unsafe root-owned working tree. Any missing pinned object, private seed, accepted source SHA, signed input, copy-on-write requirement, or off-host trust input stops before the SQL run.
+
+Expected successful first-run evidence:
+- `FI HEADER FIRST ISOLATED OVERLAY READY`
+- `FI HEADER FIRST BLOCK STREAM` entries matching the original signed batch count
+- All original `FI PRIVATE PARALLEL PREP BATCH`, `FI PRIVATE STAGE PROFILE`, and committed-window acceptance checks
+- `FI W512 SIGNED READBACK PASS batches=431`
+- `FI C220 W512 HEADER FIRST TWO-WINDOW ACCEPTED windows=2 new_records=997434`
+
+The command may reject noncanonical historical input instead of silently falling back. If so, preserve the error; review the signed spool and add an explicitly tested fallback. **Do not modify signed cache or disable verification.**
+
+## Architectural limitations of this first runnable A/B
+
+The private header-first reader uses 4 MiB read blocks and dispatches based on top-level canonical `record_kind` without parsing the payload. For a controlled A/B, it intentionally retains Candidate A's **two preparation workers, four in-flight record credits, original family buffering and one SQL writer**. It decodes data through the existing per-type code after dispatch. This isolates the effect of read batching and classification from the later, more invasive processor refactor.
+
+**It does not yet implement** zero-copy SQL-ready family processors, replacement of the four-credit scheduler, or cross-W512 partial-buffer carry. Those changes require their own verified A/B after this run. No backend performance improvement is claimed until C220 records it.
