@@ -96,7 +96,8 @@ func newPrivateHeaderFirstPreparedStream(
                 }
             })
         s.readerTime = metrics.ReadTime
-        fmt.Printf("FI HEADER FIRST BLOCK STREAM records=%d bytes=%d read_calls=%d cross_block=%d reader_time=%s\n",\n            metrics.Records, metrics.Bytes, metrics.ReadCalls, metrics.CrossBlockRecords, metrics.ReadTime)
+        fmt.Printf("FI HEADER FIRST BLOCK STREAM records=%d bytes=%d read_calls=%d cross_block=%d reader_time=%s\n",
+            metrics.Records, metrics.Bytes, metrics.ReadCalls, metrics.CrossBlockRecords, metrics.ReadTime)
         if scanErr != nil && ctx.Err() == nil {
             // Never turn a malformed source into normal EOF.
             select {
