@@ -358,7 +358,7 @@ for f in fsync synchronous_commit full_page_writes; do
 done
 cat > "$out/RUN_MANIFEST.txt" <<EOF
 FI FAMILY P3 W512 PRIVATE TWO-WINDOW PILOT
-header_first_source_commit=$sourcecommit
+family_p3_source_commit=$sourcecommit
 source_seed=$seed
 seed_descriptor=$seedhash
 seed_records=493478
@@ -369,8 +369,11 @@ window_source_bytes_max=2147483648
 start_window=1
 windows=2
 K32=32768
-workers=2
-inflight_limit=4
+family_lanes=5
+family_workers=6
+security_workers=2
+inflight_limit=32
+pending_raw_bytes_max=268435456
 sql_writers=1
 private_only=true
 private_signed_artifact_root=$private_root
@@ -422,7 +425,7 @@ vmstatpid=
 stats after || fail 'postrun PostgreSQL stats unavailable'
 log="$out/$name/recover.log"
 grep -Fq 'FI PRIVATE PARALLEL PREP A ENABLED workers=2 inflight=4 postgres_writers=1 source_window=W512 atomic=true' "$log" ||
-    fail 'W512 Candidate A worker proof absent'
+    fail 'pinned W512 H16 activation gate absent'
 [ "$(grep -c '^FI REAL BACKLOG DURABLE ' "$log")" = 2 ] &&
 [ "$(grep -c '^FI PRIVATE STAGE PROFILE ' "$log")" = 2 ] &&
 [ "$(grep -c '^FI PRIVATE DEPENDENCY BUFFER PROOF ' "$log")" = 2 ] &&
