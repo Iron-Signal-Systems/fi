@@ -242,7 +242,7 @@ mkdir -m 700 "$out" "$out/$name" "$private_root" ||
   fail 'private benchmark output initialization failed'
 [ "$(stat -f %d "$private_root")" = "$(stat -f %d "$cache")" ] ||
   fail 'private signed artifact root differs from signed-cache filesystem'
-[ "$(stat -f %p "$private_root")" = "40700" ] ||
+[ "$(stat -f %Sp "$private_root")" = "drwx------" ] ||
   fail 'private artifact directory must be exactly 0700'
 printf 'FI C220 CLONE-ONLY PRIVATE OUTPUT PASS cache_fs=fast private_fs=fast separate_inode_required=true original_cache=unchanged\n'
 recover="$jailroot$root/fi-optfield-recover"
