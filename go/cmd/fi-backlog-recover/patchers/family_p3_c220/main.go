@@ -124,6 +124,33 @@ func main() {
       "var chunkSamples []backlogTypedChunkSample",
       "var chunkSamples []backlogTypedChunkSample\n    // P5 is a disposable clone-only option; source chunks keep the same\n    // SQL transaction and signed evidence, while preparation workers now\n    // persist across original signed batch boundaries in this window.\n    if privateP5Enabled() {\n        pool,poolErr:=newPrivateP5Pool(ctx,index)\n        if poolErr!=nil {return poolErr}\n        defer pool.Close()\n        ctx=context.WithValue(ctx,privateP5PoolContextKey{},pool)\n    }",
     },
+    // P6 is an isolated extension of P5; the original signed reader,
+    // joined-source custody and outer W512 transaction stay intact.
+    {
+      "go/internal/recordingest/postgres_ingest.go",
+      "if profile.coverageBuffer == nil {",
+      "if privateP6Selected() && privateP6BuffersFromContext(ctx)==nil {\n        return 0, errors.New(\"FI P6: private W512 buffer context is missing; no fallback to P5 SQL\")\n    }\n    if profile.coverageBuffer == nil {",
+    },
+    {
+      "go/internal/recordingest/postgres_ingest.go",
+      "if prepared.Record.RecordKind != \"WindowsSecurityCoverage\" &&",
+      "if p6:=privateP6BuffersFromContext(ctx);p6!=nil {\n            joined:=joinedBacklogSourceFromContext(ctx)\n            if joined==nil || joined.batchIndex<0 {\n                return ordinal, errors.New(\"FI P6: signed source batch index unavailable\")\n            }\n            row:=privateP6Record{signedBatchIndex:joined.batchIndex,sourceBatchID:sourceBatchID,ordinal:ordinal,prepared:prepared,selectedSinglePass:selectedSinglePass,singlePassSecurity:singlePassSecurity}\n            if err:=p6.Add(ctx,row);err!=nil{return ordinal,fmt.Errorf(\"FI P6 typed family handoff: %w\",err)}\n            if readErr!=nil {\n                if errors.Is(readErr,io.EOF) {return ordinal,errors.New(\"FI P6: signed source ended without final LF\")}\n                return ordinal,readErr\n            }\n            continue\n        }\n        if prepared.Record.RecordKind != \"WindowsSecurityCoverage\" &&",
+    },
+    {
+      "go/internal/recordingest/backlog_typed_window_postgres.go",
+      "profile.coverageBuffer = newSecurityCoverageBulkState(&profile)",
+      "profile.coverageBuffer = newSecurityCoverageBulkState(&profile)\n    var p6 *privateP6Buffers\n    if privateP6Selected() {\n        if !joined || !privateP5Enabled() || index<1 {return errors.New(\"FI P6: requires joined P5 private W512 typed window\")}\n        sink,sinkErr:=newPrivateP6SQLCoordinator(shadow,d.SourceID,&profile)\n        if sinkErr!=nil{return sinkErr}\n        p6,sinkErr=newPrivateP6Buffers(index,sink)\n        if sinkErr!=nil{return sinkErr}\n        ctx=context.WithValue(ctx,privateP6WindowContextKey{},p6)\n        fmt.Printf(\"FI P6 WINDOW START window=%d families=5 parent_ledger=ordered writer=1 atomic=true\\n\",index)\n    }",
+    },
+    {
+      "go/internal/recordingest/backlog_typed_window_postgres.go",
+      "joinedElapsed := time.Since(joinedStarted)",
+      "if p6!=nil {\n        if err:=p6.Finish(ctx);err!=nil{return fmt.Errorf(\"FI P6: atomic W512 relational handoff barrier: %w\",err)}\n    }\n    joinedElapsed := time.Since(joinedStarted)",
+    },
+    {
+      "go/internal/recordingest/security_bulk.go",
+      "copied, err := tx.CopyFrom(ctx, pgx.Identifier{\"fi\", \"source_record\"}, sourceColumns, sourceRows)",
+      "var copied int64\n    var err error\n    if privateP6SourceAlreadyInserted(ctx) {\n        copied=int64(len(pending)) // parent already inserted in exact custody order\n    }else{\n        copied,err=tx.CopyFrom(ctx,pgx.Identifier{\"fi\",\"source_record\"},sourceColumns,sourceRows)\n    }",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
@@ -166,7 +193,7 @@ func main() {
   }
   // Require both classifier implementation and its fixture-bearing test.
   // Missing tests are failures, never grounds to weaken the Go test gate.
-  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_family_dynamic_p4.go","private_family_dynamic_p4_test.go","private_family_persistent_p5.go","private_family_persistent_p5_test.go"} {
+  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_family_dynamic_p4.go","private_family_dynamic_p4_test.go","private_family_persistent_p5.go","private_family_persistent_p5_test.go","private_p6_family_buffers.go","private_p6_family_buffers_test.go","private_p6_sql_coordinator.go","private_p6_sql_security.go","private_p6_sql_ntfs.go","private_p6_sql_coverage.go","private_p6_sql_usn.go","private_p6_sql_other.go"} {
     path:=filepath.Join(root,"go/internal/recordingest",n)
     st,err:=os.Lstat(path)
     if err!=nil||!st.Mode().IsRegular() {fail(fmt.Errorf("missing staged private asset %s: %v",n,err))}
@@ -177,6 +204,6 @@ func main() {
     if err:=os.WriteFile(temp,[]byte(content),perms[path]);err!=nil {fail(err)}
     if err:=os.Rename(temp,path);err!=nil {fail(err)}
   }
-  fmt.Printf("FI FAMILY P3 W512 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true family_lanes=5 security_workers=runtime_verified credits=32 writer=original_H16 atomic=true\n",len(files),len(edits))
+  fmt.Printf("FI FAMILY P6 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true families=5 source_ledger=ordered writer=1 atomic=true\n",len(files),len(edits))
 }
 func fail(err error){ fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP:",err);os.Exit(1) }
