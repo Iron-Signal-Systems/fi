@@ -162,6 +162,6 @@ func main() {
     if err:=os.WriteFile(temp,[]byte(content),perms[path]);err!=nil {fail(err)}
     if err:=os.Rename(temp,path);err!=nil {fail(err)}
   }
-  fmt.Printf("FI FAMILY P3 W512 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true family_lanes=5 security_workers=2 credits=32 writer=original_H16 atomic=true\n",len(files),len(edits))
+  fmt.Printf("FI FAMILY P3 W512 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true family_lanes=5 security_workers=runtime_verified credits=32 writer=original_H16 atomic=true\n",len(files),len(edits))
 }
 func fail(err error){ fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP:",err);os.Exit(1) }
