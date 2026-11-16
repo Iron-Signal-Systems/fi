@@ -1,10 +1,11 @@
 # FI W512 private clone — per-worker signed-batch aggregate.
 # The SAME pinned file is smoke-tested in host preflight and used after replay.
-# sec and general are passed with -v, for validated 8/8, 16/8, or 8/16.
+# sec and general are passed with -v: accepted 8/8, 16/8, fixed 8/16,
+# or the clone-only adaptive reporting capacity 16/64 (80 worker slots).
 # No database or network writes.
 BEGIN {
     if(!((sec==8 && (general==8 || general==16)) ||
-         (sec==16 && general==8))) {
+         (sec==16 && (general==8 || general==64)))) {
         print "FI SWEEP REPORT STOP: invalid Security/general worker topology" > "/dev/stderr"
         exit 2
     }
