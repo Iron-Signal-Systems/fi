@@ -53,7 +53,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=31c55d0afef3dcecf4ee89b8b68ccf52e3c0d6d2
+sourcecommit=7c81f8f96f29bf834a29672832d1f5238d0918c7
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -206,8 +206,12 @@ report_fixture="$report_tmp/fixture.tsv"
 dynamic_awk="$report_tmp/private_family_dynamic_summary.awk"
 dynamic_fixture="$report_tmp/dynamic_fixture.tsv"
 dynamic_output="$report_tmp/dynamic_output.tsv"
+p5_report="$report_tmp/p5_window_report.awk"
+p5_fixture="$report_tmp/p5_fixture.txt"
+p5_output="$report_tmp/p5_output.tsv"
 report_clear(){
-    rm -f "$report_awk" "$report_fixture" "$dynamic_awk" "$dynamic_fixture" "$dynamic_output"
+    rm -f "$report_awk" "$report_fixture" "$dynamic_awk" "$dynamic_fixture" "$dynamic_output" \
+      "$p5_report" "$p5_fixture" "$p5_output"
     rmdir "$report_tmp" 2>/dev/null || :
 }
 trap report_clear 0
@@ -219,6 +223,29 @@ jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage show \
   "$sourcecommit:go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk" \
     > "$dynamic_awk" || fail 'pinned dynamic scale-out report unavailable'
 chmod 0600 "$dynamic_awk"
+jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage show \
+  "$sourcecommit:go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_persistent_p5_summary.awk" \
+  > "$p5_report" || fail 'pinned P5 window report unavailable'
+chmod 0600 "$p5_report"
+cat > "$p5_fixture" <<'P5_FIXTURE'
+FI P5 PERSISTENT WINDOW FAMILY window=1 family=0 spawned=16 scale_ups=14 peak_busy=16 max_queue=20 processed=499052 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=1 family=1 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=1 family=2 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=1 family=3 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=1 family=4 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=2 family=0 spawned=16 scale_ups=14 peak_busy=16 max_queue=20 processed=498382 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=2 family=1 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=2 family=2 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=2 family=3 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+FI P5 PERSISTENT WINDOW FAMILY window=2 family=4 spawned=2 scale_ups=0 peak_busy=0 max_queue=0 processed=0 complete=true
+P5_FIXTURE
+awk -v windows=2 -v first=1 -v records1=499052 -v records2=498382 \
+  -f "$p5_report" "$p5_fixture" > "$p5_output" ||
+    fail 'P5 pinned window-report smoke test failed'
+[ "$(wc -l < "$p5_output" | tr -d ' ')" = 11 ] &&
+grep -Fq "$(printf '1\tSecurity\t16\t14\t16\t20\t499052')" "$p5_output" ||
+    fail 'P5 window-report fixture row mismatch'
+printf 'FI P5 PERSISTENT REPORT PREFLIGHT PASS windows=2 families=5 signed_records=997434\n'
 cat > "$dynamic_fixture" <<'DYNAMIC_FIXTURE'
 FI FAMILY DYNAMIC LANE family=Security min=2 max=16 spawned=8 scale_ups=6 peak_busy=8 peak_pending=3 assigned=3 prepared=3 dispatched=3 complete=true
 FI FAMILY DYNAMIC LANE family=File min=2 max=16 spawned=2 scale_ups=0 peak_busy=1 peak_pending=1 assigned=1 prepared=1 dispatched=1 complete=true
@@ -610,6 +637,29 @@ awk -v batches="$prepbatches" -f "$dynamic_awk" \
     fail 'P4 dynamic spawn/queue/record accounting invalid'
 printf 'FI W512 P5 DYNAMIC BATCH ACCOUNTING PASS batches=%s families=5 min=2 max=16 slots=80\n' "$prepbatches" |
     tee -a "$out/SUMMARY.txt"
+# The five preparation pools persist across signed batches, but MUST
+# be disposed at the SQL transaction boundary of each W512 typed window.
+grep '^FI P5 PERSISTENT WINDOW START ' "$log" > "$out/$name/P5_WINDOW_START.txt" ||
+    fail 'P5 typed-window pool start receipts missing'
+grep '^FI P5 PERSISTENT WINDOW STOP ' "$log" > "$out/$name/P5_WINDOW_STOP.txt" ||
+    fail 'P5 typed-window pool worker join receipts missing'
+grep '^FI P5 PERSISTENT WINDOW FAMILY ' "$log" > "$out/$name/P5_WINDOW_LANES.txt" ||
+    fail 'P5 per-window family pool breakdown missing'
+[ "$(wc -l < "$out/$name/P5_WINDOW_START.txt" | tr -d ' ')" = 2 ] &&
+[ "$(wc -l < "$out/$name/P5_WINDOW_STOP.txt" | tr -d ' ')" = 2 ] &&
+[ "$(wc -l < "$out/$name/P5_WINDOW_LANES.txt" | tr -d ' ')" = 10 ] ||
+    fail 'P5 requires exactly two pool lifetimes, ten per-window family proofs'
+for window in 1 2; do
+    grep -Fqx "FI P5 PERSISTENT WINDOW STOP window=$window families=5 joined=true" \
+        "$out/$name/P5_WINDOW_STOP.txt" ||
+        fail "P5 pool workers did not cleanly join at window $window"
+done
+awk -v windows=2 -v first=1 -v records1=499052 -v records2=498382 \
+    -f "$p5_report" "$out/$name/P5_WINDOW_LANES.txt" \
+    > "$out/$name/P5_WINDOW_LANES.tsv" ||
+    fail 'P5 window family/worker reuse and signed-row accounting failed'
+printf 'FI W512 P5 PERSISTENT WINDOWS PASS windows=2 signed_records=997434 persistent_across_batches=true window_pools_closed=true\n' |
+    tee -a "$out/SUMMARY.txt"
 # Lane/worker receipts are printed only AFTER every prep worker has joined.
 # Every signed batch must report five lanes (including zero-work lanes), all
 # 8+Security workers individually, and complete source/prepare accounting.
@@ -742,6 +792,8 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
   "$name/FAMILY_TOTALS.txt" "$name/FAMILY_LANES.txt" "$name/FAMILY_WORKERS.txt" \
   "$name/FAMILY_DYNAMIC.txt" "$name/FAMILY_DYNAMIC_SUMMARY.tsv" \
+  "$name/P5_WINDOW_START.txt" "$name/P5_WINDOW_STOP.txt" \
+  "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
   "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
   "$name/P5_WINDOW_START.txt" "$name/P5_WINDOW_STOP.txt" \
   "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
