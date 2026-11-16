@@ -13,6 +13,8 @@ import (
     "errors"
     "fmt"
     "os"
+    "path/filepath"
+    "strings"
     "sync"
     "time"
 
@@ -45,8 +47,14 @@ func privateP7FiveWriterSelected()bool{
         os.Getenv("FI_W512_P6_FAMILY_SQL")=="1" &&
         os.Getenv("FI_W512_P5_PERSISTENT")=="1"
 }
-func privateP7ConnectVerified(ctx context.Context,dsn string)(*pgx.Conn,int32,error){
-    if !privateP7FiveWriterSelected()||dsn==""||ctx==nil {
+func privateP7ConnectVerified(ctx context.Context,dsn,expectedDataDir string)(*pgx.Conn,int32,error){
+    // A matching role/database name alone is NOT enough: the authoritative
+    // SoR can also be named fi and use fi_ingest. Require an exact,
+    // caller-pinned clone data_directory on every one of six backends.
+    if !privateP7FiveWriterSelected()||dsn==""||ctx==nil||
+        expectedDataDir=="" || !filepath.IsAbs(expectedDataDir) ||
+        (!strings.Contains(expectedDataDir,"fi-window-bench-w512-") &&
+         !strings.Contains(expectedDataDir,"fi-w512-family-clone-")) {
         return nil,0,errors.New("FI five-writer: P7 clone-only feature gates not enabled")
     }
     conn,err:=pgx.Connect(ctx,dsn)
@@ -54,13 +62,21 @@ func privateP7ConnectVerified(ctx context.Context,dsn string)(*pgx.Conn,int32,er
     var who,db string
     var inRecovery bool
     var pid int32
-    err=conn.QueryRow(ctx,
-        "SELECT current_user,current_database(),pg_is_in_recovery(),pg_backend_pid()").
-        Scan(&who,&db,&inRecovery,&pid)
-    if err!=nil||who!="fi_ingest"||db!="fi"||inRecovery||pid<=0{
+    var actualDataDir string
+    var fsyncOn,commitOn,fullPageOn bool
+    err=conn.QueryRow(ctx,`SELECT current_user,current_database(),
+        pg_is_in_recovery(),pg_backend_pid(),current_setting('data_directory'),
+        current_setting('fsync')='on',
+        current_setting('synchronous_commit')='on',
+        current_setting('full_page_writes')='on'`).
+        Scan(&who,&db,&inRecovery,&pid,&actualDataDir,
+            &fsyncOn,&commitOn,&fullPageOn)
+    if err!=nil||who!="fi_ingest"||db!="fi"||inRecovery||pid<=0||
+        filepath.Clean(actualDataDir)!=filepath.Clean(expectedDataDir)||
+        !fsyncOn||!commitOn||!fullPageOn{
         _=conn.Close(ctx)
-        return nil,0,fmt.Errorf("FI five-writer: unsupported private SQL identity role=%q db=%q replica=%t pid=%d: %w",
-            who,db,inRecovery,pid,err)
+        return nil,0,fmt.Errorf("FI five-writer: private PostgreSQL identity/durability mismatch role=%q db=%q data=%q expected=%q replica=%t fsync=%t commit=%t fullpage=%t pid=%d: %v",
+            who,db,actualDataDir,expectedDataDir,inRecovery,fsyncOn,commitOn,fullPageOn,pid,err)
     }
     return conn,pid,nil
 }
@@ -151,11 +167,11 @@ func(w *privateP7PGFamily) Close(ctx context.Context)error{
 // parent-ledger connection (six total). Backend PID uniqueness is verified;
 // the coordinator is not secretly multiplexing the five family SQL writers.
 func newPrivateP7PostgresFiveWriter(ctx context.Context,dsn,sourceID,
-    fieldPartition string)(*privateP7FiveWriter,error){
+    fieldPartition,expectedDataDir string)(*privateP7FiveWriter,error){
     if sourceID==""||!privateP7FiveWriterSelected(){
         return nil,errors.New("FI P7: source ID or five-connection feature gate missing")
     }
-    ledgerConn,ledgerPID,err:=privateP7ConnectVerified(ctx,dsn)
+    ledgerConn,ledgerPID,err:=privateP7ConnectVerified(ctx,dsn,expectedDataDir)
     if err!=nil{return nil,err}
     ledger:=&privateP7PGSource{conn:ledgerConn,sourceID:sourceID,lastBatch:-1}
     var mu sync.Mutex
@@ -163,7 +179,7 @@ func newPrivateP7PostgresFiveWriter(ctx context.Context,dsn,sourceID,
     factory:=func(ctx context.Context,f privateP6Family)(
         privateP7FamilyWriter,error,
     ){
-        c,pid,err:=privateP7ConnectVerified(ctx,dsn)
+        c,pid,err:=privateP7ConnectVerified(ctx,dsn,expectedDataDir)
         if err!=nil{return nil,err}
         mu.Lock()
         duplicate:=seen[pid]
