@@ -47,24 +47,23 @@ func privateP7FiveWriterSelected()bool{
         os.Getenv("FI_W512_P6_FAMILY_SQL")=="1" &&
         os.Getenv("FI_W512_P5_PERSISTENT")=="1"
 }
-func privateP7ConnectVerified(ctx context.Context,dsn,expectedDataDir string)(*pgx.Conn,int32,error){
-    // A matching role/database name alone is NOT enough: the authoritative
-    // SoR can also be named fi and use fi_ingest. Require an exact,
-    // caller-pinned clone data_directory on every one of six backends.
-    if !privateP7FiveWriterSelected()||dsn==""||ctx==nil||
+// Verify EVERY connection, including the control/marker connection,
+// against an exact caller-pinned private clone data directory. Matching
+// role/database alone is unsafe because authoritative FI uses fi_ingest/fi.
+func privateP7VerifyCloneConnection(ctx context.Context,conn *pgx.Conn,
+    expectedDataDir string)(int32,error){
+    if !privateP7FiveWriterSelected()||ctx==nil||conn==nil||
         expectedDataDir=="" || !filepath.IsAbs(expectedDataDir) ||
         (!strings.Contains(expectedDataDir,"fi-window-bench-w512-") &&
-         !strings.Contains(expectedDataDir,"fi-w512-family-clone-")) {
-        return nil,0,errors.New("FI five-writer: P7 clone-only feature gates not enabled")
+         !strings.Contains(expectedDataDir,"fi-w512-family-clone-")){
+        return 0,errors.New("FI five-writer: clone SQL identity/gates missing")
     }
-    conn,err:=pgx.Connect(ctx,dsn)
-    if err!=nil{return nil,0,fmt.Errorf("FI five-writer: clone connection: %w",err)}
     var who,db string
     var inRecovery bool
     var pid int32
     var actualDataDir string
     var fsyncOn,commitOn,fullPageOn bool
-    err=conn.QueryRow(ctx,`SELECT current_user,current_database(),
+    err:=conn.QueryRow(ctx,`SELECT current_user,current_database(),
         pg_is_in_recovery(),pg_backend_pid(),current_setting('data_directory'),
         current_setting('fsync')='on',
         current_setting('synchronous_commit')='on',
@@ -74,10 +73,17 @@ func privateP7ConnectVerified(ctx context.Context,dsn,expectedDataDir string)(*p
     if err!=nil||who!="fi_ingest"||db!="fi"||inRecovery||pid<=0||
         filepath.Clean(actualDataDir)!=filepath.Clean(expectedDataDir)||
         !fsyncOn||!commitOn||!fullPageOn{
-        _=conn.Close(ctx)
-        return nil,0,fmt.Errorf("FI five-writer: private PostgreSQL identity/durability mismatch role=%q db=%q data=%q expected=%q replica=%t fsync=%t commit=%t fullpage=%t pid=%d: %v",
+        return 0,fmt.Errorf("FI five-writer: non-clone PostgreSQL target or weak durability role=%q db=%q data=%q expected=%q replica=%t fsync=%t commit=%t fullpage=%t pid=%d: %v",
             who,db,actualDataDir,expectedDataDir,inRecovery,fsyncOn,commitOn,fullPageOn,pid,err)
     }
+    return pid,nil
+}
+func privateP7ConnectVerified(ctx context.Context,dsn,expectedDataDir string)(*pgx.Conn,int32,error){
+    if ctx==nil||dsn==""{return nil,0,errors.New("FI P7: SQL DSN missing")}
+    conn,err:=pgx.Connect(ctx,dsn)
+    if err!=nil{return nil,0,fmt.Errorf("FI five-writer: clone connection: %w",err)}
+    pid,err:=privateP7VerifyCloneConnection(ctx,conn,expectedDataDir)
+    if err!=nil{_ = conn.Close(ctx);return nil,0,err}
     return conn,pid,nil
 }
 
