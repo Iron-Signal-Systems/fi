@@ -106,8 +106,8 @@ func main() {
     },
     {
       "go/internal/recordingest/private_parallel_preparation.go",
-      "    <-s.done\n}",
-      "    <-s.done\n    if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}\n}",
+      "<-s.done",
+      "<-s.done\n    if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}",
     },
   }
   files:=map[string]string{}
