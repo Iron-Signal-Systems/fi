@@ -13,8 +13,8 @@ stamp=$2
 [ "$stamp" = 20261115T153532Z ] || fail 'pair run requires the pinned accepted W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 branch=experiment/fi-security-sweep-8-16-w512-20261116
-sourcepin=351043ee55a1876823fbe0370f7c126d8c96bc49
-runnerpin=6f9dd33abdfdbd346bd2ba6d798e50dd50296046
+sourcepin=c411459686fa5a84194b5540cb68693f10f2db8a
+runnerpin=73e47e46867b3b4e9ae8ae9f1f7adb039f0947a1
 rpath=go/cmd/fi-backlog-recover/run_private_family_w512_c220_p3_host.sh
 [ -d "/fast/jails/roots/fi-dev" ] || fail 'fi-dev jail root missing'
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
