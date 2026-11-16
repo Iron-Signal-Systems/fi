@@ -11,6 +11,8 @@ import (
     "context"
     "errors"
     "fmt"
+    "os"
+    "strconv"
     "sync"
     "time"
 
@@ -21,8 +23,94 @@ import (
 const (
     privateFamilyP3Credits = 32
     privateFamilyP3Bytes int64 = 256 << 20
-    privateFamilyP3SecurityWorkers = 2
+    privateFamilyP3SecurityWorkers = 2 // accepted P3 default, unchanged when sweep is unset
+    privateFamilyP3GeneralWorkers = 4 // one each in the accepted P3 configuration
 )
+
+// The W512 sweep changes only clone-local worker topology via a strict
+// environment gate. Unset means the original accepted Family P3 topology.
+// 8 general workers are distributed File=2, Coverage=2, USN=2, Other=2.
+// Security=8 or Security=16, 32 in-flight credits in both experiments.
+type privateFamilyP3Topology struct {
+    Security int
+    General int
+    Counts [spoolDispatchFamilyCount]int
+    Sweep bool
+}
+
+func privateFamilyP3TopologyFromEnvironment()(privateFamilyP3Topology,error){
+    config:=privateFamilyP3Topology{Security:privateFamilyP3SecurityWorkers,
+        General:privateFamilyP3GeneralWorkers}
+    for i:=range config.Counts {config.Counts[i]=1}
+    config.Counts[spoolDispatchSecurity]=privateFamilyP3SecurityWorkers
+    rawSecurity:=os.Getenv("FI_W512_P3_SECURITY_WORKERS")
+    rawGeneral:=os.Getenv("FI_W512_P3_GENERAL_WORKERS")
+    if rawSecurity=="" && rawGeneral=="" {return config,nil}
+    sec,err:=strconv.Atoi(rawSecurity)
+    if err!=nil || (sec!=8 && sec!=16) {
+        return config,errors.New("FI W512 P3 sweep: Security workers must be exactly 8 or 16")
+    }
+    general,err:=strconv.Atoi(rawGeneral)
+    if err!=nil || general!=8 {
+        return config,errors.New("FI W512 P3 sweep: general workers must be exactly 8")
+    }
+    config.Security,config.General,config.Sweep=sec,general,true
+    config.Counts[spoolDispatchSecurity]=sec
+    for _,f:=range []spoolDispatchFamily{spoolDispatchFile,spoolDispatchCoverage,
+        spoolDispatchUSN,spoolDispatchOther} {config.Counts[f]=2}
+    return config,nil
+}
+
+type privateFamilyP3WorkerStat struct {
+    Records uint64
+    Bytes uint64
+    Prepare time.Duration
+    ReceiveWait time.Duration
+    OutputWait time.Duration
+}
+type privateFamilyP3LaneStat struct {
+    Workers int
+    WorkersStats []privateFamilyP3WorkerStat
+    DispatchCount uint64
+    DispatchBytes uint64
+    PeakDepth int
+}
+type privateFamilyP3Telemetry struct {
+    Topology privateFamilyP3Topology
+    Lanes [spoolDispatchFamilyCount]privateFamilyP3LaneStat
+    InputRecords uint64
+    InputBytes uint64
+    mu sync.Mutex // reader-only peak queue accounting; workers use isolated per-worker slots
+}
+func (m *privateFamilyP3Telemetry) print(complete bool) {
+    if m==nil{return}
+    labels:=[spoolDispatchFamilyCount]string{"Security","File","Coverage","USNDependency","Other"}
+    var total uint64
+    for i:=range m.Lanes {
+        lane:=&m.Lanes[i]
+        var prepared,bytes uint64
+        var active int
+        var prepareNS,receiveNS,outputNS int64
+        for wi,stat:=range lane.WorkersStats {
+            if stat.Records!=0 {active++}
+            prepared+=stat.Records
+            bytes+=stat.Bytes
+            prepareNS+=int64(stat.Prepare)
+            receiveNS+=int64(stat.ReceiveWait)
+            outputNS+=int64(stat.OutputWait)
+            fmt.Printf("FI FAMILY P3 WORKER family=%s worker=%d records=%d bytes=%d prepare_ns=%d input_wait_ns=%d output_wait_ns=%d complete=%t\n",
+                labels[i],wi,stat.Records,stat.Bytes,stat.Prepare.Nanoseconds(),
+                stat.ReceiveWait.Nanoseconds(),stat.OutputWait.Nanoseconds(),complete)
+        }
+        total+=prepared
+        fmt.Printf("FI FAMILY P3 LANE family=%s workers=%d active=%d dispatched=%d prepared=%d bytes=%d prepare_ns=%d input_wait_ns=%d output_wait_ns=%d max_queue_depth=%d complete=%t\n",
+            labels[i],lane.Workers,active,lane.DispatchCount,prepared,bytes,
+            prepareNS,receiveNS,outputNS,lane.PeakDepth,complete)
+    }
+    fmt.Printf("FI FAMILY P3 TOTAL input_records=%d input_bytes=%d prepared_records=%d complete=%t security_workers=%d general_workers=%d inflight=32 sql_writers=1\n",
+        m.InputRecords,m.InputBytes,total,complete,m.Topology.Security,m.Topology.General)
+}
+
 
 // This admission controller bounds the *prepared-but-not-consumed* signed
 // input bytes in addition to the global 32-record credit budget. It does not
@@ -83,7 +171,7 @@ func (b *privateFamilyP3Budget) stats() (used,peak int64) {
 }
 
 // Each record family has an independent work queue, with the Security lane
-// using two workers. Workers are pure: no PostgreSQL calls, transactions,
+// receiving 2 (control), 8, or 16 workers. Workers are pure: no PostgreSQL calls, transactions,
 // writes, or source-order decisions. The ordered H16 writer still owns all
 // SQL and the atomic W512 commit. The original signed bytes are copied once
 // before the block reader reuses its storage.
@@ -93,22 +181,32 @@ func newPrivateFamilyP3PreparedStream(
     if parent==nil || reader==nil || prepare==nil {
         return nil,errors.New("FI family P3: reader, context and preparer required")
     }
-    fmt.Printf("FI FAMILY P3 SCHEDULER lanes=5 workers=6 security_workers=2 credits=32 max_pending_bytes=%d sql_writers=1 atomic_window=true\n",privateFamilyP3Bytes)
+    config,err:=privateFamilyP3TopologyFromEnvironment()
+    if err!=nil{return nil,err}
+    workerCount:=config.Security+config.General
+    fmt.Printf("FI FAMILY P3 SCHEDULER lanes=5 workers=%d security_workers=%d general_workers=%d file_workers=%d coverage_workers=%d usn_workers=%d other_workers=%d credits=32 max_pending_bytes=%d sql_writers=1 atomic_window=true\n",
+        workerCount,config.Security,config.General,config.Counts[spoolDispatchFile],
+        config.Counts[spoolDispatchCoverage],config.Counts[spoolDispatchUSN],
+        config.Counts[spoolDispatchOther],privateFamilyP3Bytes)
     ctx,cancel:=context.WithCancel(parent)
     var lanes [spoolDispatchFamilyCount]chan privateParallelLine
     for i:=range lanes {lanes[i]=make(chan privateParallelLine,privateFamilyP3Credits)}
     output:=make(chan privateParallelLine,privateFamilyP3Credits)
     budget:=newPrivateFamilyP3Budget(privateFamilyP3Bytes)
+    telemetry:=&privateFamilyP3Telemetry{Topology:config}
+    for i:=range telemetry.Lanes {
+        telemetry.Lanes[i].Workers=config.Counts[i]
+        telemetry.Lanes[i].WorkersStats=make([]privateFamilyP3WorkerStat,config.Counts[i])
+    }
     s:=&privateParallelPreparedStream{
         cancel:cancel,done:make(chan struct{}),results:output,
         credits:make(chan struct{},privateFamilyP3Credits),
         nextOrdinal:1,reorder:make(map[int64]privateParallelLine),
-        privateFamilyBudget:budget,
+        privateFamilyBudget:budget,privateFamilyP3Telemetry:telemetry,
     }
     for i:=0;i<privateFamilyP3Credits;i++ {s.credits<-struct{}{}}
     var workers sync.WaitGroup
-    count:=int(spoolDispatchFamilyCount)+privateFamilyP3SecurityWorkers-1
-    workers.Add(count+1)
+    workers.Add(workerCount+1)
 
     go func(){
         defer workers.Done()
@@ -128,9 +226,19 @@ func newPrivateFamilyP3PreparedStream(
                 ordinal++
                 row:=privateParallelLine{ordinal:ordinal,raw:append([]byte(nil),raw...),
                     headerKind:kind,headerFamily:family}
+                // Only this reader changes per-lane dispatch counts/high-water.
+                lane:=&telemetry.Lanes[family]
+                lane.DispatchCount++
+                lane.DispatchBytes+=uint64(len(raw))
+                telemetry.InputRecords++
+                telemetry.InputBytes+=uint64(len(raw))
                 select {
                 case <-ctx.Done():budget.release(int64(len(raw)));return ctx.Err()
-                case lanes[family]<-row:return nil
+                case lanes[family]<-row:
+                    // len includes queued but not currently processing records.
+                    depth:=len(lanes[family])
+                    if depth>lane.PeakDepth {lane.PeakDepth=depth}
+                    return nil
                 }
             })
         // Next reads this only after worker completion/output channel close.
@@ -157,29 +265,36 @@ func newPrivateFamilyP3PreparedStream(
 
     for family:=range lanes {
         lane:=spoolDispatchFamily(family)
-        copies:=1
-        if lane==spoolDispatchSecurity {copies=privateFamilyP3SecurityWorkers}
+        copies:=config.Counts[family]
         for i:=0;i<copies;i++ {
-            go func(f spoolDispatchFamily){
+            go func(f spoolDispatchFamily,workerIndex int){
                 defer workers.Done()
+                stat:=&telemetry.Lanes[f].WorkersStats[workerIndex]
                 for {
                     var line privateParallelLine
                     var ok bool
+                    waitStart:=time.Now()
                     select{
                     case <-ctx.Done():return
                     case line,ok=<-lanes[f]:
                     }
+                    stat.ReceiveWait+=time.Since(waitStart)
                     if !ok{return}
                     started:=time.Now()
                     line.source,line.security,line.selected,line.prepareErr=
                         prepare(line.raw,line.headerKind,f)
                     line.prepareTime=time.Since(started)
+                    stat.Prepare+=line.prepareTime
+                    stat.Records++
+                    stat.Bytes+=uint64(len(line.raw))
+                    outputStart:=time.Now()
                     select{
                     case <-ctx.Done():return
                     case output<-line:
+                        stat.OutputWait+=time.Since(outputStart)
                     }
                 }
-            }(lane)
+            }(lane,i)
         }
     }
     go func(){workers.Wait();close(output);close(s.done)}()
