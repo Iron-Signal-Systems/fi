@@ -52,7 +52,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=37ca67532a4713633af41b0c92643b6c5ede4f10
+sourcecommit=d3f4de42880d91cefdb96e2a1149fce049c5bcdb
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -157,12 +157,13 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_preparation_p3_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_dynamic_p4.go \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_dynamic_p4_test.go \
+  go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk \
   go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P4 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=9 clone_only=true min=2 max=16"
+echo "FI FAMILY P4 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=10 clone_only=true min=2 max=16"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -198,8 +199,11 @@ report_tmp=$(mktemp -d /var/tmp/fi-w512-family-report.XXXXXX) ||
     fail 'cannot allocate private AWK preflight directory'
 report_awk="$report_tmp/private_family_worker_summary.awk"
 report_fixture="$report_tmp/fixture.tsv"
+dynamic_awk="$report_tmp/private_family_dynamic_summary.awk"
+dynamic_fixture="$report_tmp/dynamic_fixture.tsv"
+dynamic_output="$report_tmp/dynamic_output.tsv"
 report_clear(){
-    rm -f "$report_awk" "$report_fixture"
+    rm -f "$report_awk" "$report_fixture" "$dynamic_awk" "$dynamic_fixture" "$dynamic_output"
     rmdir "$report_tmp" 2>/dev/null || :
 }
 trap report_clear 0
@@ -207,6 +211,23 @@ jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage show \
   "$sourcecommit:go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_worker_summary.awk" \
     > "$report_awk" || fail 'pinned family worker report unavailable'
 chmod 0600 "$report_awk"
+jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage show \
+  "$sourcecommit:go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk" \
+    > "$dynamic_awk" || fail 'pinned dynamic scale-out report unavailable'
+chmod 0600 "$dynamic_awk"
+cat > "$dynamic_fixture" <<'DYNAMIC_FIXTURE'
+FI FAMILY DYNAMIC LANE family=Security min=2 max=16 spawned=8 scale_ups=6 peak_busy=8 peak_pending=3 assigned=3 prepared=3 dispatched=3 complete=true
+FI FAMILY DYNAMIC LANE family=File min=2 max=16 spawned=2 scale_ups=0 peak_busy=1 peak_pending=1 assigned=1 prepared=1 dispatched=1 complete=true
+FI FAMILY DYNAMIC LANE family=Coverage min=2 max=16 spawned=2 scale_ups=0 peak_busy=0 peak_pending=0 assigned=0 prepared=0 dispatched=0 complete=true
+FI FAMILY DYNAMIC LANE family=USNDependency min=2 max=16 spawned=2 scale_ups=0 peak_busy=0 peak_pending=0 assigned=0 prepared=0 dispatched=0 complete=true
+FI FAMILY DYNAMIC LANE family=Other min=2 max=16 spawned=2 scale_ups=0 peak_busy=0 peak_pending=0 assigned=0 prepared=0 dispatched=0 complete=true
+DYNAMIC_FIXTURE
+awk -v batches=1 -f "$dynamic_awk" "$dynamic_fixture" > "$dynamic_output" ||
+    fail 'pinned P4 dynamic lane reporter fixture failed'
+[ "$(wc -l < "$dynamic_output" | tr -d ' ')" = 6 ] &&
+grep -Fq "$(printf 'Security\t1\t3\t8\t8\t3\t6')" "$dynamic_output" ||
+    fail 'P4 dynamic lane reporter fixture values incorrect'
+printf 'FI FAMILY P4 DYNAMIC REPORT PREFLIGHT PASS families=5 zero_work=retained min=2 max=16\n'
 awk -v sec="$security_workers" -v general="$general_workers" -f "$report_awk" > "$report_fixture" <<'FIXTURE' ||
     fail 'pinned per-worker AWK report compile/smoke test failed'
 FI FAMILY P3 WORKER family=Security worker=0 records=3 bytes=300 prepare_ns=500000000 input_wait_ns=2000000000 output_wait_ns=0 complete=true
@@ -580,28 +601,8 @@ grep '^FI FAMILY DYNAMIC LANE ' "$log" > "$out/$name/FAMILY_DYNAMIC.txt" ||
     fail 'P4 lane scale-out receipts missing'
 [ "$(wc -l < "$out/$name/FAMILY_DYNAMIC.txt" | tr -d ' ')" = "$((prepbatches*5))" ] ||
     fail 'P4 requires five lane receipts for each signed batch'
-awk '/^FI FAMILY DYNAMIC LANE /{
-    delete f
-    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
-    k=f["family"]
-    if(k!="Security" && k!="File" && k!="Coverage" &&
-       k!="USNDependency" && k!="Other")bad=1
-    if(f["complete"]!="true" || f["min"]!=2 || f["max"]!=16 ||
-       f["spawned"]<2 || f["spawned"]>16 ||
-       f["peak_busy"]<0 || f["peak_busy"]>f["spawned"] ||
-       f["scale_ups"]!=f["spawned"]-2 ||
-       f["assigned"]!=f["prepared"] || f["assigned"]!=f["dispatched"] ||
-       f["peak_pending"]<0 || f["peak_pending"]>32)bad=1
-    total[k]+=f["assigned"]; if(f["spawned"]>peak[k])peak[k]=f["spawned"]
-    count[k]++
-}END {
-    if(bad || count["Security"]!=431 || count["File"]!=431 ||
-       count["Coverage"]!=431 || count["USNDependency"]!=431 ||
-       count["Other"]!=431)exit 1
-    print "family\tprepared_records\tpeak_spawned_workers"
-    split("Security File Coverage USNDependency Other",a," ")
-    for(i=1;i<=5;i++){k=a[i];printf "%s\t%.0f\t%d\n",k,total[k],peak[k]}
-}' "$out/$name/FAMILY_DYNAMIC.txt" > "$out/$name/FAMILY_DYNAMIC_SUMMARY.tsv" ||
+awk -v batches="$prepbatches" -f "$dynamic_awk" \
+    "$out/$name/FAMILY_DYNAMIC.txt" > "$out/$name/FAMILY_DYNAMIC_SUMMARY.tsv" ||
     fail 'P4 dynamic spawn/queue/record accounting invalid'
 printf 'FI W512 P4 DYNAMIC LANES PASS batches=%s families=5 min=2 max=16 slots=80\n' "$prepbatches" |
     tee -a "$out/SUMMARY.txt"
