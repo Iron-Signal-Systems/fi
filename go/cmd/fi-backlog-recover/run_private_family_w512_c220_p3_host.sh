@@ -55,7 +55,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=6a839d8c71ade909a4d9d19c5d94fe824cb40d46
+sourcecommit=adab0afdd9648f8d26832a19512e4b78717311b6
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -164,6 +164,7 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_family_buffers.go \
   go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_family_buffers_test.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_file_proof_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_coordinator.go \
   go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_security.go \
   go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_ntfs.go \
@@ -177,7 +178,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=21 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=22 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -360,7 +361,7 @@ for item in private_family_preparation_p3.go private_family_preparation_p3_test.
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p3/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
-for item in private_p6_family_buffers.go private_p6_family_buffers_test.go private_p6_sql_coordinator.go private_p6_sql_security.go private_p6_sql_ntfs.go private_p6_sql_coverage.go private_p6_sql_usn.go private_p6_sql_other.go; do
+for item in private_p6_family_buffers.go private_p6_family_buffers_test.go private_p6_file_proof_test.go private_p6_sql_coordinator.go private_p6_sql_security.go private_p6_sql_ntfs.go private_p6_sql_coverage.go private_p6_sql_usn.go private_p6_sql_other.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p6/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -621,6 +622,34 @@ unvalidated_fks=$(sql "SELECT count(*) FROM pg_constraint WHERE connamespace='fi
 [ "$unvalidated_fks" = 0 ] || fail "P6 foreign keys are not fully validated=$unvalidated_fks"
 printf 'FI P6 FULL RELATIONAL GRAPH PASS supported_kinds=13 missing_typed=0 unvalidated_fks=0\n' |
   tee -a "$out/SUMMARY.txt"
+# Preserve original C220 optimized FileObservation source proof and bulk
+# validated-source reuse. Unlike the first P6 failure, these receipts come
+# from the original seeded validator AFTER actual typed SQL writes.
+grep '^FI FILE VALIDATION WINDOW index=' "$log" > "$out/$name/P6_FILE_VALIDATION.txt" ||
+    fail 'original optimized FileObservation validation receipts missing'
+[ "$(wc -l < "$out/$name/P6_FILE_VALIDATION.txt" | tr -d ' ')" = 2 ] ||
+    fail 'original FileObservation validation receipts missing for a W512 window'
+awk '
+/^FI FILE VALIDATION WINDOW / {
+    delete kv
+    for(i=1;i<=NF;i++){split($i,a,"=");kv[a[1]]=a[2]}
+    win=kv["index"]+0
+    if(win<1||win>2||seen[win]++||
+       kv["source_validated"]<1||
+       kv["bulk_reused"]!=kv["source_validated"]||
+       kv["bulk_validated"]<0) bad=1
+    source[win]=kv["source_validated"]+0
+    reused[win]=kv["bulk_reused"]+0
+}
+END {
+    if(bad||seen[1]!=1||seen[2]!=1||
+       source[1]!=52519||source[2]!=52311||
+       reused[1]!=52519||reused[2]!=52311||
+       source[1]+source[2]!=104830)exit 1
+}' "$out/$name/P6_FILE_VALIDATION.txt" ||
+    fail 'P6 signed NTFS validation proof missing, reused more than validated, or count differs'
+printf 'FI P6 VERIFIED FILE SOURCE AND BULK REUSE PASS windows=2 validated=104830 reused=104830 signed_kind=FileObservation\n' |
+    tee -a "$out/SUMMARY.txt"
 sql "SELECT window_index::text || '|' || committed_records::text || '|' ||
     encode(descriptor_sha256,'hex')
     FROM fi_recovery.typed_window ORDER BY window_index" \
@@ -872,6 +901,7 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
   "$name/P5_WINDOW_START.txt" "$name/P5_WINDOW_STOP.txt" \
   "$name/P6_SOURCE_LEDGER.txt" "$name/P6_FAMILY_HANDOFFS.txt" "$name/P6_WINDOWS.txt" \
+  "$name/P6_FILE_VALIDATION.txt" \
   "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
