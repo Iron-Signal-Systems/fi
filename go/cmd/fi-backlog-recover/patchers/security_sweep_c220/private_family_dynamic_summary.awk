@@ -1,5 +1,7 @@
 # FI C220 P4 private dynamic per-lane scaling report.
 # Pinned AWK source is exercised with synthetic receipts BEFORE PostgreSQL.
+# In P5, scale_ups is the *new spawns in that batch* and spawned is the
+# persistent pool size at batch completion; do not require equality.
 # Input is all "FI FAMILY DYNAMIC LANE" receipts.
 # Required -v batches=1 (preflight) or batches=431 (two-window).
 BEGIN {
@@ -21,7 +23,8 @@ BEGIN {
        fields["min"]!=2 || fields["max"]!=16 ||
        fields["spawned"]<2 || fields["spawned"]>16 ||
        fields["peak_busy"]<0 || fields["peak_busy"]>fields["spawned"] ||
-       fields["scale_ups"]!=fields["spawned"]-2 ||
+       fields["scale_ups"]<0 ||
+       fields["scale_ups"]>fields["spawned"]-2 ||
        fields["peak_pending"]<0 || fields["peak_pending"]>32 ||
        fields["assigned"]!=fields["prepared"] ||
        fields["assigned"]!=fields["dispatched"])bad=1
