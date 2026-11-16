@@ -39,7 +39,13 @@ func privateP6ValidFileProofFixture(t *testing.T) SourceRecord {
     const scope="p6-file-proof-scope"
     const rootPath=`C:\FI-P6-Proof`
     const volumeGUID=`\\?\Volume{12345678-1234-1234-1234-123456789abc}\`
-    now:=time.Date(2026,11,16,12,0,0,0,time.UTC).Format(time.RFC3339Nano)
+    // FI source uses exact UTC with NINE fractional digits even at .000000000.
+    // time.RFC3339Nano intentionally trims zeros and is not FI canonical.
+    now:=time.Date(2026,11,16,12,0,0,0,time.UTC).
+        Format("2006-01-02T15:04:05.000000000Z")
+    if err:=records.ValidateObservedAt(now);err!=nil {
+        t.Fatalf("FI P6 fixture timestamp is not canonical: %v",err)
+    }
     volume:=records.VolumeIdentity{
         MethodVersion:ntfs.IdentityMethodVersion,
         VolumeGUID:volumeGUID,VolumeSerial:"123456789",
