@@ -160,8 +160,25 @@ func (l *privateP5Lane) idleWorker() int {
     return -1
 }
 
+// Process completed tasks BEFORE deciding to scale up. Otherwise a
+// buffered worker-completion notification can cause needless goroutine
+// creation while an existing worker is actually idle.
+func (l *privateP5Lane) drainCompletions(){
+    for {
+        select {
+        case id:=<-l.done:
+            if id<0 || id>=l.live || !l.busy[id] {
+                panic("FI P5: invalid/duplicate worker completion")
+            }
+            l.busy[id]=false
+        default:return
+        }
+    }
+}
+
 func (l *privateP5Lane) flushPending() {
     for len(l.pending)>0 {
+        l.drainCompletions()
         task:=l.pending[0]
         if task.stream.ctx.Err()!=nil {
             l.pending[0]=nil
