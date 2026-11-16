@@ -47,7 +47,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=c411459686fa5a84194b5540cb68693f10f2db8a
+sourcecommit=e3a7e6e88b87194929bd82f79c03d04fc5c09edb
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -184,6 +184,44 @@ HF_GO_SYNTAX
 echo 'FI FAMILY P3 PATCHER COMPILE PREFLIGHT PASS pinned=true source_tree_unchanged=true'
 echo 'FI FAMILY P3 DISPATCH TEST PREFLIGHT PASS fixture=present standalone_tests=passed'
 echo 'FI FAMILY P3 ORIGINAL SOURCE ANCHOR AUDIT PASS seed_unchanged=true'
+# Validate the EXACT report program under this source commit BEFORE
+# repeating an expensive W512 replay. Also prevents zero-activity families
+# from disappearing in the final comparison.
+report_tmp=$(mktemp -d /var/tmp/fi-w512-family-report.XXXXXX) ||
+    fail 'cannot allocate private AWK preflight directory'
+report_awk="$report_tmp/private_family_worker_summary.awk"
+report_fixture="$report_tmp/fixture.tsv"
+report_clear(){
+    rm -f "$report_awk" "$report_fixture"
+    rmdir "$report_tmp" 2>/dev/null || :
+}
+trap report_clear 0
+jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage show \
+  "$sourcecommit:go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_worker_summary.awk" \
+    > "$report_awk" || fail 'pinned family worker report unavailable'
+chmod 0600 "$report_awk"
+awk -v sec="$security_workers" -f "$report_awk" > "$report_fixture" <<'FIXTURE' ||
+    fail 'pinned per-worker AWK report compile/smoke test failed'
+FI FAMILY P3 WORKER family=Security worker=0 records=3 bytes=300 prepare_ns=500000000 input_wait_ns=2000000000 output_wait_ns=0 complete=true
+FI FAMILY P3 WORKER family=File worker=0 records=1 bytes=100 prepare_ns=7000000 input_wait_ns=0 output_wait_ns=0 complete=true
+FIXTURE
+awk -F '\t' -v sec="$security_workers" -v total="$family_workers" '
+    NR==1 {if($1!="family" || $2!="worker" || $3!="records")bad=1}
+    NR>1 {
+        if($1=="Security"){security++;if($2==0 && ($3!=3 || $4!=300))bad=1}
+        else if($1=="File"){file++;if($2==0 && ($3!=1 || $4!=100))bad=1}
+        else if($1=="Coverage")coverage++
+        else if($1=="USNDependency")usn++
+        else if($1=="Other")other++
+        else bad=1
+    }
+    END{
+        if(bad || NR!=total+1 || security!=sec ||
+          file!=2 || coverage!=2 || usn!=2 || other!=2)exit 1
+    }' "$report_fixture" ||
+    fail 'worker summary self-test incorrect counts or zero-work families'
+printf 'FI FAMILY P3 WORKER SUMMARY PREFLIGHT PASS security_workers=%s general_workers=8 rows=%s zero_work_families=retained\n' \
+    "$security_workers" "$family_workers"
 printf 'FI C220 FAMILY P3 W512 SWEEP PREFLIGHT PASS security_workers=%s general_workers=8 total_workers=%s credits=32 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped\n' "$security_workers" "$family_workers"
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
@@ -195,6 +233,7 @@ vmstatpid=
 cleanup(){
     code=$?
     trap - 0 1 2 15
+    report_clear
     for pid in "$iostatpid" "$vmstatpid" "$relaypid"; do
         [ -n "$pid" ] || continue
         kill -TERM "$pid" 2>/dev/null || :
@@ -592,24 +631,9 @@ awk '/^FI FAMILY P3 LANE /{
         k,workers[k],records[k],bytes[k],pre[k]/1e9,iw[k]/1e9,ow[k]/1e9,peak[k]}
 }' "$out/$name/FAMILY_LANES.txt" > "$out/$name/FAMILY_LANE_SUMMARY.tsv" ||
     fail 'family lane summary failed'
-awk -v sec="$security_workers" '/^FI FAMILY P3 WORKER /{
-    delete f
-    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
-    k=f["family"] ":" f["worker"]
-    records[k]+=f["records"]; bytes[k]+=f["bytes"]
-    prep[k]+=f["prepare_ns"]; inbound[k]+=f["input_wait_ns"]
-    outbound[k]+=f["output_wait_ns"]
-}END{
-    print "family\tworker\trecords\tbytes\tprepare_worker_seconds\tinput_wait_worker_seconds\toutput_wait_worker_seconds"
-    split("Security File Coverage USNDependency Other",a," ")
-    for(i=1;i<=5;i++){f=a[i]; limit=(f=="Security"?sec:2);
-        for(j=0;j<limit;j++){k=f ":" j;
-            printf "%s\t%d\t%.0f\t%.0f\t%.6f\t%.6f\t%.6f\n",
-            f,j,records[k],bytes[k],prep[k]/1e9,inbound[k]/1e9,outbound[k]/1e9
-        }
-    }
-}' "$out/$name/FAMILY_WORKERS.txt" > "$out/$name/FAMILY_WORKER_SUMMARY.tsv" ||
-    fail 'family worker summary failed'
+awk -v sec="$security_workers" -f "$report_awk" \
+    "$out/$name/FAMILY_WORKERS.txt" > "$out/$name/FAMILY_WORKER_SUMMARY.tsv" ||
+    fail 'pinned family worker summary failed'
 printf 'FI W512 FAMILY BREAKDOWN PASS windows=2 signed_batches=%s families=5 workers=%s records=%s\n' "$prepbatches" "$family_workers" "$new" |
     tee -a "$out/SUMMARY.txt"
 awk '/^FI FAMILY P3 BLOCK DISPATCH /{
