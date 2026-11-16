@@ -27,10 +27,11 @@ const (
     privateFamilyP3GeneralWorkers = 4 // one each in the accepted P3 configuration
 )
 
-// The W512 sweep changes only clone-local worker topology via a strict
-// environment gate. Unset means the original accepted Family P3 topology.
-// 8 general workers are distributed File=2, Coverage=2, USN=2, Other=2.
-// Security=8 or Security=16, 32 in-flight credits in both experiments.
+// The private W512 sweep changes only clone-local worker topology via a
+// strict environment gate. Unset retains the original accepted P3 topology.
+// Accepted controls: Security=8 or 16, general=8 (2 workers/family).
+// Next experiment: Security=8, general=16 (4 workers/family).
+// All retain 32 global credits and one PostgreSQL SQL writer.
 type privateFamilyP3Topology struct {
     Security int
     General int
@@ -51,13 +52,14 @@ func privateFamilyP3TopologyFromEnvironment()(privateFamilyP3Topology,error){
         return config,errors.New("FI W512 P3 sweep: Security workers must be exactly 8 or 16")
     }
     general,err:=strconv.Atoi(rawGeneral)
-    if err!=nil || general!=8 {
-        return config,errors.New("FI W512 P3 sweep: general workers must be exactly 8")
+    if err!=nil || !((general==8 && (sec==8 || sec==16)) ||
+        (general==16 && sec==8)) {
+        return config,errors.New("FI W512 P3 sweep: allowed topology Security/general is 8/8, 16/8 or 8/16")
     }
     config.Security,config.General,config.Sweep=sec,general,true
     config.Counts[spoolDispatchSecurity]=sec
     for _,f:=range []spoolDispatchFamily{spoolDispatchFile,spoolDispatchCoverage,
-        spoolDispatchUSN,spoolDispatchOther} {config.Counts[f]=2}
+        spoolDispatchUSN,spoolDispatchOther} {config.Counts[f]=general/4}
     return config,nil
 }
 
