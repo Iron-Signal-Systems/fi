@@ -19,8 +19,8 @@ grep -Fxq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifest
 grep -Fxq 'FI C220 W512 PERSISTENT P5 TWO-WINDOW ACCEPTED windows=2 new_records=997434 elapsed=3m57.995s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0' "$control/SUMMARY.txt" ||
     fail 'P5 typed SQL acceptance receipt changed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=6a839d8c71ade909a4d9d19c5d94fe824cb40d46
-runnerpin=b26f20e08107403d71060f0d198f7db2d0277159
+sourcepin=adab0afdd9648f8d26832a19512e4b78717311b6
+runnerpin=3e997641a2775409ac397a08ba49f7aa3a1ddf66
 runner_path=go/cmd/fi-backlog-recover/run_private_family_w512_c220_p3_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
     fail 'pinned 8-module P6 source unavailable'
@@ -37,6 +37,7 @@ chmod 0700 "$runner"
 sh -n "$runner" || fail 'host runner shell syntax invalid'
 grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
     fail 'P6 runner source and controller pins do not match'
+grep -Fq 'FI P6 VERIFIED FILE SOURCE AND BULK REUSE PASS' "$runner" &&
 grep -Fq 'FI P6 FULL RELATIONAL GRAPH PASS' "$runner" &&
 grep -Fq 'P6_FAMILY_HANDOFFS.txt' "$runner" &&
 grep -Fq 'go127 test -race' "$runner" &&
@@ -75,6 +76,8 @@ grep -Fxq 'FI W512 P6 ATOMIC FAMILY HANDOFFS PASS windows=2 families=5 records=9
     fail 'P6 source ledger and all five SQL families not accepted'
 grep -Fxq 'FI P6 FULL RELATIONAL GRAPH PASS supported_kinds=13 missing_typed=0 unvalidated_fks=0' "$summary" ||
     fail 'P6 complete typed relational parent/FK graph not accepted'
+grep -Fxq 'FI P6 VERIFIED FILE SOURCE AND BULK REUSE PASS windows=2 validated=104830 reused=104830 signed_kind=FileObservation' "$summary" ||
+    fail 'P6 original optimized NTFS validation and bulk reuse proofs missing'
 grep -Fxq 'FI W512 P5 PERSISTENT WINDOWS PASS windows=2 signed_records=997434 persistent_across_batches=true window_pools_closed=true' "$summary" ||
     fail 'P5 persistent preparation engines failed inside P6'
 accepted=$(grep '^FI C220 W512 ATOMIC FAMILY P6 TWO-WINDOW ACCEPTED ' "$summary" | tail -n 1)
@@ -97,7 +100,7 @@ rps=$(awk -v sec="$secs" 'BEGIN{
     printf "%.3f",997434/sec
 }') || fail 'P6 throughput malformed'
 for file in P6_SOURCE_LEDGER.txt P6_FAMILY_HANDOFFS.txt P6_WINDOWS.txt \
-    P5_WINDOW_LANES.tsv FAMILY_DYNAMIC_SUMMARY.tsv FAMILY_LANE_SUMMARY.tsv \
+    P6_FILE_VALIDATION.txt P5_WINDOW_LANES.tsv FAMILY_DYNAMIC_SUMMARY.tsv FAMILY_LANE_SUMMARY.tsv \
     FAMILY_WORKER_SUMMARY.tsv W512_CHECKPOINTS.tsv; do
     [ -s "$output/clone-w512-2g/$file" ] ||
         fail "P6 required audit evidence missing: $file"
