@@ -46,9 +46,11 @@ func newPrivateP7WindowSession(ctx context.Context,control *pgx.Conn,
     if ctx.Value(usnCaptureContextKey{})==nil{
         return nil,errors.New("FI P7: original USN capture state absent")
     }
-    // NOTE: exact control PG clone identity/durability is independently
-    // verified by the parent caller; five family + one source connection
-    // revalidate their own PostgreSQL data_directory before any writes.
+    // Never trust a supplied control connection without checking its
+    // physical data_directory: the real SoR may share fi/fi_ingest names.
+    if _,err:=privateP7VerifyCloneConnection(ctx,control,expectedDataDir);err!=nil{
+        return nil,fmt.Errorf("FI P7: unsafe W512 setup connection: %w",err)
+    }
     setup,err:=privateP7PrepareCommittedWindow(ctx,control,descriptor,index)
     if err!=nil{return nil,err}
     writer,err:=newPrivateP7PostgresFiveWriter(ctx,dsn,descriptor.SourceID,
