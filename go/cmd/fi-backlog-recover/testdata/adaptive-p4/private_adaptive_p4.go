@@ -26,6 +26,7 @@ const (
 type privateAdaptiveP4LaneCounters struct {
     Activations uint64
     Retirements uint64
+    ProtocolErrors uint64
     PeakActive int
     ActiveAtEnd int
 }
@@ -44,8 +45,8 @@ func (m *privateAdaptiveP4Telemetry) print(complete bool) {
     }
     for f:=range m.Lanes {
         x:=m.Lanes[f]
-        fmt.Printf("FI ADAPTIVE P4 LANE family=%s min_workers=2 max_workers=16 peak_active=%d activations=%d retirements=%d active_at_end=%d complete=%t\n",
-            labels[f],x.PeakActive,x.Activations,x.Retirements,x.ActiveAtEnd,complete)
+        fmt.Printf("FI ADAPTIVE P4 LANE family=%s min_workers=2 max_workers=16 peak_active=%d activations=%d retirements=%d protocol_errors=%d active_at_end=%d complete=%t\n",
+            labels[f],x.PeakActive,x.Activations,x.Retirements,x.ProtocolErrors,x.ActiveAtEnd,complete)
     }
     fmt.Printf("FI ADAPTIVE P4 COMPLETE families=5 min_workers=2 max_workers=16 credits=32 sql_writers=1 complete=%t\n",complete)
 }
@@ -92,13 +93,15 @@ func privateAdaptiveP4RunLane(
 
     complete:=func(id int){
         if id<0 || id>=active || idle[id] {
-            // An impossible duplicate readiness must not silently produce
-            // reordered SQL work. The stream's receipt validation will fail.
+            // A duplicate/out-of-range readiness event must invalidate
+            // the private benchmark rather than disappear silently.
+            stats.ProtocolErrors++
             return
         }
         idle[id]=true
         idleSince[id]=time.Now()
         inFlight--
+        if inFlight<0 {stats.ProtocolErrors++}
     }
     drainReady:=func(){
         for {
