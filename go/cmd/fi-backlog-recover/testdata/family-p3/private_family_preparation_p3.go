@@ -29,7 +29,7 @@ const (
 
 // The W512 sweep changes only clone-local worker topology via a strict
 // environment gate. Unset means the original accepted Family P3 topology.
-// 8 general workers are distributed File=2, Coverage=2, USN=2, Other=2.
+// 16 general workers are distributed File=4, Coverage=4, USN=4, Other=4.
 // Security=8 or Security=16, 32 in-flight credits in both experiments.
 type privateFamilyP3Topology struct {
     Security int
@@ -51,13 +51,13 @@ func privateFamilyP3TopologyFromEnvironment()(privateFamilyP3Topology,error){
         return config,errors.New("FI W512 P3 sweep: Security workers must be exactly 8 or 16")
     }
     general,err:=strconv.Atoi(rawGeneral)
-    if err!=nil || general!=8 {
-        return config,errors.New("FI W512 P3 sweep: general workers must be exactly 8")
+    if err!=nil || general!=16 {
+        return config,errors.New("FI W512 P3 sweep: general workers must be exactly 16")
     }
     config.Security,config.General,config.Sweep=sec,general,true
     config.Counts[spoolDispatchSecurity]=sec
     for _,f:=range []spoolDispatchFamily{spoolDispatchFile,spoolDispatchCoverage,
-        spoolDispatchUSN,spoolDispatchOther} {config.Counts[f]=2}
+        spoolDispatchUSN,spoolDispatchOther} {config.Counts[f]=4}
     return config,nil
 }
 
