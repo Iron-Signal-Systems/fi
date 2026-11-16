@@ -88,6 +88,12 @@ func stagePrivateP7FiveWriterTypedWindow(
         return errors.New("FI P7: original source batch key count mismatch")
     }
 
+    // The original joined W512 caller provides a typed-source sentinel.
+    // Five-connection P7 already durably staged the source window above;
+    // mask that sentinel so ingestSourceBatch NEVER attempts a second,
+    // transaction-bound joined source_record COPY before the P7 handoff.
+    ctx=context.WithValue(ctx,joinedBacklogSourceKey{},nil)
+
     // The File bulk proof and USN capture object are the ORIGINAL FI
     // validator/capture types. P7 must not generate synthetic receipts.
     ntfsTiming:=&ntfsStageTimingCounters{}
