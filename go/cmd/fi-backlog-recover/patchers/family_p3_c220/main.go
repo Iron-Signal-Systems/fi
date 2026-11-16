@@ -193,7 +193,7 @@ func main() {
   }
   // Require both classifier implementation and its fixture-bearing test.
   // Missing tests are failures, never grounds to weaken the Go test gate.
-  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_family_dynamic_p4.go","private_family_dynamic_p4_test.go","private_family_persistent_p5.go","private_family_persistent_p5_test.go","private_p6_family_buffers.go","private_p6_family_buffers_test.go","private_p6_sql_coordinator.go","private_p6_sql_security.go","private_p6_sql_ntfs.go","private_p6_sql_coverage.go","private_p6_sql_usn.go","private_p6_sql_other.go"} {
+  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_family_dynamic_p4.go","private_family_dynamic_p4_test.go","private_family_persistent_p5.go","private_family_persistent_p5_test.go","private_p6_family_buffers.go","private_p6_family_buffers_test.go","private_p6_file_proof_test.go","private_p6_sql_coordinator.go","private_p6_sql_security.go","private_p6_sql_ntfs.go","private_p6_sql_coverage.go","private_p6_sql_usn.go","private_p6_sql_other.go"} {
     path:=filepath.Join(root,"go/internal/recordingest",n)
     st,err:=os.Lstat(path)
     if err!=nil||!st.Mode().IsRegular() {fail(fmt.Errorf("missing staged private asset %s: %v",n,err))}
