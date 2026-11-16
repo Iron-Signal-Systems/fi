@@ -13,6 +13,13 @@ import (
     "fmt"
 )
 
+type privateP6WindowContextKey struct{}
+func privateP6BuffersFromContext(ctx context.Context)*privateP6Buffers{
+    if ctx==nil{return nil}
+    b,_:=ctx.Value(privateP6WindowContextKey{}).(*privateP6Buffers)
+    return b
+}
+
 type privateP6Family uint8
 const(
     privateP6Security privateP6Family=iota
@@ -235,5 +242,16 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
             b.source.records,complete,b.total)
     }
     b.finished=true
+    fmt.Printf("FI P6 SOURCE LEDGER window=%d records=%d copy_handoffs=%d bytes_limit=%d complete=true\n",
+        b.window,b.source.records,b.source.handoffs,b.source.limit.bytes)
+    for family:=privateP6Family(0);family<privateP6FamilyCount;family++{
+        lane:=&b.lanes[family]
+        fmt.Printf("FI P6 FAMILY window=%d family=%s rows=%d handoffs=%d capacity=%d dependency=%d final=%d peak_rows=%d peak_bytes=%d complete=true\n",
+            b.window,privateP6FamilyNames[family],lane.records,lane.handoffs,
+            lane.capacityHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
+            lane.peakRows,lane.peakBytes)
+    }
+    fmt.Printf("FI P6 WINDOW READY window=%d source=%d typed=%d families=5 sql_writers=1 atomic=true\n",
+        b.window,b.source.records,complete)
     return nil
 }
