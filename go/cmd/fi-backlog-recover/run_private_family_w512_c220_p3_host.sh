@@ -37,7 +37,8 @@ out=/var/tmp/fi-window-chunks-family-p3-$stamp
 # The private signed output is a separate fresh 0700 directory on the CACHE dataset.
 private_parent=/fast/jails/roots/fi-dev/home/jwood
 private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
-port=55984
+# Use the relay-allowed port proven by the accepted C220 header-first P2 run.
+port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
 sourcecommit=e34787344b93b26ca695bbb14982d79dbb0f6215
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
@@ -337,8 +338,8 @@ relay="$jailroot$root/fi-optfield-relay"
 relaypid=$!
 tries=0
 while ! grep -Fq "FI PG RELAY READY profile=$name port=$port" "$out/relay.log" 2>/dev/null; do
-    kill -0 "$relaypid" 2>/dev/null || fail 'W512 relay exited'
-    [ "$tries" -lt 30 ] || fail 'W512 relay startup timeout'
+    kill -0 "$relaypid" 2>/dev/null || { tail -n 50 "$out/relay.log" >&2 || :; fail 'W512 relay exited'; }
+    [ "$tries" -lt 30 ] || { tail -n 50 "$out/relay.log" >&2 || :; fail 'W512 relay startup timeout'; }
     tries=$((tries+1))
     sleep 1
 done
