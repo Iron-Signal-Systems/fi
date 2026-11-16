@@ -114,6 +114,13 @@ func stagePrivateP7FiveWriterTypedWindow(
         fmt.Sprintf("window-%08d",index))
     var profile ingestStageProfile
     profile.coverageBuffer=newSecurityCoverageBulkState(&profile)
+    // Reuse the ORIGINAL signed-batch reader, LF/digest verification and
+    // selected P5 preparation pipeline. Its P7 early-family handoff
+    // intercept performs no SQL on this read-only, control-local tx.
+    readOnlyTx,err:=control.BeginTx(ctx,pgx.TxOptions{AccessMode:pgx.ReadOnly})
+    if err!=nil{return err}
+    // Every error/cancellation must release this read-only snapshot.
+    defer readOnlyTx.Rollback(context.Background())
     var records,bytes int64
     ingestStarted:=time.Now()
     for offset,sourceBatchID:=range batchIDs{
@@ -125,12 +132,11 @@ func stagePrivateP7FiveWriterTypedWindow(
             return errors.New("FI P7: empty signed source batch not allowed")
         }
         batchCtx:=context.WithValue(ctx,privateP7SignedBatchIndexKey{},globalIndex)
-        // No source/typed SQL is executed by ingestSourceBatch for the P7
-        // context. All SQL is owned by the ledger or five family backends.
-        // A dummy pgx.Tx is neither needed nor permitted in this path:
-        // use the existing signed row reader adapter directly.
-        n,err:=privateP7IngestPreparedSignedBatch(
-            batchCtx,d.SourceID,sourceBatchID,batch,&profile)
+        // The clone-only P7 overlay intercepts this after the ORIGINAL
+        // canonical signature/record preparation, before monolithic SQL.
+        // Read-only control tx cannot accidentally persist a typed row.
+        n,err:=ingestSourceBatch(batchCtx,privateProjectionTx{Tx:readOnlyTx},
+            d.SourceID,sourceBatchID,batch,&profile)
         if err!=nil{
             return fmt.Errorf("FI P7: signed batch=%d: %w",globalIndex,err)
         }
@@ -141,6 +147,9 @@ func stagePrivateP7FiveWriterTypedWindow(
     if records!=int64(d.EndRecord-d.StartRecord)||
         bytes!=int64(d.DataBytes){
         return fmt.Errorf("FI P7: signed source totals mismatch records=%d bytes=%d",records,bytes)
+    }
+    if err:=readOnlyTx.Rollback(ctx);err!=nil {
+        return fmt.Errorf("FI P7: close signed reader snapshot before publish: %w",err)
     }
     published,err:=session.Publish(ctx)
     if err!=nil{return fmt.Errorf("FI P7: five SQL family publication rejected: %w",err)}
