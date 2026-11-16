@@ -13,7 +13,8 @@ case "$1" in
   preflight|family) mode=$1 ;;
   *) fail 'mode must be preflight or family' ;;
 esac
-# Private dynamic P4 topology: demand-spawn 2..16 per family, 32 global credits.
+# P5: window-scoped persistent workers, private clone only.
+[ "${FI_W512_P5_PERSISTENT:-}" = 1 ] || fail 'P5 persistent worker mode must be explicitly enabled'
 [ "${FI_W512_P3_DYNAMIC_MIN:-}" = 2 ] &&
 [ "${FI_W512_P3_DYNAMIC_MAX:-}" = 16 ] ||
     fail 'P4 priority-fill requires min=2 max=16'
@@ -52,7 +53,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=d3f4de42880d91cefdb96e2a1149fce049c5bcdb
+sourcecommit=31c55d0afef3dcecf4ee89b8b68ccf52e3c0d6d2
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -157,13 +158,16 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_preparation_p3_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_dynamic_p4.go \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_dynamic_p4_test.go \
+  go/cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5.go \
+  go/cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5_test.go \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk \
+  go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_persistent_p5_summary.awk \
   go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P4 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=10 clone_only=true min=2 max=16"
+echo "FI FAMILY P4 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=13 clone_only=true min=2 max=16"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -314,7 +318,7 @@ for item in private_header_first_p2.go private_header_first_p2_test.go; do
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/header-first/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
-for item in private_family_preparation_p3.go private_family_preparation_p3_test.go private_family_dynamic_p4.go private_family_dynamic_p4_test.go; do
+for item in private_family_preparation_p3.go private_family_preparation_p3_test.go private_family_dynamic_p4.go private_family_dynamic_p4_test.go private_family_persistent_p5.go private_family_persistent_p5_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p3/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -368,12 +372,12 @@ if grep -Eq 'receivertrust\\.(RootCAPath|BatchIssuerPath|BatchCRLPath|SourceRegi
 fi
 mv "$trustfile.c220" "$trustfile" || exit 1
 (cd "$src/go" &&
- FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
+ FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
-   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4)' -count=1 &&
- FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
+   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5)' -count=1 &&
+ FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -race \
-   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4)' -count=1 &&
+   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5)' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover
 ) > "$root/private-trust-path-build.log" 2>&1 || {
@@ -492,7 +496,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf 'FI FAMILY P4 W512 PILOT START start_index=1 windows=2 dynamic_min=2 dynamic_max=16 max_worker_slots=80 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
+printf 'FI FAMILY P5 W512 PILOT START start_index=1 windows=2 persistent=window dynamic_min=2 dynamic_max=16 max_worker_slots=80 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
 if ! /usr/bin/time -l "$recover" \
   -private-w512-2g -private-hash-h16 \
   -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
@@ -581,7 +585,7 @@ trusted=$(awk '/^FI PRIVATE BATCH HASH ONCE window=/{
 prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
 [ "$prepbatches" = 431 ] ||
     fail "W512 expected 431 signed preparation batches; observed $prepbatches"
-[ "$(grep -Fc 'FI FAMILY P3 SCHEDULER lanes=5 mode=dynamic priority_fill=true min_workers=2 max_workers=16 max_worker_slots=80 credits=32 max_pending_bytes=268435456 sql_writers=1 atomic_window=true' "$log")" = "$prepbatches" ] ||
+[ "$(grep -Fc 'FI FAMILY P3 SCHEDULER lanes=5 mode=persistent priority_fill=true min_workers=2 max_workers=16 max_worker_slots=80 credits=32 max_pending_bytes=268435456 sql_writers=1 atomic_window=true' "$log")" = "$prepbatches" ] ||
     fail 'independent family worker topology proof missing'
 grep '^FI FAMILY P3 BUDGET ' "$log" > "$out/$name/FAMILY_BUDGET.txt" ||
     fail 'private family admission budget proof missing'
@@ -604,7 +608,7 @@ grep '^FI FAMILY DYNAMIC LANE ' "$log" > "$out/$name/FAMILY_DYNAMIC.txt" ||
 awk -v batches="$prepbatches" -f "$dynamic_awk" \
     "$out/$name/FAMILY_DYNAMIC.txt" > "$out/$name/FAMILY_DYNAMIC_SUMMARY.tsv" ||
     fail 'P4 dynamic spawn/queue/record accounting invalid'
-printf 'FI W512 P4 DYNAMIC LANES PASS batches=%s families=5 min=2 max=16 slots=80\n' "$prepbatches" |
+printf 'FI W512 P5 DYNAMIC BATCH ACCOUNTING PASS batches=%s families=5 min=2 max=16 slots=80\n' "$prepbatches" |
     tee -a "$out/SUMMARY.txt"
 # Lane/worker receipts are printed only AFTER every prep worker has joined.
 # Every signed batch must report five lanes (including zero-work lanes), all
@@ -726,7 +730,7 @@ grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
 grep '^FI PRIVATE EXACT WINDOW STOP ' "$log" > "$out/$name/RESULT.txt"
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'W512 elapsed time missing'
-printf 'FI C220 W512 DYNAMIC P4 TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0\n' \
+printf 'FI C220 W512 PERSISTENT P5 TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0\n' \
     "$new" "$elapsed" | tee -a "$out/SUMMARY.txt"
 bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
@@ -738,6 +742,8 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
   "$name/FAMILY_TOTALS.txt" "$name/FAMILY_LANES.txt" "$name/FAMILY_WORKERS.txt" \
   "$name/FAMILY_DYNAMIC.txt" "$name/FAMILY_DYNAMIC_SUMMARY.tsv" \
+  "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
+  "$name/P5_WINDOW_START.txt" "$name/P5_WINDOW_STOP.txt" \
   "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
