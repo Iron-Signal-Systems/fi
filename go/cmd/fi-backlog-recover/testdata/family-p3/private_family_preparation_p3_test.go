@@ -154,3 +154,98 @@ func TestPrivateFamilyP3CancelJoinsWorkers(t *testing.T){
     case <-time.After(2*time.Second):t.Fatal("cancel stranded family workers")
     }
 }
+
+func TestPrivateSecuritySweepConfigurations(t *testing.T){
+    for _,wantSecurity:=range []int{8,16}{
+        t.Run(fmt.Sprintf("Security%dGeneral8",wantSecurity),func(t *testing.T){
+            t.Setenv("FI_W512_P3_SECURITY_WORKERS",fmt.Sprint(wantSecurity))
+            t.Setenv("FI_W512_P3_GENERAL_WORKERS","8")
+            kinds:=[]string{"WindowsSecurityEvent","WindowsSecurityEvent","FileObservation",
+                "WindowsSecurityCoverage","USNReadBoundary","CollectorIdentity"}
+            const n=1200
+            var input []byte
+            originals:=make([][]byte,n)
+            for i:=0;i<n;i++{
+                originals[i]=canonicalDispatchFixture(kinds[i%len(kinds)],
+                    fmt.Sprintf("{\"sequence\":%d}",i))
+                input=append(input,originals[i]...)
+            }
+            prepare:=func(raw []byte,kind string,f spoolDispatchFamily)(
+                SourceRecord,securityBulkRecord,bool,error,
+            ){
+                actual,fam,err:=classifyCanonicalSpoolRecord(raw)
+                if err!=nil || actual!=kind || fam!=f {
+                    return SourceRecord{},securityBulkRecord{},false,
+                        errors.New("FI sweep: classified source identity changed")
+                }
+                return SourceRecord{RecordDigest:sha256.Sum256(raw)},securityBulkRecord{},false,nil
+            }
+            stream,err:=newPrivateFamilyP3PreparedStream(context.Background(),
+                bufio.NewReader(bytes.NewReader(input)),prepare)
+            if err!=nil{t.Fatal(err)}
+            defer stream.Close()
+            if cap(stream.credits)!=32 {t.Fatalf("credit capacity=%d",cap(stream.credits))}
+            m:=stream.privateFamilyP3Telemetry
+            if m==nil || m.Topology.Security!=wantSecurity || m.Topology.General!=8 {
+                t.Fatalf("wrong runtime topology %+v",m)
+            }
+            for i:=0;i<int(spoolDispatchFamilyCount);i++{
+                want:=2
+                if spoolDispatchFamily(i)==spoolDispatchSecurity {want=wantSecurity}
+                if m.Lanes[i].Workers!=want || len(m.Lanes[i].WorkersStats)!=want {
+                    t.Fatalf("family %d: workers %d wanted %d",i,m.Lanes[i].Workers,want)
+                }
+            }
+            for i:=0;i<n;i++{
+                line,ok:=stream.Next()
+                if !ok || line.readErr!=nil || line.prepareErr!=nil ||
+                    line.ordinal!=int64(i+1) ||
+                    !bytes.Equal(line.raw,originals[i]) ||
+                    line.source.RecordDigest!=sha256.Sum256(originals[i]){
+                    t.Fatalf("signed identity/order mismatch i=%d ok=%t err=%v",
+                        i,ok,line.prepareErr)
+                }
+            }
+            if _,ok:=stream.Next();ok{t.Fatal("unexpected extra record")}
+            stream.Close()
+            if !stream.privateSweepComplete {t.Fatal("stream did not finish")}
+            if m.InputRecords!=n {t.Fatalf("reader input=%d",m.InputRecords)}
+            var sum uint64
+            for i:=range m.Lanes{
+                var prepared uint64
+                for _,stat:=range m.Lanes[i].WorkersStats {prepared+=stat.Records}
+                if prepared!=m.Lanes[i].DispatchCount {
+                    t.Fatalf("family %d prepared=%d dispatched=%d",i,prepared,m.Lanes[i].DispatchCount)
+                }
+                sum+=prepared
+            }
+            if sum!=n {t.Fatalf("prepared records=%d want=%d",sum,n)}
+            used,peak:=stream.privateFamilyBudget.stats()
+            if used!=0 || peak>privateFamilyP3Bytes {
+                t.Fatalf("byte budget used=%d peak=%d",used,peak)
+            }
+        })
+    }
+}
+
+func TestPrivateSecuritySweepRejectsInvalidWorkerTopology(t *testing.T){
+    cases:=[]struct{security,general string}{
+        {"7","8"},{"9","8"},{"32","8"},{"16","4"},{"8","16"},{"8",""},
+        {"","8"},{"garbage","8"},
+    }
+    for _,tc:=range cases{
+        t.Run(tc.security+"_"+tc.general,func(t *testing.T){
+            t.Setenv("FI_W512_P3_SECURITY_WORKERS",tc.security)
+            t.Setenv("FI_W512_P3_GENERAL_WORKERS",tc.general)
+            stream,err:=newPrivateFamilyP3PreparedStream(context.Background(),
+                bufio.NewReader(bytes.NewReader(canonicalDispatchFixture("WindowsSecurityEvent","{}"))),
+                func([]byte,string,spoolDispatchFamily)(SourceRecord,securityBulkRecord,bool,error){
+                    return SourceRecord{},securityBulkRecord{},false,nil
+                })
+            if err==nil {
+                stream.Close()
+                t.Fatalf("accepted invalid Security/general workers %q/%q",tc.security,tc.general)
+            }
+        })
+    }
+}
