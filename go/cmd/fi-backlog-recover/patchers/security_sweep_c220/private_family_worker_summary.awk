@@ -1,9 +1,11 @@
 # FI W512 private clone — per-worker signed-batch aggregate.
 # The SAME pinned file is smoke-tested in host preflight and used after replay.
-# sec is passed as -v sec=8 or -v sec=16. No database or network writes.
+# sec and general are passed with -v, for validated 8/8, 16/8, or 8/16.
+# No database or network writes.
 BEGIN {
-    if(sec!=8 && sec!=16) {
-        print "FI SWEEP REPORT STOP: Security workers must be 8 or 16" > "/dev/stderr"
+    if(!((sec==8 && (general==8 || general==16)) ||
+         (sec==16 && general==8))) {
+        print "FI SWEEP REPORT STOP: invalid Security/general worker topology" > "/dev/stderr"
         exit 2
     }
 }
@@ -31,7 +33,7 @@ END {
     split("Security File Coverage USNDependency Other",families," ")
     for(fi=1;fi<=5;fi++) {
         familyName=families[fi]
-        limit=(familyName=="Security"?sec:2)
+        limit=(familyName=="Security"?sec:general/4)
         for(j=0;j<limit;j++) {
             key=familyName ":" j
             printf "%s\t%d\t%.0f\t%.0f\t%.6f\t%.6f\t%.6f\n",
