@@ -37,6 +37,9 @@ type privateFamilyP3Topology struct {
     General int
     Counts [spoolDispatchFamilyCount]int
     Sweep bool
+    Dynamic bool
+    Min int
+    Max int
 }
 
 func privateFamilyP3TopologyFromEnvironment()(privateFamilyP3Topology,error){
@@ -76,6 +79,11 @@ type privateFamilyP3LaneStat struct {
     DispatchCount uint64
     DispatchBytes uint64
     PeakDepth int
+    DynamicSpawned int
+    DynamicScaleUps int
+    DynamicPeakBusy int
+    DynamicPeakPending int
+    DynamicAssigned int64
 }
 type privateFamilyP3Telemetry struct {
     Topology privateFamilyP3Topology
@@ -105,6 +113,12 @@ func (m *privateFamilyP3Telemetry) print(complete bool) {
                 stat.ReceiveWait.Nanoseconds(),stat.OutputWait.Nanoseconds(),complete)
         }
         total+=prepared
+        if m.Topology.Dynamic {
+            fmt.Printf("FI FAMILY DYNAMIC LANE family=%s min=%d max=%d spawned=%d scale_ups=%d peak_busy=%d peak_pending=%d assigned=%d prepared=%d dispatched=%d complete=%t\n",
+                labels[i],m.Topology.Min,m.Topology.Max,lane.DynamicSpawned,
+                lane.DynamicScaleUps,lane.DynamicPeakBusy,lane.DynamicPeakPending,
+                lane.DynamicAssigned,prepared,lane.DispatchCount,complete)
+        }
         fmt.Printf("FI FAMILY P3 LANE family=%s workers=%d active=%d dispatched=%d prepared=%d bytes=%d prepare_ns=%d input_wait_ns=%d output_wait_ns=%d max_queue_depth=%d complete=%t\n",
             labels[i],lane.Workers,active,lane.DispatchCount,prepared,bytes,
             prepareNS,receiveNS,outputNS,lane.PeakDepth,complete)
@@ -182,6 +196,11 @@ func newPrivateFamilyP3PreparedStream(
 ) (*privateParallelPreparedStream,error) {
     if parent==nil || reader==nil || prepare==nil {
         return nil,errors.New("FI family P3: reader, context and preparer required")
+    }
+    // Private only: dynamic scheduling and the fixed-worker control never
+    // run together; the strict environment gate rejects partial/mixed modes.
+    if privateDynamicP4Selected() {
+        return newPrivateDynamicP4PreparedStream(parent,reader,prepare)
     }
     config,err:=privateFamilyP3TopologyFromEnvironment()
     if err!=nil{return nil,err}
