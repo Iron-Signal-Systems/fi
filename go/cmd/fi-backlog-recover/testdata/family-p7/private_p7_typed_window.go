@@ -65,6 +65,7 @@ func stagePrivateP7FiveWriterTypedWindow(
         index,privateRoot);err!=nil{
         return fmt.Errorf("FI P7: authenticated durable source pre-stage: %w",err)
     }
+    sourceStageElapsed:=time.Since(started)
     // Shadow generation and original source batch identity were already
     // created by the accepted seed W512=0. NEVER mint new batch IDs.
     readTx,err:=control.Begin(ctx)
@@ -151,13 +152,35 @@ func stagePrivateP7FiveWriterTypedWindow(
     if err:=readOnlyTx.Rollback(ctx);err!=nil {
         return fmt.Errorf("FI P7: close signed reader snapshot before publish: %w",err)
     }
+    publishStarted:=time.Now()
     published,err:=session.Publish(ctx)
     if err!=nil{return fmt.Errorf("FI P7: five SQL family publication rejected: %w",err)}
     if published.SourceRows!=records||published.SourceBytes!=bytes{
         return errors.New("FI P7: publication result differs from signed batches")
     }
+    publishElapsed:=time.Since(publishStarted)
+    committedSource,committedTyped,peakBytes,families:=session.sink.Stats()
+    if committedSource!=records||committedTyped!=records{
+        return errors.New("FI P7: post-publication five-writer accounting changed")
+    }
+    for f,l:=range session.sink.lanes{
+        pg,ok:=l.writer.(*privateP7PGFamily)
+        if !ok||pg.totalRecords!=families[f]{
+            return fmt.Errorf("FI P7: dedicated SQL writer %d lost typed rows",f)
+        }
+        fmt.Printf("FI P7 SQL FAMILY COMMITTED window=%d family=%s pg_backend=%d records=%d handoffs=%d sql_time=%s complete=true\n",
+            index,privateP6FamilyNames[f],pg.conn.PgConn().PID(),pg.totalRecords,
+            pg.totalHandoffs,pg.totalElapsed)
+    }
+    fmt.Printf("FI P7 PRIVATE STAGE PROFILE index=%d records=%d source_stage=%s p5_signed_ingest=%s five_writer_publish=%s total=%s max_queued_bytes=%d\n",
+        index,records,sourceStageElapsed,ingestElapsed,publishElapsed,
+        time.Since(started),peakBytes)
+    fmt.Printf("FI FILE VALIDATION WINDOW index=%d source_validated=%d bulk_reused=%d bulk_validated=0\n",
+        index,ntfsTiming.FileSourceValidated,ntfsTiming.FileBulkValidationReused)
     fmt.Printf("FI P7 REAL TYPED WINDOW index=%d records=%d bytes=%d sql_writers=5 signed_batches=%d file_validated=%d security_fields=%d ingest=%s total=%s\n",
         index,records,bytes,len(batchIDs),published.FileValidated,
         published.SecurityFields,ingestElapsed,time.Since(started))
+    fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d sql_writers=5 security_fields=%d ntfs_file_validated=%d\n",
+        index,records,published.SecurityFields,published.FileValidated)
     return nil
 }
