@@ -109,11 +109,11 @@ descriptors in each run.
 
 - P6 development branch: `experiment/fi-atomic-family-buffers-p6-20261116`
 - Source, module code, tests and exact-anchor patcher:
-  `5309fcf6c99f27cfcd23602de8abd3c5c06d0c30`.
+  `6a839d8c71ade909a4d9d19c5d94fe824cb40d46`.
 - Private W512 SQL test runner:
-  `22f8a7cc150fcc156d257b461dccce5abeba9017`.
+  `b26f20e08107403d71060f0d198f7db2d0277159`.
 - Two-window P6 control script:
-  `87612357d063c6bece78b63cc9177f6979b045a4`.
+  `6cdb591fb52a3eccf8f75fa5821dedef27211ed1`.
 
 ## How P6 runs and when to stop
 
