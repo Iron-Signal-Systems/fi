@@ -231,7 +231,10 @@ func newPrivateP5Pool(ctx context.Context,windowIndex int)(*privateP5Pool,error)
         os.Getenv("FI_W512_P3_GENERAL_WORKERS")!="" {
         return nil,errors.New("FI P5 private window: invalid explicit 2..16 scaling gate")
     }
-    poolCtx,cancel:=context.WithCancel(ctx)
+    // Keep the pool alive long enough to DRAIN canceled batch tasks before
+    // the typed-window's deferred Close. If we inherited ctx cancellation,
+    // a lane could exit with queued session tasks and strand session.Close().
+    poolCtx,cancel:=context.WithCancel(context.Background())
     p:=&privateP5Pool{ctx:poolCtx,cancel:cancel,windowIndex:windowIndex}
     p.wg.Add(int(spoolDispatchFamilyCount))
     for i:=range p.lanes{
