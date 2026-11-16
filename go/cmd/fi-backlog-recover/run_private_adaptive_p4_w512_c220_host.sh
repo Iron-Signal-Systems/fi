@@ -308,7 +308,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/family_p3_c220 "$src"
 ) || exit 1
-echo "FI FAMILY P3 ISOLATED OVERLAY READY source_commit=$sourcecommit"
+echo "FI ADAPTIVE P4 ISOLATED OVERLAY READY source_commit=$sourcecommit"
 # Pin the original resolver source exactly BEFORE replacing four filesystem
 # path constants. Cryptographic signature, certificate and CRL logic is intact.
 git -C "$expected" show b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/generation_trust.go |
@@ -422,7 +422,7 @@ for f in fsync synchronous_commit full_page_writes; do
 done
 cat > "$out/RUN_MANIFEST.txt" <<EOF
 FI FAMILY P3 W512 PRIVATE TWO-WINDOW PILOT
-family_p3_source_commit=$sourcecommit
+adaptive_p4_source_commit=$sourcecommit
 source_seed=$seed
 seed_descriptor=$seedhash
 seed_records=493478
@@ -434,9 +434,11 @@ start_window=1
 windows=2
 K32=32768
 family_lanes=5
-family_workers=$family_workers
-security_workers=$security_workers
-general_workers=$general_workers
+worker_slots=$family_workers
+active_workers_min=2
+active_workers_max=16
+security_worker_slots=$security_workers
+general_worker_slots=$general_workers
 file_workers=$general_each
 coverage_workers=$general_each
 usn_workers=$general_each
@@ -483,7 +485,7 @@ if ! /usr/bin/time -l "$recover" \
   -max-windows=0 -max-runtime=0 -test-stop-after-windows=2 \
   -deferred-verified-clone -verified-cache-root="$cache" > "$out/$name/recover.log" 2>&1; then
     tail -n 100 "$out/$name/recover.log" >&2 || :
-    fail 'W512 two-worker recovery rejected'
+    fail 'W512 adaptive P4 recovery rejected'
 fi
 for pid in "$iostatpid" "$vmstatpid"; do
     kill -TERM "$pid" 2>/dev/null || :
@@ -622,6 +624,50 @@ awk -v sec="$security_workers" -v each="$general_each" '/^FI FAMILY P3 WORKER /{
        seen["USNDependency"]!=431 || seen["Other"]!=431)exit 1
 }' "$log" ||
     fail 'per-family worker totals, exact counts or bounded queues invalid'
+# Dynamic P4 receipts: one completion and FIVE lane scaling reports for every
+# verified signed batch, including families with zero source rows. This is an
+# additional gate beyond the accepted per-worker, SQL and signed-readback gates.
+grep '^FI ADAPTIVE P4 LANE ' "$log" > "$out/$name/ADAPTIVE_LANES.txt" ||
+    fail 'P4 active-worker receipts missing'
+grep '^FI ADAPTIVE P4 COMPLETE ' "$log" > "$out/$name/ADAPTIVE_COMPLETION.txt" ||
+    fail 'P4 completion receipts missing'
+[ "$(wc -l < "$out/$name/ADAPTIVE_LANES.txt" | tr -d ' ')" = "$((prepbatches*5))" ] &&
+[ "$(wc -l < "$out/$name/ADAPTIVE_COMPLETION.txt" | tr -d ' ')" = "$prepbatches" ] ||
+    fail 'P4 dynamic lane scaling reports incomplete'
+awk '/^FI ADAPTIVE P4 LANE /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    family=f["family"]
+    if(family!="Security" && family!="File" && family!="Coverage" &&
+       family!="USNDependency" && family!="Other")bad=1
+    if(f["min_workers"]!=2 || f["max_workers"]!=16 ||
+       f["complete"]!="true" || f["peak_active"]<2 ||
+       f["peak_active"]>16 || f["activations"]<f["peak_active"] ||
+       f["retirements"]>f["activations"]-2 ||
+       f["active_at_end"]<2 || f["active_at_end"]>16)bad=1
+    peak[family]=(peak[family]>f["peak_active"]?peak[family]:f["peak_active"])
+    starts[family]+=f["activations"]; retires[family]+=f["retirements"]
+    reports[family]++
+}END{
+    if(bad || reports["Security"]!=431 || reports["File"]!=431 ||
+       reports["Coverage"]!=431 || reports["USNDependency"]!=431 ||
+       reports["Other"]!=431)exit 1
+    print "family\tmin_workers\tmax_workers\tpeak_active\tactivations\tretirements\tsigned_batches"
+    split("Security File Coverage USNDependency Other",names," ")
+    for(i=1;i<=5;i++){k=names[i];printf "%s\t2\t16\t%d\t%.0f\t%.0f\t%d\n",
+        k,peak[k],starts[k],retires[k],reports[k]}
+}' "$out/$name/ADAPTIVE_LANES.txt" > "$out/$name/ADAPTIVE_LANE_SUMMARY.tsv" ||
+    fail 'P4 worker dynamic-scaling invariant invalid'
+awk '/^FI ADAPTIVE P4 COMPLETE /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    if(f["families"]!=5||f["min_workers"]!=2||f["max_workers"]!=16||
+       f["credits"]!=32||f["sql_writers"]!=1||f["complete"]!="true")bad=1
+    n++
+}END{if(bad||n!=431)exit 1}' "$out/$name/ADAPTIVE_COMPLETION.txt" ||
+    fail 'P4 incomplete batch or unsupported worker count'
+printf 'FI W512 ADAPTIVE P4 DYNAMIC GATE PASS signed_batches=431 families=5 min=2 max=16 worker_slots=80 credits=32 sql_writers=1\n' |
+    tee -a "$out/SUMMARY.txt"
 # Machine-readable family-wide summaries, ready for two-window and W3..W12
 # cross-experiment comparisons. Wait columns are cumulative worker-seconds,
 # NOT wall time or PostgreSQL wait_event measurements.
@@ -703,6 +749,8 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
   "$name/FAMILY_TOTALS.txt" "$name/FAMILY_LANES.txt" "$name/FAMILY_WORKERS.txt" \
   "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
+  "$name/ADAPTIVE_LANES.txt" "$name/ADAPTIVE_COMPLETION.txt" \
+  "$name/ADAPTIVE_LANE_SUMMARY.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
 [ -s "$bundle" ] || fail 'W512 metrics bundle absent'
