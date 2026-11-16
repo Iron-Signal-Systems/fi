@@ -66,10 +66,12 @@ type privateP7FiveWriter struct{
     usedBytes int64
     peakBytes int64
     sourceRows int64
+    sourceBytes int64
     typedRows int64
     sourceCommitted map[privateP7SourceKey]privateP7Proof
     failed error
     finished bool
+    drained bool
     closed bool
 }
 
@@ -204,7 +206,9 @@ func(s *privateP7FiveWriter) Source(ctx context.Context,rows []privateP6Record)e
     s.mu.Unlock()
     if err!=nil{return err}
     local:=make(map[privateP7SourceKey]privateP7Proof,len(rows))
+    var sourceBytes int64
     for _,r:=range rows{
+        sourceBytes+=int64(r.prepared.RecordBytes)
         if !r.valid(){return errors.New("FI five-writer: bad signed source record")}
         f,err:=privateP6KindFamily(r.prepared.Record.RecordKind)
         if err!=nil{return err}
@@ -229,6 +233,7 @@ func(s *privateP7FiveWriter) Source(ctx context.Context,rows []privateP6Record)e
     s.mu.Lock()
     for k,v:=range local{s.sourceCommitted[k]=v}
     s.sourceRows+=int64(len(rows))
+    s.sourceBytes+=sourceBytes
     s.signalLocked()
     s.mu.Unlock()
     return nil
@@ -330,6 +335,7 @@ func(s *privateP7FiveWriter) Drain(ctx context.Context)error{
                 s.fail(err)
                 return err
             }
+            s.drained=true
             s.mu.Unlock()
             return nil
         }
