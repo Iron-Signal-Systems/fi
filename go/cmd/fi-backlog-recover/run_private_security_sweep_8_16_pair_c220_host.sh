@@ -56,6 +56,8 @@ workerout="$pairroot/WORKER_COMPARISON.tsv"
 printf 'run\tsecurity_workers\tgeneral_workers\tall_workers\tcredits\trecords\tseconds\trecords_per_sec\toutput\n' > "$comparison"
 printf 'run\tfamily\tworkers\trecords\tbytes\tprepare_worker_seconds\tinput_wait_worker_seconds\toutput_wait_worker_seconds\tpeak_queue_depth\n' > "$familyout"
 printf 'run\tfamily\tworker\trecords\tbytes\tprepare_worker_seconds\tinput_wait_worker_seconds\toutput_wait_worker_seconds\n' > "$workerout"
+hostcpu="$pairroot/HOST_CPU_COMPARISON.tsv"
+printf 'run\tsamples\tavg_user_cpu_pct\tavg_system_cpu_pct\tavg_idle_cpu_pct\n' > "$hostcpu"
 for sec in 8 16; do
     case "$sec" in 8) caseid=A8 ;; 16) caseid=B16 ;; esac
     export FI_W512_P3_SECURITY_WORKERS="$sec"
@@ -88,8 +90,8 @@ for sec in 8 16; do
         for(i=1;i<=NF;i++)if($i~/^elapsed=/){split($i,a,"=");print a[2]}
     }')
     seconds=$(awk -v elapsed="$elapsed" 'BEGIN{
-        split(elapsed,a,"m")
-        if(length(a)<2)exit 1
+        parts=split(elapsed,a,"m")
+        if(parts!=2)exit 1
         split(a[2],b,"s")
         if((a[1]+0)<0||(b[1]+0)<0)exit 1
         printf "%.3f",a[1]*60+b[1]
@@ -106,6 +108,20 @@ for sec in 8 16; do
         fail "$caseid individual lane/worker reports unavailable"
     awk -v run="$caseid" 'NR>1{print run "\t" $0}' "$lanes" >> "$familyout"
     awk -v run="$caseid" 'NR>1{print run "\t" $0}' "$workers" >> "$workerout"
+    # FreeBSD vmstat's last three columns are us/sy/id. The first numeric
+    # sample is a since-boot average, not a sample of this benchmark.
+    awk -v run="$caseid" '
+      NF>=3 && $NF~/^[0-9]+$/ && $(NF-1)~/^[0-9]+$/ &&
+        $(NF-2)~/^[0-9]+$/ {
+          if(!started++){next}
+          u+=$(NF-2);sys+=$(NF-1);idle+=$NF;n++
+        }
+      END{
+          if(n<10)exit 1
+          printf "%s\t%d\t%.2f\t%.2f\t%.2f\n",
+            run,n,u/n,sys/n,idle/n
+      }' "$out/clone-w512-2g/vmstat.txt" >> "$hostcpu" ||
+        fail "$caseid sampled host CPU utilization unavailable"
     bundle="$out/fi-w512-family-p3-pilot2-$(basename "$out" | sed 's/^fi-window-chunks-family-p3-//').tar.gz"
     [ -s "$bundle" ] || fail "$caseid metrics bundle missing"
     sha256 -q "$bundle" > "$pairroot/$caseid.bundle.sha256"
@@ -116,4 +132,6 @@ echo '===== PAIRED THROUGHPUT COMPARISON ====='
 cat "$comparison"
 echo '===== PAIRED FAMILY BREAKDOWN (zero-activity families included) ====='
 cat "$familyout"
+echo '===== PAIRED HOST CPU USAGE (5-second vmstat samples) ====='
+cat "$hostcpu"
 echo "FI C220 W512 SECURITY SWEEP PAIR ACCEPTED cases=2 windows_per_case=2 source_records_per_case=997434 signed_batches_per_case=431 postgres_writers=1 original_seed_unchanged=true output=$pairroot"
