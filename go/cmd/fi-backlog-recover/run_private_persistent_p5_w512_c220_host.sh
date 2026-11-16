@@ -20,8 +20,8 @@ grep -Fxq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifest
 grep -Fxq 'FI C220 W512 DYNAMIC P4 TWO-WINDOW ACCEPTED windows=2 new_records=997434 elapsed=4m0.984s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0' "$control/SUMMARY.txt" ||
   fail 'accepted P4 SQL/typed/batch baseline receipt differs'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=9ba8c9ea309747d9203424aa340bb72000108c32
-runnerpin=21e6d6bf32964d61bb51835cd18cb28941d8fb1c
+sourcepin=fd618b9ce2bb045b8a4d83ba4aa9f508b7bbfd30
+runnerpin=df92e1c30b3b59827ce40556569213871d052f7a
 rpath=go/cmd/fi-backlog-recover/run_private_family_w512_c220_p3_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'private dynamic source pin not in the C220 staging object database'
