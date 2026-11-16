@@ -88,6 +88,7 @@ type privateP5Lane struct {
     pool *privateP5Pool
     family spoolDispatchFamily
     input chan *privateP5Task
+    started chan struct{}
     done chan int
     jobs [privateDynamicMaxWorkers]chan *privateP5Task
     busy [privateDynamicMaxWorkers]bool
@@ -196,6 +197,7 @@ func (l *privateP5Lane) flushPending() {
 func (l *privateP5Lane) run() {
     defer l.pool.wg.Done()
     for i:=0;i<privateDynamicMinWorkers;i++ {l.spawn()}
+    close(l.started)
     for {
         l.flushPending()
         select {
@@ -240,10 +242,13 @@ func newPrivateP5Pool(ctx context.Context,windowIndex int)(*privateP5Pool,error)
     for i:=range p.lanes{
         lane:=&privateP5Lane{pool:p,family:spoolDispatchFamily(i),
             input:make(chan *privateP5Task,privateFamilyP3Credits),
+            started:make(chan struct{}),
             done:make(chan int,privateDynamicMaxWorkers)}
         p.lanes[i]=lane
         go lane.run()
     }
+    // All five families have two real workers before the first batch.
+    for _,lane:=range p.lanes {<-lane.started}
     fmt.Printf("FI P5 PERSISTENT WINDOW START window=%d families=5 worker_min=2 worker_max=16 credits=32 sql_writers=1\n",windowIndex)
     return p,nil
 }
