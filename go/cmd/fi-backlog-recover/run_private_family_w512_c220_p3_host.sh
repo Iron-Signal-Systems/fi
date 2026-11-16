@@ -420,7 +420,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf 'FI FAMILY P3 W512 PILOT START start_index=1 windows=2 family_workers=$family_workers security_workers=$security_workers general_workers=8 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
+printf 'FI FAMILY P3 W512 PILOT START start_index=1 windows=2 family_workers=%s security_workers=%s general_workers=8 writer=1 credits=32 K32=32768\n' "$family_workers" "$security_workers" | tee "$out/SUMMARY.txt"
 if ! /usr/bin/time -l "$recover" \
   -private-w512-2g -private-hash-h16 \
   -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
@@ -592,7 +592,7 @@ awk '/^FI FAMILY P3 LANE /{
         k,workers[k],records[k],bytes[k],pre[k]/1e9,iw[k]/1e9,ow[k]/1e9,peak[k]}
 }' "$out/$name/FAMILY_LANES.txt" > "$out/$name/FAMILY_LANE_SUMMARY.tsv" ||
     fail 'family lane summary failed'
-awk '/^FI FAMILY P3 WORKER /{
+awk -v sec="$security_workers" '/^FI FAMILY P3 WORKER /{
     delete f
     for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
     k=f["family"] ":" f["worker"]
@@ -602,7 +602,7 @@ awk '/^FI FAMILY P3 WORKER /{
 }END{
     print "family\tworker\trecords\tbytes\tprepare_worker_seconds\tinput_wait_worker_seconds\toutput_wait_worker_seconds"
     split("Security File Coverage USNDependency Other",a," ")
-    for(i=1;i<=5;i++){f=a[i]; limit=(f=="Security"?ENVIRON["FI_W512_P3_SECURITY_WORKERS"]+0:2);
+    for(i=1;i<=5;i++){f=a[i]; limit=(f=="Security"?sec:2);
         for(j=0;j<limit;j++){k=f ":" j;
             printf "%s\t%d\t%.0f\t%.0f\t%.6f\t%.6f\t%.6f\n",
             f,j,records[k],bytes[k],prep[k]/1e9,inbound[k]/1e9,outbound[k]/1e9
@@ -658,8 +658,8 @@ grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
 grep '^FI PRIVATE EXACT WINDOW STOP ' "$log" > "$out/$name/RESULT.txt"
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'W512 elapsed time missing'
-printf 'FI C220 W512 SECURITY SWEEP TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s family_workers=$family_workers security_workers=$security_workers general_workers=8 credits=32 writer=1 authoritative=0 accepted=0\n' \
-    "$new" "$elapsed" | tee -a "$out/SUMMARY.txt"
+printf 'FI C220 W512 SECURITY SWEEP TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s family_workers=%s security_workers=%s general_workers=8 credits=32 writer=1 authoritative=0 accepted=0\n' \
+    "$new" "$elapsed" "$family_workers" "$security_workers" | tee -a "$out/SUMMARY.txt"
 bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/RESULT.txt" "$name/WINDOWS.txt" \
