@@ -13,7 +13,9 @@ case "$1" in
   preflight|family) mode=$1 ;;
   *) fail 'mode must be preflight or family' ;;
 esac
-# P5: window-scoped persistent workers, private clone only.
+# P6: 5 separate SoR relational ingestion modules, same P5 preparers.
+[ "${FI_W512_P6_FAMILY_SQL:-}" = 1 ] ||
+    fail 'P6 requires explicit isolated SQL family redesign gate'
 [ "${FI_W512_P5_PERSISTENT:-}" = 1 ] || fail 'P5 persistent worker mode must be explicitly enabled'
 [ "${FI_W512_P3_DYNAMIC_MIN:-}" = 2 ] &&
 [ "${FI_W512_P3_DYNAMIC_MAX:-}" = 16 ] ||
@@ -53,7 +55,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=fd618b9ce2bb045b8a4d83ba4aa9f508b7bbfd30
+sourcecommit=5309fcf6c99f27cfcd23602de8abd3c5c06d0c30
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -160,6 +162,14 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_dynamic_p4_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5.go \
   go/cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5_test.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_family_buffers.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_family_buffers_test.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_coordinator.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_security.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_ntfs.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_coverage.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_usn.go \
+  go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_other.go \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_persistent_p5_summary.awk \
   go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go
@@ -167,7 +177,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P4 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=13 clone_only=true min=2 max=16"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=21 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -350,6 +360,11 @@ for item in private_family_preparation_p3.go private_family_preparation_p3_test.
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p3/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
+for item in private_p6_family_buffers.go private_p6_family_buffers_test.go private_p6_sql_coordinator.go private_p6_sql_security.go private_p6_sql_ntfs.go private_p6_sql_coverage.go private_p6_sql_usn.go private_p6_sql_other.go; do
+  [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
+  git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p6/$item" \
+    > "$src/go/internal/recordingest/$item" || exit 1
+done
 mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/family_p3_c220" || exit 1
 git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go" \
   > "$src/go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go" || exit 1
@@ -357,7 +372,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/family_p3_c220 "$src"
 ) || exit 1
-echo "FI FAMILY P3 ISOLATED OVERLAY READY source_commit=$sourcecommit"
+echo "FI FAMILY P6 ISOLATED SQL MODULES READY source_commit=$sourcecommit"
 # Pin the original resolver source exactly BEFORE replacing four filesystem
 # path constants. Cryptographic signature, certificate and CRL logic is intact.
 git -C "$expected" show b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/generation_trust.go |
@@ -401,10 +416,10 @@ mv "$trustfile.c220" "$trustfile" || exit 1
 (cd "$src/go" &&
  FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
-   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5)' -count=1 &&
+   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6)' -count=1 &&
  FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -race \
-   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5)' -count=1 &&
+   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6)' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover
 ) > "$root/private-trust-path-build.log" 2>&1 || {
@@ -523,7 +538,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf 'FI FAMILY P5 W512 PILOT START start_index=1 windows=2 persistent=window dynamic_min=2 dynamic_max=16 max_worker_slots=80 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
+printf 'FI FAMILY P6 W512 PILOT START start_index=1 windows=2 sql_modules=5 source_ledger=ordered p5_persistent=window dynamic_min=2 dynamic_max=16 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
 if ! /usr/bin/time -l "$recover" \
   -private-w512-2g -private-hash-h16 \
   -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
@@ -780,7 +795,7 @@ grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
 grep '^FI PRIVATE EXACT WINDOW STOP ' "$log" > "$out/$name/RESULT.txt"
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'W512 elapsed time missing'
-printf 'FI C220 W512 PERSISTENT P5 TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0\n' \
+printf 'FI C220 W512 ATOMIC FAMILY P6 TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0\n' \
     "$new" "$elapsed" | tee -a "$out/SUMMARY.txt"
 bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
