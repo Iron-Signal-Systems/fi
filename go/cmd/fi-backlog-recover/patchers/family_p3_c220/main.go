@@ -47,7 +47,7 @@ func main() {
     {
       "go/internal/recordingest/postgres_ingest.go",
       "parallelPrep, err = newPrivateParallelPreparedStream(ctx, reader, privateParallelAPrepare)",
-      "parallelPrep, err = newPrivateFamilyP3PreparedStream(ctx, reader, privateFamilyP3Prepare)",
+      "parallelPrep, err = newPrivateAdaptiveP4PreparedStream(ctx, reader, privateFamilyP3Prepare)",
     },
     {
       "go/internal/recordingest/postgres_ingest.go",
@@ -109,6 +109,16 @@ func main() {
       "<-s.done",
       "<-s.done\n    if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}",
     },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "type privateParallelPreparedStream struct {",
+      "type privateParallelPreparedStream struct {\n    privateAdaptiveP4Telemetry *privateAdaptiveP4Telemetry",
+    },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "<-s.done",
+      "<-s.done\n    if s.privateAdaptiveP4Telemetry != nil {s.privateAdaptiveP4Telemetry.print(s.privateSweepComplete)}",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
@@ -151,7 +161,7 @@ func main() {
   }
   // Require both classifier implementation and its fixture-bearing test.
   // Missing tests are failures, never grounds to weaken the Go test gate.
-  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go"} {
+  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_adaptive_p4.go","private_adaptive_p4_test.go"} {
     path:=filepath.Join(root,"go/internal/recordingest",n)
     st,err:=os.Lstat(path)
     if err!=nil||!st.Mode().IsRegular() {fail(fmt.Errorf("missing staged private asset %s: %v",n,err))}
@@ -162,6 +172,6 @@ func main() {
     if err:=os.WriteFile(temp,[]byte(content),perms[path]);err!=nil {fail(err)}
     if err:=os.Rename(temp,path);err!=nil {fail(err)}
   }
-  fmt.Printf("FI FAMILY P3 W512 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true family_lanes=5 security_workers=runtime_verified credits=32 writer=original_H16 atomic=true\n",len(files),len(edits))
+  fmt.Printf("FI ADAPTIVE P4 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true family_lanes=5 workers_per_family=2-16 priority_fill=true credits=32 writer=original_H16 atomic=true\n",len(files),len(edits))
 }
 func fail(err error){ fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP:",err);os.Exit(1) }
