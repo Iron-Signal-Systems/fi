@@ -156,10 +156,13 @@ func TestPrivateFamilyP3CancelJoinsWorkers(t *testing.T){
 }
 
 func TestPrivateSecuritySweepConfigurations(t *testing.T){
-    for _,wantSecurity:=range []int{8,16}{
-        t.Run(fmt.Sprintf("Security%dGeneral8",wantSecurity),func(t *testing.T){
+    for _,cfg:=range []struct{ security,general int }{
+        {8,8},{16,8},{8,16},
+    }{
+        wantSecurity,wantGeneral:=cfg.security,cfg.general
+        t.Run(fmt.Sprintf("Security%dGeneral%d",wantSecurity,wantGeneral),func(t *testing.T){
             t.Setenv("FI_W512_P3_SECURITY_WORKERS",fmt.Sprint(wantSecurity))
-            t.Setenv("FI_W512_P3_GENERAL_WORKERS","8")
+            t.Setenv("FI_W512_P3_GENERAL_WORKERS",fmt.Sprint(wantGeneral))
             kinds:=[]string{"WindowsSecurityEvent","WindowsSecurityEvent","FileObservation",
                 "WindowsSecurityCoverage","USNReadBoundary","CollectorIdentity"}
             const n=1200
@@ -186,11 +189,11 @@ func TestPrivateSecuritySweepConfigurations(t *testing.T){
             defer stream.Close()
             if cap(stream.credits)!=32 {t.Fatalf("credit capacity=%d",cap(stream.credits))}
             m:=stream.privateFamilyP3Telemetry
-            if m==nil || m.Topology.Security!=wantSecurity || m.Topology.General!=8 {
+            if m==nil || m.Topology.Security!=wantSecurity || m.Topology.General!=wantGeneral {
                 t.Fatalf("wrong runtime topology %+v",m)
             }
             for i:=0;i<int(spoolDispatchFamilyCount);i++{
-                want:=2
+                want:=wantGeneral/4
                 if spoolDispatchFamily(i)==spoolDispatchSecurity {want=wantSecurity}
                 if m.Lanes[i].Workers!=want || len(m.Lanes[i].WorkersStats)!=want {
                     t.Fatalf("family %d: workers %d wanted %d",i,m.Lanes[i].Workers,want)
@@ -230,8 +233,8 @@ func TestPrivateSecuritySweepConfigurations(t *testing.T){
 
 func TestPrivateSecuritySweepRejectsInvalidWorkerTopology(t *testing.T){
     cases:=[]struct{security,general string}{
-        {"7","8"},{"9","8"},{"32","8"},{"16","4"},{"8","16"},{"8",""},
-        {"","8"},{"garbage","8"},
+        {"7","8"},{"9","8"},{"32","8"},{"16","4"},{"16","16"},
+        {"8","4"},{"8","12"},{"8","24"},{"8",""},{"","8"},{"garbage","8"},
     }
     for _,tc:=range cases{
         t.Run(tc.security+"_"+tc.general,func(t *testing.T){
