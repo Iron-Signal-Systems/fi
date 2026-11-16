@@ -641,19 +641,19 @@ printf 'FI P6 FULL RELATIONAL GRAPH PASS supported_kinds=13 missing_typed=0 unva
 # Preserve original C220 optimized FileObservation source proof and bulk
 # validated-source reuse. Unlike the first P6 failure, these receipts come
 # from the original seeded validator AFTER actual typed SQL writes.
-grep '^FI FILE VALIDATION WINDOW index=' "$log" > "$out/$name/P6_FILE_VALIDATION.txt" ||
+grep '^FI P7 FILE PROOF VERIFIED index=' "$log" > "$out/$name/P6_FILE_VALIDATION.txt" ||
     fail 'original optimized FileObservation validation receipts missing'
 [ "$(wc -l < "$out/$name/P6_FILE_VALIDATION.txt" | tr -d ' ')" = 2 ] ||
     fail 'original FileObservation validation receipts missing for a W512 window'
 awk '
-/^FI FILE VALIDATION WINDOW / {
+/^FI P7 FILE PROOF VERIFIED / {
     delete kv
     for(i=1;i<=NF;i++){split($i,a,"=");kv[a[1]]=a[2]}
     win=kv["index"]+0
     if(win<1||win>2||seen[win]++||
        kv["source_validated"]<1||
        kv["bulk_reused"]!=kv["source_validated"]||
-       kv["bulk_validated"]<0) bad=1
+       kv["all_native"]!="true") bad=1
     source[win]=kv["source_validated"]+0
     reused[win]=kv["bulk_reused"]+0
 }
@@ -664,7 +664,7 @@ END {
        source[1]+source[2]!=104830)exit 1
 }' "$out/$name/P6_FILE_VALIDATION.txt" ||
     fail 'P6 signed NTFS validation proof missing, reused more than validated, or count differs'
-printf 'FI P6 VERIFIED FILE SOURCE AND BULK REUSE PASS windows=2 validated=104830 reused=104830 signed_kind=FileObservation\n' |
+printf 'FI P7 VERIFIED NATIVE FILE SOURCE AND BULK REUSE PASS windows=2 validated=104830 reused=104830 sql_writers=5\n' |
     tee -a "$out/SUMMARY.txt"
 sql "SELECT window_index::text || '|' || committed_records::text || '|' ||
     encode(descriptor_sha256,'hex')
@@ -779,6 +779,36 @@ grep -Fxq 'FI P6 WINDOW READY window=1 source=499052 typed=499052 families=5 sql
 grep -Fxq 'FI P6 WINDOW READY window=2 source=498382 typed=498382 families=5 sql_writers=5 atomic=true' "$out/$name/P6_WINDOWS.txt" ||
     fail 'P6 SQL source-parent and typed child completion disagree'
 printf 'FI W512 P7 FIVE SQL FAMILY HANDOFFS PASS windows=2 families=5 records=997434 source_ledger=durable sql_writers=5\n' |
+    tee -a "$out/SUMMARY.txt"
+# P7: Five ACTUAL relational PostgreSQL writer backends; five exact
+# SQL commit reports per W512 window, not five modules on one connection.
+grep '^FI P7 SQL FAMILY COMMITTED ' "$log" > "$out/$name/P7_SQL_FAMILIES.txt" ||
+    fail 'five independent PostgreSQL family writer commit reports missing'
+grep '^FI P7 FIVE-WRITER W512 PUBLISHED ' "$log" > "$out/$name/P7_PUBLISHED.txt" ||
+    fail 'atomic typed W512 publication receipts missing'
+[ "$(wc -l < "$out/$name/P7_SQL_FAMILIES.txt" | tr -d ' ')" = 10 ] &&
+[ "$(wc -l < "$out/$name/P7_PUBLISHED.txt" | tr -d ' ')" = 2 ] ||
+    fail 'five PostgreSQL family writer receipts missing for a window'
+awk '/^FI P7 SQL FAMILY COMMITTED /{
+    delete kv
+    for(i=1;i<=NF;i++){split($i,a,"=");kv[a[1]]=a[2]}
+    w=kv["window"]+0;f=kv["family"];pid=kv["pg_backend"]+0
+    if(w<1||w>2||pid<1||kv["complete"]!="true"||
+       kv["handoffs"]<0||kv["records"]<0||
+       seen[w ":" f]++||pidSeen[w ":" pid]++)bad=1
+    records[w]+=kv["records"];n++
+}END{
+    if(bad||n!=10||records[1]!=499052||records[2]!=498382)exit 1
+    split("Security NTFSFile Coverage USNDependency Other",families," ")
+    for(w=1;w<=2;w++)for(i=1;i<=5;i++)if(seen[w ":" families[i]]!=1)exit 1
+}' "$out/$name/P7_SQL_FAMILIES.txt" ||
+    fail 'P7 backend PID isolation, SQL receipts or source rows mismatch'
+grep -Fq 'FI P7 FIVE-WRITER W512 PUBLISHED index=1 records=499052 ' "$out/$name/P7_PUBLISHED.txt" &&
+grep -Fq 'FI P7 FIVE-WRITER W512 PUBLISHED index=2 records=498382 ' "$out/$name/P7_PUBLISHED.txt" &&
+[ "$(grep -Fc 'family_writers=5 ' "$out/$name/P7_PUBLISHED.txt")" = 2 ] &&
+[ "$(grep -Fc 'typed_marker=atomic accepted=0 authoritative=0' "$out/$name/P7_PUBLISHED.txt")" = 2 ] ||
+    fail 'P7 five-writer atomic publication missing or authoritative'
+printf 'FI W512 P7 REAL FIVE PG WRITERS PASS windows=2 independent_backends=5 per_window_family_receipts=10 records=997434 typed_marker=atomic\n' |
     tee -a "$out/SUMMARY.txt"
 # Lane/worker receipts are printed only AFTER every prep worker has joined.
 # Every signed batch must report five lanes (including zero-work lanes), all
@@ -917,7 +947,7 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
   "$name/P5_WINDOW_START.txt" "$name/P5_WINDOW_STOP.txt" \
   "$name/P6_SOURCE_LEDGER.txt" "$name/P6_FAMILY_HANDOFFS.txt" "$name/P6_WINDOWS.txt" \
-  "$name/P6_FILE_VALIDATION.txt" \
+  "$name/P6_FILE_VALIDATION.txt" "$name/P7_SQL_FAMILIES.txt" "$name/P7_PUBLISHED.txt" \
   "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
