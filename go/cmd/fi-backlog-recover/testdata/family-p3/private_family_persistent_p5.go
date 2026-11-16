@@ -36,6 +36,7 @@ type privateP5Session struct {
     output chan privateParallelLine
     wg sync.WaitGroup
     telemetry *privateFamilyP3Telemetry
+    preparer privateHeaderPrepareFunc
     stateMu sync.Mutex
     active [spoolDispatchFamilyCount]int
     peakBusy [spoolDispatchFamilyCount]int
@@ -109,8 +110,10 @@ func (l *privateP5Lane) spawned() int {
 func (l *privateP5Lane) spawn() {
     id:=l.live
     l.jobs[id]=make(chan *privateP5Task)
+    l.mu.Lock()
     l.live++
     if id>=privateDynamicMinWorkers {l.scaleUps++}
+    l.mu.Unlock()
     l.pool.wg.Add(1)
     go func(worker int, jobs <-chan *privateP5Task){
         defer l.pool.wg.Done()
@@ -126,7 +129,7 @@ func (l *privateP5Lane) spawn() {
                 stat:=&s.telemetry.Lanes[l.family].WorkersStats[worker]
                 started:=time.Now()
                 task.line.source,task.line.security,task.line.selected,task.line.prepareErr=
-                    privateFamilyP3Prepare(task.line.raw,task.line.headerKind,l.family)
+                    s.preparer(task.line.raw,task.line.headerKind,l.family)
                 task.line.prepareTime=time.Since(started)
                 stat.Prepare+=task.line.prepareTime
                 stat.Records++
@@ -273,7 +276,8 @@ func (p *privateP5Pool) newStream(
     }
     metrics.Topology=cfg
     sess:=&privateP5Session{ctx:sessionCtx,cancel:sessionCancel,
-        pool:p,output:make(chan privateParallelLine,privateFamilyP3Credits),telemetry:metrics}
+        pool:p,output:make(chan privateParallelLine,privateFamilyP3Credits),
+        telemetry:metrics,preparer:prepare}
     s:=&privateParallelPreparedStream{
         cancel:sessionCancel,done:make(chan struct{}),results:sess.output,
         credits:make(chan struct{},privateFamilyP3Credits),
