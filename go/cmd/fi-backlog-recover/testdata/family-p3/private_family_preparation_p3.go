@@ -197,6 +197,16 @@ func newPrivateFamilyP3PreparedStream(
     if parent==nil || reader==nil || prepare==nil {
         return nil,errors.New("FI family P3: reader, context and preparer required")
     }
+    // P5 explicitly injects the persistent pool from ONE private typed
+    // window. Missing context with the P5 flag is a hard stop; never fall
+    // back silently to per-batch P4 and misreport a persistent experiment.
+    if privateP5Enabled() {
+        pool,ok:=parent.Value(privateP5PoolContextKey{}).(*privateP5Pool)
+        if !ok || pool==nil {
+            return nil,errors.New("FI P5: persistent pool requested but typed-window context is missing")
+        }
+        return pool.newStream(parent,reader,prepare)
+    }
     // Private only: dynamic scheduling and the fixed-worker control never
     // run together; the strict environment gate rejects partial/mixed modes.
     if privateDynamicP4Selected() {
