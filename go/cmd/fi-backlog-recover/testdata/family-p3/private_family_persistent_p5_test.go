@@ -160,3 +160,26 @@ func TestPrivateP5RejectsInvalidWindowConfig(t *testing.T){
         t.Fatal("mixed fixed/dynamic configuration accepted")
     }
 }
+
+func TestPrivateP5CanceledWindowContextDrainsWithoutStranding(t *testing.T){
+    privateP5TestMode(t)
+    windowCtx,cancel:=context.WithCancel(context.Background())
+    pool,err:=newPrivateP5Pool(windowCtx,4)
+    if err!=nil{t.Fatal(err)}
+    defer pool.Close()
+    ctx:=context.WithValue(windowCtx,privateP5PoolContextKey{},pool)
+    input:=bytes.Repeat(canonicalDispatchFixture("WindowsSecurityEvent","{}"),100)
+    stream,err:=newPrivateFamilyP3PreparedStream(ctx,
+        bufio.NewReader(bytes.NewReader(input)),privateP5TestPrepare)
+    if err!=nil{t.Fatal(err)}
+    // Failure occurs before all 100 source records can pass the 32-credit
+    // admission controller. The pool must still drain accepted tasks.
+    cancel()
+    closed:=make(chan struct{})
+    go func(){stream.Close();close(closed)}()
+    select{
+    case <-closed:
+    case <-time.After(5*time.Second):
+        t.Fatal("canceled W512 context left signed batch tasks in persistent pool")
+    }
+}
