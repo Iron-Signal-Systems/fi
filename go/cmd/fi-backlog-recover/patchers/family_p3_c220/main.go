@@ -94,6 +94,21 @@ func main() {
       "s.readerTime += line.readTime",
       "if s.privateFamilyBudget == nil {s.readerTime += line.readTime}",
     },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "type privateParallelPreparedStream struct {",
+      "type privateParallelPreparedStream struct {\n    privateFamilyP3Telemetry *privateFamilyP3Telemetry\n    privateSweepComplete bool",
+    },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "return privateParallelLine{}, false",
+      "s.privateSweepComplete=true\n            return privateParallelLine{}, false",
+    },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "    <-s.done\n}",
+      "    <-s.done\n    if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}\n}",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
