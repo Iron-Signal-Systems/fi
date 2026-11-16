@@ -166,21 +166,18 @@ func (l *privateP5Lane) flushPending() {
             continue
         }
         id:=l.idleWorker()
+        scaled:=false
         if id<0 {
             if l.live==privateDynamicMaxWorkers{return}
             l.spawn()
             id=l.live-1
+            scaled=true
         }
         l.busy[id]=true
         busy:=0
         for i:=0;i<l.live;i++ {if l.busy[i]{busy++}}
         if busy>l.peakBusy {l.peakBusy=busy}
-        task.stream.onAssign(l.family,id>=privateDynamicMinWorkers &&
-            // A scale-up belongs to this session only when this task
-            // caused the NEW worker to be created.
-            l.scaleUps>0 && id==l.live-1 && l.busy[id] &&
-            // Count only if there was no job channel at the start of dispatch.
-            false,len(l.pending))
+        task.stream.onAssign(l.family,scaled,len(l.pending))
         l.pending[0]=nil
         l.pending=l.pending[1:]
         select {
