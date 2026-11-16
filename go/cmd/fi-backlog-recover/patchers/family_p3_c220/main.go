@@ -144,7 +144,7 @@ func main() {
     {
       "go/internal/recordingest/backlog_typed_window_postgres.go",
       "joinedElapsed := time.Since(joinedStarted)",
-      "if p6!=nil {\n        if err:=p6.Finish(ctx);err!=nil{return fmt.Errorf(\"FI P6: atomic W512 relational handoff barrier: %w\",err)}\n    }\n    joinedElapsed := time.Since(joinedStarted)",
+      "joinedElapsed := time.Since(joinedStarted)\n    // Final family SQL buffers drain after joined-source timing closes.\n    if p6!=nil {\n        if err:=p6.Finish(ctx);err!=nil{return fmt.Errorf(\"FI P6: atomic W512 relational handoff barrier: %w\",err)}\n    }",
     },
     {
       "go/internal/recordingest/security_bulk.go",
