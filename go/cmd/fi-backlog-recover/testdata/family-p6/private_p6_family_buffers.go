@@ -241,6 +241,17 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
         return fmt.Errorf("FI P6: incomplete source/relational accounting source=%d typed=%d admitted=%d",
             b.source.records,complete,b.total)
     }
+    // P7's five SQL connections own asynchronous family transactions.
+    // A completed in-memory buffer is not a committed SQL row; require
+    // positive ACKs from all 5 dedicated backends before an atomic marker.
+    sqlWriters:=1
+    if writer,ok:=b.sink.(*privateP7FiveWriter);ok {
+        if err:=writer.Drain(ctx);err!=nil{
+            b.failed=fmt.Errorf("FI P7: five real SQL writers failed before W512 marker: %w",err)
+            return b.failed
+        }
+        sqlWriters=5
+    }
     b.finished=true
     fmt.Printf("FI P6 SOURCE LEDGER window=%d records=%d copy_handoffs=%d bytes_limit=%d complete=true\n",
         b.window,b.source.records,b.source.handoffs,b.source.limit.bytes)
@@ -251,7 +262,7 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
             lane.capacityHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
             lane.peakRows,lane.peakBytes)
     }
-    fmt.Printf("FI P6 WINDOW READY window=%d source=%d typed=%d families=5 sql_writers=1 atomic=true\n",
-        b.window,b.source.records,complete)
+    fmt.Printf("FI P6 WINDOW READY window=%d source=%d typed=%d families=5 sql_writers=%d atomic=true\n",
+        b.window,b.source.records,complete,sqlWriters)
     return nil
 }
