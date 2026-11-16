@@ -27,11 +27,11 @@ per-run manifest prove actual runtime worker/credit counts.
 
 - Branch: `experiment/fi-security-sweep-8-16-w512-20261116`
 - Immutable source/Go patcher/test commit:
-  `351043ee55a1876823fbe0370f7c126d8c96bc49`
+  `c411459686fa5a84194b5540cb68693f10f2db8a`
 - W512 clone runner commit:
-  `6f9dd33abdfdbd346bd2ba6d798e50dd50296046`
+  `73e47e46867b3b4e9ae8ae9f1f7adb039f0947a1`
 - Pair controller source: `go/cmd/fi-backlog-recover/run_private_security_sweep_8_16_pair_c220_host.sh`
-- Pair controller pinned commit: `18b95a364653441d012330ff9b125119ca2fca42`
+- Pair controller pinned commit: `3901d5dc70de637b7c13ecd9560cf45251b68674`
 - Original accepted W512 source seed: `20261115T153532Z`
 - Relay base port `55983`, as accepted by the original C220 relay binary.
 - Both runs use a **separate fresh private PostgreSQL clone**, identical
@@ -122,6 +122,31 @@ signed-readback proof.
 Do not alter the relay executable, authenticated cache, signed source,
 authoritative SoR, original seed, SQL durability, or host networking.
 
+## C220 first paired preflight and correction (2026-11-16)
+
+The initial A8 preflight stopped safely before making any private PostgreSQL
+clone because the telemetry patcher demanded an exact four-space suffix
+`"    <-s.done\\n}"` in the C220 seed's
+`private_parallel_preparation.go`. The optimized seed uses a different
+indentation/closing shape, but the worker-join operation itself is present
+and already part of the accepted family-P3 stream. Source-anchor audit found
+**one** mismatched edit, and no live or cloned database was started.
+
+The corrected patcher anchors only the unique `<-s.done` worker-join
+operation, verifies it matches **exactly once**, then prints all family-worker
+timings after the join. This is intentionally not a blind regex replacement
+and does not bypass the original-seed read-only audit. The P3 patch receipt
+now avoids hardcoding the old Security=2 count: actual A8/B16 topology is
+verified by the stricter per-batch scheduler receipts.
+
+Corrected source pin: `c411459686fa5a84194b5540cb68693f10f2db8a`.
+Corrected clone runner: `73e47e46867b3b4e9ae8ae9f1f7adb039f0947a1`.
+Corrected paired controller: `3901d5dc70de637b7c13ecd9560cf45251b68674`.
+
+Only two-window preflight and (if successful) the paired A8/B16 benchmark
+are approved. Go tests, race tests, signed verification, SQL window atomicity,
+and per-family telemetry must all pass before accepting either result.
+
 ## Ten-window follow-on
 
 The initial A/B remains the existing proven **two-window W512** test.
@@ -140,7 +165,7 @@ A ten-window run is not implemented or authorized by this controller.
 set -eu
 repo=/home/jwood/fi-w512-c220-stage
 branch=experiment/fi-security-sweep-8-16-w512-20261116
-pairpin=18b95a364653441d012330ff9b125119ca2fca42
+pairpin=3901d5dc70de637b7c13ecd9560cf45251b68674
 controller=/var/tmp/fi-w512-security-sweep-pair-20261116.sh
 jexec -U jwood fi-dev git -C "$repo" fetch origin \\
   "refs/heads/$branch:refs/remotes/origin/$branch"
