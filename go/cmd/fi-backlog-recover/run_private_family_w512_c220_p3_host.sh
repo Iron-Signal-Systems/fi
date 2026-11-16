@@ -11,8 +11,15 @@ fail(){ printf 'FI W512 PILOT STOP: %s\n' "$*" >&2; exit 1; }
     fail 'usage on root@c220: sh runner preflight|family YYYYMMDDTHHMMSSZ'
 case "$1" in
   preflight|family) mode=$1 ;;
-  *) fail 'mode must be preflight or hf' ;;
+  *) fail 'mode must be preflight or family' ;;
 esac
+# The paired private A/B runner chooses this environment; no production flag.
+case "${FI_W512_P3_SECURITY_WORKERS:-}" in 8|16) security_workers=$FI_W512_P3_SECURITY_WORKERS ;;
+  *) fail 'paired Security sweep requires FI_W512_P3_SECURITY_WORKERS=8 or 16' ;;
+esac
+[ "${FI_W512_P3_GENERAL_WORKERS:-}" = 8 ] ||
+  fail 'paired Security sweep requires FI_W512_P3_GENERAL_WORKERS=8'
+family_workers=$((security_workers+8))
 seedstamp=$2
 case "$seedstamp" in
   ????????T??????Z) ;;
@@ -40,7 +47,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=e34787344b93b26ca695bbb14982d79dbb0f6215
+sourcecommit=351043ee55a1876823fbe0370f7c126d8c96bc49
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -177,7 +184,7 @@ HF_GO_SYNTAX
 echo 'FI FAMILY P3 PATCHER COMPILE PREFLIGHT PASS pinned=true source_tree_unchanged=true'
 echo 'FI FAMILY P3 DISPATCH TEST PREFLIGHT PASS fixture=present standalone_tests=passed'
 echo 'FI FAMILY P3 ORIGINAL SOURCE ANCHOR AUDIT PASS seed_unchanged=true'
-echo 'FI C220 FAMILY P3 W512 PREFLIGHT PASS family_workers=6 credits=32 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped'
+printf 'FI C220 FAMILY P3 W512 SWEEP PREFLIGHT PASS security_workers=%s general_workers=8 total_workers=%s credits=32 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped\n' "$security_workers" "$family_workers"
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
   exit 0
@@ -296,9 +303,9 @@ fi
 mv "$trustfile.c220" "$trustfile" || exit 1
 (cd "$src/go" &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
-   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3)' -count=1 &&
+   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep)' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -race \
-   ./internal/recordingest -run '^TestPrivateFamilyP3' -count=1 &&
+   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep)' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover
 ) > "$root/private-trust-path-build.log" 2>&1 || {
@@ -379,8 +386,13 @@ start_window=1
 windows=2
 K32=32768
 family_lanes=5
-family_workers=6
-security_workers=2
+family_workers=$family_workers
+security_workers=$security_workers
+general_workers=8
+file_workers=2
+coverage_workers=2
+usn_workers=2
+other_workers=2
 inflight_limit=32
 pending_raw_bytes_max=268435456
 sql_writers=1
@@ -408,7 +420,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf 'FI FAMILY P3 W512 PILOT START start_index=1 windows=2 family_workers=6 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
+printf 'FI FAMILY P3 W512 PILOT START start_index=1 windows=2 family_workers=$family_workers security_workers=$security_workers general_workers=8 writer=1 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
 if ! /usr/bin/time -l "$recover" \
   -private-w512-2g -private-hash-h16 \
   -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
@@ -497,7 +509,7 @@ trusted=$(awk '/^FI PRIVATE BATCH HASH ONCE window=/{
 prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
 [ "$prepbatches" = 431 ] ||
     fail "W512 expected 431 signed preparation batches; observed $prepbatches"
-[ "$(grep -Fc 'FI FAMILY P3 SCHEDULER lanes=5 workers=6 security_workers=2 credits=32 max_pending_bytes=268435456 sql_writers=1 atomic_window=true' "$log")" = "$prepbatches" ] ||
+[ "$(grep -Fc "FI FAMILY P3 SCHEDULER lanes=5 workers=$family_workers security_workers=$security_workers general_workers=8 file_workers=2 coverage_workers=2 usn_workers=2 other_workers=2 credits=32 max_pending_bytes=268435456 sql_writers=1 atomic_window=true" "$log")" = "$prepbatches" ] ||
     fail 'independent family worker topology proof missing'
 grep '^FI FAMILY P3 BUDGET ' "$log" > "$out/$name/FAMILY_BUDGET.txt" ||
     fail 'private family admission budget proof missing'
@@ -557,7 +569,7 @@ grep '^FI PRIVATE STAGE PROFILE ' "$log" > "$out/$name/STAGES.txt"
 grep '^FI PRIVATE EXACT WINDOW STOP ' "$log" > "$out/$name/RESULT.txt"
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'W512 elapsed time missing'
-printf 'FI C220 W512 FAMILY P3 TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s family_workers=6 credits=32 writer=1 authoritative=0 accepted=0\n' \
+printf 'FI C220 W512 SECURITY SWEEP TWO-WINDOW ACCEPTED windows=2 new_records=%s elapsed=%s family_workers=$family_workers security_workers=$security_workers general_workers=8 credits=32 writer=1 authoritative=0 accepted=0\n' \
     "$new" "$elapsed" | tee -a "$out/SUMMARY.txt"
 bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
