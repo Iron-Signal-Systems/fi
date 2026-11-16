@@ -157,9 +157,9 @@ func TestPrivateFamilyP3CancelJoinsWorkers(t *testing.T){
 
 func TestPrivateSecuritySweepConfigurations(t *testing.T){
     for _,wantSecurity:=range []int{8,16}{
-        t.Run(fmt.Sprintf("Security%dGeneral8",wantSecurity),func(t *testing.T){
+        t.Run(fmt.Sprintf("Security%dGeneral16",wantSecurity),func(t *testing.T){
             t.Setenv("FI_W512_P3_SECURITY_WORKERS",fmt.Sprint(wantSecurity))
-            t.Setenv("FI_W512_P3_GENERAL_WORKERS","8")
+            t.Setenv("FI_W512_P3_GENERAL_WORKERS","16")
             kinds:=[]string{"WindowsSecurityEvent","WindowsSecurityEvent","FileObservation",
                 "WindowsSecurityCoverage","USNReadBoundary","CollectorIdentity"}
             const n=1200
@@ -186,11 +186,11 @@ func TestPrivateSecuritySweepConfigurations(t *testing.T){
             defer stream.Close()
             if cap(stream.credits)!=32 {t.Fatalf("credit capacity=%d",cap(stream.credits))}
             m:=stream.privateFamilyP3Telemetry
-            if m==nil || m.Topology.Security!=wantSecurity || m.Topology.General!=8 {
+            if m==nil || m.Topology.Security!=wantSecurity || m.Topology.General!=16 {
                 t.Fatalf("wrong runtime topology %+v",m)
             }
             for i:=0;i<int(spoolDispatchFamilyCount);i++{
-                want:=2
+                want:=4
                 if spoolDispatchFamily(i)==spoolDispatchSecurity {want=wantSecurity}
                 if m.Lanes[i].Workers!=want || len(m.Lanes[i].WorkersStats)!=want {
                     t.Fatalf("family %d: workers %d wanted %d",i,m.Lanes[i].Workers,want)
@@ -230,8 +230,8 @@ func TestPrivateSecuritySweepConfigurations(t *testing.T){
 
 func TestPrivateSecuritySweepRejectsInvalidWorkerTopology(t *testing.T){
     cases:=[]struct{security,general string}{
-        {"7","8"},{"9","8"},{"32","8"},{"16","4"},{"8","16"},{"8",""},
-        {"","8"},{"garbage","8"},
+        {"7","16"},{"9","16"},{"32","16"},{"16","4"},{"8","8"},{"8",""},
+        {"","16"},{"garbage","16"},{"8","12"},
     }
     for _,tc:=range cases{
         t.Run(tc.security+"_"+tc.general,func(t *testing.T){
@@ -246,6 +246,56 @@ func TestPrivateSecuritySweepRejectsInvalidWorkerTopology(t *testing.T){
                 stream.Close()
                 t.Fatalf("accepted invalid Security/general workers %q/%q",tc.security,tc.general)
             }
+        })
+    }
+}
+
+func TestPrivateFamilyGeneralFourZeroActivityLanes(t *testing.T) {
+    for _,security:=range []string{"8","16"} {
+        t.Run("Security"+security,func(t *testing.T) {
+            t.Setenv("FI_W512_P3_SECURITY_WORKERS",security)
+            t.Setenv("FI_W512_P3_GENERAL_WORKERS","16")
+            // Only Security is present. The four other lanes must still
+            // have four workers each and zero-activity telemetry.
+            var src []byte
+            for i:=0;i<1024;i++{
+                src=append(src,canonicalDispatchFixture("WindowsSecurityEvent",
+                    fmt.Sprintf("{\"ordinal\":%d}",i))...)
+            }
+            stream,err:=newPrivateFamilyP3PreparedStream(context.Background(),
+                bufio.NewReader(bytes.NewReader(src)),
+                func([]byte,string,spoolDispatchFamily)(SourceRecord,securityBulkRecord,bool,error) {
+                    return SourceRecord{},securityBulkRecord{},false,nil
+                })
+            if err!=nil{t.Fatal(err)}
+            for i:=0;i<1024;i++{
+                row,ok:=stream.Next()
+                if !ok || row.ordinal!=int64(i+1)||row.prepareErr!=nil {
+                    t.Fatalf("ordered Security row %d: ok=%t err=%v",i,ok,row.prepareErr)
+                }
+            }
+            if _,ok:=stream.Next();ok {t.Fatal("unexpected extra record")}
+            stream.Close()
+            m:=stream.privateFamilyP3Telemetry
+            for _,family:=range []spoolDispatchFamily{
+                spoolDispatchFile,spoolDispatchCoverage,spoolDispatchUSN,spoolDispatchOther,
+            } {
+                lane:=m.Lanes[family]
+                if lane.Workers!=4 || len(lane.WorkersStats)!=4 ||
+                    lane.DispatchCount!=0 || lane.DispatchBytes!=0 || lane.PeakDepth!=0 {
+                    t.Fatalf("idle family %v metrics %+v",family,lane)
+                }
+                for _,w:=range lane.WorkersStats {
+                    if w.Records!=0||w.Bytes!=0||w.Prepare!=0 {
+                        t.Fatalf("inactive family %v handled records %+v",family,w)
+                    }
+                }
+            }
+            if m.Lanes[spoolDispatchSecurity].DispatchCount!=1024 {
+                t.Fatal("Security count lost")
+            }
+            used,_:=stream.privateFamilyBudget.stats()
+            if used!=0 {t.Fatalf("leaked signed records used=%d",used)}
         })
     }
 }
