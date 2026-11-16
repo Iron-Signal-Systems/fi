@@ -597,6 +597,30 @@ integrity=$(sql "SELECT CASE WHEN
  AND (SELECT encode(descriptor_sha256,'hex') FROM fi_recovery.typed_window WHERE window_index=0)='$seedhash'
  THEN 'PASS' ELSE 'FAIL' END")
 [ "$integrity" = PASS ] || fail 'W512 SQL source/typed/artifact integrity failed'
+# P6 additionally proves that ALL 13 relational record kinds have their
+# canonical typed parent. This covers the full child-family dispatcher and
+# not merely the number of FI source_record ledger entries.
+missing_typed=$(sql "SELECT count(*) FROM fi_recovery_projection.source_record sr WHERE CASE sr.record_kind
+ WHEN 'CollectorIdentity' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.collector_identity x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'DirectoryPrincipalSnapshot' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.directory_principal_snapshot x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'FileObservation' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.file_observation x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'LocalPrincipalSnapshot' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.local_principal_snapshot x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'NTFSCollectionError' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.ntfs_collection_error x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'SMBShareSnapshot' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.smb_share_snapshot x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'SupportingSourceCollectionError' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.supporting_source_collection_error x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'USNContinuityGap' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.usn_continuity_gap x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'USNObjectObservation' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.usn_object_observation x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'USNReadBoundary' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.usn_read_boundary x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'WindowsSecurityContinuityGap' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.windows_security_continuity_gap x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'WindowsSecurityCoverage' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.windows_security_coverage x WHERE x.source_record_id=sr.source_record_id)
+ WHEN 'WindowsSecurityEvent' THEN NOT EXISTS (SELECT 1 FROM fi_recovery_projection.windows_security_event x WHERE x.source_record_id=sr.source_record_id)
+ ELSE true END") || fail 'P6 relational graph readback query failed'
+[ "$missing_typed" = 0 ] || fail "P6 relational projection coverage missing typed parents=$missing_typed"
+unvalidated_fks=$(sql "SELECT count(*) FROM pg_constraint WHERE connamespace='fi_recovery_projection'::regnamespace AND contype='f' AND NOT convalidated") ||
+  fail 'P6 FK graph status inspection failed'
+[ "$unvalidated_fks" = 0 ] || fail "P6 foreign keys are not fully validated=$unvalidated_fks"
+printf 'FI P6 FULL RELATIONAL GRAPH PASS supported_kinds=13 missing_typed=0 unvalidated_fks=0\n' |
+  tee -a "$out/SUMMARY.txt"
 sql "SELECT window_index::text || '|' || committed_records::text || '|' ||
     encode(descriptor_sha256,'hex')
     FROM fi_recovery.typed_window ORDER BY window_index" \
