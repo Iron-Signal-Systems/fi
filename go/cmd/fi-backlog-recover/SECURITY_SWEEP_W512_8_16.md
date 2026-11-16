@@ -27,11 +27,11 @@ per-run manifest prove actual runtime worker/credit counts.
 
 - Branch: `experiment/fi-security-sweep-8-16-w512-20261116`
 - Immutable source/Go patcher/test commit:
-  `c411459686fa5a84194b5540cb68693f10f2db8a`
+  `e3a7e6e88b87194929bd82f79c03d04fc5c09edb`
 - W512 clone runner commit:
-  `73e47e46867b3b4e9ae8ae9f1f7adb039f0947a1`
+  `74b9c6212a53e3f3b883fd3060546e224ca9c689`
 - Pair controller source: `go/cmd/fi-backlog-recover/run_private_security_sweep_8_16_pair_c220_host.sh`
-- Pair controller pinned commit: `3901d5dc70de637b7c13ecd9560cf45251b68674`
+- Pair controller pinned commit: `c9ec7462dde0e45c854ba960de7dbb96ccd9b82b`
 - Original accepted W512 source seed: `20261115T153532Z`
 - Relay base port `55983`, as accepted by the original C220 relay binary.
 - Both runs use a **separate fresh private PostgreSQL clone**, identical
@@ -139,9 +139,9 @@ and does not bypass the original-seed read-only audit. The P3 patch receipt
 now avoids hardcoding the old Security=2 count: actual A8/B16 topology is
 verified by the stricter per-batch scheduler receipts.
 
-Corrected source pin: `c411459686fa5a84194b5540cb68693f10f2db8a`.
-Corrected clone runner: `73e47e46867b3b4e9ae8ae9f1f7adb039f0947a1`.
-Corrected paired controller: `3901d5dc70de637b7c13ecd9560cf45251b68674`.
+Corrected source pin: `e3a7e6e88b87194929bd82f79c03d04fc5c09edb`.
+Corrected clone runner: `74b9c6212a53e3f3b883fd3060546e224ca9c689`.
+Corrected paired controller: `c9ec7462dde0e45c854ba960de7dbb96ccd9b82b`.
 
 Only two-window preflight and (if successful) the paired A8/B16 benchmark
 are approved. Go tests, race tests, signed verification, SQL window atomicity,
@@ -165,7 +165,7 @@ A ten-window run is not implemented or authorized by this controller.
 set -eu
 repo=/home/jwood/fi-w512-c220-stage
 branch=experiment/fi-security-sweep-8-16-w512-20261116
-pairpin=3901d5dc70de637b7c13ecd9560cf45251b68674
+pairpin=c9ec7462dde0e45c854ba960de7dbb96ccd9b82b
 controller=/var/tmp/fi-w512-security-sweep-pair-20261116.sh
 jexec -U jwood fi-dev git -C "$repo" fetch origin \\
   "refs/heads/$branch:refs/remotes/origin/$branch"
@@ -186,3 +186,33 @@ commits, the relay allowlisted port, two original-seed preflights, and then
 runs A8 followed by B16 with **no shared PostgreSQL clone**. All previous
 signed-readback, SQL-integrity and source/typed descriptor gates remain in
 force. The per-worker/full lane receipts and host CPU summary are mandatory.
+
+## A8 first replay — postrun AWK failure and correction (2026-11-16)
+
+The first full A8 benchmark, in output directory
+`/var/tmp/fi-window-chunks-family-p3-20261116T102714Z`, passed the two
+original-seed preflights, Go build/race tests, private PostgreSQL start,
+ingestion, SQL row counts, and family worker/queue receipt gates. It then
+failed **after SQL replay** while formatting the family-worker TSV:
+`awk: can't assign to f; it's an array name.` The script was using `f`
+for both its parsed key/value map and the family-name string in the `END`
+loop. The runner stopped PostgreSQL and exited 1; the signed byte-for-byte
+readback and final acceptance gates had **not** run. Consequently, **A8
+is not accepted**, and the pair correctly did not start B16. Preserve the
+failed run directory as diagnostic evidence; never call that run successful.
+
+The fix is more than a variable rename. A single, separately pinned AWK
+script (`patchers/security_sweep_c220/private_family_worker_summary.awk`)
+aggregates all workers and zero-work families using distinct `fields` and
+`familyName` variables. The C220 runner fetches it by the fixed source
+commit, checks it under a synthetic fixture in **preflight**, verifies it
+produces exactly 16 or 24 worker rows (plus header), and then uses that
+**same vetted file** for the actual postrun family report. A quick local
+`awk` execution check was also performed for both Security=8 and 16; the
+live C220 preflight has not yet been repeated.
+
+New source pin: `e3a7e6e88b87194929bd82f79c03d04fc5c09edb`.
+New clone runner: `74b9c6212a53e3f3b883fd3060546e224ca9c689`.
+New paired controller: `c9ec7462dde0e45c854ba960de7dbb96ccd9b82b`.
+No change to accepted header-first or prior P3 controls, PostgreSQL
+transaction boundaries, canonical signed source, or authoritative SoR.
