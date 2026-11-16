@@ -109,6 +109,21 @@ func main() {
       "<-s.done",
       "<-s.done\n    if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}",
     },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "type privateParallelPreparedStream struct {",
+      "type privateParallelPreparedStream struct {\n    privateP5Session *privateP5Session",
+    },
+    {
+      "go/internal/recordingest/private_parallel_preparation.go",
+      "if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}",
+      "if s.privateP5Session != nil {s.privateP5Session.afterClose()}\n    if s.privateFamilyP3Telemetry != nil {s.privateFamilyP3Telemetry.print(s.privateSweepComplete)}",
+    },
+    {
+      "go/internal/recordingest/backlog_typed_window_postgres.go",
+      "var chunkSamples []backlogTypedChunkSample",
+      "var chunkSamples []backlogTypedChunkSample\n    // P5 is a disposable clone-only option; source chunks keep the same\n    // SQL transaction and signed evidence, while preparation workers now\n    // persist across original signed batch boundaries in this window.\n    if privateP5Enabled() {\n        pool,poolErr:=newPrivateP5Pool(ctx,index)\n        if poolErr!=nil {return poolErr}\n        defer pool.Close()\n        ctx=context.WithValue(ctx,privateP5PoolContextKey{},pool)\n    }",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}
@@ -151,7 +166,7 @@ func main() {
   }
   // Require both classifier implementation and its fixture-bearing test.
   // Missing tests are failures, never grounds to weaken the Go test gate.
-  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_family_dynamic_p4.go","private_family_dynamic_p4_test.go"} {
+  for _,n:=range []string{"private_canonical_spool_dispatch.go","private_canonical_spool_dispatch_test.go","private_header_first_p2.go","private_header_first_p2_test.go","private_family_preparation_p3.go","private_family_preparation_p3_test.go","private_family_dynamic_p4.go","private_family_dynamic_p4_test.go","private_family_persistent_p5.go","private_family_persistent_p5_test.go"} {
     path:=filepath.Join(root,"go/internal/recordingest",n)
     st,err:=os.Lstat(path)
     if err!=nil||!st.Mode().IsRegular() {fail(fmt.Errorf("missing staged private asset %s: %v",n,err))}
