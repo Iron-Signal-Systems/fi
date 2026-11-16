@@ -8,6 +8,17 @@ fail(){ printf 'FI C220 PERSISTENT P5 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$#" -eq 2 ] || fail 'usage: sh controller preflight|persistent 20261115T153532Z'
 case "$1" in preflight|persistent) mode=$1 ;; *) fail 'unknown persistent P5 mode' ;; esac
 [ "$2" = 20261115T153532Z ] || fail 'signed W512 source seed mismatch'
+# Freeze the accepted P4 comparison input, not just a printed number.
+control=/var/tmp/fi-window-chunks-family-p3-20261116T115151Z
+controlbundle="$control/fi-w512-family-p3-pilot2-20261116T115151Z.tar.gz"
+controlsha=9bbbba5dd9376eefb75c98a3bd5f6f878f7bbb0e3b25966195b0647a47a9923e
+[ -s "$controlbundle" ] && [ -s "$control/SUMMARY.txt" ] &&
+[ "$(sha256 -q "$controlbundle")" = "$controlsha" ] ||
+  fail 'accepted P4 baseline metrics bundle missing or SHA256 differs'
+grep -Fxq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifests_identical=true' "$control/SUMMARY.txt" ||
+  fail 'accepted P4 source signature/readback receipt absent'
+grep -Fxq 'FI C220 W512 DYNAMIC P4 TWO-WINDOW ACCEPTED windows=2 new_records=997434 elapsed=4m0.984s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0' "$control/SUMMARY.txt" ||
+  fail 'accepted P4 SQL/typed/batch baseline receipt differs'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=9ba8c9ea309747d9203424aa340bb72000108c32
 runnerpin=21e6d6bf32964d61bb51835cd18cb28941d8fb1c
