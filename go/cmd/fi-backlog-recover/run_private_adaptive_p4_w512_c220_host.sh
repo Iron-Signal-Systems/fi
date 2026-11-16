@@ -48,7 +48,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=ead939aa5e6d0be55769f86b49c33678c8581932
+sourcecommit=d49403b519407e6b6dc8d30c0d99c3c228d24f4a
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -644,6 +644,7 @@ awk '/^FI ADAPTIVE P4 LANE /{
        f["complete"]!="true" || f["peak_active"]<2 ||
        f["peak_active"]>16 || f["activations"]<f["peak_active"] ||
        f["retirements"]>f["activations"]-2 ||
+       f["protocol_errors"]!="0" ||
        f["active_at_end"]<2 || f["active_at_end"]>16)bad=1
     peak[family]=(peak[family]>f["peak_active"]?peak[family]:f["peak_active"])
     starts[family]+=f["activations"]; retires[family]+=f["retirements"]
