@@ -19,8 +19,8 @@ grep -Fxq 'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifest
 grep -Fxq 'FI C220 W512 PERSISTENT P5 TWO-WINDOW ACCEPTED windows=2 new_records=997434 elapsed=3m57.995s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0' "$control/SUMMARY.txt" ||
     fail 'P5 typed SQL acceptance receipt changed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=adab0afdd9648f8d26832a19512e4b78717311b6
-runnerpin=3e997641a2775409ac397a08ba49f7aa3a1ddf66
+sourcepin=be622cf547f750ba20b111720219e82a44eaa56c
+runnerpin=9bc02d154fb1ecf710a20d0f1643db75a5e6347d
 runner_path=go/cmd/fi-backlog-recover/run_private_family_w512_c220_p3_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
     fail 'pinned 8-module P6 source unavailable'
