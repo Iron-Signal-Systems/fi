@@ -675,6 +675,42 @@ awk -v windows=2 -v first=1 -v records1=499052 -v records2=498382 \
     fail 'P5 window family/worker reuse and signed-row accounting failed'
 printf 'FI W512 P5 PERSISTENT WINDOWS PASS windows=2 signed_records=997434 persistent_across_batches=true window_pools_closed=true\n' |
     tee -a "$out/SUMMARY.txt"
+# P6: require every relational module and source-copy ledger to complete.
+# These receipts are logged inside the existing W512 transaction, before
+# the final existing typed-window SQL commit and signed readback.
+grep '^FI P6 SOURCE LEDGER window=' "$log" > "$out/$name/P6_SOURCE_LEDGER.txt" ||
+    fail 'P6 ordered source ledger receipts missing'
+grep '^FI P6 FAMILY window=' "$log" > "$out/$name/P6_FAMILY_HANDOFFS.txt" ||
+    fail 'P6 five dedicated relational family receipts missing'
+grep '^FI P6 WINDOW READY window=' "$log" > "$out/$name/P6_WINDOWS.txt" ||
+    fail 'P6 atomic window source/typed completion receipts missing'
+[ "$(wc -l < "$out/$name/P6_SOURCE_LEDGER.txt" | tr -d ' ')" = 2 ] &&
+[ "$(wc -l < "$out/$name/P6_FAMILY_HANDOFFS.txt" | tr -d ' ')" = 10 ] &&
+[ "$(wc -l < "$out/$name/P6_WINDOWS.txt" | tr -d ' ')" = 2 ] ||
+    fail 'P6 must have two window ledgers and ten exact family handoffs'
+awk '/^FI P6 FAMILY /{
+    delete k
+    for(i=1;i<=NF;i++){split($i,a,"=");k[a[1]]=a[2]}
+    family=k["family"];win=k["window"]+0
+    if(win<1||win>2||k["complete"]!="true"||
+        k["rows"]<0||k["capacity"]<0||k["dependency"]<0||
+        k["final"]<0||k["handoffs"]<0||
+        k["handoffs"]!=k["capacity"]+k["dependency"]+k["final"]||
+        k["peak_rows"]<0||k["peak_bytes"]<0||
+        seen[win ":" family]++)bad=1
+    records[win]+=k["rows"];total+=k["rows"];n++
+}END {
+    if(bad||n!=10||records[1]!=499052||records[2]!=498382||total!=997434)exit 1
+    split("Security NTFSFile Coverage USNDependency Other",families," ")
+    for(w=1;w<=2;w++)for(i=1;i<=5;i++)
+        if(seen[w ":" families[i]]!=1)exit 1
+}' "$out/$name/P6_FAMILY_HANDOFFS.txt" ||
+    fail 'P6 source/child family handoffs or original signed totals mismatch'
+grep -Fxq 'FI P6 WINDOW READY window=1 source=499052 typed=499052 families=5 sql_writers=1 atomic=true' "$out/$name/P6_WINDOWS.txt" &&
+grep -Fxq 'FI P6 WINDOW READY window=2 source=498382 typed=498382 families=5 sql_writers=1 atomic=true' "$out/$name/P6_WINDOWS.txt" ||
+    fail 'P6 SQL source-parent and typed child completion disagree'
+printf 'FI W512 P6 ATOMIC FAMILY HANDOFFS PASS windows=2 families=5 records=997434 source_ledger=ordered sql_writers=1\n' |
+    tee -a "$out/SUMMARY.txt"
 # Lane/worker receipts are printed only AFTER every prep worker has joined.
 # Every signed batch must report five lanes (including zero-work lanes), all
 # 8+Security workers individually, and complete source/prepare accounting.
@@ -811,6 +847,7 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
   "$name/P5_WINDOW_LANES.txt" "$name/P5_WINDOW_LANES.tsv" \
   "$name/P5_WINDOW_START.txt" "$name/P5_WINDOW_STOP.txt" \
+  "$name/P6_SOURCE_LEDGER.txt" "$name/P6_FAMILY_HANDOFFS.txt" "$name/P6_WINDOWS.txt" \
   "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
