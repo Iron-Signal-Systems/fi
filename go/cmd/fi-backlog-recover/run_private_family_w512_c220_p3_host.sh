@@ -523,6 +523,95 @@ awk '/^FI FAMILY P3 BUDGET /{
     n++
 }END{if(bad||n!=431)exit 1}' "$out/$name/FAMILY_BUDGET.txt" ||
     fail 'family admission budget invariant failed'
+# Lane/worker receipts are printed only AFTER every prep worker has joined.
+# Every signed batch must report five lanes (including zero-work lanes), all
+# 8+Security workers individually, and complete source/prepare accounting.
+grep '^FI FAMILY P3 TOTAL ' "$log" > "$out/$name/FAMILY_TOTALS.txt" ||
+    fail 'family P3 completion totals absent'
+grep '^FI FAMILY P3 LANE ' "$log" > "$out/$name/FAMILY_LANES.txt" ||
+    fail 'family P3 lane telemetry absent'
+grep '^FI FAMILY P3 WORKER ' "$log" > "$out/$name/FAMILY_WORKERS.txt" ||
+    fail 'family P3 individual worker telemetry absent'
+[ "$(wc -l < "$out/$name/FAMILY_TOTALS.txt" | tr -d ' ')" = "$prepbatches" ] &&
+[ "$(wc -l < "$out/$name/FAMILY_LANES.txt" | tr -d ' ')" = "$((prepbatches*5))" ] &&
+[ "$(wc -l < "$out/$name/FAMILY_WORKERS.txt" | tr -d ' ')" = "$((prepbatches*family_workers))" ] ||
+    fail 'family P3 completion report missing or duplicate worker/lane entries'
+awk -v expected="$new" -v sec="$security_workers" '/^FI FAMILY P3 TOTAL /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    if(f["complete"]!="true" || f["prepared_records"]!=f["input_records"] ||
+       f["security_workers"]!=sec || f["general_workers"]!=8 ||
+       f["inflight"]!=32 || f["sql_writers"]!=1) bad=1
+    sum+=f["input_records"]; n++
+}END{if(bad || n!=431 || sum!=expected)exit 1}' "$out/$name/FAMILY_TOTALS.txt" ||
+    fail 'signed family source/prepared completion totals diverged'
+awk -v sec="$security_workers" '/^FI FAMILY P3 WORKER /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    key=f["family"]
+    w=f["worker"]+0
+    if(f["complete"]!="true" || f["records"]<0 || f["bytes"]<0 ||
+       f["prepare_ns"]<0 || f["input_wait_ns"]<0 || f["output_wait_ns"]<0 ||
+       (key=="Security" && w>=sec) ||
+       (key!="Security" && w>=2))bad=1
+    wc[key]++; records[key]+=f["records"]; bytes[key]+=f["bytes"]
+}
+/^FI FAMILY P3 LANE /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    key=f["family"]
+    want=(key=="Security"?sec:2)
+    if(key!="Security" && key!="File" && key!="Coverage" &&
+       key!="USNDependency" && key!="Other")bad=1
+    if(f["complete"]!="true" || f["workers"]!=want ||
+       wc[key]!=want || records[key]!=f["prepared"] ||
+       f["prepared"]!=f["dispatched"] || bytes[key]!=f["bytes"] ||
+       f["max_queue_depth"]<0 || f["max_queue_depth"]>32)bad=1
+    wc[key]=0; records[key]=0; bytes[key]=0; lanes++; seen[key]++
+}END{
+    if(bad || lanes!=2155 || seen["Security"]!=431 ||
+       seen["File"]!=431 || seen["Coverage"]!=431 ||
+       seen["USNDependency"]!=431 || seen["Other"]!=431)exit 1
+}' "$log" ||
+    fail 'per-family worker totals, exact counts or bounded queues invalid'
+# Machine-readable family-wide summaries, ready for two-window and W3..W12
+# cross-experiment comparisons. Wait columns are cumulative worker-seconds,
+# NOT wall time or PostgreSQL wait_event measurements.
+awk '/^FI FAMILY P3 LANE /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    k=f["family"]; workers[k]=f["workers"]
+    records[k]+=f["prepared"]; bytes[k]+=f["bytes"]
+    pre[k]+=f["prepare_ns"]; iw[k]+=f["input_wait_ns"]
+    ow[k]+=f["output_wait_ns"]
+    if(f["max_queue_depth"]>peak[k])peak[k]=f["max_queue_depth"]
+}END{
+    print "family\tworkers\trecords\tbytes\tprepare_worker_seconds\tinput_wait_worker_seconds\toutput_wait_worker_seconds\tpeak_queue_depth"
+    split("Security File Coverage USNDependency Other",a," ")
+    for(i=1;i<=5;i++){k=a[i];printf "%s\t%d\t%.0f\t%.0f\t%.6f\t%.6f\t%.6f\t%d\n",
+        k,workers[k],records[k],bytes[k],pre[k]/1e9,iw[k]/1e9,ow[k]/1e9,peak[k]}
+}' "$out/$name/FAMILY_LANES.txt" > "$out/$name/FAMILY_LANE_SUMMARY.tsv" ||
+    fail 'family lane summary failed'
+awk '/^FI FAMILY P3 WORKER /{
+    delete f
+    for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]}
+    k=f["family"] ":" f["worker"]
+    records[k]+=f["records"]; bytes[k]+=f["bytes"]
+    prep[k]+=f["prepare_ns"]; inbound[k]+=f["input_wait_ns"]
+    outbound[k]+=f["output_wait_ns"]
+}END{
+    print "family\tworker\trecords\tbytes\tprepare_worker_seconds\tinput_wait_worker_seconds\toutput_wait_worker_seconds"
+    split("Security File Coverage USNDependency Other",a," ")
+    for(i=1;i<=5;i++){f=a[i]; limit=(f=="Security"?ENVIRON["FI_W512_P3_SECURITY_WORKERS"]+0:2);
+        for(j=0;j<limit;j++){k=f ":" j;
+            printf "%s\t%d\t%.0f\t%.0f\t%.6f\t%.6f\t%.6f\n",
+            f,j,records[k],bytes[k],prep[k]/1e9,inbound[k]/1e9,outbound[k]/1e9
+        }
+    }
+}' "$out/$name/FAMILY_WORKERS.txt" > "$out/$name/FAMILY_WORKER_SUMMARY.tsv" ||
+    fail 'family worker summary failed'
+printf 'FI W512 FAMILY BREAKDOWN PASS windows=2 signed_batches=%s families=5 workers=%s records=%s\n' "$prepbatches" "$family_workers" "$new" |
+    tee -a "$out/SUMMARY.txt"
 awk '/^FI FAMILY P3 BLOCK DISPATCH /{
   delete f
   for(i=1;i<=NF;i++){split($i,a,"=");f[a[1]]=a[2]+0}
@@ -579,6 +668,8 @@ tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
+  "$name/FAMILY_TOTALS.txt" "$name/FAMILY_LANES.txt" "$name/FAMILY_WORKERS.txt" \
+  "$name/FAMILY_LANE_SUMMARY.tsv" "$name/FAMILY_WORKER_SUMMARY.tsv" \
   "$name/iostat.txt" "$name/vmstat.txt" "$name/W512_CHECKPOINTS.tsv" ||
   fail 'W512 metrics bundle creation failed'
 [ -s "$bundle" ] || fail 'W512 metrics bundle absent'
