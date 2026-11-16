@@ -31,6 +31,7 @@ per-run manifest prove actual runtime worker/credit counts.
 - W512 clone runner commit:
   `6f9dd33abdfdbd346bd2ba6d798e50dd50296046`
 - Pair controller source: `go/cmd/fi-backlog-recover/run_private_security_sweep_8_16_pair_c220_host.sh`
+- Pair controller pinned commit: `18b95a364653441d012330ff9b125119ca2fca42`
 - Original accepted W512 source seed: `20261115T153532Z`
 - Relay base port `55983`, as accepted by the original C220 relay binary.
 - Both runs use a **separate fresh private PostgreSQL clone**, identical
@@ -92,6 +93,9 @@ It creates a unique host
   peak queue depth, for A8 and B16.
 - `WORKER_COMPARISON.tsv` — every individual worker's corresponding
   aggregate, including idle workers.
+- `HOST_CPU_COMPARISON.tsv` — sampled host CPU user/system/idle percentages,
+  excluding the initial since-boot sample. Full per-device `iostat` and
+  PostgreSQL WAL/I/O/checkpointer snapshots remain in each original bundle.
 - `A8.console.txt` / `B16.console.txt` — complete command output.
 - `A8.output-path` / `B16.output-path`, `A8.bundle.sha256` /
   `B16.bundle.sha256` — concrete result pointers/checksums.
@@ -128,3 +132,32 @@ workload. Ten-window record/batch invariants must be derived from its
 authenticated descriptors and checked against expected signed records; the
 two-window 431-batch/997,434 constants must not be copied blindly.
 A ten-window run is not implemented or authorized by this controller.
+
+## Exact controller invocation (root@c220)
+
+```sh
+(
+set -eu
+repo=/home/jwood/fi-w512-c220-stage
+branch=experiment/fi-security-sweep-8-16-w512-20261116
+pairpin=18b95a364653441d012330ff9b125119ca2fca42
+controller=/var/tmp/fi-w512-security-sweep-pair-20261116.sh
+jexec -U jwood fi-dev git -C "$repo" fetch origin \\
+  "refs/heads/$branch:refs/remotes/origin/$branch"
+jexec -U jwood fi-dev git -C "$repo" cat-file -e "$pairpin^{commit}"
+test ! -e "$controller"
+jexec -U jwood fi-dev git -C "$repo" show \\
+  "$pairpin:go/cmd/fi-backlog-recover/run_private_security_sweep_8_16_pair_c220_host.sh" \\
+  > "$controller"
+chmod 0700 "$controller"
+sh -n "$controller"
+sh "$controller" preflight 20261115T153532Z
+sh "$controller" pair 20261115T153532Z
+)
+```
+
+The controller independently checks the pinned Git source and clone runner
+commits, the relay allowlisted port, two original-seed preflights, and then
+runs A8 followed by B16 with **no shared PostgreSQL clone**. All previous
+signed-readback, SQL-integrity and source/typed descriptor gates remain in
+force. The per-worker/full lane receipts and host CPU summary are mandatory.
