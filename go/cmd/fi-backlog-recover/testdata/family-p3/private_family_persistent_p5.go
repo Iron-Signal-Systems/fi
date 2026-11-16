@@ -144,12 +144,16 @@ func (l *privateP5Lane) spawn() {
                 }
             }
             s.onFinished(l.family)
-            s.wg.Done()
-            // Done is buffered, so a worker never waits for a reader or SQL
-            // writer before becoming available for another signed batch.
+            // Publish worker availability before reporting the source task
+            // complete. Thus a next signed batch cannot race the prior
+            // worker-completion notice and spuriously spawn another worker.
+            // Buffered by 16 slots: at most one outstanding notice/worker.
             select {
-            case <-l.pool.ctx.Done():return
+            case <-l.pool.ctx.Done():
+                s.wg.Done()
+                return
             case l.done<-worker:
+                s.wg.Done()
             }
         }
     }(id,l.jobs[id])
