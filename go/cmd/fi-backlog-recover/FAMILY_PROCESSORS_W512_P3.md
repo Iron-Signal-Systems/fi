@@ -1,6 +1,6 @@
 # FI W512 independent family preparation P3 — private C220 candidate
 
-**Status (2026-11-15): the C220 read-only source audit found exactly two incompatible File validation anchors. Both assumed the repository's older File validation pattern, but the seed already has an optimized `validated.observation` pipeline. Those two redundant edits are now removed; the original optimized validator remains in charge of File scope and SQL constraints. Candidate NOT rerun or benchmark-accepted, NOT released.** No production or authoritative SoR changes.
+**Status (2026-11-16): corrected family P3 overlay passed C220 original-seed anchor audit (11 edits), isolated Go build/tests including race tests, and private PostgreSQL startup. The first ingestion attempt then stopped BEFORE ingest when the relay rejected disallowed port `55984`. The pinned runner now uses the same allowed `55983` port as the accepted header-first C220 control and prints relay errors automatically. NOT yet benchmark-accepted or released.** No authoritative SoR, original signed-cache, or seed changes.
 
 ## Why this candidate exists
 
@@ -29,7 +29,7 @@ The prior private header-first branch and its accepted 431-batch signed readback
 ## Frozen source pins
 
 - Source / patcher **`e34787344b93b26ca695bbb14982d79dbb0f6215`**
-- C220 runner **`39ca181efcc0b80388d6d79c9d635d8f504d13dd`**
+- C220 runner **`410f454a79b6f4fb02f48670eadcef154c46a4a7`**
 - Branch: `experiment/fi-family-processors-w512-20261115`
 - Seed: `20261115T153532Z` (the accepted private W512 seed, offline only)
 - All Git files are read by exact commit using the existing `fi-dev` staging checkout; no switching or editing that checkout.
@@ -43,7 +43,7 @@ set -eu
 repo=/home/jwood/fi-w512-c220-stage
 branch=experiment/fi-family-processors-w512-20261115
 sourcepin=e34787344b93b26ca695bbb14982d79dbb0f6215
-runnerpin=39ca181efcc0b80388d6d79c9d635d8f504d13dd
+runnerpin=410f454a79b6f4fb02f48670eadcef154c46a4a7
 runner=/var/tmp/fi-w512-family-p3-initial-c220.sh
 
 jexec -U jwood fi-dev git -C "$repo" fetch origin \
@@ -96,4 +96,10 @@ The second preflight enumerated **exactly two** failed File validation anchors i
 
 The patcher no longer tries to inject a second wrapper around an old validator; it retains the seed's existing optimized File validation and scope behavior. It still injects a *pure* File worker-side typed preparation and reuses the decoded value at the verified JSON-decode insertion point. This is a correctness-first trial, **not yet proof of lower writer-side validation cost**. The exact read-only preflight gate still runs before copying the private PostgreSQL seed.
 
-Pinned corrective source: `e34787344b93b26ca695bbb14982d79dbb0f6215` and pinned runner: `39ca181efcc0b80388d6d79c9d635d8f504d13dd`. Re-run preflight and then the isolated two-window candidate only if preflight passes. If Go compilation, race detector, SHA, SQL, or byte-for-byte signed readback fails, stop and investigate; do not bypass.
+Pinned corrective source: `e34787344b93b26ca695bbb14982d79dbb0f6215` and pinned runner: `410f454a79b6f4fb02f48670eadcef154c46a4a7`. Re-run preflight and then the isolated two-window candidate only if preflight passes. If Go compilation, race detector, SHA, SQL, or byte-for-byte signed readback fails, stop and investigate; do not bypass.
+
+## Third C220 stop: relay port (2026-11-16)
+
+The private benchmark stopped just after `FI C220 CLONE-ONLY PRIVATE OUTPUT PASS`. Its retained `relay.log` states `FI PG relay: unexpected disposable cluster port family`. The P3 runner was using `port=55984`, which the pinned relay binary rejects. The previously accepted C220 header-first P2 control used `port=55983` successfully. This is a runner-port regression, not an ingestion or database correctness result.
+
+The corrective runner at commit `410f454a79b6f4fb02f48670eadcef154c46a4a7` uses `55983` without modifying any seed or relay executable. It also tails `relay.log` on a relay crash or startup timeout so further failures are not hidden. Re-fetch the fixed runner into a **new filename**, verify its source pin `e34787344b93b26ca695bbb14982d79dbb0f6215`, run `preflight` and then `family` only if preflight passes. The full SQL/signed readback gates must still pass before acceptance.
