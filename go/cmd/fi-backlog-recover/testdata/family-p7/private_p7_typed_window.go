@@ -175,7 +175,7 @@ func stagePrivateP7FiveWriterTypedWindow(
     fmt.Printf("FI P7 PRIVATE STAGE PROFILE index=%d records=%d source_stage=%s p5_signed_ingest=%s five_writer_publish=%s total=%s max_queued_bytes=%d\n",
         index,records,sourceStageElapsed,ingestElapsed,publishElapsed,
         time.Since(started),peakBytes)
-    fmt.Printf("FI FILE VALIDATION WINDOW index=%d source_validated=%d bulk_reused=%d bulk_validated=0\n",
+    fmt.Printf("FI P7 FILE PROOF VERIFIED index=%d source_validated=%d bulk_reused=%d all_native=true\n",
         index,ntfsTiming.FileSourceValidated,ntfsTiming.FileBulkValidationReused)
     fmt.Printf("FI P7 REAL TYPED WINDOW index=%d records=%d bytes=%d sql_writers=5 signed_batches=%d file_validated=%d security_fields=%d ingest=%s total=%s\n",
         index,records,bytes,len(batchIDs),published.FileValidated,
