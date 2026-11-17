@@ -67,8 +67,7 @@ func privateP8ReusableStage(ctx context.Context,g *PreparedGeneration,
         }
         return "",false,nil
     }
-    if g==nil || index>=len(g.Batches) && d.EndBatch>len(g.Batches) ||
-        d.EndBatch>len(g.Batches) {
+    if g==nil || d.EndBatch>len(g.Batches) {
         return "",false,errors.New("FI P8: source generation batch range invalid")
     }
     ds,err:=DescribeBacklogWindows(g,limits)
