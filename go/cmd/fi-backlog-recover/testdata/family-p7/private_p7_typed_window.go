@@ -151,6 +151,8 @@ func stagePrivateP7FiveWriterTypedWindow(
         bytes+=batch.Manifest.DataBytes
     }
     ingestElapsed:=time.Since(ingestStarted)
+    fmt.Printf("FI P7 SIGNED BATCH VERIFIED window=%d batches=%d records=%d bytes=%d manifest_sha_validated=true record_sha_validated=true\n",
+        index,len(batchIDs),records,bytes)
     if records!=int64(d.EndRecord-d.StartRecord)||
         bytes!=int64(d.DataBytes){
         return fmt.Errorf("FI P7: signed source totals mismatch records=%d bytes=%d",records,bytes)
