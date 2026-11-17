@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p8) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=ddbec10fa28143a2e81763fe98b2c17ddf58a967
-testrunnerpin=be223371e7be605ecb758be0936d00236f0994ea
-runnerpin=7fb6f8e5a82d70392693b62b7904f85396b1a098
+sourcepin=cef2158260e76ba026f7478efe3cdf054f778f6e
+testrunnerpin=134cf86b28ed2cf24a008dc38a2037156f96db05
+runnerpin=15dfa7f73979c9e912c620212f698e93d9f9758c
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -58,7 +58,7 @@ grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
     fail 'P7 source pin disagrees across C220 runners'
 grep -Fq 'go127 test -race' "$testscript" &&
 grep -Fq 'TestPrivateP[78]' "$testscript" &&
-grep -Fq 'FI P8 COMMITTED ARTIFACT REUSE PASS' "$runner" &&
+grep -Fq 'FI P8 VERIFIED PRIVATE ARTIFACT PASS' "$runner" &&
 grep -Fq 'FI W512 P7 SIGNED CANONICAL SHA PASS' "$runner" &&
 grep -Fq 'sha_once_shortcut=disabled' "$runner" &&
 grep -Fq 'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS' "$runner" &&
@@ -110,7 +110,7 @@ esac
 summary="$out/SUMMARY.txt"
 [ -s "$summary" ] || fail 'P7 SQL run summary missing'
 for expected in \
-    'FI P8 COMMITTED ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=6 historical_sql_source_scan=retained original_sha=retained' \
+    'FI P8 VERIFIED PRIVATE ARTIFACT PASS windows=2 signed_batches=431 records=997434 fresh=2 reused=0 full_data_rehashes_avoided=2 signed_copy_sha=enabled source_sql_scan=retained original_sha=retained' \
     'FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged' \
     'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS windows=2 artifact_markers=2 source_markers=2 signed_batches=431 records=997434' \
     'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true' \
