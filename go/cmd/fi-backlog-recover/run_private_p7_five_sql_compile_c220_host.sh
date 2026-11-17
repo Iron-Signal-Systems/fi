@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=907b74759f7465c7c9a7b15560a63f61d771b1d2
+sourcepin=029e851ca8f6c486cbc3795640adcee05365485a
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
@@ -72,6 +72,13 @@ mkdir -p "$bridge"
 git -C "$repo" show "$sourcepin:go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go" \
     > "$bridge/main.go" ||
     { echo 'FI P7: pinned Candidate A bridge missing' >&2; exit 1; }
+git -C "$repo" show "$sourcepin:go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main_test.go" \
+    > "$bridge/main_test.go" ||
+    { echo 'FI P7: pinned Candidate A bridge regression tests missing' >&2; exit 1; }
+(cd "$dst/optimized-source/go" &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -count=1 \
+   ./cmd/fi-backlog-recover/patchers/p7_parallel_bridge) ||
+    { echo 'FI P7: Candidate A bridge syntax/AST regression failed' >&2; exit 1; }
 (cd "$dst/optimized-source/go" &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/p7_parallel_bridge "$dst/optimized-source") ||
