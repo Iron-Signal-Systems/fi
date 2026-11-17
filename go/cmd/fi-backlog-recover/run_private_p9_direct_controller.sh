@@ -40,7 +40,7 @@ sh -n "$tests" && sh -n "$runner" || fail 'pinned POSIX shell syntax invalid'
 grep -Fxq "sourcepin=$sourcepin" "$tests" &&
 grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
   fail 'P9 source pin mismatch'
-grep -Fq 'TestPrivateP9' "$tests" &&
+grep -Fq 'TestPrivateP[789]' "$tests" &&
 grep -Fq 'go127 test -race' "$tests" &&
 grep -Fq 'FI P9 DIRECT MULTIWINDOW COMMIT PASS' "$runner" &&
 grep -Fq 'source_receipt_writes=0 artifact_receipt_writes=0' "$runner" &&
