@@ -62,14 +62,29 @@ func stagePrivateP7FiveWriterTypedWindow(
     verifiedStageDir,err:=privateP7MaterializeSignedWindow(
         ctx,generation,limits,index,privateRoot,d)
     if err!=nil{return err}
-    // The accepted joined-source implementation staged parent source and
-    // typed projections inside one transaction. That cannot work across
-    // five real PostgreSQL connections. P7 instead stages independently
-    // durable source envelopes from this newly verified PRIVATE copy.
+    // Deferred joined-source replay may intentionally skip the separate
+    // fi_recovery.verified_artifact_window checkpoint. P7 requires that
+    // independently committed checkpoint BEFORE StageVerifiedBacklogSourceWindow
+    // can create the signed pending-source ledger. Record it only after
+    // physical materialization and complete original manifest/data hashing.
+    // The existing artifact-ledger function verifies AGAIN and enforces
+    // the exact preceding window, transfer/receipt identity and digest.
+    if err:=RecordVerifiedBacklogArtifactWindow(ctx,control,generation,limits,
+        index,privateRoot);err!=nil{
+        return fmt.Errorf("FI P7: signed physical artifact checkpoint: %w",err)
+    }
+    fmt.Printf("FI P7 VERIFIED ARTIFACT CHECKPOINT COMMITTED index=%d signed_batches=%d records=%d source_rows=pending typed_marker=absent\n",
+        index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord)
+    // Five independent PostgreSQL family transactions require parents to
+    // be durable first. The existing exact signed source-ledger stage
+    // revalidates the artifact checkpoint and original source bytes before
+    // it commits pending-source rows.
     if err:=StageVerifiedBacklogSourceWindow(ctx,control,generation,limits,
         index,privateRoot);err!=nil{
         return fmt.Errorf("FI P7: authenticated durable source pre-stage: %w",err)
     }
+    fmt.Printf("FI P7 VERIFIED SOURCE CHECKPOINT COMMITTED index=%d signed_batches=%d records=%d artifact=committed typed_marker=absent\n",
+        index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord)
     sourceStageElapsed:=time.Since(started)
     // Shadow generation and original source batch identity were already
     // created by the accepted seed W512=0. NEVER mint new batch IDs.
