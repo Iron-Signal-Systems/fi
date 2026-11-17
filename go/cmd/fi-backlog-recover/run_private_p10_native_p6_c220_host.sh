@@ -371,6 +371,13 @@ for item in private_p6_family_buffers_test.go private_p6_file_proof_test.go priv
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p6/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
+# P6 patcher audits all P6 private assets before modifying the disposable
+# source. Supply the P10-owned P6 buffer implementation BEFORE that audit,
+# not after it. This is the accepted P6 buffer with only SQL ACK barriers.
+[ ! -e "$src/go/internal/recordingest/private_p6_family_buffers.go" ] || exit 1
+git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p10/private_p6_family_buffers.go" \
+  > "$src/go/internal/recordingest/private_p6_family_buffers.go" || exit 1
+[ -s "$src/go/internal/recordingest/private_p6_family_buffers.go" ] || exit 1
 mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/family_p3_c220" || exit 1
 git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go" \
   > "$src/go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go" || exit 1
@@ -378,10 +385,8 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/family_p3_c220 "$src"
 ) || exit 1
-# Extend the accepted P6 coordinator directly. No P7 bridge/P8 artifacts.
-[ ! -e "$src/go/internal/recordingest/private_p6_family_buffers.go" ] || exit 1
-git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p10/private_p6_family_buffers.go" \
-  > "$src/go/internal/recordingest/private_p6_family_buffers.go" || exit 1
+# Extend the accepted P6 coordinator directly. P6 buffers were already
+# installed before the original P6 patcher's required asset audit.
 for item in private_p10_five_sql.go private_p10_direct.go private_p10_direct_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p10/$item" \
