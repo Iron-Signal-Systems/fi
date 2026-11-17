@@ -166,9 +166,15 @@ func(s *privateP7FiveWriter) run(f privateP6Family){
             for{
                 select{
                 case job:=<-l.jobs:
-                    s.release(job.bytes)
+                    // Even aborted jobs retire both accounting fields
+                    // atomically. They never count as committed SQL.
                     s.mu.Lock()
                     l.queued-=int64(len(job.rows))
+                    s.usedBytes-=job.bytes
+                    if l.queued<0 || s.usedBytes<0 {
+                        s.mu.Unlock()
+                        panic("FI five-writer: negative canceled job accounting")
+                    }
                     s.signalLocked()
                     s.mu.Unlock()
                 default:return
