@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p7) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=6baf59d36bb3b4d51f4e26f5be54de178279de8f
-testrunnerpin=8b2ff76c6f97b22651c35378e5afe60cbfee608e
-runnerpin=b419c06e926c892d2ca1af83fc2edb3b46c9e36e
+sourcepin=546c6a1e1a12f30bb0f54c70809dee978afea5f3
+testrunnerpin=ec9f99bdf2ca82717ade94ae0d814d81c8bd99db
+runnerpin=93e27858d93b22acc2e5ab810ffdae86a315acf1
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -58,6 +58,8 @@ grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
     fail 'P7 source pin disagrees across C220 runners'
 grep -Fq 'go127 test -race' "$testscript" &&
 grep -Fq 'TestPrivateP7' "$testscript" &&
+grep -Fq 'FI W512 P7 PHYSICAL SIGNED STAGE PASS' "$runner" &&
+grep -Fq 'P7_MATERIALIZED_WINDOWS.txt' "$runner" &&
 grep -Fq 'FI W512 P7 REAL FIVE PG WRITERS PASS' "$runner" &&
 grep -Fq 'SELECT rolname FROM pg_catalog.pg_roles WHERE rolsuper AND rolcanlogin' "$runner" &&
 grep -Fq 'FI P7 PRIVATE CLONE SETTINGS ACCESS PASS' "$runner" &&
@@ -103,6 +105,7 @@ esac
 summary="$out/SUMMARY.txt"
 [ -s "$summary" ] || fail 'P7 SQL run summary missing'
 for expected in \
+    'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true' \
     'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifests_identical=true' \
     'FI P6 FULL RELATIONAL GRAPH PASS supported_kinds=13 missing_typed=0 unvalidated_fks=0' \
     'FI W512 P7 FIVE SQL FAMILY HANDOFFS PASS windows=2 families=5 records=997434 source_ledger=durable sql_writers=5' \
@@ -122,7 +125,7 @@ printf '%s\n' "$accepted" |
 printf '%s\n' "$accepted" |
     grep -Fq 'min_workers=2 max_workers=16 max_slots=80 credits=32 writer=5 authoritative=0 accepted=0' ||
     fail 'P7 five SQL writers or SoR isolation failed'
-for file in P7_SQL_FAMILIES.txt P7_PUBLISHED.txt P6_FILE_VALIDATION.txt \
+for file in P7_MATERIALIZED_WINDOWS.txt P7_SQL_FAMILIES.txt P7_PUBLISHED.txt P6_FILE_VALIDATION.txt \
     P6_FAMILY_HANDOFFS.txt SIGNED_BATCHES.txt P5_WINDOW_LANES.tsv \
     FAMILY_DYNAMIC_SUMMARY.tsv FAMILY_LANE_SUMMARY.tsv W512_CHECKPOINTS.tsv
 do
