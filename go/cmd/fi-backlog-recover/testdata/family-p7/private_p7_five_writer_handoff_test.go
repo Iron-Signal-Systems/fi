@@ -142,6 +142,50 @@ func TestPrivateP7FiveSeparateFamilyWritersWithUSNFileFence(t *testing.T){
     }
 }
 
+// Regression for C220 P8's false incomplete-barrier rejection:
+// source=typed=committed=5, unowned=0, but the last 21-byte reservation
+// was still visible because the worker signaled before releasing it.
+// Queue retirement and byte retirement must now be one atomic event.
+func TestPrivateP7DrainCannotSeeRetiredRowsWithReservedBytes(t *testing.T){
+    for round:=0;round<128;round++{
+        ledger:=&privateP7TestLedger{}
+        sink,_:=privateP7TestEngine(t,ledger,nil,nil,privateP6FamilyCount)
+        r:=privateP6Fixture(1,int64(round+1),"WindowsSecurityEvent")
+        ctx,cancel:=context.WithTimeout(context.Background(),3*time.Second)
+        if err:=sink.Source(ctx,[]privateP6Record{r});err!=nil{
+            cancel()
+            _=sink.Close(context.Background())
+            t.Fatalf("round %d source: %v",round,err)
+        }
+        if err:=sink.Family(ctx,privateP6Security,[]privateP6Record{r});err!=nil{
+            cancel()
+            _=sink.Close(context.Background())
+            t.Fatalf("round %d family: %v",round,err)
+        }
+        if err:=sink.Drain(ctx);err!=nil{
+            cancel()
+            _=sink.Close(context.Background())
+            t.Fatalf("round %d false incomplete W512 barrier: %v",round,err)
+        }
+        sink.mu.Lock()
+        queued:=sink.lanes[privateP6Security].queued
+        bytes:=sink.usedBytes
+        committed:=sink.lanes[privateP6Security].committed
+        complete:=sink.drained
+        sink.mu.Unlock()
+        if queued!=0 || bytes!=0 || committed!=1 || !complete{
+            cancel()
+            _=sink.Close(context.Background())
+            t.Fatalf("round %d non-atomic SQL retirement queued=%d bytes=%d committed=%d drained=%v",
+                round,queued,bytes,committed,complete)
+        }
+        cancel()
+        if err:=sink.Close(context.Background());err!=nil{
+            t.Fatalf("round %d SQL writer close: %v",round,err)
+        }
+    }
+}
+
 func TestPrivateP7SignedParentRequiredAndExactlyOnce(t *testing.T){
     ledger:=&privateP7TestLedger{}
     sink,_:=privateP7TestEngine(t,ledger,nil,nil,privateP6FamilyCount)
