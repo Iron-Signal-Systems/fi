@@ -7,8 +7,8 @@ umask 077
 fail(){ printf 'FI P7 FIVE SQL STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
 [ "$#" -eq 2 ] ||
-    fail 'usage root@c220: sh controller preflight|tests|p7 20261115T153532Z'
-case "$1" in preflight|tests|p7) mode=$1;;*) fail 'unsupported mode';;esac
+    fail 'usage root@c220: sh controller preflight|tests|p8 20261115T153532Z'
+case "$1" in preflight|tests|p8) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
