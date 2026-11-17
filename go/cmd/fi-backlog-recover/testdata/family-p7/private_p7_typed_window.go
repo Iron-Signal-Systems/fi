@@ -109,14 +109,24 @@ func stagePrivateP7FiveWriterTypedWindow(
     }
     started:=time.Now()
 
-    // The verified-cache recovery loop has already materialized, fully
-    // SHA-verified and committed this exact signed artifact in THIS
-    // process. Reuse that evidence instead of reading another ~2GiB two
-    // more times. Standalone P7 retains its original full-verification path.
-    verifiedStageDir,reused,err:=privateP8ReusableStage(
-        ctx,generation,limits,index,privateRoot,d)
-    if err!=nil{return fmt.Errorf("FI P8: verified outer source: %w",err)}
-    if !reused {
+    var verifiedStageDir string
+    if privateP8Selected() {
+        // The established cache recovery loop committed this original
+        // artifact before calling P7. Require its exact SQL checkpoint;
+        // do not add another materialize/verify/checkpoint cycle.
+        if err:=privateP8CommittedArtifact(ctx,control,d,index);err!=nil {
+            return fmt.Errorf("FI P8: committed signed checkpoint: %w",err)
+        }
+        verifiedStageDir,err=privateP8ReusableStage(
+            ctx,generation,limits,index,privateRoot,d)
+        if err!=nil{return fmt.Errorf("FI P8: existing signed files: %w",err)}
+        fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
+            index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
+        fmt.Printf("FI P8 VERIFIED OUTER ARTIFACT REUSED index=%d records=%d signed_batches=%d full_data_rehashes_avoided=3 manifest_sha_rechecked=true\n",
+            index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
+    } else {
+        // P7 retains its previously accepted independent physical
+        // source verification if P8 has not been explicitly selected.
         verifiedStageDir,err=privateP7MaterializeSignedWindow(
             ctx,generation,limits,index,privateRoot,d)
         if err!=nil{return err}
@@ -124,13 +134,6 @@ func stagePrivateP7FiveWriterTypedWindow(
             index,privateRoot);err!=nil{
             return fmt.Errorf("FI P7: signed physical artifact checkpoint: %w",err)
         }
-    } else {
-        // Same format as P7's existing proof, so the pinned signed readback
-        // and per-window acceptance gates retain their original meaning.
-        fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
-            index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
-        fmt.Printf("FI P8 VERIFIED OUTER ARTIFACT REUSED index=%d records=%d signed_batches=%d full_data_rehashes_avoided=4 manifest_sha_rechecked=true\n",
-            index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
     }
     fmt.Printf("FI P7 VERIFIED ARTIFACT CHECKPOINT COMMITTED index=%d signed_batches=%d records=%d source_rows=pending typed_marker=absent\n",
         index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord)
