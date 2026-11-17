@@ -57,33 +57,11 @@ func stagePrivateP7FiveWriterTypedWindow(
     }
     started:=time.Now()
 
-    // The accepted P5/P6 C220 verified-cache path runs with deferred
-    // artifact cloning: RecordVerifiedBacklogArtifactWindow may have a
-    // durable signed checkpoint WITHOUT an eagerly copied window directory.
-    // P7 source-row staging explicitly REQUIRES the materialized files.
-    // Create a wholly PRIVATE, exact-byte-hash-checked window from the
-    // authenticated cached batch DataPaths before reading source records.
-    // Call the lower-level physical materializer with reuseStage=false so
-    // a deferred wrapper cannot skip this mandatory P7 source copy.
-    stageDir,err:=materializeBacklogWindow(ctx,generation,limits,index,
-        privateRoot,false)
-    if err!=nil{
-        return fmt.Errorf("FI P7: exact private signed window materialization: %w",err)
-    }
-    expectedDir:=filepath.Join(privateRoot,"receipt-"+d.ReceiptSHA256,
-        fmt.Sprintf("window-%08d",index))
-    if stageDir!=expectedDir{
-        return fmt.Errorf("FI P7: materialized window escaped signed private namespace got=%q expected=%q",
-            stageDir,expectedDir)
-    }
-    // A directory name or previously persisted artifact checkpoint
-    // does not prove bytes. Rehash all signed manifests and DATA here.
-    if err:=VerifyMaterializedBacklogWindow(ctx,generation,limits,
-        index,privateRoot);err!=nil{
-        return fmt.Errorf("FI P7: physical signed window verification: %w",err)
-    }
-    fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
-        index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
+    // The deferred-cache loader does not guarantee a physical private
+    // window exists. The source ledger requires the fully verified copy.
+    verifiedStageDir,err:=privateP7MaterializeSignedWindow(
+        ctx,generation,limits,index,privateRoot,d)
+    if err!=nil{return err}
     // The accepted joined-source implementation staged parent source and
     // typed projections inside one transaction. That cannot work across
     // five real PostgreSQL connections. P7 instead stages independently
@@ -144,8 +122,7 @@ func stagePrivateP7FiveWriterTypedWindow(
     // Its P7 signed batch index is explicitly carried by this context;
     // no joined-source transaction is opened and no duplicate parent
     // source_record COPY occurs in the preparation reader.
-    sourceDir:=filepath.Join(privateRoot,"receipt-"+d.ReceiptSHA256,
-        fmt.Sprintf("window-%08d",index))
+    sourceDir:=verifiedStageDir
     var profile ingestStageProfile
     profile.coverageBuffer=newSecurityCoverageBulkState(&profile)
     // Reuse the ORIGINAL signed-batch reader, LF/digest verification and
@@ -237,4 +214,42 @@ func stagePrivateP7FiveWriterTypedWindow(
     fmt.Printf("FI REAL TYPED WINDOW index=%d records=%d sql_writers=5 security_fields=%d ntfs_file_validated=%d\n",
         index,records,published.SecurityFields,published.FileValidated)
     return nil
+}
+
+ // privateP7MaterializeSignedWindow is an intentional hard boundary:
+ // the authenticated deferred verified-cache mode may persist a signed
+ // artifact checkpoint WITHOUT allocating window files. P7's durable
+ // pending-source ledger scans physical signed files, so it MUST create
+ // and independently hash-check its own private window before any SQL.
+ // Never touch the cached source batch paths or bypass hash checking.
+func privateP7MaterializeSignedWindow(ctx context.Context,g *PreparedGeneration,
+    limits BacklogWindowLimits,index int,privateRoot string,
+    d BacklogCheckpointDescriptor)(string,error){
+    if ctx==nil||g==nil||privateRoot==""||index<1 {
+        return "",errors.New("FI P7: materialized source window requires signed nonseed descriptor")
+    }
+    desc,err:=DescribeBacklogWindows(g,limits)
+    if err!=nil{return "",err}
+    if index>=len(desc)||desc[index]!=d{
+        return "",errors.New("FI P7: signed W512 descriptor changed before physical source staging")
+    }
+    // The exact lower-level materializer cannot skip its filesystem copy
+    // in the original deferred-materialization wrapper. No stage reuse of
+    // caller-owned custody files is permitted (reuseStage=false).
+    dir,err:=materializeBacklogWindow(ctx,g,limits,index,privateRoot,false)
+    if err!=nil{
+        return "",fmt.Errorf("FI P7: exact private signed window materialization: %w",err)
+    }
+    expected:=filepath.Join(privateRoot,"receipt-"+d.ReceiptSHA256,
+        fmt.Sprintf("window-%08d",index))
+    if dir!=expected{
+        return "",fmt.Errorf("FI P7: signed window escaped private namespace got=%q expected=%q",
+            dir,expected)
+    }
+    if err:=VerifyMaterializedBacklogWindow(ctx,g,limits,index,privateRoot);err!=nil{
+        return "",fmt.Errorf("FI P7: exact physical source/manifest SHA verification: %w",err)
+    }
+    fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
+        index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
+    return dir,nil
 }
