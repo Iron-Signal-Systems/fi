@@ -553,7 +553,16 @@ psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c \
   "CREATE TABLE fi_recovery_projection.windows_security_event_field_continuous_default
      PARTITION OF fi_recovery_projection.windows_security_event_field DEFAULT;
    REVOKE ALL ON fi_recovery_projection.windows_security_event_field_continuous_default FROM PUBLIC;
-   GRANT SELECT, INSERT ON fi_recovery_projection.windows_security_event_field_continuous_default TO fi_ingest;" >/dev/null ||
+   GRANT SELECT, INSERT ON fi_recovery_projection.windows_security_event_field_continuous_default TO fi_ingest;
+   -- The historical typed-window FK only supports the old duplicate
+   -- pending-source ledger. Replace it with the real shadow generation
+   -- FK in THIS disposable PostgreSQL clone only. Preserve other FKs.
+   ALTER TABLE fi_recovery.typed_window
+     DROP CONSTRAINT typed_window_receipt_sha256_window_index_fkey;
+   ALTER TABLE fi_recovery.typed_window
+     ADD CONSTRAINT fi_p9_typed_shadow_generation_fkey
+     FOREIGN KEY (shadow_generation_id)
+     REFERENCES fi_recovery_projection.recorded_generation(recorded_generation_id);" >/dev/null ||
    { echo 'FI P9: cannot prepare clone-only direct Security partition' >&2;exit 1; }
 echo 'FI P9 DIRECT SECURITY PARTITION PASS clone_only=true no_detached_window_tables=true'
 echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
