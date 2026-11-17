@@ -140,3 +140,74 @@ granting superuser to `fi_ingest`, or bypassing the data-directory gate.
   `/var/tmp/fi-window-chunks-family-p3-20261117T072232Z`.
 - C220 private clone stopped cleanly; original signed source unchanged.
 - **Still no P7 two-window acceptance or performance data.**
+
+## Third C220 attempt — 2026-11-17 07:28 UTC: deferred artifact copy boundary
+
+The latest role-discovery controller successfully passed all Go, race
+and P6 regression tests, detected the actual private PostgreSQL
+superuser, granted the configuration READ privilege only in the cloned
+cluster, and emitted:
+
+```text
+FI P7 PRIVATE CLONE SETTINGS ACCESS PASS
+```
+
+Its first signed source stage then STOPPED **before any W512 typed SQL**:
+
+```text
+FI P7: authenticated durable source pre-stage:
+FI backlog source stage: source copy verification failed:
+lstat .../receipt-29891703eea7bef6e21b84374c49193a9b1d58666665d418267e418e3414c7ed/window-00000001:
+no such file or directory
+```
+
+The accepted W512 C220 loader runs `-deferred-verified-clone`: it
+can complete an authenticated artifact marker while postponing the
+physical 0700 signed-window directory. The original joined source+typed
+transaction tolerates that handoff; new P7 calls
+`StageVerifiedBacklogSourceWindow` directly, and the source stage
+requires physical, exact-byte-verified `batch-*.data` and
+`batch-*.manifest` files.
+
+### Correction
+
+The P7-only source path now calls the underlying
+`materializeBacklogWindow(...,reuseStage=false)` using the already
+authenticated cache's original batch DataPaths. It requires the exact
+receipt/window directory, rehashes every copied original signed
+manifest and data payload via `VerifyMaterializedBacklogWindow`,
+then invokes the durable SQL source stage. It never bypasses
+source-file metadata, SHA validation, original parent/child or FK
+checks and never writes to or modifies the shared verified cache.
+
+A new source-only `TestPrivateP7DeferredVerifiedCacheCreatesPhysicalSignedWindow`
+regression reproduces the missing-directory condition, verifies the
+generated immutable signed window, requires safe re-verification,
+rejects tampered bytes and changed descriptor identity and confirms
+the source is unchanged. This test runs under the P7 Go and race gates.
+
+The final M6.1 USN in-memory capture check was also moved to **after
+all five SQL writer acknowledgments and before typed publication**, so
+USN state is not read concurrently with the asynchronous USN writer.
+
+The C220 runner now requires two explicit physical source proof
+receipts with original window row counts and total 431 signed batches;
+it archives their metrics alongside existing SQL/FK and byte-identical
+readback receipts.
+
+The former staging-only failure output:
+`/var/tmp/fi-window-chunks-family-p3-20261117T072810Z`.
+The initial original cache and accepted P5/P6 controls are unchanged.
+
+### Corrected source and regression gate
+
+- Source and native regression fixture:
+  `546c6a1e1a12f30bb0f54c70809dee978afea5f3`
+- Updated P7 compile/race runner:
+  `ec9f99bdf2ca82717ade94ae0d814d81c8bd99db`
+- Clean, audited P7 SQL runner with physical window evidence:
+  `93e27858d93b22acc2e5ab810ffdae86a315acf1`
+
+The fresh compiled C220 test and five-connection SQL replay have
+**not yet executed** against this third correction. P7 is still
+unaccepted and has no measured throughput.
