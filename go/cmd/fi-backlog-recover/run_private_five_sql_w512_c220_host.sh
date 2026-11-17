@@ -56,7 +56,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=907b74759f7465c7c9a7b15560a63f61d771b1d2
+sourcecommit=029e851ca8f6c486cbc3795640adcee05365485a
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -182,12 +182,13 @@ for asset in \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_persistent_p5_summary.awk \
   go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go \
-  go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go
+  go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go \
+  go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main_test.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P7 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=30 clone_only=true min=2 max=16 actual_sql_writers=5"
+echo "FI FAMILY P7 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=31 clone_only=true min=2 max=16 actual_sql_writers=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -207,6 +208,16 @@ done
 GOTOOLCHAIN=local GO111MODULE=off go127 test -count=1 \
   "$tmp/private_canonical_spool_dispatch.go" \
   "$tmp/private_canonical_spool_dispatch_test.go" >/dev/null || exit 1
+# Validate the P7 bridge itself before even opening a private PostgreSQL clone.
+git -C /home/jwood/fi-w512-c220-stage show \
+  "$1:go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go" \
+  > "$tmp/p7_bridge_main.go" || exit 1
+git -C /home/jwood/fi-w512-c220-stage show \
+  "$1:go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main_test.go" \
+  > "$tmp/p7_bridge_main_test.go" || exit 1
+GOTOOLCHAIN=local GO111MODULE=off go127 test -count=1 \
+  "$tmp/p7_bridge_main.go" "$tmp/p7_bridge_main_test.go" >/dev/null || exit 1
+echo 'FI P7 AST BRIDGE NO-POSTGRES PREFLIGHT PASS'
 # Original C220 seed is examined ONLY in memory. The patcher checks all
 # ordered source anchors and reports the precise mismatching source fragment.
 # Fail in preflight, before allocating any disposable DB or overlay.
