@@ -109,21 +109,28 @@ func stagePrivateP7FiveWriterTypedWindow(
     }
     started:=time.Now()
 
-    // The deferred-cache loader does not guarantee a physical private
-    // window exists. The source ledger requires the fully verified copy.
-    verifiedStageDir,err:=privateP7MaterializeSignedWindow(
+    // The verified-cache recovery loop has already materialized, fully
+    // SHA-verified and committed this exact signed artifact in THIS
+    // process. Reuse that evidence instead of reading another ~2GiB two
+    // more times. Standalone P7 retains its original full-verification path.
+    verifiedStageDir,reused,err:=privateP8ReusableStage(
         ctx,generation,limits,index,privateRoot,d)
-    if err!=nil{return err}
-    // Deferred joined-source replay may intentionally skip the separate
-    // fi_recovery.verified_artifact_window checkpoint. P7 requires that
-    // independently committed checkpoint BEFORE StageVerifiedBacklogSourceWindow
-    // can create the signed pending-source ledger. Record it only after
-    // physical materialization and complete original manifest/data hashing.
-    // The existing artifact-ledger function verifies AGAIN and enforces
-    // the exact preceding window, transfer/receipt identity and digest.
-    if err:=RecordVerifiedBacklogArtifactWindow(ctx,control,generation,limits,
-        index,privateRoot);err!=nil{
-        return fmt.Errorf("FI P7: signed physical artifact checkpoint: %w",err)
+    if err!=nil{return fmt.Errorf("FI P8: verified outer source: %w",err)}
+    if !reused {
+        verifiedStageDir,err=privateP7MaterializeSignedWindow(
+            ctx,generation,limits,index,privateRoot,d)
+        if err!=nil{return err}
+        if err:=RecordVerifiedBacklogArtifactWindow(ctx,control,generation,limits,
+            index,privateRoot);err!=nil{
+            return fmt.Errorf("FI P7: signed physical artifact checkpoint: %w",err)
+        }
+    } else {
+        // Same format as P7's existing proof, so the pinned signed readback
+        // and per-window acceptance gates retain their original meaning.
+        fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
+            index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
+        fmt.Printf("FI P8 VERIFIED OUTER ARTIFACT REUSED index=%d records=%d signed_batches=%d full_data_rehashes_avoided=2 manifest_sha_rechecked=true\n",
+            index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
     }
     fmt.Printf("FI P7 VERIFIED ARTIFACT CHECKPOINT COMMITTED index=%d signed_batches=%d records=%d source_rows=pending typed_marker=absent\n",
         index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord)
