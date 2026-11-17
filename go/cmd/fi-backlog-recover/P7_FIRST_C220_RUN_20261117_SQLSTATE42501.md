@@ -94,3 +94,49 @@ PostgreSQL family backends finish both W512 windows with all 997,434
 source/typed records, 431 signed batches, native File validation/reuse,
 13-kind relational and FK coverage, M6.1 USN capture, exact security
 field children, atomic typed marker and clean private shutdown.
+
+## Second C220 attempt — 2026-11-17 07:22 UTC; role assumption corrected
+
+The SQLSTATE 42501 correction passed every preflight, Go compilation,
+Go race test, P6 regression test, and started the private clone. It stopped
+at the private settings bootstrap with:
+
+```text
+psql: FATAL: role "jwood" does not exist
+FI P7 PRIVATE GRANT STOP: clone owner cannot verify PostgreSQL data_directory
+```
+
+**Root cause:** `jwood` is the FreeBSD `fi-dev` Unix user that owns and
+starts the disposable PostgreSQL postmaster. It is NOT necessarily a
+PostgreSQL login role. The bootstrap code incorrectly assumed the Unix
+account name was also the PostgreSQL superuser name.
+
+**Fix:** Query `pg_catalog.pg_roles` read-only from the existing
+`fi_ingest` private-socket connection to enumerate login-capable
+superuser roles. Require **exactly one** discovered role, safe SQL
+identifier syntax, and no `pg_` internal role. Connect to the same
+private socket as that discovered SQL role, verify its `rolsuper` and
+`pg_is_in_recovery=false`, and require its reported physical
+`data_directory` to equal the newly copied private seed. Only then
+grant `pg_read_all_settings` to `fi_ingest` within that disposable
+clone and recheck the physical directory as `fi_ingest`.
+
+The corrected runner refuses ambiguous or unauthenticated bootstrap
+identities. It never falls back to changing the authoritative SoR,
+granting superuser to `fi_ingest`, or bypassing the data-directory gate.
+
+### Second corrected immutable pins
+
+- Original source/pipeline remains
+  `6baf59d36bb3b4d51f4e26f5be54de178279de8f`.
+- New role-discovery private SQL runner:
+  `b419c06e926c892d2ca1af83fc2edb3b46c9e36e`.
+- New first-run controller:
+  `d133b34ac0ecefd922a756aa9ba96463364d046e`.
+- Previously attempted controllers `307b9cf8d478c28c86bfedcd98017ac984eac724`
+  and `9fdf8c61d05e40fe9e90d3a615a7ded9d06c0288`
+  are superseded for P7 testing.
+- C220 second failed output:
+  `/var/tmp/fi-window-chunks-family-p3-20261117T072232Z`.
+- C220 private clone stopped cleanly; original signed source unchanged.
+- **Still no P7 two-window acceptance or performance data.**
