@@ -53,6 +53,31 @@ jobs:
           assert sum(line.startswith("sql(){") for line in src.splitlines()) == 1, "one SQL helper"
           assert sum(line.startswith("stats(){") for line in src.splitlines()) == 1, "one PG stats helper"
           print("FI P10 P6 PATCHER INPUT ORDER PASS")
+          worker = Path("cmd/fi-backlog-recover/testdata/family-p10/private_p10_five_sql.go").read_text()
+          for required in [
+              "newACECopyState()", "newContentHashCopyState()",
+              "newUSNChangeCopyState()", "newNTFSObjectCache()",
+              "newNTFSScopeIdentityCache()",
+              "privateP10BoundedProjectorContext(ctx)",
+              "aceCopy.flushAll(writeCtx,projector)",
+              "hashCopy.flush(writeCtx,projector)",
+              "usnCopy.flushAll(writeCtx,projector)",
+              "projector:=privateProjectionTx{Tx:tx}",
+          ]:
+              assert required in worker, f"P10 P6 bounded SQL worker missing {required}"
+          assert worker.index("aceCopy.flushAll(writeCtx,projector)") < worker.index("return tx.Commit(ctx)"), (
+              "P10 cannot commit with unflushed DACL/SACL children"
+          )
+          for forbidden in [
+              "GRANT pg_read_all_settings",
+              "GRANT SELECT, INSERT ON fi_recovery_projection.windows_security_event_field_p10_default",
+              "REVOKE ALL ON fi_recovery_projection.windows_security_event_field_p10_default",
+          ]:
+              assert forbidden not in src, f"P10 must not change clone role/ACL permissions: {forbidden}"
+          assert "current_setting('data_directory')" not in worker, (
+              "P10 must not demand new fi_ingest role grants for PGDATA introspection"
+          )
+          print("FI P10 P6 BOUNDED ACE/HASH/USN COPY AND ORIGINAL PRIVILEGES PASS")
           PY
           for source in ./cmd/fi-backlog-recover/testdata/family-p10/*.go; do
             gofmt -e "$source" > /dev/null
