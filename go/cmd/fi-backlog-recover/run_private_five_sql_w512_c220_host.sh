@@ -804,7 +804,9 @@ trusted=$(awk '/^FI P7 SIGNED BATCH VERIFIED /{
     for(i=1;i<=NF;i++){split($i,a,"=");v[a[1]]=a[2]}
     w=v["window"]+0
     if(w<1||w>2||seen[w]++||v["manifest_sha_validated"]!="true"||
-       v["record_sha_validated"]!="true")bad=1
+       v["record_sha_validated"]!="true"||
+       v["sha_once_shortcut"]!="disabled"||
+       v["canonical_sha256"]!="every_batch")bad=1
     if(w==1&&v["records"]!=499052)bad=1
     if(w==2&&v["records"]!=498382)bad=1
     n+=v["batches"]+0
@@ -813,6 +815,8 @@ trusted=$(awk '/^FI P7 SIGNED BATCH VERIFIED /{
     print n
 }' "$out/$name/SIGNED_BATCHES.txt") ||
     fail 'P7 signed windows SHA, record or signed batch totals invalid'
+printf 'FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged\n' |
+    tee -a "$out/SUMMARY.txt"
 prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
 [ "$prepbatches" = 431 ] ||
     fail "W512 expected 431 signed preparation batches; observed $prepbatches"
