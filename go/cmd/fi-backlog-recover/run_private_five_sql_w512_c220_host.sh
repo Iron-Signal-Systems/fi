@@ -56,7 +56,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=1458e22daac56ad390e5ab247b6df655bc510f0f
+sourcecommit=b3d7fef1ddc9557373877c0d62054f1b68b8f95f
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -716,14 +716,14 @@ awk '/^FI P8 VERIFIED OUTER ARTIFACT REUSED /{
     delete kv
     for(i=1;i<=NF;i++){split($i,a,"=");kv[a[1]]=a[2]}
     w=kv["index"]+0
-    if(w<1||w>2||seen[w]++||kv["full_data_rehashes_avoided"]!="2"||
+    if(w<1||w>2||seen[w]++||kv["full_data_rehashes_avoided"]!="4"||
        kv["manifest_sha_rechecked"]!="true")bad=1
     records+=kv["records"]+0;batches+=kv["signed_batches"]+0
 }
 END {if(bad||seen[1]!=1||seen[2]!=1||records!=997434||batches!=431)exit 1
 }' "$out/$name/P8_REUSED.txt" ||
     fail 'P8 source evidence reuse missing, duplicated or mismatched'
-printf 'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=4 historical_sql_source_scan=retained original_sha=retained\n' |
+printf 'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=8 historical_sql_source_scan=retained original_sha=retained\n' |
     tee -a "$out/SUMMARY.txt"
 # Source of truth for P7 is a three-stage, strict ordered checkpoint:
 # original SHA-verified physical files -> verified artifact DB checkpoint ->
