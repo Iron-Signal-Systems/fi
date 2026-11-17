@@ -77,6 +77,13 @@ jobs:
           assert "current_setting('data_directory')" not in worker, (
               "P10 must not demand new fi_ingest role grants for PGDATA introspection"
           )
+          assert 'psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting(' not in src, (
+              "P10 fi_ingest must not query restricted PGDATA"
+          )
+          assert 'psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting(' in src, (
+              "P10 must still verify exact PGDATA through existing clone owner"
+          )
+          assert 'fi_ingest|false' in src, "P10 must keep original ingest role and no standby"
           print("FI P10 P6 BOUNDED ACE/HASH/USN COPY AND ORIGINAL PRIVILEGES PASS")
           PY
           for source in ./cmd/fi-backlog-recover/testdata/family-p10/*.go; do
