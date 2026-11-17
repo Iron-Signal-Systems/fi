@@ -181,8 +181,18 @@ func stagePrivateP7FiveWriterTypedWindow(
     fmt.Printf("FI P7 PRIVATE STAGE PROFILE index=%d records=%d source_stage=%s p5_signed_ingest=%s five_writer_publish=%s total=%s max_queued_bytes=%d\n",
         index,records,sourceStageElapsed,ingestElapsed,publishElapsed,
         time.Since(started),peakBytes)
+    fileWriter,ok:=session.sink.lanes[privateP6File].writer.(*privateP7PGFamily)
+    if !ok||fileWriter.ntfsTiming==nil {
+        return errors.New("FI P7: dedicated File SQL writer's native validation proof missing")
+    }
+    native:=fileWriter.ntfsTiming
+    if native.FileSourceValidated!=families[privateP6File]||
+       native.FileBulkValidationReused!=families[privateP6File] {
+        return fmt.Errorf("FI P7: native File SQL proof missing source=%d reuse=%d committed=%d",
+            native.FileSourceValidated,native.FileBulkValidationReused,families[privateP6File])
+    }
     fmt.Printf("FI P7 FILE PROOF VERIFIED index=%d source_validated=%d bulk_reused=%d all_native=true\n",
-        index,ntfsTiming.FileSourceValidated,ntfsTiming.FileBulkValidationReused)
+        index,native.FileSourceValidated,native.FileBulkValidationReused)
     fmt.Printf("FI P7 REAL TYPED WINDOW index=%d records=%d bytes=%d sql_writers=5 signed_batches=%d file_validated=%d security_fields=%d ingest=%s total=%s\n",
         index,records,bytes,len(batchIDs),published.FileValidated,
         published.SecurityFields,ingestElapsed,time.Since(started))
