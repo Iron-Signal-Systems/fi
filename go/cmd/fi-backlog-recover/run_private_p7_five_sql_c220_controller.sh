@@ -1,7 +1,7 @@
 #!/bin/sh
-# FI P7 private C220 five-real-PostgreSQL-writer control.
+# FI P8 private C220 five-real-PostgreSQL-writer control.
 # NO authoritative or Accepted SQL writes. Failed attempts discarded.
-# Mode: preflight | tests | p7. No database started by preflight/tests.
+# Mode: preflight | tests | p8. No database started by preflight/tests.
 set -eu
 umask 077
 fail(){ printf 'FI P7 FIVE SQL STOP: %s\n' "$*" >&2; exit 1; }
@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p8) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=fa63946a468428ce32b3799490764b0744eff469
-testrunnerpin=79f86502773401c4239fc02321008cfa0fb68dcb
-runnerpin=1aa723a56c5551ec380220d3060b4c27f1f60240
+sourcepin=519ee6c92b7dfc0ffc92ca3a07a09d9c3ccf16a7
+testrunnerpin=252a3120c0fe248b9709376b5abe4a2a0eeff307
+runnerpin=60d60b788bd45c19550cdae96b3c944f414ebc81
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -40,7 +40,7 @@ for pin in "$sourcepin" "$testrunnerpin" "$runnerpin";do
     jexec -U jwood fi-dev git -C "$repo" cat-file -e "$pin^{commit}" ||
         fail "pinned source/test/runner unavailable $pin"
 done
-runroot=/var/tmp/fi-w512-five-sql-p7-$(date -u '+%Y%m%dT%H%M%SZ')
+runroot=/var/tmp/fi-w512-five-sql-p8-$(date -u '+%Y%m%dT%H%M%SZ')
 [ ! -e "$runroot" ] && [ ! -L "$runroot" ] ||
     fail 'private P7 control output already exists'
 mkdir -m 0700 "$runroot"
@@ -58,7 +58,7 @@ grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
     fail 'P7 source pin disagrees across C220 runners'
 grep -Fq 'go127 test -race' "$testscript" &&
 grep -Fq 'TestPrivateP[78]' "$testscript" &&
-grep -Fq 'FI P8 SAME-PROCESS ARTIFACT REUSE PASS' "$runner" &&
+grep -Fq 'FI P8 COMMITTED ARTIFACT REUSE PASS' "$runner" &&
 grep -Fq 'FI W512 P7 SIGNED CANONICAL SHA PASS' "$runner" &&
 grep -Fq 'sha_once_shortcut=disabled' "$runner" &&
 grep -Fq 'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS' "$runner" &&
@@ -110,7 +110,7 @@ esac
 summary="$out/SUMMARY.txt"
 [ -s "$summary" ] || fail 'P7 SQL run summary missing'
 for expected in \
-    'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=8 historical_sql_source_scan=retained original_sha=retained' \
+    'FI P8 COMMITTED ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=6 historical_sql_source_scan=retained original_sha=retained' \
     'FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged' \
     'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS windows=2 artifact_markers=2 source_markers=2 signed_batches=431 records=997434' \
     'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true' \
