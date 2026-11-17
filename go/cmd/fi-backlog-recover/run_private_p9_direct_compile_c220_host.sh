@@ -45,7 +45,7 @@ for item in private_p6_sql_ntfs.go private_p6_family_buffers.go private_p6_file_
         { echo "FI P7: historical P6 source differs: $item" >&2; exit 1; }
 done
 stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-dst="/home/jwood/fi-p9-direct-five-writer-go-tests-$stamp"
+dst="/home/jwood/fi-p7-five-writer-go-tests-$stamp"
 [ ! -e "$dst" ] && [ ! -L "$dst" ] ||
     { echo 'FI P7: test destination already exists' >&2; exit 1; }
 mkdir -m 0700 "$dst"
