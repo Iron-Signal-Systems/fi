@@ -26,6 +26,33 @@ func privateP8Selected() bool {
     return os.Getenv("FI_W512_P8_REUSE")=="1" && privateP7FiveWriterSelected()
 }
 
+// The cache-resume fast path can defer physical stage creation AND omit
+// the artifact SQL checkpoint before P7's typed entrypoint. Never assume
+// either exists. On a missing checkpoint, copy every byte to the private
+// namespace while verifying each signed batch SHA-256 as it is written.
+// RecordVerifiedBacklogArtifactWindow then independently rehashes the
+// durable copy and commits the exact signed receipt; the existing source
+// stage hashes the original data again before its SQL marker.
+// This eliminates only the additional post-copy VerifyMaterialized pass.
+func privateP8FreshSignedWindow(ctx context.Context,g *PreparedGeneration,
+    limits BacklogWindowLimits,index int,root string,
+    d BacklogCheckpointDescriptor)(string,error){
+    if !privateP8Selected()||ctx==nil||g==nil||index<1||root==""{
+        return "",errors.New("FI P8: unselected private signed copy")
+    }
+    ds,err:=DescribeBacklogWindows(g,limits)
+    if err!=nil{return "",err}
+    if index>=len(ds)||ds[index]!=d{
+        return "",errors.New("FI P8: signed descriptor differs from source generation")
+    }
+    dir,err:=materializeBacklogWindow(ctx,g,limits,index,root,false)
+    if err!=nil{return "",fmt.Errorf("FI P8: verified signed copy to private artifact: %w",err)}
+    want:=filepath.Join(root,"receipt-"+d.ReceiptSHA256,
+        fmt.Sprintf("window-%08d",index))
+    if dir!=want{return "",errors.New("FI P8: private signed window escaped its receipt namespace")}
+    return dir,nil
+}
+
 // SQL evidence comes from the original full-verified artifact checkpoint
 // committed by recoverBacklogVerifiedCachedWindows BEFORE P7 is entered.
 // It is never inferred from a directory, cached manifest, or previously
