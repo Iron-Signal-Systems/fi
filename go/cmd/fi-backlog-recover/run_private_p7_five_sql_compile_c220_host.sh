@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=ca1a6690b67bf00995c3106702b0eea5ccc6e4a4
+sourcepin=0fc0cfd20243918768f6366e11ddf10d7ac85400
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
@@ -59,6 +59,12 @@ for item in $files; do
       > "$dst/optimized-source/go/internal/recordingest/$item" ||
         { echo "FI P7: missing pinned source $item" >&2; exit 1; }
 done
+# Include P7's modified completion barrier; the accepted P6 file
+# alone still assumes one synchronous SQL writer.
+git -C "$repo" show \
+  "$sourcepin:go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_family_buffers.go" \
+  > "$dst/optimized-source/go/internal/recordingest/private_p6_family_buffers.go" ||
+  { echo 'FI P7: pinned atomic five-writer completion barrier missing' >&2; exit 1; }
 cd "$dst/optimized-source/go"
 export GOTOOLCHAIN=local
 export GOFLAGS=-mod=readonly
