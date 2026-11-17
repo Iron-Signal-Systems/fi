@@ -136,6 +136,24 @@ func(w *privateP10FiveSQL) runLane(lane *privateP10SQLLane){
     }
 }
 
+// P6's standard typed-window path installs these original COPY states and
+// caches before invoking any child projector. Each concurrent P10 family
+// transaction needs its own copies: never share a mutable COPY buffer across
+// five SQL writers, and NEVER enable SendBatch on privateProjectionTx.
+func privateP10BoundedProjectorContext(ctx context.Context)(
+    context.Context,*contentHashCopyState,*aceCopyState,*usnChangeCopyState){
+    ctx=context.WithValue(ctx,ntfsObjectCacheContextKey{},newNTFSObjectCache())
+    ctx=context.WithValue(ctx,ntfsScopeIdentityCacheContextKey{},newNTFSScopeIdentityCache())
+    hashCopy:=newContentHashCopyState()
+    aceCopy:=newACECopyState()
+    usnCopy:=newUSNChangeCopyState()
+    ctx=context.WithValue(ctx,contentHashCopyContextKey{},hashCopy)
+    ctx=context.WithValue(ctx,aceCopyContextKey{},aceCopy)
+    ctx=context.WithValue(ctx,usnChangeCopyContextKey{},usnCopy)
+    ctx=context.WithValue(ctx,ntfsStageTimingContextKey{},&ntfsStageTimingCounters{})
+    return ctx,hashCopy,aceCopy,usnCopy
+}
+
 func(w *privateP10FiveSQL) writeFamily(ctx context.Context,lane *privateP10SQLLane,rows []privateP6Record)error{
     if lane.err!=nil{return lane.err}
     if err:=ctx.Err();err!=nil{return err}
@@ -146,20 +164,7 @@ func(w *privateP10FiveSQL) writeFamily(ctx context.Context,lane *privateP10SQLLa
     coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx},
         w.sourceID,profile)
     if err!=nil{return err}
-    // Restore the ORIGINAL P6 typed-window projector context in each
-    // independent P10 family transaction. P6 used to inherit these
-    // bounded COPY states from backlog_typed_window_postgres.go. The new
-    // async handoff must supply them explicitly, never weaken the
-    // privateProjectionTx.SendBatch fail-closed boundary.
-    writeCtx:=context.WithValue(ctx,ntfsObjectCacheContextKey{},newNTFSObjectCache())
-    writeCtx=context.WithValue(writeCtx,ntfsScopeIdentityCacheContextKey{},newNTFSScopeIdentityCache())
-    hashCopy:=newContentHashCopyState()
-    aceCopy:=newACECopyState()
-    usnCopy:=newUSNChangeCopyState()
-    writeCtx=context.WithValue(writeCtx,contentHashCopyContextKey{},hashCopy)
-    writeCtx=context.WithValue(writeCtx,aceCopyContextKey{},aceCopy)
-    writeCtx=context.WithValue(writeCtx,usnChangeCopyContextKey{},usnCopy)
-    writeCtx=context.WithValue(writeCtx,ntfsStageTimingContextKey{},&ntfsStageTimingCounters{})
+    writeCtx,hashCopy,aceCopy,usnCopy:=privateP10BoundedProjectorContext(ctx)
     if err=coordinator.Family(writeCtx,lane.family,rows);err!=nil{return err}
     // The same privateProjectionTx rewrites all five family's COPY
     // targets into fi_recovery_projection. Drain *before* SQL COMMIT:
