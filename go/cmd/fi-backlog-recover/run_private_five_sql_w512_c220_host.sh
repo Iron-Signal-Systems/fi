@@ -677,23 +677,38 @@ awk '/^FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED /{
     fail 'P7 requires two physically verified W512 windows and all 431 signed batches'
 printf 'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true\n' |
     tee -a "$out/SUMMARY.txt"
-# P8 may reuse ONLY outer exact SQL-committed signed artifacts. Require
-# explicit receipts for both signed windows and keep the original P7
-# source SQL scan and typed SHA acceptance gates intact.
-grep '^FI P8 VERIFIED OUTER ARTIFACT REUSED ' "$log" > "$out/$name/P8_REUSED.txt" ||
-    fail 'P8 verified committed artifact checkpoint evidence missing'
-awk '/^FI P8 VERIFIED OUTER ARTIFACT REUSED /{
+# The C220 verified-cache mode can omit the outer artifact marker
+# entirely. Require the private P8 signed stage to prove whether the
+# source was freshly SHA-verified or safely reused from an exact durable
+# receipt. The source SQL scanner, typed canonical SHA and accepted
+# readback gates below remain mandatory.
+grep '^FI P8 VERIFIED ARTIFACT STAGE ' "$log" > "$out/$name/P8_REUSED.txt" ||
+    fail 'P8 fresh/reused signed artifact receipts missing'
+awk '/^FI P8 VERIFIED ARTIFACT STAGE /{
     delete kv
     for(i=1;i<=NF;i++){split($i,a,"=");kv[a[1]]=a[2]}
     w=kv["index"]+0
-    if(w<1||w>2||seen[w]++||kv["full_data_rehashes_avoided"]!="3"||
-       kv["manifest_sha_rechecked"]!="true")bad=1
+    if(w<1||w>2||seen[w]++||
+       kv["manifest_sha_rechecked"]!="true"||
+       (kv["mode"]!="fresh" && kv["mode"]!="reuse"))bad=1
+    if(kv["mode"]=="fresh"&&kv["full_data_rehashes_avoided"]!="1")bad=1
+    if(kv["mode"]=="reuse"&&kv["full_data_rehashes_avoided"]!="3")bad=1
     records+=kv["records"]+0;batches+=kv["signed_batches"]+0
+    saved+=kv["full_data_rehashes_avoided"]+0
+    if(kv["mode"]=="fresh")fresh++
+    if(kv["mode"]=="reuse")reused++
 }
-END {if(bad||seen[1]!=1||seen[2]!=1||records!=997434||batches!=431)exit 1
+END {
+    if(bad||seen[1]!=1||seen[2]!=1||records!=997434||batches!=431||
+       fresh+reused!=2||saved!=fresh+3*reused)exit 1
 }' "$out/$name/P8_REUSED.txt" ||
-    fail 'P8 source evidence reuse missing, duplicated or mismatched'
-printf 'FI P8 COMMITTED ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=6 historical_sql_source_scan=retained original_sha=retained\n' |
+    fail 'P8 signed artifact modes, hashes or row counts did not match'
+# This new disposable PostgreSQL clone is expected to have only seed W512=0.
+# Any unexpected preexisting artifact for W512=1 or 2 requires investigation
+# before claiming the P8 fresh-stage optimization benchmark.
+[ "$(grep -c 'mode=fresh ' "$out/$name/P8_REUSED.txt")" = 2 ] ||
+    fail 'P8 expected two fresh signed W512 materializations in new clone'
+printf 'FI P8 VERIFIED PRIVATE ARTIFACT PASS windows=2 signed_batches=431 records=997434 fresh=2 reused=0 full_data_rehashes_avoided=2 signed_copy_sha=enabled source_sql_scan=retained original_sha=retained\n' |
     tee -a "$out/SUMMARY.txt"
 # Source of truth for P7 is a three-stage, strict ordered checkpoint:
 # original SHA-verified physical files -> verified artifact DB checkpoint ->
