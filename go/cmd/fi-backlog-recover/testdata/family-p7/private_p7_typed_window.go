@@ -30,13 +30,17 @@ type privateP7SignedBatchIndexKey struct{}
 // evidence is bound. If we passed the outer deferred context to the
 // canonical reader, it would (correctly) reject a different file path.
 //
-// Mask ONLY the experimental SHA-once private deferred-window key for
-// this P7 signed reader. This causes privateReuseSignedBatchDigest to
-// return (nil,nil), preserving the canonical per-batch SHA-256 over
-// actual bytes. It does not disable or alter FI's signed manifest/data,
-// per-record digest, private PostgreSQL, or path-ownership checks.
+// This physical P7 signed reader must not inherit the outer deferred
+// SHA-once entitlement OR the legacy W128/K32 mixed/dependency buffer route.
+// P7 owns an independent bounded P6 family-buffer session: it has no
+// backlogTypedChunkDirective and must never create a dummy chunk to satisfy
+// the legacy guard. The canonical per-batch SHA-256, original source digest,
+// source/typed SQL guards and P6/P7 family session remain unchanged.
 func privateP7CanonicalSignedBatchContext(ctx context.Context,globalIndex int) context.Context {
     ctx=context.WithValue(ctx,privateDeferredWindowKey{},(*deferredBacklogWindow)(nil))
+    ctx=context.WithValue(ctx,privateMixedFamilyBuffersKey{},false)
+    ctx=context.WithValue(ctx,privateDependencyBuffersKey{},false)
+    ctx=context.WithValue(ctx,backlogTypedChunkContextKey{},nil)
     return context.WithValue(ctx,privateP7SignedBatchIndexKey{},globalIndex)
 }
 
