@@ -301,3 +301,57 @@ func TestPrivateP7DeferredVerifiedCacheCreatesPhysicalSignedWindow(t *testing.T)
         t.Fatal("FI P7: changed signed window descriptor was accepted")
     }
 }
+
+func TestPrivateP7OwnedSignedWindowUsesCanonicalSHAInsteadOfForeignDeferredClone(t *testing.T){
+    // Regression for the actual C220 failure after the first physical
+    // source + artifact + source checkpoints committed: the outer
+    // deferredWindow context refers to a DIFFERENT owned COW path.
+    // P7 signs and hashes its own materialized source directory, so
+    // reusing that unrelated SHA-once evidence must be prohibited.
+    g:=privateBacklogStageFixture(t)
+    root:=privateBacklogTestRoot(t)
+    limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+    descriptors,err:=DescribeBacklogWindows(g,limits)
+    if err!=nil||len(descriptors)!=2{t.Fatalf("FI P7 fixture: %v",err)}
+    d:=descriptors[1]
+    stage,err:=privateP7MaterializeSignedWindow(
+        context.Background(),g,limits,1,root,d)
+    if err!=nil{t.Fatal(err)}
+    i:=d.StartBatch
+    batch:=g.Batches[i]
+    batch.DataPath=filepath.Join(stage,fmt.Sprintf("batch-%08d.data",i))
+    file,err:=os.Open(batch.DataPath)
+    if err!=nil{t.Fatal(err)}
+    defer file.Close()
+
+    // Simulate the existing accelerated deferred-clone context held by
+    // the outer C220 runner. The original SHA-once helper MUST reject
+    // the independently staged signed source path.
+    wrongDeferred:=&deferredBacklogWindow{
+        pending:filepath.Join(root,"a-different-owned-clone"),
+    }
+    outer:=context.WithValue(context.Background(),privateDeferredWindowKey{},wrongDeferred)
+    if proof,err:=privateReuseSignedBatchDigest(outer,batch,file);err==nil||proof!=nil{
+        t.Fatal("FI P7 fixture did not reproduce foreign owned-clone failure")
+    }
+    canonical:=privateP7CanonicalSignedBatchContext(outer,i)
+    if deferredWindowFromContext(canonical)!=nil{
+        t.Fatal("FI P7 canonical reader retained foreign deferred SHA-once entitlement")
+    }
+    if deferredWindowFromContext(outer)!=wrongDeferred{
+        t.Fatal("FI P7 changed the enclosing deferred clone ownership context")
+    }
+    if index,ok:=canonical.Value(privateP7SignedBatchIndexKey{}).(int);!ok||index!=i{
+        t.Fatal("FI P7 canonical reader lost original authenticated batch index")
+    }
+    proof,err:=privateReuseSignedBatchDigest(canonical,batch,file)
+    if err!=nil||proof!=nil{
+        t.Fatalf("FI P7 independent signed source did not select original per-batch SHA path: proof=%v err=%v",proof,err)
+    }
+    // The canonical reader hashes actual LF-terminated source bytes;
+    // this test verifies that the path it opens is the exact original
+    // signed physical materialization, not the foreign COW clone.
+    if err:=VerifyMaterializedBacklogWindow(context.Background(),g,limits,1,root);err!=nil{
+        t.Fatalf("FI P7 independently staged signed source failed full SHA verification: %v",err)
+    }
+}
