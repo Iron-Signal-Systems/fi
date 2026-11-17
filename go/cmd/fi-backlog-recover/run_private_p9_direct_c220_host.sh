@@ -712,8 +712,6 @@ awk '/^FI P9 DIRECT READ window=/{
 }END{
  if(bad||seen[1]!=1||seen[2]!=1||rows!=997434||batches!=431)exit 1
 }' "$out/$name/P9_READ.txt" || fail 'P9 original signed W512 records/batches inconsistent'
-grep -Fqx 'FI P9 DIRECT SECURITY PARTITION PASS clone_only=true no_detached_window_tables=true' "$out/SUMMARY.txt" ||
-    { :; } # SQL default partition was installed before the receiver ran
 grep '^FI P9 DIRECT FIVE WRITERS PASS ' "$log" > "$out/$name/P9_FAMILIES.txt" ||
     fail 'P9 five real PostgreSQL writer receipt missing'
 awk '/^FI P9 DIRECT FIVE WRITERS PASS /{
