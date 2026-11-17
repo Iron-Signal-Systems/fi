@@ -166,15 +166,10 @@ func stagePrivateP7FiveWriterTypedWindow(
     if err:=readOnlyTx.Rollback(ctx);err!=nil {
         return fmt.Errorf("FI P7: close signed reader snapshot before publish: %w",err)
     }
-    if index==len(ds)-1 {
-        // Match the original W512 M6.1 completion proof, including
-        // in-memory boundary/identity state, before SQL publication.
-        if err:=captureState.verify();err!=nil {
-            return fmt.Errorf("FI P7: original final USN capture dependency verification: %w",err)
-        }
-    }
     publishStarted:=time.Now()
-    published,err:=session.Publish(ctx)
+    // The capture verifier must run only AFTER session.Publish drains
+    // every asynchronous SQL lane, never concurrently with USN SQL.
+    published,err:=session.Publish(ctx,captureState.verify)
     if err!=nil{return fmt.Errorf("FI P7: five SQL family publication rejected: %w",err)}
     if published.SourceRows!=records||published.SourceBytes!=bytes{
         return errors.New("FI P7: publication result differs from signed batches")
