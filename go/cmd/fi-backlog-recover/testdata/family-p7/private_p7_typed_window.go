@@ -44,6 +44,38 @@ func privateP7CanonicalSignedBatchContext(ctx context.Context,globalIndex int) c
     return context.WithValue(ctx,privateP7SignedBatchIndexKey{},globalIndex)
 }
 
+// privateP7ParallelPreparationReader is the only alternative to the
+// historical K32 dependency-buffer requirement of Candidate A. It proves
+// that this original signed-batch reader has a live P7 family handoff, not
+// a legacy K32 chunk or a one-writer P6 transaction. Every existing H16,
+// Security, F3H16 and parallel-worker profile check still applies.
+func privateP7ParallelPreparationReader(ctx context.Context) bool {
+    if ctx==nil || !privateP7FiveWriterSelected() {
+        return false
+    }
+    batch,ok:=ctx.Value(privateP7SignedBatchIndexKey{}).(int)
+    if !ok || batch<=0 {return false}
+    mixed,mixedOK:=ctx.Value(privateMixedFamilyBuffersKey{}).(bool)
+    dependency,dependencyOK:=ctx.Value(privateDependencyBuffersKey{}).(bool)
+    if !mixedOK||mixed||!dependencyOK||dependency ||
+        privateMixedFamilyBuffersEnabled(ctx) ||
+        privateDependencyBuffersEnabled(ctx) {
+        return false
+    }
+    if _,active:=ctx.Value(backlogTypedChunkContextKey{}).(backlogTypedChunkDirective);active {
+        return false
+    }
+    if deferredWindowFromContext(ctx)!=nil || joinedBacklogSourceFromContext(ctx)!=nil {
+        return false
+    }
+    buffers:=privateP6BuffersFromContext(ctx)
+    if buffers==nil || buffers.window<1 || buffers.finished || buffers.failed!=nil {
+        return false
+    }
+    writer,ok:=buffers.sink.(*privateP7FiveWriter)
+    return ok && writer!=nil && writer.ctx!=nil
+}
+
 func stagePrivateP7FiveWriterTypedWindow(
     ctx context.Context,reader,control *pgx.Conn,
     generation *PreparedGeneration,limits BacklogWindowLimits,
