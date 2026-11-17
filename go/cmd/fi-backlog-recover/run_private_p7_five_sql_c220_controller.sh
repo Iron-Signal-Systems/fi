@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p8) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=d13da9eedfbdcbc1396822db4ffa87764ee0d2aa
-testrunnerpin=eeffa3d355450f82ff7ce09c2f5e700b05b177cc
-runnerpin=a778ddc8245af34ae99fe9751acffd55d4bde56a
+sourcepin=ddbec10fa28143a2e81763fe98b2c17ddf58a967
+testrunnerpin=be223371e7be605ecb758be0936d00236f0994ea
+runnerpin=7fb6f8e5a82d70392693b62b7904f85396b1a098
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
