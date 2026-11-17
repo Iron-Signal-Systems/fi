@@ -24,6 +24,22 @@ import (
 
 type privateP7SignedBatchIndexKey struct{}
 
+// P7 independently materializes and fully hashes each original signed
+// window under the receipt-bound privateRoot. Those files are NOT the
+// deferredWindow.pending COW clones to which the experimental SHA-once
+// evidence is bound. If we passed the outer deferred context to the
+// canonical reader, it would (correctly) reject a different file path.
+//
+// Mask ONLY the experimental SHA-once private deferred-window key for
+// this P7 signed reader. This causes privateReuseSignedBatchDigest to
+// return (nil,nil), preserving the canonical per-batch SHA-256 over
+// actual bytes. It does not disable or alter FI's signed manifest/data,
+// per-record digest, private PostgreSQL, or path-ownership checks.
+func privateP7CanonicalSignedBatchContext(ctx context.Context,globalIndex int) context.Context {
+    ctx=context.WithValue(ctx,privateDeferredWindowKey{},(*deferredBacklogWindow)(nil))
+    return context.WithValue(ctx,privateP7SignedBatchIndexKey{},globalIndex)
+}
+
 func stagePrivateP7FiveWriterTypedWindow(
     ctx context.Context,reader,control *pgx.Conn,
     generation *PreparedGeneration,limits BacklogWindowLimits,
@@ -157,7 +173,7 @@ func stagePrivateP7FiveWriterTypedWindow(
         if batch.Manifest.RecordCount<1{
             return errors.New("FI P7: empty signed source batch not allowed")
         }
-        batchCtx:=context.WithValue(ctx,privateP7SignedBatchIndexKey{},globalIndex)
+        batchCtx:=privateP7CanonicalSignedBatchContext(ctx,globalIndex)
         // The clone-only P7 overlay intercepts this after the ORIGINAL
         // canonical signature/record preparation, before monolithic SQL.
         // Read-only control tx cannot accidentally persist a typed row.
@@ -176,7 +192,7 @@ func stagePrivateP7FiveWriterTypedWindow(
     }
     // This is issued only AFTER every original signed batch has passed
     // its real LF/row-count/bytes/SHA check and the signed W512 totals match.
-    fmt.Printf("FI P7 SIGNED BATCH VERIFIED window=%d batches=%d records=%d bytes=%d manifest_sha_validated=true record_sha_validated=true\n",
+    fmt.Printf("FI P7 SIGNED BATCH VERIFIED window=%d batches=%d records=%d bytes=%d manifest_sha_validated=true record_sha_validated=true sha_once_shortcut=disabled canonical_sha256=every_batch\n",
         index,len(batchIDs),records,bytes)
     if err:=readOnlyTx.Rollback(ctx);err!=nil {
         return fmt.Errorf("FI P7: close signed reader snapshot before publish: %w",err)
