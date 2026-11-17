@@ -488,7 +488,9 @@ psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c \
      ADD CONSTRAINT typed_window_p10_shadow_fkey
      FOREIGN KEY (shadow_generation_id)
      REFERENCES fi_recovery_projection.recorded_generation(recorded_generation_id);" >/dev/null || exit 1
-[ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')")" = "$clone_data" ] || exit 1
+# fi_ingest uses the original P6 role without new read-all-settings grants.
+# PGDATA identity has already been verified through the clone owner above.
+[ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_user||'|'||pg_is_in_recovery()::text")" = "fi_ingest|false" ] || exit 1
 # The source seed already grants fi_ingest access to the partitioned
 # projection parent. Child partitions reached through that parent use
 # its INSERT privilege; do not alter roles, permissions or ownership.
