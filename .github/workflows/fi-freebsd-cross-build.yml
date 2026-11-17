@@ -30,6 +30,15 @@ jobs:
           go-version: '1.27.3'
           cache: true
           cache-dependency-path: go/go.sum
+      - name: P10 native P6 runner POSIX syntax and Go parser
+        run: |
+          set -eu
+          sh -n ./cmd/fi-backlog-recover/run_private_p10_native_p6_controller.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_p10_native_p6_c220_host.sh
+          for source in ./cmd/fi-backlog-recover/testdata/family-p10/*.go; do
+            gofmt -e "$source" > /dev/null
+          done
+          echo 'FI P10 NATIVE P6 RUNNER/SOURCE SYNTAX PASS'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
