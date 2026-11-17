@@ -453,6 +453,43 @@ echo 'FI FAMILY P3 POST-BUILD PRIVATE SEED COPY PASS'
 pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
   -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700" \
   -w start > "$root/$name/start.log" 2>&1 || exit 1
+# P7: The fi_ingest role cannot read PostgreSQL's restricted
+# data_directory setting by default. It needs that setting to prove
+# EVERY P7 writer is connected to this exact disposable private clone.
+# Grant the narrowly scoped pg_read_all_settings role ONLY AFTER an
+# existing LOCAL clone owner/superuser has independently verified PGDATA.
+# NEVER use this bootstrap on the authoritative FI SoR or a remote socket.
+clone_sock="$root/$name/socket"
+clone_data="$root/$name/data"
+clone_owner_dsn="host=$clone_sock port=$port user=jwood dbname=fi sslmode=disable"
+clone_ingest_dsn="host=$clone_sock port=$port user=fi_ingest dbname=fi sslmode=disable"
+[ -d "$clone_data" ] && [ -d "$clone_sock" ] &&
+[ "$(cat "$clone_data/PG_VERSION")" = 18 ] &&
+pg_ctl -D "$clone_data" status >/dev/null 2>&1 ||
+    { echo 'FI P7 PRIVATE GRANT STOP: exact clone server not running' >&2; exit 1; }
+# Query path as the private clone's actual bootstrap role. This
+# deliberately FAILS CLOSED if jwood isn't a PostgreSQL superuser.
+clone_path=$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 \
+    -c "SELECT current_setting('data_directory')" ) ||
+    { echo 'FI P7 PRIVATE GRANT STOP: clone owner cannot verify PostgreSQL data_directory' >&2; exit 1; }
+[ "$clone_path" = "$clone_data" ] ||
+    { echo "FI P7 PRIVATE GRANT STOP: PostgreSQL cluster differs from copied private PGDATA" >&2; exit 1; }
+clone_owner=$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 \
+    -c "SELECT current_user||'|'||(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user)||'|'||pg_is_in_recovery()::text") ||
+    { echo 'FI P7 PRIVATE GRANT STOP: clone owner identity not verified' >&2; exit 1; }
+[ "$clone_owner" = "jwood|true|false" ] ||
+    { echo "FI P7 PRIVATE GRANT STOP: invalid clone bootstrap identity $clone_owner" >&2; exit 1; }
+# The role grant exists only in THIS newly copied PostgreSQL cluster.
+# pg_read_all_settings gives config READ access, not SQL superuser access.
+psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 \
+    -c "GRANT pg_read_all_settings TO fi_ingest" >/dev/null ||
+    { echo 'FI P7 PRIVATE GRANT STOP: read-only clone settings grant rejected' >&2; exit 1; }
+clone_ingest_path=$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 \
+    -c "SELECT current_setting('data_directory')") ||
+    { echo 'FI P7 PRIVATE GRANT STOP: fi_ingest still cannot read clone data_directory' >&2; exit 1; }
+[ "$clone_ingest_path" = "$clone_data" ] ||
+    { echo 'FI P7 PRIVATE GRANT STOP: fi_ingest is not connected to expected disposable PostgreSQL clone' >&2; exit 1; }
+printf 'FI P7 PRIVATE CLONE SETTINGS ACCESS PASS pgdata=%s role=fi_ingest config_read=pg_read_all_settings clone_only=true\n' "$clone_data"
 echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
 JAIL
 mkdir -m 700 "$out" "$out/$name" "$private_root" ||
