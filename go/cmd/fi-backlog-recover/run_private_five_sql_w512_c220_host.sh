@@ -1016,7 +1016,7 @@ bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/COPY_CALLS.txt" "$name/STAGES.txt" "$name/PARALLEL_PREP.txt" \
-  "$name/SIGNED_BATCHES.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
+  "$name/P7_MATERIALIZED_WINDOWS.txt" "$name/SIGNED_BATCHES.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
