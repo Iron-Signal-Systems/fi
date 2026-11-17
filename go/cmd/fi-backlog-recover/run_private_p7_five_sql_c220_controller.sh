@@ -134,7 +134,7 @@ printf '%s\n' "$accepted" |
     grep -Fq 'min_workers=2 max_workers=16 max_slots=80 credits=32 writer=5 authoritative=0 accepted=0' ||
     fail 'P7 five SQL writers or SoR isolation failed'
 for file in P7_MATERIALIZED_WINDOWS.txt P8_REUSED.txt P7_SOURCE_CHAIN.txt P7_SQL_FAMILIES.txt P7_PUBLISHED.txt P6_FILE_VALIDATION.txt \
-    P6_FAMILY_HANDOFFS.txt SIGNED_BATCHES.txt P5_WINDOW_LANES.tsv \
+    P6_FAMILY_HANDOFFS.txt STAGES.txt WINDOWS.txt SIGNED_BATCHES.txt P5_WINDOW_LANES.tsv \
     FAMILY_DYNAMIC_SUMMARY.tsv FAMILY_LANE_SUMMARY.tsv W512_CHECKPOINTS.tsv
 do
     [ -s "$out/clone-w512-2g/$file" ] ||
@@ -160,6 +160,8 @@ rps=$(awk -v sec="$secs" 'BEGIN{if(sec<=0)exit 1;printf "%.3f",997434/sec}') ||
 printf '%s\n' "$out" > "$runroot/PRIVATE_SQL_OUTPUT_PATH"
 echo '===== MATCHED P5 / P6 / P7 / P8 TWO-WINDOW RESULTS ====='
 cat "$runroot/P5_P6_P7_P8_COMPARISON.tsv"
+echo '===== P8 PER-WINDOW PHASE TIMING ====='
+cat "$runroot/STAGES.txt" "$runroot/WINDOWS.txt"
 echo '===== P7 FIVE ACTUAL POSTGRESQL FAMILY WRITERS ====='
 cat "$runroot/P7_SQL_FAMILIES.txt"
 printf 'FI C220 P8 FIVE PG SQL PRIVATE ACCEPTED windows=2 source_batches=431 records=997434 writers=5 authoritative=0 accepted=0 output=%s\n' "$runroot"
