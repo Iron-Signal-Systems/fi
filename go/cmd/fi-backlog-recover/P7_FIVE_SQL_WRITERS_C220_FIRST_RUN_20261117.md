@@ -251,3 +251,57 @@ readback, 13-kind relational/FK and USN proof gates.
 These pins supersede every preceding P7 controller. Correctness and
 performance remain **unaccepted** until the full C220 two-window
 SQL run finishes with all original signed and relational receipts.
+
+## Sixth C220 candidate — canonical source hashing for P7
+
+The fifth P7 C220 trial (2026-11-17 07:50 UTC) passed Go/race
+tests, PostgreSQL clone identity, signed artifact and source checkpoint
+staging and reached the first signed batch (global index 205). It
+failed **before any typed records** when the original SHA-once
+experiment correctly rejected a foreign owned-clone pathname:
+
+```text
+FI P7: signed batch=205: FI verified batch evidence:
+FI batch once: source not inside owned private clone
+```
+
+The P7 entry independently materializes and verifies
+`receipt-<digest>/window-00000001`, not the SHA-once
+`deferredWindow.pending` COW directory. It cannot claim that the
+independently materialized source is the same owned COW inode.
+The new per-batch P7 context therefore masks *only* that unrelated
+SHA-once shortcut and restores the canonical SHA-256 pass over every
+actual signed JSONL record, with manifest/record totals checked.
+The outer deferred-clone ownership context remains unchanged.
+P5 and P6 keep their accepted SHA-once path.
+
+A targeted Go/race regression reproduces the exact foreign-owned-clone
+failure, proves P7's local canonical context does not inherit false
+SHA-once authorization, and re-verifies all physical signed bytes.
+
+**Source pin**:
+`b81b50b5ea5a2bf420f0e49c476d386f7d635371`.
+
+**Go/race runner pin**:
+`86d4484919337c6fdc8e14c7420f39fe73f71758`.
+
+**5-SQL runner pin**:
+`8b50cd52c92ed79394a03d09c443ce2f5ddd036b`.
+
+**Controller pin**:
+`5456959eab86a72f135c3998410a008f37a98807`.
+
+The next test MUST produce
+`FI W512 P7 SIGNED CANONICAL SHA PASS` (431 signed batches,
+`sha_once_shortcut=disabled canonical_sha256=every_batch`)
+and all original 13-kind typed, File, USN and 5 independent
+PostgreSQL writer proofs. No successful P7 SQL replay has been
+demonstrated yet.
+
+**Benchmark fairness note:** The sixth P7 candidate now performs an
+additional full canonical signed-data SHA pass, unlike P5/P6's
+trusted private COW SHA-once reuse. Its throughput therefore cannot
+be treated as a *controlled SQL-writer-only A/B difference*.
+P7 must first pass correctness. A fair subsequent P5/P6/P7
+performance comparison will need equal signed-hashing policies or
+separate measured SHA time from SQL commit timing.
