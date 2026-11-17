@@ -1,9 +1,13 @@
 # FI P7 — five real PostgreSQL family writers
 ## C220 first-run handoff, 2026-11-17
 
-**Development only. Not a release. First C220 Go compilation, race tests, and
-private SQL replay are still NOT completed.** Do not report this as an accepted
-result until exact test receipts pass.
+**Development only. Not a release.** On 2026-11-17 the first C220
+Go compilation, P7 unit tests, Go race tests, and P6 regression tests
+**PASSED**. The private PostgreSQL clone started, but the first P7
+SQL replay stopped **before any typed records** on SQLSTATE 42501:
+`fi_ingest` was not authorized to read `data_directory`.
+A new private-clone-only settings privilege bootstrap has been committed
+and pinned; its corrected SQL replay has **not yet run or passed**.
 
 ### Baselines (frozen)
 
@@ -84,10 +88,12 @@ No Accepted publication is ever authorized.
   `6baf59d36bb3b4d51f4e26f5be54de178279de8f`
 - P7 isolated Go/race test runner:
   `8b2ff76c6f97b22651c35378e5afe60cbfee608e`
-- P7 two-window C220 runner:
-  `ce11cb92b6667010dcc6144d3504f7df1321cbfa`
-- Top-level first-run controller:
-  `307b9cf8d478c28c86bfedcd98017ac984eac724`
+- P7 two-window C220 runner, **SQLSTATE42501 fixed**:
+  `e396533c80a460b5b1d4d8a11ec99c4136ac358b`
+- Top-level corrected controller:
+  `9fdf8c61d05e40fe9e90d3a615a7ded9d06c0288`
+- Original controller `307b9cf8d478c28c86bfedcd98017ac984eac724`
+  is **superseded** and must not be rerun.
 - Signed original W512 seed: `20261115T153532Z`
 - P5 archive SHA256:
   `7f8f1fadfe8bc48529dfffc654fd08fd06aed5ac767d480a52bf99d2f52e184a`
@@ -135,10 +141,15 @@ logs and tarball retain the failed candidate for diagnosis.
 
 ### Known limit
 
-No C220 execution or Go compile result is available yet. The source,
-pin, gate and concurrency checks were audited statically, but C220 is
-the only validated execution environment for the optimized historical
-seed. **Stop on the first Go/race, source, SQL, FK or signed-data error.
-Never relax a check to print PASS.** Do not proceed to a 10-window
-P5/P6/P7 performance test until P7's first two-window correctness gate
-passes with complete receipts.
+C220 successfully executed the Go compiler, P7 unit/race tests, and
+P6 regression gate on 2026-11-17. The first SQL attempt failed on
+SQLSTATE 42501 before ingestion; this is documented in
+`P7_FIRST_C220_RUN_20261117_SQLSTATE42501.md`.
+The corrected private runner verifies the exact PGDATA as its local
+bootstrap superuser, grants `pg_read_all_settings` to `fi_ingest`
+**only within the copied disposable PostgreSQL cluster**, and then
+re-verifies the exact data directory as `fi_ingest` before any P7
+writer can ingest. The physical directory guard remains mandatory.
+**Stop on the first Go/race, source, SQL, FK or signed-data error.
+Never relax a check to print PASS.** No ten-window benchmark until
+P7's first two-window correctness gate passes completely.
