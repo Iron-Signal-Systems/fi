@@ -92,3 +92,32 @@ func TestPrivateP10ExactBenchmarkStop(t *testing.T){
         }
     }
 }
+
+
+func TestPrivateP10FiveNativeProjectorsReuseP6CopyContexts(t *testing.T){
+    // A File DACL with no ACE state would call privateProjectionTx.SendBatch,
+    // which MUST remain forbidden. Each worker needs P6's bounded ACE COPY
+    // state, and also the hash/USN states that P6 used to inherit from the
+    // typed-window transaction. The contexts must not share mutable buffers.
+    left,hashA,aceA,usnA:=privateP10BoundedProjectorContext(context.Background())
+    right,hashB,aceB,usnB:=privateP10BoundedProjectorContext(context.Background())
+    for i,c:=range []context.Context{left,right}{
+        if c.Value(aceCopyContextKey{})==nil||
+           c.Value(contentHashCopyContextKey{})==nil||
+           c.Value(usnChangeCopyContextKey{})==nil||
+           c.Value(ntfsObjectCacheContextKey{})==nil||
+           c.Value(ntfsScopeIdentityCacheContextKey{})==nil||
+           c.Value(ntfsStageTimingContextKey{})==nil{
+            t.Fatalf("P10 SQL worker %d omitted accepted P6 bounded child projector state",i)
+        }
+    }
+    if hashA==hashB||aceA==aceB||usnA==usnB{
+        t.Fatal("P10 concurrent PostgreSQL workers share mutable bounded buffers")
+    }
+    // Confirm this regression fix did not weaken FI's original private
+    // projector security boundary.
+    var failClosed privateProjectionTx
+    if err:=failClosed.SendBatch(context.Background(),nil).Close();err==nil{
+        t.Fatal("P10 weakened the original private SendBatch prohibition")
+    }
+}
