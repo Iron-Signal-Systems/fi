@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p7) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=1458e22daac56ad390e5ab247b6df655bc510f0f
-testrunnerpin=0a9a2009600722af95ed1ec5b2aeb355224e03da
-runnerpin=dc11d92d46e8b38f9015ef09f6b9b8b070ae7efb
+sourcepin=b3d7fef1ddc9557373877c0d62054f1b68b8f95f
+testrunnerpin=486a1251ade3386a845bfff1c2254d7d62e41684
+runnerpin=d9cce7cb07e9b2bce778e8c71f15d8fabcef6915
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -110,7 +110,7 @@ esac
 summary="$out/SUMMARY.txt"
 [ -s "$summary" ] || fail 'P7 SQL run summary missing'
 for expected in \
-    'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=4 historical_sql_source_scan=retained original_sha=retained' \
+    'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=8 historical_sql_source_scan=retained original_sha=retained' \
     'FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged' \
     'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS windows=2 artifact_markers=2 source_markers=2 signed_batches=431 records=997434' \
     'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true' \
