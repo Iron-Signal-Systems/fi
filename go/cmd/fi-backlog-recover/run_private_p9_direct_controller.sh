@@ -9,9 +9,9 @@ fail(){ printf 'FI P9 STOP: %s\n' "$*" >&2; exit 1; }
 case "$1" in preflight|tests|p9) mode=$1;;*) fail 'invalid P9 mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only authenticated W512 original seed allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=34ad2e976d8a6ed44ec5ac063e13350c67153de8
-testrunnerpin=60f8af6e2db00873a0f1621ac29bfac11f52b8da
-runnerpin=61f5f724a342d41d1173e33d6ad7b9f1c8e91270
+sourcepin=5acbf0ae6cdea1f9ee66cc936ef4016a729ae6ea
+testrunnerpin=c42dc77c954b7d3e8e9003807d6eff9a5d4adfbc
+runnerpin=f5fa1df9213b5ebfd133f926c716d3748ccde714
 testpath=go/cmd/fi-backlog-recover/run_private_p9_direct_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_p9_direct_c220_host.sh
 for pin in "$sourcepin" "$testrunnerpin" "$runnerpin";do
