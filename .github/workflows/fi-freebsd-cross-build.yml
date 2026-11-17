@@ -49,9 +49,9 @@ jobs:
           assert src.index(stage) < src.index(check) < src.index(patcher), (
               "P10 P6 family buffer must be fully staged before original P6 patcher"
           )
-          assert src.count("\\nJAIL\\n") == 1, "one private C220 JAIL heredoc"
-          assert src.count("\\nsql(){") == 1, "one SQL helper"
-          assert src.count("\\nstats(){") == 1, "one PG stats helper"
+          assert src.splitlines().count("JAIL") == 1, "one private C220 JAIL heredoc"
+          assert sum(line.startswith("sql(){") for line in src.splitlines()) == 1, "one SQL helper"
+          assert sum(line.startswith("stats(){") for line in src.splitlines()) == 1, "one PG stats helper"
           print("FI P10 P6 PATCHER INPUT ORDER PASS")
           PY
           for source in ./cmd/fi-backlog-recover/testdata/family-p10/*.go; do
