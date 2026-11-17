@@ -65,14 +65,19 @@ func privateP10CloneConnection(ctx context.Context,dsn,expectedPGDATA string)(*p
     }
     conn,err:=pgx.Connect(ctx,dsn)
     if err!=nil{return nil,0,err}
-    var path,user string
+    // The C220 runner has already checked the exact private PGDATA using
+    // the clone's existing owner login. Do not grant pg_read_all_settings
+    // to fi_ingest merely so this session can query data_directory again.
+    // This worker only verifies the trusted clone socket, role, recovery
+    // state, and distinct PostgreSQL backend identity.
+    var user string
     var recovery bool
     var pid int64
-    err=conn.QueryRow(ctx,`SELECT current_setting('data_directory'), current_user,
-pg_is_in_recovery(),pg_backend_pid()::bigint`).Scan(&path,&user,&recovery,&pid)
-    if err!=nil||path!=expectedPGDATA||user!="fi_ingest"||recovery||pid<=0{
+    err=conn.QueryRow(ctx,`SELECT current_user,
+pg_is_in_recovery(),pg_backend_pid()::bigint`).Scan(&user,&recovery,&pid)
+    if err!=nil||user!="fi_ingest"||recovery||pid<=0{
         conn.Close(context.Background())
-        return nil,0,fmt.Errorf("FI P10: backend must be private fi_ingest exact clone: pgdata=%q role=%q standby=%v pid=%d err=%v",path,user,recovery,pid,err)
+        return nil,0,fmt.Errorf("FI P10: unexpected clone session role=%q standby=%v pid=%d err=%v",user,recovery,pid,err)
     }
     return conn,pid,nil
 }
@@ -141,11 +146,34 @@ func(w *privateP10FiveSQL) writeFamily(ctx context.Context,lane *privateP10SQLLa
     coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx},
         w.sourceID,profile)
     if err!=nil{return err}
-    writeCtx:=ctx
-    if lane.family==privateP6File {
-        writeCtx=context.WithValue(ctx,ntfsStageTimingContextKey{},&ntfsStageTimingCounters{})
-    }
+    // Restore the ORIGINAL P6 typed-window projector context in each
+    // independent P10 family transaction. P6 used to inherit these
+    // bounded COPY states from backlog_typed_window_postgres.go. The new
+    // async handoff must supply them explicitly, never weaken the
+    // privateProjectionTx.SendBatch fail-closed boundary.
+    writeCtx:=context.WithValue(ctx,ntfsObjectCacheContextKey{},newNTFSObjectCache())
+    writeCtx=context.WithValue(writeCtx,ntfsScopeIdentityCacheContextKey{},newNTFSScopeIdentityCache())
+    hashCopy:=newContentHashCopyState()
+    aceCopy:=newACECopyState()
+    usnCopy:=newUSNChangeCopyState()
+    writeCtx=context.WithValue(writeCtx,contentHashCopyContextKey{},hashCopy)
+    writeCtx=context.WithValue(writeCtx,aceCopyContextKey{},aceCopy)
+    writeCtx=context.WithValue(writeCtx,usnChangeCopyContextKey{},usnCopy)
+    writeCtx=context.WithValue(writeCtx,ntfsStageTimingContextKey{},&ntfsStageTimingCounters{})
     if err=coordinator.Family(writeCtx,lane.family,rows);err!=nil{return err}
+    // The same privateProjectionTx rewrites all five family's COPY
+    // targets into fi_recovery_projection. Drain *before* SQL COMMIT:
+    // pending hashes/ACEs/USN changes and reasons are real FK children.
+    projector:=privateProjectionTx{Tx:tx}
+    if err=usnCopy.flushAll(writeCtx,projector);err!=nil{
+        return fmt.Errorf("FI P10: USN/reason child COPY: %w",err)
+    }
+    if err=hashCopy.flush(writeCtx,projector);err!=nil{
+        return fmt.Errorf("FI P10: content-hash child COPY: %w",err)
+    }
+    if err=aceCopy.flushAll(writeCtx,projector);err!=nil{
+        return fmt.Errorf("FI P10: DACL/SACL child COPY: %w",err)
+    }
     return tx.Commit(ctx)
 }
 
