@@ -393,3 +393,61 @@ func TestPrivateP7CanonicalSignedReaderDoesNotRequireLegacyK32Chunk(t *testing.T
         t.Fatal("FI P7 mutated the enclosing private benchmark context")
     }
 }
+
+func TestPrivateP7ParallelAUsesRealFiveWriterSessionNotLegacyK32(t *testing.T) {
+    t.Setenv("FI_W512_P7_SQL_WRITERS","5")
+    t.Setenv("FI_W512_P6_FAMILY_SQL","1")
+    t.Setenv("FI_W512_P5_PERSISTENT","1")
+    // Recreate the exact selected two-worker H16 context from the C220 run.
+    selected,err:=WithPrivateParallelPreparationA(privateDependencyTestContext(t))
+    if err!=nil {t.Fatal(err)}
+    active,err:=WithPrivateFileHashH16(selected)
+    if err!=nil {t.Fatal(err)}
+    if !privateParallelAEnabled(active) {t.Fatal("accepted K32 control lost Candidate A")}
+
+    writer:=&privateP7FiveWriter{ctx:context.Background()}
+    buffers,err:=newPrivateP6Buffers(1,writer)
+    if err!=nil {t.Fatal(err)}
+    outer:=context.WithValue(active,privateP6WindowContextKey{},buffers)
+    signed:=privateP7CanonicalSignedBatchContext(outer,205)
+    if err:=validatePrivateFamilyRoute(signed);err!=nil {
+        t.Fatalf("P7 signed reader inherited invalid legacy K32 route: %v",err)
+    }
+    if !privateP7ParallelPreparationReader(signed) ||
+       !privateParallelAEnabled(signed) ||
+       privateParallelAActivationError(signed)!=nil {
+        t.Fatal("P7 actual five-writer signed reader lost verified two-worker preparation")
+    }
+    if !privateDependencyBuffersEnabled(outer) || !privateParallelAEnabled(outer) {
+        t.Fatal("P7 modified the accepted K32 parent activation")
+    }
+
+    for _,tc:=range []struct{name string; ctx context.Context}{
+        {"missing signed batch index",context.WithValue(signed,privateP7SignedBatchIndexKey{},nil)},
+        {"legacy mixed buffers reenabled",context.WithValue(signed,privateMixedFamilyBuffersKey{},true)},
+        {"legacy dependency buffers reenabled",context.WithValue(signed,privateDependencyBuffersKey{},true)},
+        {"fake legacy chunk",context.WithValue(signed,backlogTypedChunkContextKey{},backlogTypedChunkDirective{})},
+        {"missing five writer",context.WithValue(signed,privateP6WindowContextKey{},nil)},
+        {"one writer P6",context.WithValue(signed,privateP6WindowContextKey{},&privateP6Buffers{window:1,sink:&privateP6SQLCoordinator{}})},
+        {"missing SQL worker context",context.WithValue(signed,privateP6WindowContextKey{},&privateP6Buffers{window:1,sink:&privateP7FiveWriter{}})},
+    } {
+        t.Run(tc.name,func(t *testing.T){
+            if privateP7ParallelPreparationReader(tc.ctx) ||
+               privateParallelAEnabled(tc.ctx) ||
+               privateParallelAActivationError(tc.ctx)==nil {
+                t.Fatal("invalid P7 activation accepted or fell back silently")
+            }
+        })
+    }
+    caps:=fileBulkLimitsFromContext(signed)
+    caps.ObserveMaxBytes++
+    altered:=context.WithValue(signed,fileBulkProfileContextKey{},caps)
+    if privateParallelAEnabled(altered)||privateParallelAActivationError(altered)==nil {
+        t.Fatal("wrong F3H16 profile bypassed P7 Candidate A strict gate")
+    }
+    t.Setenv("FI_W512_P7_SQL_WRITERS","0")
+    if privateP7ParallelPreparationReader(signed) ||
+        privateParallelAEnabled(signed) || privateParallelAActivationError(signed)==nil {
+        t.Fatal("P7 parallel activation ignored five-SQL environment gate")
+    }
+}
