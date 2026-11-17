@@ -10,6 +10,8 @@ import (
     "context"
     "errors"
     "fmt"
+    "os"
+    "path/filepath"
     "sync"
     "testing"
     "time"
@@ -245,5 +247,57 @@ func TestPrivateP7OpeningOneOfFiveConnectionsFailsClosed(t *testing.T){
     ledger.mu.Lock();closed:=ledger.closed;ledger.mu.Unlock()
     if !closed||opened!=4{
         t.Fatal(fmt.Sprintf("partially opened five SQL writers not cleaned up opened=%d ledgerClosed=%v",opened,closed))
+    }
+}
+
+func TestPrivateP7DeferredVerifiedCacheCreatesPhysicalSignedWindow(t *testing.T){
+    // Reproduce P7's C220 2026-11-17 failure: the durable signed
+    // artifact checkpoint already exists, but deferred materialization
+    // leaves the window-00000001 directory absent. The P7 source
+    // ledger MUST create+verify actual 0600 signed files before SQL.
+    g:=privateBacklogStageFixture(t)
+    root:=privateBacklogTestRoot(t)
+    limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
+    descriptors,err:=DescribeBacklogWindows(g,limits)
+    if err!=nil||len(descriptors)!=2{
+        t.Fatalf("FI P7 signed fixture W512 window count %d: %v",len(descriptors),err)
+    }
+    d:=descriptors[1]
+    expected:=filepath.Join(root,"receipt-"+d.ReceiptSHA256,"window-00000001")
+    if _,err:=os.Lstat(expected);!os.IsNotExist(err){
+        t.Fatal("FI P7: test needs truly deferred window without a physical directory")
+    }
+    path,err:=privateP7MaterializeSignedWindow(
+        context.Background(),g,limits,1,root,d)
+    if err!=nil||path!=expected{
+        t.Fatalf("FI P7: private physical source stage %q want %q: %v",
+            path,expected,err)
+    }
+    if err:=VerifyMaterializedBacklogWindow(
+        context.Background(),g,limits,1,root);err!=nil{
+        t.Fatalf("FI P7: staged signed source bytes failed re-verification: %v",err)
+    }
+    pathAgain,err:=privateP7MaterializeSignedWindow(
+        context.Background(),g,limits,1,root,d)
+    if err!=nil||pathAgain!=path{
+        t.Fatalf("FI P7: existing complete stage not safely reused %q: %v",pathAgain,err)
+    }
+    bad:=filepath.Join(path,"batch-00000002.data")
+    original,err:=os.ReadFile(g.Batches[2].DataPath)
+    if err!=nil{t.Fatal(err)}
+    if err:=os.WriteFile(bad,[]byte("corrupt!"),0600);err!=nil{t.Fatal(err)}
+    if _,err:=privateP7MaterializeSignedWindow(
+        context.Background(),g,limits,1,root,d);err==nil{
+        t.Fatal("FI P7: tampered private source copy was accepted and published")
+    }
+    current,err:=os.ReadFile(g.Batches[2].DataPath)
+    if err!=nil||string(current)!=string(original){
+        t.Fatalf("FI P7: independent signed source cache was modified: %v",err)
+    }
+    mutated:=d
+    mutated.DigestSHA256="mutated"
+    if _,err:=privateP7MaterializeSignedWindow(
+        context.Background(),g,limits,1,root,mutated);err==nil{
+        t.Fatal("FI P7: changed signed window descriptor was accepted")
     }
 }
