@@ -219,3 +219,35 @@ candidate passes on C220. Do not run one of the previous superseded
 controllers. The P7 acceptance gate now additionally requires and
 archives `P7_MATERIALIZED_WINDOWS.txt`, exactly two verified windows
 and the full 431 signed batches.
+
+## Fifth controller — independently committed artifact and source checkpoints
+
+On 2026-11-17 07:41 UTC the fourth C220 trial authenticated and
+verified signed W512 window 1 (216 batches, 499,052 records,
+2,146,829,460 bytes). It then stopped, correctly, because the
+deferred verified-clone joined route had not recorded a separate
+`fi_recovery.verified_artifact_window` marker. The original
+`StageVerifiedBacklogSourceWindow` requires that marker before
+staging durable source rows.
+
+The fifth P7 source now explicitly commits the existing
+`RecordVerifiedBacklogArtifactWindow` transaction after full
+physical SHA verification, then invokes
+`StageVerifiedBacklogSourceWindow`, which validates that marker
+again and commits the pending-source ledger. Only then can P7
+start five distinct PostgreSQL family writers. The runner requires
+two exact chronological artifact+source checkpoint receipts and
+archives `P7_SOURCE_CHAIN.txt`, in addition to the original signed
+readback, 13-kind relational/FK and USN proof gates.
+
+- Source pin: `03881677b33fe428154157fe07e8a7ec235d63c8`
+- Go/race/P6-regression runner pin:
+  `4e874be099e7d8b0fb1df3b198a191f27e096ebc`
+- Private C220 five-SQL replay runner pin:
+  `080a74cafe2b5e4575e5ca913b48bf79ef58ba81`
+- Top-level controller pin:
+  `b7737a4df3a72ab40e365371a782b0cdf755afe2`
+
+These pins supersede every preceding P7 controller. Correctness and
+performance remain **unaccepted** until the full C220 two-window
+SQL run finishes with all original signed and relational receipts.
