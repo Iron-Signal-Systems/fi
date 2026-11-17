@@ -461,24 +461,34 @@ pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
 # NEVER use this bootstrap on the authoritative FI SoR or a remote socket.
 clone_sock="$root/$name/socket"
 clone_data="$root/$name/data"
-clone_owner_dsn="host=$clone_sock port=$port user=jwood dbname=fi sslmode=disable"
 clone_ingest_dsn="host=$clone_sock port=$port user=fi_ingest dbname=fi sslmode=disable"
 [ -d "$clone_data" ] && [ -d "$clone_sock" ] &&
 [ "$(cat "$clone_data/PG_VERSION")" = 18 ] &&
 pg_ctl -D "$clone_data" status >/dev/null 2>&1 ||
     { echo 'FI P7 PRIVATE GRANT STOP: exact clone server not running' >&2; exit 1; }
-# Query path as the private clone's actual bootstrap role. This
-# deliberately FAILS CLOSED if jwood isn't a PostgreSQL superuser.
+# Unix account jwood is not a PostgreSQL role in this signed seed.
+# Enumerate this PRIVATE CLONE's login-capable PG superuser through
+# fi_ingest's read-only public pg_roles view; never guess an identity.
+clone_admin=$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 \
+    -c "SELECT rolname FROM pg_catalog.pg_roles WHERE rolsuper AND rolcanlogin AND rolname !~ '^pg_' ORDER BY rolname") ||
+    { echo 'FI P7 PRIVATE GRANT STOP: cannot discover cloned PostgreSQL bootstrap roles' >&2; exit 1; }
+[ -n "$clone_admin" ] &&
+[ "$(printf '%s\n' "$clone_admin" | wc -l | tr -d '[:space:]')" = 1 ] &&
+printf '%s\n' "$clone_admin" | grep -Eq '^[A-Za-z_][A-Za-z_0-9]*$' ||
+    { echo 'FI P7 PRIVATE GRANT STOP: expected exactly one safe login-capable PostgreSQL superuser in clone' >&2; exit 1; }
+clone_owner_dsn="host=$clone_sock port=$port user=$clone_admin dbname=fi sslmode=disable"
+# Verify exact physical private PGDATA as the discovered SQL superuser
+# BEFORE granting the limited settings-read privilege.
 clone_path=$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 \
     -c "SELECT current_setting('data_directory')" ) ||
-    { echo 'FI P7 PRIVATE GRANT STOP: clone owner cannot verify PostgreSQL data_directory' >&2; exit 1; }
+    { echo 'FI P7 PRIVATE GRANT STOP: discovered clone superuser cannot read physical PGDATA' >&2; exit 1; }
 [ "$clone_path" = "$clone_data" ] ||
-    { echo "FI P7 PRIVATE GRANT STOP: PostgreSQL cluster differs from copied private PGDATA" >&2; exit 1; }
+    { echo 'FI P7 PRIVATE GRANT STOP: actual cluster data_directory differs from copied private PGDATA' >&2; exit 1; }
 clone_owner=$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 \
     -c "SELECT current_user||'|'||(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user)||'|'||pg_is_in_recovery()::text") ||
-    { echo 'FI P7 PRIVATE GRANT STOP: clone owner identity not verified' >&2; exit 1; }
-[ "$clone_owner" = "jwood|true|false" ] ||
-    { echo "FI P7 PRIVATE GRANT STOP: invalid clone bootstrap identity $clone_owner" >&2; exit 1; }
+    { echo 'FI P7 PRIVATE GRANT STOP: clone SQL superuser identity not verified' >&2; exit 1; }
+[ "$clone_owner" = "$clone_admin|true|false" ] ||
+    { echo "FI P7 PRIVATE GRANT STOP: unsafe clone SQL superuser identity $clone_owner" >&2; exit 1; }
 # The role grant exists only in THIS newly copied PostgreSQL cluster.
 # pg_read_all_settings gives config READ access, not SQL superuser access.
 psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 \
