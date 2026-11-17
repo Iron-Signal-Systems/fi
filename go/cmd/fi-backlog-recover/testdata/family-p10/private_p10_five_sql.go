@@ -16,7 +16,6 @@ import (
     "os"
     "strings"
     "sync"
-    "time"
 
     "github.com/jackc/pgx/v5"
 )
@@ -175,10 +174,6 @@ func(w *privateP10FiveSQL) Family(ctx context.Context,f privateP6Family,rows []p
     }
     if w.failed!=nil{return w.failed}
     lane:=w.lanes[f]
-    if lane.err!=nil{
-        w.failed=lane.err
-        return w.failed
-    }
     // At most 4 pending handed-off buffers per family; each is itself
     // bounded by the original P6 row/byte capacity. Do not grow an
     // unlimited backlog waiting for a slow SQL family.
@@ -252,4 +247,3 @@ func(w *privateP10FiveSQL) Close(){
     if w.parent!=nil {_=w.parent.Close(context.Background())}
 }
 var _ privateP6SQLHandoff=(*privateP10FiveSQL)(nil)
-var _=time.Second
