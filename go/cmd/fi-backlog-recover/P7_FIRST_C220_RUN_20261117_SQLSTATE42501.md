@@ -280,3 +280,73 @@ closed if a checkpoint is missing, out of order or duplicated.
 This corrected source has **not yet completed** the first C220 replay,
 and neither 2-window P7 correctness nor throughput is accepted.
 The authoritative SoR and signed cache remain unchanged.
+
+## Fifth C220 attempt — 2026-11-17 07:50 UTC: foreign deferred SHA-once ownership
+
+Pinned controller `b7737a4df3a72ab40e365371a782b0cdf755afe2`
+passed signed seed and private clone gates, Go compile, P7 Go/race
+tests, and accepted P6 regression. The failure reached
+`ingestSourceBatch` on original signed batch **205**, the first
+batch of W512 index 1, and stopped BEFORE any typed family rows:
+
+```text
+FI P7 WINDOW REJECTED index=1 typed_marker=absent clone_disposal=required
+FI P7: signed batch=205: FI verified batch evidence:
+FI batch once: source not inside owned private clone
+```
+
+No P7 two-window acceptance or throughput was produced.
+The private SQL server shut down cleanly and original seed remained
+unchanged.
+
+### Exact root cause
+
+The accepted private P5/P6 SHA-once helper
+`privateReuseSignedBatchDigest` **only** trusts an open file when
+its pathname is `deferredWindow.pending` and its original
+`deferredFileIdentity` was registered by the existing COW-clone
+handoff. P7 independently materializes and FULL SHA-verifies original
+signed W512 files under `receipt-<digest>/window-00000001`.
+Those are correct signed files but are **not** the original deferred
+COW clone path recorded in the outer recovery context. The helper
+correctly rejects the attempted trust reuse.
+
+### Fix
+
+A new P7-only `privateP7CanonicalSignedBatchContext` masks
+`privateDeferredWindowKey` **only on the individual prepared
+batch's context** before calling the existing
+`ingestSourceBatch`. This causes
+`privateReuseSignedBatchDigest` to select the original canonical
+per-batch SHA-256 path, hashing the actual LF-terminated JSONL bytes
+and comparing against the original signed manifest. Outer deferred
+clone ownership and P5/P6 SHA-once behavior are unchanged. The
+original W512 artifact/source ledger SHA checks also remain enabled.
+
+A new regression test
+`TestPrivateP7OwnedSignedWindowUsesCanonicalSHAInsteadOfForeignDeferredClone`
+reproduces the actual foreign-clone rejection, verifies the P7
+canonical context disables only the reuse shortcut, retains original
+signed batch index, confirms the outer deferred ownership context
+is unchanged, and independently rehashes the materialized window.
+
+The C220 SQL runner rejects any success unless both windows report:
+
+```text
+FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged
+```
+
+### Pinned fix (NOT YET EXECUTED ON C220)
+
+- P7 source and new negative regression test:
+  `b81b50b5ea5a2bf420f0e49c476d386f7d635371`
+- P7 isolated Go and race test runner:
+  `86d4484919337c6fdc8e14c7420f39fe73f71758`
+- P7 five-connection SQL runner requiring true signed-byte SHA:
+  `8b50cd52c92ed79394a03d09c443ce2f5ddd036b`
+- Top-level controller:
+  `5456959eab86a72f135c3998410a008f37a98807`
+
+Correctness and P7 five-writer throughput remain **unaccepted**.
+Do not rerun the obsolete controllers. This fix must first pass the
+new Go/race regression and then the complete C220 clone test.
