@@ -480,11 +480,8 @@ clone_owner_dsn="host=$clone_sock port=$port user=$clone_admin dbname=fi sslmode
 [ "$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')")" = "$clone_data" ] || exit 1
 [ "$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_user||'|'||(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user)||'|'||pg_is_in_recovery()::text")" = "$clone_admin|true|false" ] || exit 1
 psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c \
-  "GRANT pg_read_all_settings TO fi_ingest;
-   CREATE TABLE fi_recovery_projection.windows_security_event_field_p10_default
+  "CREATE TABLE fi_recovery_projection.windows_security_event_field_p10_default
      PARTITION OF fi_recovery_projection.windows_security_event_field DEFAULT;
-   REVOKE ALL ON fi_recovery_projection.windows_security_event_field_p10_default FROM PUBLIC;
-   GRANT SELECT, INSERT ON fi_recovery_projection.windows_security_event_field_p10_default TO fi_ingest;
    ALTER TABLE fi_recovery.typed_window
      DROP CONSTRAINT typed_window_receipt_sha256_window_index_fkey;
    ALTER TABLE fi_recovery.typed_window
@@ -492,7 +489,11 @@ psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c \
      FOREIGN KEY (shadow_generation_id)
      REFERENCES fi_recovery_projection.recorded_generation(recorded_generation_id);" >/dev/null || exit 1
 [ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')")" = "$clone_data" ] || exit 1
-echo 'FI P10 PRIVATE P6 SQL CLONE PASS physical_pgdata=verified shadow_fk=retained'
+# The source seed already grants fi_ingest access to the partitioned
+# projection parent. Child partitions reached through that parent use
+# its INSERT privilege; do not alter roles, permissions or ownership.
+[ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege(current_user, 'fi_recovery_projection.windows_security_event_field', 'INSERT')::text")" = t ] || exit 1
+echo 'FI P10 PRIVATE P6 SQL CLONE PASS physical_pgdata=verified shadow_fk=retained permissions=unchanged'
 echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
 JAIL
 mkdir -m 700 "$out" "$out/$name" "$private_root" ||
