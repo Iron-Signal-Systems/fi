@@ -98,8 +98,8 @@ func stagePrivateP7FiveWriterTypedWindow(
     // validator/capture types. P7 must not generate synthetic receipts.
     ntfsTiming:=&ntfsStageTimingCounters{}
     ctx=context.WithValue(ctx,ntfsStageTimingContextKey{},ntfsTiming)
-    ctx=context.WithValue(ctx,usnCaptureContextKey{},
-        newUSNCaptureState(d.SourceID,d.GenerationID))
+    captureState:=newUSNCaptureState(d.SourceID,d.GenerationID)
+    ctx=context.WithValue(ctx,usnCaptureContextKey{},captureState)
     ctx=context.WithValue(ctx,backlogUSNCrossWindowContextKey{},true)
     ctx=context.WithValue(ctx,usnTimingContextKey{},&usnTimingCounters{})
     pool,err:=newPrivateP5Pool(ctx,index)
@@ -159,6 +159,13 @@ func stagePrivateP7FiveWriterTypedWindow(
     }
     if err:=readOnlyTx.Rollback(ctx);err!=nil {
         return fmt.Errorf("FI P7: close signed reader snapshot before publish: %w",err)
+    }
+    if index==len(ds)-1 {
+        // Match the original W512 M6.1 completion proof, including
+        // in-memory boundary/identity state, before SQL publication.
+        if err:=captureState.verify();err!=nil {
+            return fmt.Errorf("FI P7: original final USN capture dependency verification: %w",err)
+        }
     }
     publishStarted:=time.Now()
     published,err:=session.Publish(ctx)
