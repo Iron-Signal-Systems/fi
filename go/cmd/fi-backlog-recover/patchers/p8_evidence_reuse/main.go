@@ -105,6 +105,9 @@ func rewrite(input []byte,e edit)([]byte,error){
     // verification block's whitespace; never relax the function name,
     // digest comparison, or SQL source ledger.
     if strings.Contains(e.path,"backlog_source_window_postgres.go"){
+        if strings.Contains(s,"if !privateP8OuterEvidenceMatches(ctx,privateRoot,d,index)") {
+            return nil,errors.New("P8 signed-source verification prehash already patched")
+        }
         start:=strings.Index(s,"if err := VerifyMaterializedBacklogWindow(ctx, g, limits, index, privateRoot); err != nil {")
         if start<0 || strings.Count(s,"if err := VerifyMaterializedBacklogWindow(ctx, g, limits, index, privateRoot); err != nil {")!=1{
             return nil,errors.New("P8 original full artifact verifier anchor missing")
