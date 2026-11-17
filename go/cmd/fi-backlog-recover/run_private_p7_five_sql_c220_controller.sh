@@ -14,7 +14,7 @@ case "$1" in preflight|tests|p7) mode=$1;;*) fail 'unsupported mode';;esac
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=6baf59d36bb3b4d51f4e26f5be54de178279de8f
 testrunnerpin=8b2ff76c6f97b22651c35378e5afe60cbfee608e
-runnerpin=ce11cb92b6667010dcc6144d3504f7df1321cbfa
+runnerpin=e396533c80a460b5b1d4d8a11ec99c4136ac358b
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -59,6 +59,9 @@ grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
 grep -Fq 'go127 test -race' "$testscript" &&
 grep -Fq 'TestPrivateP7' "$testscript" &&
 grep -Fq 'FI W512 P7 REAL FIVE PG WRITERS PASS' "$runner" &&
+grep -Fq 'FI P7 PRIVATE CLONE SETTINGS ACCESS PASS' "$runner" &&
+grep -Fq 'GRANT pg_read_all_settings TO fi_ingest' "$runner" &&
+grep -Fq 'clone_ingest_path' "$runner" &&
 grep -Fq 'FI P7 VERIFIED NATIVE FILE SOURCE AND BULK REUSE PASS' "$runner" &&
 grep -Fq 'FI P6 FULL RELATIONAL GRAPH PASS' "$runner" &&
 grep -Fq 'FI W512 SIGNED READBACK PASS' "$runner" ||
