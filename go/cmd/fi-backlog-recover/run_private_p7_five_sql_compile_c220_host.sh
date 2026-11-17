@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=5bddfc77a588d9c7377901e6bd99205f326b86b8
+sourcepin=907b74759f7465c7c9a7b15560a63f61d771b1d2
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
@@ -65,6 +65,17 @@ git -C "$repo" show \
   "$sourcepin:go/cmd/fi-backlog-recover/testdata/family-p6/private_p6_family_buffers.go" \
   > "$dst/optimized-source/go/internal/recordingest/private_p6_family_buffers.go" ||
   { echo 'FI P7: pinned atomic five-writer completion barrier missing' >&2; exit 1; }
+# Apply the SAME exact-anchor P7 preparer gate in this test-only source
+# that the SQL pilot will install after the inherited family P3 patch.
+bridge="$dst/optimized-source/go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge"
+mkdir -p "$bridge"
+git -C "$repo" show "$sourcepin:go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go" \
+    > "$bridge/main.go" ||
+    { echo 'FI P7: pinned Candidate A bridge missing' >&2; exit 1; }
+(cd "$dst/optimized-source/go" &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
+   ./cmd/fi-backlog-recover/patchers/p7_parallel_bridge "$dst/optimized-source") ||
+    { echo 'FI P7: signed reader preparer bridge failed' >&2; exit 1; }
 cd "$dst/optimized-source/go"
 export GOTOOLCHAIN=local
 export GOFLAGS=-mod=readonly
