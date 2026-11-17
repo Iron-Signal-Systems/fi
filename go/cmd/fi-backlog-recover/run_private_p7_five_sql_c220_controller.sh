@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p7) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=03881677b33fe428154157fe07e8a7ec235d63c8
-testrunnerpin=4e874be099e7d8b0fb1df3b198a191f27e096ebc
-runnerpin=080a74cafe2b5e4575e5ca913b48bf79ef58ba81
+sourcepin=b81b50b5ea5a2bf420f0e49c476d386f7d635371
+testrunnerpin=86d4484919337c6fdc8e14c7420f39fe73f71758
+runnerpin=8b50cd52c92ed79394a03d09c443ce2f5ddd036b
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -58,6 +58,8 @@ grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
     fail 'P7 source pin disagrees across C220 runners'
 grep -Fq 'go127 test -race' "$testscript" &&
 grep -Fq 'TestPrivateP7' "$testscript" &&
+grep -Fq 'FI W512 P7 SIGNED CANONICAL SHA PASS' "$runner" &&
+grep -Fq 'sha_once_shortcut=disabled' "$runner" &&
 grep -Fq 'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS' "$runner" &&
 grep -Fq 'P7_SOURCE_CHAIN.txt' "$runner" &&
 grep -Fq 'FI W512 P7 PHYSICAL SIGNED STAGE PASS' "$runner" &&
@@ -107,6 +109,7 @@ esac
 summary="$out/SUMMARY.txt"
 [ -s "$summary" ] || fail 'P7 SQL run summary missing'
 for expected in \
+    'FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged' \
     'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS windows=2 artifact_markers=2 source_markers=2 signed_batches=431 records=997434' \
     'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true' \
     'FI W512 SIGNED READBACK PASS batches=431 byte_identical=true manifests_identical=true' \
