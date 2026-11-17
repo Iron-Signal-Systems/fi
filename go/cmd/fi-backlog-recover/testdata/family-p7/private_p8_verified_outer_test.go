@@ -32,15 +32,15 @@ func TestPrivateP8VerifiedOuterArtifactRequiresExactSameProcessEvidence(t *testi
     if err!=nil || !reused || got!=original {
         t.Fatalf("P8 verified artifact reuse rejected: %q %t %v",got,reused,err)
     }
-    for name,otherRoot,otherD,otherIndex:=range []struct{
-        root string;d BacklogCheckpointDescriptor;index int
+    for _,tc:=range []struct{
+        name,root string;d BacklogCheckpointDescriptor;index int
     }{
-        {root:root+"-foreign",d:d,index:1},
-        {root:root,d:d,index:2},
-        {root:root,d:func()BacklogCheckpointDescriptor{x:=d;x.DigestSHA256="tampered";return x}(),index:1},
+        {name:"foreign-private-root",root:root+"-foreign",d:d,index:1},
+        {name:"wrong-window-index",root:root,d:d,index:2},
+        {name:"changed-signed-descriptor",root:root,d:func()BacklogCheckpointDescriptor{x:=d;x.DigestSHA256="tampered";return x}(),index:1},
     }{
-        t.Run(name,func(t *testing.T){
-            if _,ok,err:=privateP8ReusableStage(ctx,g,limits,otherIndex,otherRoot,otherD);
+        t.Run(tc.name,func(t *testing.T){
+            if _,ok,err:=privateP8ReusableStage(ctx,g,limits,tc.index,tc.root,tc.d);
                err==nil || ok {
                 t.Fatalf("P8 admitted mismatched same-process proof %t %v",ok,err)
             }
