@@ -193,6 +193,12 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if err!=nil||subtle.ConstantTimeCompare(prevDigest,want)!=1{
         return empty,errors.New("FI P10: existing signed seed checkpoint does not match")
     }
+    // Keep the original P6 cross-batch USN and File identity semantics.
+    // No reset or forced buffer flush at a W512 reporting boundary.
+    usn:=newUSNCaptureState(ds[0].SourceID,ds[0].GenerationID)
+    ctx=context.WithValue(ctx,usnCaptureContextKey{},usn)
+    ctx=context.WithValue(ctx,usnTimingContextKey{},&usnTimingCounters{})
+    ctx=context.WithValue(ctx,backlogUSNCrossWindowContextKey{},true)
     dsn,pgdata:=os.Getenv("FI_W512_P10_SQL_DSN"),os.Getenv("FI_W512_P10_EXPECTED_PGDATA")
     sink,err:=newPrivateP10FiveSQL(ctx,dsn,pgdata,ds[0].SourceID)
     if err!=nil{return empty,err}
