@@ -647,6 +647,46 @@ awk '/^FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED /{
     fail 'P7 requires two physically verified W512 windows and all 431 signed batches'
 printf 'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true\n' |
     tee -a "$out/SUMMARY.txt"
+# Source of truth for P7 is a three-stage, strict ordered checkpoint:
+# original SHA-verified physical files -> verified artifact DB checkpoint ->
+# durable pending-source DB checkpoint -> five SQL writers.
+# The fixture must never count a deferred placeholder as a completed source.
+awk '/^FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED /{
+   delete a
+   for(i=1;i<=NF;i++){split($i,x,"=");a[x[1]]=x[2]}
+   w=a["index"]+0
+   if(w<1||w>2||state[w]!=0)bad=1
+   state[w]=1
+}
+/^FI P7 VERIFIED ARTIFACT CHECKPOINT COMMITTED /{
+   delete a
+   for(i=1;i<=NF;i++){split($i,x,"=");a[x[1]]=x[2]}
+   w=a["index"]+0
+   if(w<1||w>2||state[w]!=1||a["typed_marker"]!="absent"||
+      a["source_rows"]!="pending")bad=1
+   if(w==1&&(a["signed_batches"]!=216||a["records"]!=499052))bad=1
+   if(w==2&&(a["signed_batches"]!=215||a["records"]!=498382))bad=1
+   state[w]=2
+}
+/^FI P7 VERIFIED SOURCE CHECKPOINT COMMITTED /{
+   delete a
+   for(i=1;i<=NF;i++){split($i,x,"=");a[x[1]]=x[2]}
+   w=a["index"]+0
+   if(w<1||w>2||state[w]!=2||a["typed_marker"]!="absent"||
+      a["artifact"]!="committed")bad=1
+   if(w==1&&(a["signed_batches"]!=216||a["records"]!=499052))bad=1
+   if(w==2&&(a["signed_batches"]!=215||a["records"]!=498382))bad=1
+   state[w]=3
+}
+END{if(bad||state[1]!=3||state[2]!=3)exit 1}' "$log" ||
+    fail 'P7 signed physical/artifact/source checkpoint chain incomplete or out of order'
+grep -E '^FI P7 (VERIFIED ARTIFACT CHECKPOINT COMMITTED|VERIFIED SOURCE CHECKPOINT COMMITTED) ' \
+    "$log" > "$out/$name/P7_SOURCE_CHAIN.txt" ||
+    fail 'P7 durable artifact/source checkpoint receipts absent'
+[ "$(wc -l < "$out/$name/P7_SOURCE_CHAIN.txt" | tr -d '[:space:]')" = 4 ] ||
+    fail 'P7 expected two durable checkpoint receipts per signed window'
+printf 'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS windows=2 artifact_markers=2 source_markers=2 signed_batches=431 records=997434\n' |
+    tee -a "$out/SUMMARY.txt"
 [ "$(grep -c '^FI P7 FIVE SQL BACKENDS VERIFIED typed_writers=5 parent_ledger=1 unique_backend_pids=6 shadow_only=true$' "$log")" = 2 ] ||
     fail 'five distinct family SQL writer backend PIDs absent from W512 windows'
 [ "$(grep -c '^FI REAL BACKLOG DURABLE ' "$log")" = 2 ] &&
@@ -1016,7 +1056,7 @@ bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/COPY_CALLS.txt" "$name/STAGES.txt" "$name/PARALLEL_PREP.txt" \
-  "$name/P7_MATERIALIZED_WINDOWS.txt" "$name/SIGNED_BATCHES.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
+  "$name/P7_MATERIALIZED_WINDOWS.txt" "$name/P7_SOURCE_CHAIN.txt" "$name/SIGNED_BATCHES.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
