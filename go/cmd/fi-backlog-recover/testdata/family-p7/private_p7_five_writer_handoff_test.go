@@ -355,3 +355,39 @@ func TestPrivateP7OwnedSignedWindowUsesCanonicalSHAInsteadOfForeignDeferredClone
         t.Fatalf("FI P7 independently staged signed source failed full SHA verification: %v",err)
     }
 }
+
+func TestPrivateP7CanonicalSignedReaderDoesNotRequireLegacyK32Chunk(t *testing.T) {
+    // Actual C220 failure: the outer private W512 context still enables
+    // W128 mixed-family routing, but P7 has its own five-family P6 buffer
+    // session and never creates a legacy backlogTypedChunkDirective.
+    owner:=&privateP6Buffers{}
+    outer:=context.WithValue(context.Background(),privateMixedFamilyBuffersKey{},true)
+    outer=context.WithValue(outer,privateDependencyBuffersKey{},true)
+    outer=context.WithValue(outer,privateP6WindowContextKey{},owner)
+    outer=context.WithValue(outer,backlogTypedChunkContextKey{},backlogTypedChunkDirective{})
+    if err:=validatePrivateFamilyRoute(outer);err==nil {
+        t.Fatal("FI P7 fixture did not reproduce legacy K32 rejection")
+    }
+
+    signed:=privateP7CanonicalSignedBatchContext(outer,205)
+    if err:=validatePrivateFamilyRoute(signed);err!=nil {
+        t.Fatalf("FI P7 canonical signed reader inherited obsolete K32 route: %v",err)
+    }
+    if privateMixedFamilyBuffersEnabled(signed)||privateDependencyBuffersEnabled(signed) {
+        t.Fatal("FI P7 reader incorrectly kept legacy mixed/dependency route")
+    }
+    if _,ok:=signed.Value(backlogTypedChunkContextKey{}).(backlogTypedChunkDirective);ok {
+        t.Fatal("FI P7 reader retained legacy typed chunk state")
+    }
+    if privateP6BuffersFromContext(signed)!=owner {
+        t.Fatal("FI P7 reader lost its actual bounded five-family SQL session")
+    }
+    if i,ok:=signed.Value(privateP7SignedBatchIndexKey{}).(int);!ok||i!=205 {
+        t.Fatal("FI P7 canonical signed batch identity lost")
+    }
+    if !privateMixedFamilyBuffersEnabled(outer)||
+        outer.Value(privateDependencyBuffersKey{})!=true||
+        privateP6BuffersFromContext(outer)!=owner {
+        t.Fatal("FI P7 mutated the enclosing private benchmark context")
+    }
+}
