@@ -54,6 +54,49 @@ func TestPrivateP8ExistingSignedArtifactRequiresExactFilesAndManifests(t *testin
     }
 }
 
+
+func TestPrivateP8DeferredCacheWithoutCheckpointMaterializesSignedBytes(t *testing.T){
+    g,limits,d,root:=privateP8Fixture(t)
+    // Fresh C220 clones have a seed checkpoint at W512=0, but no durable
+    // artifact row or physical signed directory yet at W512=1. The
+    // branch must NOT require an outer checkpoint to copy signed bytes.
+    dir:=filepath.Join(root,"receipt-"+d.ReceiptSHA256,"window-00000001")
+    if _,err:=os.Lstat(dir);!os.IsNotExist(err){
+        t.Fatalf("P8 fixture unexpectedly materialized W512=1 before retry: %v",err)
+    }
+    staged,err:=privateP8FreshSignedWindow(context.Background(),g,limits,1,root,d)
+    if err!=nil||staged!=dir{
+        t.Fatalf("P8 cannot stage missing checkpoint signed bytes: got %q want %q error=%v",staged,dir,err)
+    }
+    if err:=VerifyMaterializedBacklogWindow(context.Background(),g,limits,1,root);err!=nil{
+        t.Fatalf("P8 private materialization did not verify original signed SHA: %v",err)
+    }
+    if _,err:=privateP8FreshSignedWindow(context.Background(),g,limits,1,root,d);err!=nil{
+        t.Fatalf("P8 fresh stage retry cannot verify existing exact file: %v",err)
+    }
+    bad:=filepath.Join(dir,"batch-00000002.data")
+    if err:=os.WriteFile(bad,[]byte("deadbeef"),0600);err!=nil{t.Fatal(err)}
+    if _,err:=privateP8FreshSignedWindow(context.Background(),g,limits,1,root,d);err==nil{
+        t.Fatal("P8 accepted tampered signed batch on retry without fresh SHA")
+    }
+}
+
+func TestPrivateP8FreshStageRejectsIncorrectDescriptorAndUnsafeRoot(t *testing.T){
+    g,limits,d,root:=privateP8Fixture(t)
+    changed:=d
+    changed.DigestSHA256="wrong"
+    if _,err:=privateP8FreshSignedWindow(context.Background(),g,limits,1,root,changed);err==nil{
+        t.Fatal("P8 materialized mismatched signed descriptor")
+    }
+    if _,err:=privateP8FreshSignedWindow(context.Background(),g,limits,0,root,d);err==nil{
+        t.Fatal("P8 materialized seed window through non-seed fast path")
+    }
+    t.Setenv("FI_W512_P8_REUSE","0")
+    if _,err:=privateP8FreshSignedWindow(context.Background(),g,limits,1,root,d);err==nil{
+        t.Fatal("P8 materialized signed files without private P8 explicit gate")
+    }
+}
+
 func TestPrivateP8RequiresPrivateFiveWriterSelection(t *testing.T){
     g,limits,d,root:=privateP8Fixture(t)
     if err:=privateP8CommittedArtifact(context.Background(),nil,d,1);err==nil{
