@@ -131,15 +131,9 @@ func privateP7PublishVerifiedWindow(ctx context.Context,
         g.Receipt.TransferSHA256,g.ReceiptSHA256)
     if err!=nil{return result,err}
     if !found{return result,errors.New("FI P7 publish: original private shadow generation missing")}
-    if err=verifyBacklogShadowWindowCounts(ctx,shadow,id,
-        g.Batches[d.StartBatch:d.EndBatch],total,bytes);err!=nil{return result,err}
-    if err=verifyBacklogWindowProjectionCoverage(ctx,shadow,id,
-        g.Batches[d.StartBatch:d.EndBatch]);err!=nil{return result,err}
-    if isFinalWindow{
-        if err=verifyBacklogUSNCapturesComplete(ctx,shadow,id);err!=nil{
-            return result,fmt.Errorf("FI P7 publish: USN capture not complete: %w",err)
-        }
-    }
+    // Match the accepted one-writer ordering: attach and validate Security
+    // field partitions BEFORE relational/count coverage checks. Otherwise
+    // inherited field-table checks can overlook still-detached child rows.
     if fieldPartition!=""{
         var exists bool
         if err=tx.QueryRow(ctx,"SELECT to_regclass($1) IS NOT NULL",
@@ -150,6 +144,15 @@ func privateP7PublishVerifiedWindow(ctx context.Context,
             index,fields).Scan(&attached);err!=nil{return result,err}
         if attached!=fields {
             return result,errors.New("FI P7 publish: Security field partition expected rows mismatch")
+        }
+    }
+    if err=verifyBacklogShadowWindowCounts(ctx,shadow,id,
+        g.Batches[d.StartBatch:d.EndBatch],total,bytes);err!=nil{return result,err}
+    if err=verifyBacklogWindowProjectionCoverage(ctx,shadow,id,
+        g.Batches[d.StartBatch:d.EndBatch]);err!=nil{return result,err}
+    if isFinalWindow{
+        if err=verifyBacklogUSNCapturesComplete(ctx,shadow,id);err!=nil{
+            return result,fmt.Errorf("FI P7 publish: USN capture not complete: %w",err)
         }
     }
     _,err=tx.Exec(ctx,"INSERT INTO fi_recovery.typed_window (receipt_sha256,window_index,descriptor_sha256,shadow_generation_id,start_batch,end_batch,committed_records,committed_bytes,ingest_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
