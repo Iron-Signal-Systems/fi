@@ -72,7 +72,7 @@ func(s *privateP7WindowSession) Add(ctx context.Context,r privateP6Record)error{
     }
     return s.buffers.Add(ctx,r)
 }
-func(s *privateP7WindowSession) Publish(ctx context.Context)(privateP7PublishedWindow,error){
+func(s *privateP7WindowSession) Publish(ctx context.Context,verifyFinalUSN func()error)(privateP7PublishedWindow,error){
     var empty privateP7PublishedWindow
     if s==nil||s.closed||s.published||s.buffers==nil{
         return empty,errors.New("FI P7: window not active or already published")
@@ -80,6 +80,18 @@ func(s *privateP7WindowSession) Publish(ctx context.Context)(privateP7PublishedW
     // The original private P6 buffer Finish verifies every source parent
     // and family count. In P7 it additionally waits for all five SQL ACKs.
     if err:=s.buffers.Finish(ctx);err!=nil{return empty,err}
+    // Native M6.1 capture state is updated inside the USN SQL goroutine.
+    // Never read that mutable state while a writer still runs. Its final
+    // in-memory verification happens AFTER all five SQL acknowledgments,
+    // but BEFORE the final typed marker transaction may publish.
+    if s.final{
+        if verifyFinalUSN==nil{
+            return empty,errors.New("FI P7: final USN capture verifier missing")
+        }
+        if err:=verifyFinalUSN();err!=nil{
+            return empty,fmt.Errorf("FI P7: complete original USN capture proof failed: %w",err)
+        }
+    }
     done,err:=privateP7PublishVerifiedWindow(ctx,s.control,s.sink,
         s.generation,s.descriptor,s.staged.Index,
         s.staged.FieldPartition,s.final)
