@@ -11,7 +11,7 @@ case "$1" in preflight|tests|p9) mode=$1;;*) fail 'invalid P9 mode';;esac
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=34ad2e976d8a6ed44ec5ac063e13350c67153de8
 testrunnerpin=60f8af6e2db00873a0f1621ac29bfac11f52b8da
-runnerpin=702e5b4eba7df47b9993103e6e09611c13155f7f
+runnerpin=61f5f724a342d41d1173e33d6ad7b9f1c8e91270
 testpath=go/cmd/fi-backlog-recover/run_private_p9_direct_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_p9_direct_c220_host.sh
 for pin in "$sourcepin" "$testrunnerpin" "$runnerpin";do
