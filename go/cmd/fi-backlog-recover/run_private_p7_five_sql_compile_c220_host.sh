@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=029e851ca8f6c486cbc3795640adcee05365485a
+sourcepin=3b8b8bc8e23a43485feb6a4d37d8432ae8b13b90
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
@@ -59,6 +59,15 @@ for item in $files; do
       > "$dst/optimized-source/go/internal/recordingest/$item" ||
         { echo "FI P7: missing pinned source $item" >&2; exit 1; }
 done
+# P8 same-operation evidence never modifies the historical P6 source.
+for item in private_p8_verified_outer.go private_p8_verified_outer_test.go; do
+    test ! -e "$dst/optimized-source/go/internal/recordingest/$item" ||
+        { echo "FI P8: private source asset already exists $item" >&2; exit 1; }
+    git -C "$repo" show \
+      "$sourcepin:go/cmd/fi-backlog-recover/testdata/family-p7/$item" \
+      > "$dst/optimized-source/go/internal/recordingest/$item" ||
+      { echo "FI P8: pinned verified artifact evidence missing $item" >&2; exit 1; }
+done
 # Include P7's modified completion barrier; the accepted P6 file
 # alone still assumes one synchronous SQL writer.
 git -C "$repo" show \
@@ -83,22 +92,40 @@ git -C "$repo" show "$sourcepin:go/cmd/fi-backlog-recover/patchers/p7_parallel_b
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/p7_parallel_bridge "$dst/optimized-source") ||
     { echo 'FI P7: signed reader preparer bridge failed' >&2; exit 1; }
+# Test the exact P8 source anchors against the P6 base first, then
+# apply in the disposable copy. No database is started for either step.
+p8="$dst/optimized-source/go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse"
+mkdir -p "$p8"
+for item in main.go main_test.go; do
+    git -C "$repo" show \
+      "$sourcepin:go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse/$item" \
+      > "$p8/$item" ||
+      { echo "FI P8: missing exact-pinned source scanner proof patcher $item" >&2; exit 1; }
+done
+(cd "$dst/optimized-source/go" &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -count=1 \
+   ./cmd/fi-backlog-recover/patchers/p8_evidence_reuse &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
+   ./cmd/fi-backlog-recover/patchers/p8_evidence_reuse audit "$base" &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
+   ./cmd/fi-backlog-recover/patchers/p8_evidence_reuse apply "$dst/optimized-source") ||
+    { echo 'FI P8: same-process source proof overlay failed before PostgreSQL' >&2; exit 1; }
 cd "$dst/optimized-source/go"
 export GOTOOLCHAIN=local
 export GOFLAGS=-mod=readonly
 unset FI_W512_P7_SQL_WRITERS FI_W512_P6_FAMILY_SQL FI_W512_P5_PERSISTENT
-echo '===== P7 NO-POSTGRES GO TEST ====='
-go127 test ./internal/recordingest -run '^TestPrivateP7' -count=1 \
+echo '===== P7/P8 NO-POSTGRES GO TEST ====='
+go127 test ./internal/recordingest -run '^TestPrivateP[78]' -count=1 \
     > "$dst/p7-test.log" 2>&1 ||
     { tail -n 100 "$dst/p7-test.log"; echo "FI P7 GO TEST FAIL log=$dst/p7-test.log"; exit 1; }
-echo '===== P7 NO-POSTGRES RACE TEST ====='
-go127 test -race ./internal/recordingest -run '^TestPrivateP7' -count=1 \
+echo '===== P7/P8 NO-POSTGRES RACE TEST ====='
+go127 test -race ./internal/recordingest -run '^TestPrivateP[78]' -count=1 \
     > "$dst/p7-race.log" 2>&1 ||
     { tail -n 100 "$dst/p7-race.log"; echo "FI P7 RACE FAIL log=$dst/p7-race.log"; exit 1; }
 echo '===== ACCEPTED P6 REGRESSION GATE ====='
 go127 test ./internal/recordingest -run '^TestPrivateP6' -count=1 \
     > "$dst/p6-regression.log" 2>&1 ||
     { tail -n 100 "$dst/p6-regression.log"; echo "FI P7 BROKE P6 REGRESSION log=$dst/p6-regression.log"; exit 1; }
-echo 'FI P7 FIVE-WRITER CODE TEST PASS lanes=5 distinct_backend_adapter=compiled source_parent_guard=compiled sql_marker_gate=compiled race=true unchanged_p6=true'
+echo 'FI P8 VERIFIED EVIDENCE FIVE-WRITER CODE TEST PASS lanes=5 distinct_backend_adapter=compiled source_parent_guard=compiled sql_marker_gate=compiled race=true unchanged_p6=true'
 echo "FI P7 FIVE-WRITER TEST LOGS path=$dst"
 JAIL
