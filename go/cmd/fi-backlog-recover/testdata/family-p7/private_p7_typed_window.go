@@ -57,10 +57,37 @@ func stagePrivateP7FiveWriterTypedWindow(
     }
     started:=time.Now()
 
+    // The accepted P5/P6 C220 verified-cache path runs with deferred
+    // artifact cloning: RecordVerifiedBacklogArtifactWindow may have a
+    // durable signed checkpoint WITHOUT an eagerly copied window directory.
+    // P7 source-row staging explicitly REQUIRES the materialized files.
+    // Create a wholly PRIVATE, exact-byte-hash-checked window from the
+    // authenticated cached batch DataPaths before reading source records.
+    // Call the lower-level physical materializer with reuseStage=false so
+    // a deferred wrapper cannot skip this mandatory P7 source copy.
+    stageDir,err:=materializeBacklogWindow(ctx,generation,limits,index,
+        privateRoot,false)
+    if err!=nil{
+        return fmt.Errorf("FI P7: exact private signed window materialization: %w",err)
+    }
+    expectedDir:=filepath.Join(privateRoot,"receipt-"+d.ReceiptSHA256,
+        fmt.Sprintf("window-%08d",index))
+    if stageDir!=expectedDir{
+        return fmt.Errorf("FI P7: materialized window escaped signed private namespace got=%q expected=%q",
+            stageDir,expectedDir)
+    }
+    // A directory name or previously persisted artifact checkpoint
+    // does not prove bytes. Rehash all signed manifests and DATA here.
+    if err:=VerifyMaterializedBacklogWindow(ctx,generation,limits,
+        index,privateRoot);err!=nil{
+        return fmt.Errorf("FI P7: physical signed window verification: %w",err)
+    }
+    fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
+        index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
     // The accepted joined-source implementation staged parent source and
     // typed projections inside one transaction. That cannot work across
-    // five real PostgreSQL connections. P7 uses the existing independently
-    // durable, signed StageVerifiedBacklogSourceWindow instead.
+    // five real PostgreSQL connections. P7 instead stages independently
+    // durable source envelopes from this newly verified PRIVATE copy.
     if err:=StageVerifiedBacklogSourceWindow(ctx,control,generation,limits,
         index,privateRoot);err!=nil{
         return fmt.Errorf("FI P7: authenticated durable source pre-stage: %w",err)
