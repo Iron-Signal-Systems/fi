@@ -111,22 +111,46 @@ func stagePrivateP7FiveWriterTypedWindow(
 
     var verifiedStageDir string
     if privateP8Selected() {
-        // The established cache recovery loop committed this original
-        // artifact before calling P7. Require its exact SQL checkpoint;
-        // do not add another materialize/verify/checkpoint cycle.
-        if err:=privateP8CommittedArtifact(ctx,control,d,index);err!=nil {
-            return fmt.Errorf("FI P8: committed signed checkpoint: %w",err)
+        // In the deferred-cache path the signed stage and artifact
+        // checkpoint might both be absent; an SQL checkpoint must NEVER
+        // be assumed from a cache marker. Preserve the exact trusted
+        // P7 order: verified private bytes, committed artifact marker,
+        // then committed source rows, then independent typed writers.
+        proofErr:=privateP8CommittedArtifact(ctx,control,d,index)
+        switch {
+        case errors.Is(proofErr,pgx.ErrNoRows):
+            // Each byte is hashed against its signed manifest during
+            // private materialization. Do not perform P7's redundant
+            // VerifyMaterializedBacklogWindow directly afterwards:
+            // RecordVerifiedBacklogArtifactWindow performs that complete
+            // hash independently before durable SQL publication.
+            verifiedStageDir,err=privateP8FreshSignedWindow(
+                ctx,generation,limits,index,privateRoot,d)
+            if err!=nil {
+                return fmt.Errorf("FI P8: missing outer checkpoint, failed private signed materialization: %w",err)
+            }
+            if err:=RecordVerifiedBacklogArtifactWindow(ctx,control,
+                generation,limits,index,privateRoot);err!=nil {
+                return fmt.Errorf("FI P8: fresh signed artifact checkpoint: %w",err)
+            }
+            fmt.Printf("FI P8 VERIFIED ARTIFACT STAGE index=%d mode=fresh records=%d signed_batches=%d full_data_rehashes_avoided=1 manifest_sha_rechecked=true\n",
+                index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
+        case proofErr!=nil:
+            // A wrong or conflicting committed receipt must STOP; it
+            // must not silently trigger a fresh stage or overwrite SQL.
+            return fmt.Errorf("FI P8: signed artifact checkpoint identity: %w",proofErr)
+        default:
+            verifiedStageDir,err=privateP8ReusableStage(
+                ctx,generation,limits,index,privateRoot,d)
+            if err!=nil{return fmt.Errorf("FI P8: existing signed files: %w",err)}
+            fmt.Printf("FI P8 VERIFIED ARTIFACT STAGE index=%d mode=reuse records=%d signed_batches=%d full_data_rehashes_avoided=3 manifest_sha_rechecked=true\n",
+                index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
         }
-        verifiedStageDir,err=privateP8ReusableStage(
-            ctx,generation,limits,index,privateRoot,d)
-        if err!=nil{return fmt.Errorf("FI P8: existing signed files: %w",err)}
         fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
             index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
-        fmt.Printf("FI P8 VERIFIED OUTER ARTIFACT REUSED index=%d records=%d signed_batches=%d full_data_rehashes_avoided=3 manifest_sha_rechecked=true\n",
-            index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
     } else {
-        // P7 retains its previously accepted independent physical
-        // source verification if P8 has not been explicitly selected.
+        // Accepted P7 retains its original independent verification
+        // sequence when P8 has not been explicitly enabled.
         verifiedStageDir,err=privateP7MaterializeSignedWindow(
             ctx,generation,limits,index,privateRoot,d)
         if err!=nil{return err}
