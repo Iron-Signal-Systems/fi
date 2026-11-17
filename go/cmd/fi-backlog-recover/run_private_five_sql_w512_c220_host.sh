@@ -527,7 +527,8 @@ worker_max=16
 per_family_dynamic=true
 inflight_limit=32
 pending_raw_bytes_max=268435456
-sql_writers=1
+sql_writers=5
+parent_ledger_connections=1
 private_only=true
 private_signed_artifact_root=$private_root
 clone_only_same_filesystem_required=true
@@ -585,7 +586,7 @@ log="$out/$name/recover.log"
 [ "$(grep -c '^FI REAL BACKLOG DURABLE ' "$log")" = 2 ] &&
 [ "$(grep -c '^FI P7 PRIVATE STAGE PROFILE ' "$log")" = 2 ] &&
 [ "$(grep -c '^FI P7 REAL TYPED WINDOW ' "$log")" = 2 ] &&
-[ "$(grep -c '^FI PRIVATE BATCH HASH ONCE window=' "$log")" = 2 ] ||
+[ "$(grep -c '^FI P7 SIGNED BATCH VERIFIED window=' "$log")" = 2 ] ||
     fail 'W512 per-window instrumentation incomplete'
 grep -q '^FI PRIVATE EXACT WINDOW STOP start=1 windows=2 last=2 records=' "$log" ||
     fail 'W512 exact two-window stop missing'
@@ -688,11 +689,24 @@ prep=$(awk '/^FI PRIVATE PARALLEL PREP BATCH /{
  }END{if(bad||n==0)exit 1;printf "%.0f",rows}' "$out/$name/PARALLEL_PREP.txt") ||
     fail 'W512 parallel preparation invariant failed'
 [ "$prep" = "$new" ] || fail "W512 prepared rows $prep do not equal $new"
-grep '^FI PRIVATE BATCH HASH ONCE window=' "$log" > "$out/$name/HASH_ONCE.txt" ||
-    fail 'SHA-once signed-batch accounting absent'
-trusted=$(awk '/^FI PRIVATE BATCH HASH ONCE window=/{
- for(i=1;i<=NF;i++)if($i~/^trusted_batches=/){split($i,a,"=");n+=a[2]+0}
-}END{print n+0}' "$out/$name/HASH_ONCE.txt")
+# P7 authenticates the complete window by source re-staging and by
+# ingestSourceBatch's original signed batch hasher, not old P6 hash telemetry.
+grep '^FI P7 SIGNED BATCH VERIFIED window=' "$log" > "$out/$name/SIGNED_BATCHES.txt" ||
+    fail 'five-writer signed batch verifier receipts missing'
+trusted=$(awk '/^FI P7 SIGNED BATCH VERIFIED /{
+    delete v
+    for(i=1;i<=NF;i++){split($i,a,"=");v[a[1]]=a[2]}
+    w=v["window"]+0
+    if(w<1||w>2||seen[w]++||v["manifest_sha_validated"]!="true"||
+       v["record_sha_validated"]!="true")bad=1
+    if(w==1&&v["records"]!=499052)bad=1
+    if(w==2&&v["records"]!=498382)bad=1
+    n+=v["batches"]+0
+} END{
+    if(bad||seen[1]!=1||seen[2]!=1||n!=431)exit 1
+    print n
+}' "$out/$name/SIGNED_BATCHES.txt") ||
+    fail 'P7 signed windows SHA, record or signed batch totals invalid'
 prepbatches=$(wc -l < "$out/$name/PARALLEL_PREP.txt" | tr -d ' ')
 [ "$prepbatches" = 431 ] ||
     fail "W512 expected 431 signed preparation batches; observed $prepbatches"
@@ -936,7 +950,7 @@ bundle="$out/fi-w512-family-p3-pilot2-$stamp.tar.gz"
 tar -C "$out" -czf "$bundle" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/COPY_CALLS.txt" "$name/STAGES.txt" "$name/PARALLEL_PREP.txt" \
-  "$name/HASH_ONCE.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
+  "$name/SIGNED_BATCHES.txt" "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/FAMILY_DISPATCH.txt" "$name/FAMILY_BUDGET.txt" \
