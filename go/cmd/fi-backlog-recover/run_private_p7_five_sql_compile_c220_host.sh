@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=b81b50b5ea5a2bf420f0e49c476d386f7d635371
+sourcepin=f0aa08fae56a8207b9973af701dacd70a975d063
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
