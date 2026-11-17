@@ -56,7 +56,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=fa63946a468428ce32b3799490764b0744eff469
+sourcecommit=519ee6c92b7dfc0ffc92ca3a07a09d9c3ccf16a7
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -184,15 +184,13 @@ for asset in \
   go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go \
   go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go \
   go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main_test.go \
-  go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse/main.go \
-  go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse/main_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p7/private_p8_verified_outer.go \
   go/cmd/fi-backlog-recover/testdata/family-p7/private_p8_verified_outer_test.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P7 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=35 clone_only=true min=2 max=16 actual_sql_writers=5"
+echo "FI FAMILY P7 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=33 clone_only=true min=2 max=16 actual_sql_writers=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -222,19 +220,6 @@ git -C /home/jwood/fi-w512-c220-stage show \
 GOTOOLCHAIN=local GO111MODULE=off go127 test -count=1 \
   "$tmp/p7_bridge_main.go" "$tmp/p7_bridge_main_test.go" >/dev/null || exit 1
 echo 'FI P7 AST BRIDGE NO-POSTGRES PREFLIGHT PASS'
-# P8's exact original source-stage guard must parse and pass its own
-# tests before any PostgreSQL clone or new signed window is allocated.
-git -C /home/jwood/fi-w512-c220-stage show \
-  "$1:go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse/main.go" \
-  > "$tmp/p8_main.go" || exit 1
-git -C /home/jwood/fi-w512-c220-stage show \
-  "$1:go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse/main_test.go" \
-  > "$tmp/p8_main_test.go" || exit 1
-GOTOOLCHAIN=local GO111MODULE=off go127 test -count=1 \
-  "$tmp/p8_main.go" "$tmp/p8_main_test.go" >/dev/null || exit 1
-GOTOOLCHAIN=local GO111MODULE=off go127 run "$tmp/p8_main.go" \
-  audit "$2/optimized-source" || exit 1
-echo 'FI P8 ORIGINAL SOURCE EVIDENCE AUDIT PREFLIGHT PASS'
 # Original C220 seed is examined ONLY in memory. The patcher checks all
 # ordered source anchors and reports the precise mismatching source fragment.
 # Fail in preflight, before allocating any disposable DB or overlay.
@@ -430,23 +415,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/p7_par
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/p7_parallel_bridge "$src"
 ) || exit 1
-# The C220 verified-cache loop already verified and committed the
-# source artifact BEFORE entering P7. Carry its same-process evidence
-# through the private typed stage; keep source SQL row SHA and canonical
-# signed-batch ingest SHA checks unchanged.
-p8="$src/go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse"
-mkdir -p "$p8" || exit 1
-for item in main.go main_test.go; do
-  git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/p8_evidence_reuse/$item" \
-      > "$p8/$item" || exit 1
-done
-(cd "$src/go" &&
- GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -count=1 \
-   ./cmd/fi-backlog-recover/patchers/p8_evidence_reuse &&
- GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
-   ./cmd/fi-backlog-recover/patchers/p8_evidence_reuse apply "$src"
-) || exit 1
-echo "FI FAMILY P8 VERIFIED SOURCE OVERLAY READY source_commit=$sourcecommit"
+echo "FI FAMILY P8 COMMITTED ARTIFACT ENTRYPOINT READY source_commit=$sourcecommit"
 # Pin the original resolver source exactly BEFORE replacing four filesystem
 # path constants. Cryptographic signature, certificate and CRL logic is intact.
 git -C "$expected" show b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/generation_trust.go |
@@ -662,6 +631,7 @@ vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
 printf 'FI FAMILY P7 W512 PILOT START start_index=1 windows=2 sql_writers=5 parent_ledger=1 p5_persistent=window dynamic_min=2 dynamic_max=16 credits=32 K32=32768\n' | tee "$out/SUMMARY.txt"
 export FI_W512_P7_SQL_WRITERS=5
+export FI_W512_P8_REUSE=1
 export FI_W512_P7_SQL_DSN="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable"
 export FI_W512_P7_EXPECTED_PGDATA="$root/$name/data"
 if ! /usr/bin/time -l "$recover" \
@@ -707,23 +677,23 @@ awk '/^FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED /{
     fail 'P7 requires two physically verified W512 windows and all 431 signed batches'
 printf 'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true\n' |
     tee -a "$out/SUMMARY.txt"
-# P8 may reuse ONLY outer same-process verified artifacts. Require
+# P8 may reuse ONLY outer exact SQL-committed signed artifacts. Require
 # explicit receipts for both signed windows and keep the original P7
 # source SQL scan and typed SHA acceptance gates intact.
 grep '^FI P8 VERIFIED OUTER ARTIFACT REUSED ' "$log" > "$out/$name/P8_REUSED.txt" ||
-    fail 'P8 verified same-process artifact evidence missing'
+    fail 'P8 verified committed artifact checkpoint evidence missing'
 awk '/^FI P8 VERIFIED OUTER ARTIFACT REUSED /{
     delete kv
     for(i=1;i<=NF;i++){split($i,a,"=");kv[a[1]]=a[2]}
     w=kv["index"]+0
-    if(w<1||w>2||seen[w]++||kv["full_data_rehashes_avoided"]!="4"||
+    if(w<1||w>2||seen[w]++||kv["full_data_rehashes_avoided"]!="3"||
        kv["manifest_sha_rechecked"]!="true")bad=1
     records+=kv["records"]+0;batches+=kv["signed_batches"]+0
 }
 END {if(bad||seen[1]!=1||seen[2]!=1||records!=997434||batches!=431)exit 1
 }' "$out/$name/P8_REUSED.txt" ||
     fail 'P8 source evidence reuse missing, duplicated or mismatched'
-printf 'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=8 historical_sql_source_scan=retained original_sha=retained\n' |
+printf 'FI P8 COMMITTED ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=6 historical_sql_source_scan=retained original_sha=retained\n' |
     tee -a "$out/SUMMARY.txt"
 # Source of truth for P7 is a three-stage, strict ordered checkpoint:
 # original SHA-verified physical files -> verified artifact DB checkpoint ->
