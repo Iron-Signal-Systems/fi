@@ -178,15 +178,24 @@ func(s *privateP7FiveWriter) run(f privateP6Family){
             if len(job.rows)==0 {s.fail(errors.New("FI five-writer: empty SQL job"));continue}
             // A distinct single-writer PG connection is owned by this lane.
             err:=l.writer.Write(s.ctx,job.rows)
+            // A committed job has TWO resources to retire: queued rows
+            // and its bounded in-flight bytes. Both MUST become visible
+            // together, under the same mutex, before waking Drain().
+            // Previously Drain could see queued=0 while usedBytes>0
+            // and incorrectly reject an otherwise complete window.
             s.mu.Lock()
             l.queued-=int64(len(job.rows))
-            if err==nil{
+            s.usedBytes-=job.bytes
+            if l.queued<0 || s.usedBytes<0 {
+                s.mu.Unlock()
+                panic("FI five-writer: negative committed job accounting")
+            }
+            if err==nil {
                 l.committed+=int64(len(job.rows))
                 l.committedHandoffs++
             }
             s.signalLocked()
             s.mu.Unlock()
-            s.release(job.bytes)
             if err!=nil{
                 s.fail(fmt.Errorf("FI five-writer: %s relational transaction: %w",
                     privateP6FamilyNames[f],err))
