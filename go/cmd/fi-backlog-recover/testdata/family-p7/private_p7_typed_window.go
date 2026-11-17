@@ -151,12 +151,14 @@ func stagePrivateP7FiveWriterTypedWindow(
         bytes+=batch.Manifest.DataBytes
     }
     ingestElapsed:=time.Since(ingestStarted)
-    fmt.Printf("FI P7 SIGNED BATCH VERIFIED window=%d batches=%d records=%d bytes=%d manifest_sha_validated=true record_sha_validated=true\n",
-        index,len(batchIDs),records,bytes)
     if records!=int64(d.EndRecord-d.StartRecord)||
         bytes!=int64(d.DataBytes){
         return fmt.Errorf("FI P7: signed source totals mismatch records=%d bytes=%d",records,bytes)
     }
+    // This is issued only AFTER every original signed batch has passed
+    // its real LF/row-count/bytes/SHA check and the signed W512 totals match.
+    fmt.Printf("FI P7 SIGNED BATCH VERIFIED window=%d batches=%d records=%d bytes=%d manifest_sha_validated=true record_sha_validated=true\n",
+        index,len(batchIDs),records,bytes)
     if err:=readOnlyTx.Rollback(ctx);err!=nil {
         return fmt.Errorf("FI P7: close signed reader snapshot before publish: %w",err)
     }
