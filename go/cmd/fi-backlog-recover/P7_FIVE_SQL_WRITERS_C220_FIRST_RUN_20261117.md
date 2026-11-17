@@ -153,3 +153,30 @@ writer can ingest. The physical directory guard remains mandatory.
 **Stop on the first Go/race, source, SQL, FK or signed-data error.
 Never relax a check to print PASS.** No ten-window benchmark until
 P7's first two-window correctness gate passes completely.
+
+## Subsequent C220 correction — actual SQL bootstrap role
+
+The second C220 test, using controller
+`9fdf8c61d05e40fe9e90d3a615a7ded9d06c0288`, passed all
+Go/race and private clone initialization gates but rejected its bootstrap:
+`FATAL: role "jwood" does not exist`. The FreeBSD OS `jwood` account
+does not imply a same-named PostgreSQL login.
+
+The corrected P7 bootstrap queries `pg_catalog.pg_roles` as
+`fi_ingest` over the **new private clone's UNIX socket**, requiring
+exactly one login-capable superuser role, and verifies that role against
+the exact physical clone `data_directory` before granting
+`pg_read_all_settings` within the clone. The grant remains strictly
+local to the disposable copy, and ordinary P7 writers retain the
+physical data-directory/durability verification.
+
+**Use the latest fixed runner**:
+`b419c06e926c892d2ca1af83fc2edb3b46c9e36e`.
+
+**Use the latest fixed controller**:
+`d133b34ac0ecefd922a756aa9ba96463364d046e`.
+
+The unchanged source pin remains:
+`6baf59d36bb3b4d51f4e26f5be54de178279de8f`.
+This role-discovery fix has passed static audit only; no successful
+postfix P7 SQL replay has yet been demonstrated.
