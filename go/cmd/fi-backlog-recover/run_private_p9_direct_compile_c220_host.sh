@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=34ad2e976d8a6ed44ec5ac063e13350c67153de8
+sourcepin=5acbf0ae6cdea1f9ee66cc936ef4016a729ae6ea
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
@@ -77,7 +77,7 @@ done
 # Check the complete original cached-recovery source before replacing it.
 # No Git checkout, accepted P6 source, or receiver code is altered.
 cached="$dst/optimized-source/go/internal/recordingest/backlog_verified_cache_recovery.go"
-git -C "$repo" show "$sourcepin:go/internal/recordingest/backlog_verified_cache_recovery.go" |
+git -C "$repo" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
   cmp -s - "$cached" || { echo 'FI P9: private base cache recovery source differs'; exit 1; }
 git -C "$repo" show "$sourcepin:go/cmd/fi-backlog-recover/testdata/family-p9/private_p9_cached_recovery.go" \
   > "$cached" || exit 1
