@@ -9,6 +9,9 @@ package main
 import (
     "errors"
     "fmt"
+    "go/ast"
+    "go/parser"
+    "go/token"
     "os"
     "path/filepath"
     "strings"
@@ -99,6 +102,9 @@ func main(){
 }
 
 func rewrite(input []byte,e edit)([]byte,error){
+    if strings.Contains(e.path,"backlog_verified_cache_recovery.go"){
+        return rewriteOuterVerifiedCache(input)
+    }
     s:=string(input)
     // Seed formatting may be gofmt tabs rather than the short literal
     // captured in the source review. Normalize only the exact initial
@@ -127,5 +133,148 @@ func rewrite(input []byte,e edit)([]byte,error){
         return nil,errors.New("P8 outer checkpoint handoff anchor changed or already patched")
     }
     return []byte(strings.Replace(s,e.old,e.replacement,1)),nil
+}
+// Parse the original optimized Go source instead of assuming the historical
+// whitespace or equality-assignment syntax. A P8 proof may only be minted
+// within the same window loop, AFTER materialization AND committed artifact
+// verification. No branch around either operation is permitted.
+func rewriteOuterVerifiedCache(input []byte)([]byte,error){
+    if strings.Contains(string(input),"privateP8WithVerifiedOuterArtifact("){
+        return nil,errors.New("P8 outer evidence already injected")
+    }
+    fs:=token.NewFileSet()
+    parsed,err:=parser.ParseFile(fs,"backlog_verified_cache_recovery.go",input,parser.AllErrors)
+    if err!=nil{return nil,fmt.Errorf("P8 outer Go source invalid: %w",err)}
+    var target *ast.FuncDecl
+    for _,d:=range parsed.Decls {
+        fn,ok:=d.(*ast.FuncDecl)
+        if !ok||fn.Name.Name!="recoverBacklogVerifiedCachedWindows"{continue}
+        if target!=nil{return nil,errors.New("P8 duplicate verified-cache entrypoint")}
+        target=fn
+    }
+    if target==nil||target.Body==nil{
+        return nil,errors.New("P8 verified-cache entrypoint missing")
+    }
+    var sourceLoop *ast.ForStmt
+    var stageStmt *ast.IfStmt
+    var stageCall *ast.CallExpr
+    matches:=0
+    ast.Inspect(target.Body,func(n ast.Node)bool{
+        loop,ok:=n.(*ast.ForStmt)
+        if !ok||loop.Body==nil{return true}
+        materialized,artifact,staged:=-1,-1,-1
+        var candidate *ast.IfStmt
+        var call *ast.CallExpr
+        for i,s:=range loop.Body.List {
+            if outerContainsCall(s,"MaterializeBacklogWindow"){materialized=i}
+            if outerContainsCall(s,"RecordVerifiedBacklogArtifactWindow"){artifact=i}
+            if outerContainsCall(s,"StageBacklogSourceAndTypedWindow"){
+                staged=i
+                stmt,ok:=s.(*ast.IfStmt)
+                if !ok||stmt.Init==nil{continue}
+                init,ok:=stmt.Init.(*ast.AssignStmt)
+                if !ok||len(init.Rhs)!=1{continue}
+                invoke,ok:=init.Rhs[0].(*ast.CallExpr)
+                if !ok||!outerIsCall(invoke,"StageBacklogSourceAndTypedWindow"){continue}
+                candidate=stmt
+                call=invoke
+            }
+        }
+        if staged>=0 {
+            matches++
+            if materialized<0||artifact<=materialized||staged<=artifact||
+                candidate==nil||call==nil{
+                // A second loop with invalid order must fail the entire patch.
+                matches=100
+                return false
+            }
+            sourceLoop,stageStmt,stageCall=loop,candidate,call
+        }
+        return true
+    })
+    if matches!=1||sourceLoop==nil||stageStmt==nil||stageCall==nil{
+        return nil,errors.New("P8 exact signed materialize->artifact->typed stage sequence changed")
+    }
+    want:=[]string{"ctx","reader","writer","g","limits","window","privateRoot"}
+    if len(stageCall.Args)!=len(want){
+        return nil,errors.New("P8 original joined source stage argument count changed")
+    }
+    for i,argument:=range stageCall.Args {
+        id,ok:=argument.(*ast.Ident)
+        if !ok||id.Name!=want[i] {
+            return nil,fmt.Errorf("P8 original joined source stage argument %d changed",i)
+        }
+    }
+    hasDescriptor:=false
+    for _,s:=range sourceLoop.Body.List{
+        if !outerContainsCall(s,"DescribeBacklogWindows") {
+            // The per-window descriptor is a direct local lookup.
+            if assign,ok:=s.(*ast.AssignStmt);ok{
+                for _,lhs:=range assign.Lhs{
+                    if id,ok:=lhs.(*ast.Ident);ok&&id.Name=="d" {
+                        hasDescriptor=true
+                    }
+                }
+            }
+        }
+    }
+    if !hasDescriptor {
+        return nil,errors.New("P8 source loop descriptor binding missing")
+    }
+    if !outerHasCallInBody(target.Body,"VerifyCompleteBacklogTypedGeneration"){
+        return nil,errors.New("P8 final signed typed verification no longer present")
+    }
+    start:=fs.Position(stageStmt.Pos()).Offset
+    first:=fs.Position(stageCall.Args[0].Pos()).Offset
+    last:=fs.Position(stageCall.Args[0].End()).Offset
+    if start<0||first<=start||last!=first+3||last>len(input) ||
+        string(input[first:last])!="ctx" {
+        return nil,errors.New("P8 signed source stage AST offset mismatch")
+    }
+    // Only insert before this one verified-cache stage and replace exactly
+    // its first argument. Preserve all original source lines and checks.
+    lineStart:=start
+    for lineStart>0&&input[lineStart-1]!='\n'{lineStart--}
+    indent:=string(input[lineStart:start])
+    for _,ch:=range indent{
+        if ch!=' '&&ch!='\t'{
+            return nil,errors.New("P8 original source statement indentation unsafe")
+        }
+    }
+    prefix:=indent+"stageCtx := ctx\n"+
+        indent+"if privateP7FiveWriterSelected() {\n"+
+        indent+"    var proofErr error\n"+
+        indent+"    stageCtx, proofErr = privateP8WithVerifiedOuterArtifact(ctx,privateRoot,d,window)\n"+
+        indent+"    if proofErr != nil {return empty,fmt.Errorf(\"FI P8: outer verified artifact handoff: %w\",proofErr)}\n"+
+        indent+"}\n"
+    modified:=make([]byte,0,len(input)+len(prefix)+16)
+    modified=append(modified,input[:lineStart]...)
+    modified=append(modified,prefix...)
+    modified=append(modified,input[lineStart:first]...)
+    modified=append(modified,"stageCtx"...)
+    modified=append(modified,input[last:]...)
+    if _,err:=parser.ParseFile(token.NewFileSet(),"patched_backlog_verified_cache.go",modified,parser.AllErrors);err!=nil{
+        return nil,fmt.Errorf("P8 source insertion produced invalid Go: %w",err)
+    }
+    return modified,nil
+}
+
+func outerIsCall(c *ast.CallExpr,name string)bool {
+    if c==nil{return false}
+    id,ok:=c.Fun.(*ast.Ident)
+    return ok&&id.Name==name
+}
+func outerContainsCall(n ast.Node,name string)bool{
+    return outerHasCallInBody(n,name)
+}
+func outerHasCallInBody(n ast.Node,name string)bool{
+    found:=false
+    ast.Inspect(n,func(child ast.Node)bool{
+        if call,ok:=child.(*ast.CallExpr);ok&&outerIsCall(call,name){
+            found=true;return false
+        }
+        return true
+    })
+    return found
 }
 func fail(err error){fmt.Fprintln(os.Stderr,"FI P8 EVIDENCE PATCH STOP:",err);os.Exit(1)}
