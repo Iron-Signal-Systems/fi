@@ -65,8 +65,8 @@ func privateP7PublishVerifiedWindow(ctx context.Context,
     }
     fileWriter,ok:=stage.lanes[privateP6File].writer.(*privateP7PGFamily)
     if !ok{return result,errors.New("FI P7 publish: actual NTFS PostgreSQL writer missing")}
-    counters,ok:=fileWriter.baseContext.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters)
-    if !ok||counters==nil{
+    counters:=fileWriter.ntfsTiming
+    if counters==nil{
         return result,errors.New("FI P7 publish: original NTFS source/reuse counters absent")
     }
     if counters.FileSourceValidated!=byFamily[privateP6File]||
