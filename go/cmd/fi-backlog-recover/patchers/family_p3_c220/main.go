@@ -211,6 +211,6 @@ func main() {
     if err:=os.WriteFile(temp,[]byte(content),perms[path]);err!=nil {fail(err)}
     if err:=os.Rename(temp,path);err!=nil {fail(err)}
   }
-  fmt.Printf("FI FAMILY P6 PRIVATE PATCH PASS source_files=%d modifications=%d readonly_spool=true families=5 source_ledger=ordered writer=1 atomic=true\n",len(files),len(edits))
+  fmt.Printf("FI FAMILY P7 FIVE SQL PATCH PASS source_files=%d modifications=%d readonly_spool=true families=5 source_ledger=durable writer=5 typed_marker=atomic\n",len(files),len(edits))
 }
 func fail(err error){ fmt.Fprintln(os.Stderr,"FI FAMILY P3 PATCH STOP:",err);os.Exit(1) }
