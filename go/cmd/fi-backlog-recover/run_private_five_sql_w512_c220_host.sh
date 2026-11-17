@@ -56,7 +56,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=5bddfc77a588d9c7377901e6bd99205f326b86b8
+sourcecommit=907b74759f7465c7c9a7b15560a63f61d771b1d2
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -181,12 +181,13 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/family-p7/private_p7_typed_window.go \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_dynamic_summary.awk \
   go/cmd/fi-backlog-recover/patchers/security_sweep_c220/private_family_persistent_p5_summary.awk \
-  go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go
+  go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go \
+  go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P7 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=29 clone_only=true min=2 max=16 actual_sql_writers=5"
+echo "FI FAMILY P7 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=30 clone_only=true min=2 max=16 actual_sql_writers=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -385,6 +386,16 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
 (cd "$src/go" &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/family_p3_c220 "$src"
+) || exit 1
+# The inherited Candidate A activation insists on the old K32 buffer,
+# which P7 cannot own. Install an exact P7-only alternative after P3.
+bridge="$src/go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge"
+mkdir -p "$bridge" || exit 1
+git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/p7_parallel_bridge/main.go" \
+    > "$bridge/main.go" || exit 1
+(cd "$src/go" &&
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
+   ./cmd/fi-backlog-recover/patchers/p7_parallel_bridge "$src"
 ) || exit 1
 echo "FI FAMILY P7 FIVE-SQL OVERLAY READY source_commit=$sourcecommit"
 # Pin the original resolver source exactly BEFORE replacing four filesystem
