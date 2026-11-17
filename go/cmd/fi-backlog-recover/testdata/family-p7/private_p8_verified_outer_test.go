@@ -10,60 +10,64 @@ import (
     "testing"
 )
 
-func TestPrivateP8VerifiedOuterArtifactRequiresExactSameProcessEvidence(t *testing.T){
+func privateP8Fixture(t *testing.T)(*PreparedGeneration,BacklogWindowLimits,
+    BacklogCheckpointDescriptor,string){
+    t.Helper()
     t.Setenv("FI_W512_P7_SQL_WRITERS","5")
     t.Setenv("FI_W512_P6_FAMILY_SQL","1")
     t.Setenv("FI_W512_P5_PERSISTENT","1")
+    t.Setenv("FI_W512_P8_REUSE","1")
     g:=privateBacklogStageFixture(t)
     root:=privateBacklogTestRoot(t)
     limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
     ds,err:=DescribeBacklogWindows(g,limits)
     if err!=nil || len(ds)!=2 {t.Fatalf("P8 fixture: %v windows=%d",err,len(ds))}
-    d:=ds[1]
-    if _,ok,err:=privateP8ReusableStage(context.Background(),g,limits,1,root,d);
-       err!=nil || ok {
-        t.Fatalf("P8 accepted source without current-process proof: %t %v",ok,err)
+    return g,limits,ds[1],root
+}
+
+func TestPrivateP8ExistingSignedArtifactRequiresExactFilesAndManifests(t *testing.T){
+    g,limits,d,root:=privateP8Fixture(t)
+    if _,err:=privateP8ReusableStage(context.Background(),g,limits,1,root,d);err==nil{
+        t.Fatal("P8 accepted nonexistent signed window")
     }
     original,err:=privateP7MaterializeSignedWindow(context.Background(),g,limits,1,root,d)
-    if err!=nil {t.Fatal(err)}
-    ctx,err:=privateP8WithVerifiedOuterArtifact(context.Background(),root,d,1)
-    if err!=nil {t.Fatal(err)}
-    got,reused,err:=privateP8ReusableStage(ctx,g,limits,1,root,d)
-    if err!=nil || !reused || got!=original {
-        t.Fatalf("P8 verified artifact reuse rejected: %q %t %v",got,reused,err)
+    if err!=nil{t.Fatal(err)}
+    got,err:=privateP8ReusableStage(context.Background(),g,limits,1,root,d)
+    if err!=nil || got!=original {
+        t.Fatalf("P8 exact signed artifact reuse rejected: %q %v",got,err)
     }
-    for _,tc:=range []struct{
-        name,root string;d BacklogCheckpointDescriptor;index int
-    }{
+    for _,tc:=range []struct{name,root string;d BacklogCheckpointDescriptor;index int}{
         {name:"foreign-private-root",root:root+"-foreign",d:d,index:1},
         {name:"wrong-window-index",root:root,d:d,index:2},
         {name:"changed-signed-descriptor",root:root,d:func()BacklogCheckpointDescriptor{x:=d;x.DigestSHA256="tampered";return x}(),index:1},
     }{
         t.Run(tc.name,func(t *testing.T){
-            if _,ok,err:=privateP8ReusableStage(ctx,g,limits,tc.index,tc.root,tc.d);
-               err==nil || ok {
-                t.Fatalf("P8 admitted mismatched same-process proof %t %v",ok,err)
+            if _,err:=privateP8ReusableStage(context.Background(),g,limits,tc.index,tc.root,tc.d);err==nil{
+                t.Fatal("P8 accepted mismatched signed stage identity")
             }
         })
     }
     manifest:=filepath.Join(original,"batch-00000002.manifest")
     if err:=os.WriteFile(manifest,[]byte("tampered-manifest"),0600);err!=nil {t.Fatal(err)}
-    if _,ok,err:=privateP8ReusableStage(ctx,g,limits,1,root,d);
-       err==nil || ok {
-        t.Fatalf("P8 accepted mutated signed manifest: %t %v",ok,err)
+    if _,err:=privateP8ReusableStage(context.Background(),g,limits,1,root,d);err==nil {
+        t.Fatal("P8 accepted mutated signed manifest")
     }
 }
 
-func TestPrivateP8EvidenceDoesNotChangeOrdinaryP7OrProduction(t *testing.T){
-    g:=privateBacklogStageFixture(t)
-    root:=privateBacklogTestRoot(t)
-    limits:=BacklogWindowLimits{MaxRecords:6,MaxDataBytes:32}
-    ds,err:=DescribeBacklogWindows(g,limits)
-    if err!=nil || len(ds)!=2 {t.Fatal(err)}
-    if _,err:=privateP8WithVerifiedOuterArtifact(context.Background(),root,ds[1],1);err==nil {
-        t.Fatal("P8 unsigned/outside-P7 caller minted trusted artifact evidence")
+func TestPrivateP8RequiresPrivateFiveWriterSelection(t *testing.T){
+    g,limits,d,root:=privateP8Fixture(t)
+    if err:=privateP8CommittedArtifact(context.Background(),nil,d,1);err==nil{
+        t.Fatal("P8 accepted absent clone SQL checkpoint connection")
     }
-    if privateP8OuterEvidenceMatches(context.Background(),root,ds[1],1) {
-        t.Fatal("ordinary source path unexpectedly reused P8 proof")
+    t.Setenv("FI_W512_P8_REUSE","0")
+    if privateP8Selected() {t.Fatal("P8 selected without explicit flag")}
+    if _,err:=privateP8ReusableStage(context.Background(),g,limits,1,root,d);err==nil{
+        t.Fatal("P8 reused private stage without explicit feature gate")
+    }
+    t.Setenv("FI_W512_P8_REUSE","1")
+    t.Setenv("FI_W512_P7_SQL_WRITERS","0")
+    if privateP8Selected(){t.Fatal("P8 selected without five PostgreSQL writers")}
+    if err:=privateP8CommittedArtifact(context.Background(),nil,d,1);err==nil{
+        t.Fatal("P8 accepted non-five-writer verification path")
     }
 }
