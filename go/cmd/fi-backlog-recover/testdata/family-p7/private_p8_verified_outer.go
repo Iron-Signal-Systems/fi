@@ -2,106 +2,120 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
-// P8 disposable C220 clone only: reuse the same-process verified artifact
-// checkpoint handed directly from the cached recovery loop. Never infer
-// verification from an existing directory or from an old SQL checkpoint.
+// P8 private C220 clone experiment: reuse the exact already-committed
+// artifact without patching the outer cached recovery loop.
+// P7's normal source stage still verifies EVERY signed data byte before
+// source marker commit, and its typed reader re-verifies batch SHA-256.
 package recordingest
 
 import (
     "context"
     "crypto/sha256"
+    "crypto/subtle"
     "encoding/hex"
     "encoding/json"
     "errors"
     "fmt"
     "os"
     "path/filepath"
+
+    "github.com/jackc/pgx/v5"
 )
 
-type privateP8OuterEvidenceKey struct{}
-type privateP8OuterEvidence struct {
-    privateRoot string
-    index int
-    descriptor BacklogCheckpointDescriptor
+func privateP8Selected() bool {
+    return os.Getenv("FI_W512_P8_REUSE")=="1" && privateP7FiveWriterSelected()
 }
 
-// This constructor MUST be called only after BOTH MaterializeBacklogWindow
-// and RecordVerifiedBacklogArtifactWindow have returned success in the
-// current process. An old persisted marker is never sufficient by itself.
-// The original P7 stage remains fully verifying if this evidence is absent.
-func privateP8WithVerifiedOuterArtifact(ctx context.Context,root string,
-    d BacklogCheckpointDescriptor,index int)(context.Context,error){
-    if ctx==nil || !privateP7FiveWriterSelected() || root=="" ||
-        !filepath.IsAbs(root) || filepath.Clean(root)!=root ||
-        index<1 || d.StartBatch<0 || d.EndBatch<=d.StartBatch ||
-        d.ReceiptSHA256=="" || d.DigestSHA256=="" {
-        return nil,errors.New("FI P8: same-process verified outer artifact is not eligible")
+// SQL evidence comes from the original full-verified artifact checkpoint
+// committed by recoverBacklogVerifiedCachedWindows BEFORE P7 is entered.
+// It is never inferred from a directory, cached manifest, or previously
+// staged source row. The caller first verifies this control connection
+// belongs to the disposable PostgreSQL clone (including its data_directory).
+func privateP8CommittedArtifact(ctx context.Context, control *pgx.Conn,
+    d BacklogCheckpointDescriptor,index int) error {
+    if !privateP8Selected() || ctx==nil || control==nil || index<1 ||
+        d.StartBatch<0 || d.EndBatch<=d.StartBatch {
+        return errors.New("FI P8: verified private P7 artifact entry point required")
     }
-    return context.WithValue(ctx,privateP8OuterEvidenceKey{},
-        privateP8OuterEvidence{privateRoot:root,index:index,descriptor:d}),nil
+    receipt,err:=hex.DecodeString(d.ReceiptSHA256)
+    if err!=nil || len(receipt)!=32{return errors.New("FI P8: receipt SHA-256 invalid")}
+    digest,err:=hex.DecodeString(d.DigestSHA256)
+    if err!=nil || len(digest)!=32{return errors.New("FI P8: window descriptor SHA-256 invalid")}
+    previous,err:=hex.DecodeString(d.PreviousDigestSHA256)
+    if err!=nil || len(previous)!=32{return errors.New("FI P8: preceding descriptor SHA-256 invalid")}
+    transfer,err:=hex.DecodeString(d.TransferSHA256)
+    if err!=nil || len(transfer)!=32{return errors.New("FI P8: transfer SHA-256 invalid")}
+    var gotDigest,gotPrevious,gotTransfer []byte
+    var gotSource,gotGeneration string
+    var fromBatch,toBatch int
+    var fromRecord,toRecord,bytes int64
+    err=control.QueryRow(ctx,`
+SELECT descriptor_sha256,previous_digest_sha256,transfer_sha256,
+       source_id,generation_id,start_batch,end_batch,
+       start_record,end_record,data_bytes
+FROM fi_recovery.verified_artifact_window
+WHERE receipt_sha256=$1 AND window_index=$2
+`,receipt,index).Scan(&gotDigest,&gotPrevious,&gotTransfer,
+        &gotSource,&gotGeneration,&fromBatch,&toBatch,
+        &fromRecord,&toRecord,&bytes)
+    if err!=nil{return fmt.Errorf("FI P8: committed outer artifact checkpoint missing: %w",err)}
+    if subtle.ConstantTimeCompare(gotDigest,digest)!=1 ||
+        subtle.ConstantTimeCompare(gotPrevious,previous)!=1 ||
+        subtle.ConstantTimeCompare(gotTransfer,transfer)!=1 ||
+        gotSource!=d.SourceID || gotGeneration!=d.GenerationID ||
+        fromBatch!=d.StartBatch || toBatch!=d.EndBatch ||
+        fromRecord!=int64(d.StartRecord) || toRecord!=int64(d.EndRecord) ||
+        bytes!=int64(d.DataBytes) {
+        return errors.New("FI P8: committed outer artifact does not match original signed receipt")
+    }
+    return nil
 }
 
-func privateP8OuterEvidenceMatches(ctx context.Context,root string,
-    d BacklogCheckpointDescriptor,index int)bool{
-    if ctx==nil || !privateP7FiveWriterSelected() ||
-        index<1 || root=="" {return false}
-    proof,ok:=ctx.Value(privateP8OuterEvidenceKey{}).(privateP8OuterEvidence)
-    return ok && proof.index==index && proof.privateRoot==root &&
-        proof.descriptor==d
-}
-
-// A metadata+manifest-only check here is deliberately NOT a substitute
-// for SHA verification: the outer materializer already hashed the exact
-// bytes, the outer artifact checkpoint independently rehashed them, and
-// StageVerifiedBacklogSourceWindow scans every signed data byte/record
-// against its original manifest before durable source publication.
-// The typed reader independently checks SHA-256 once more after this stage.
+// Verify the exact private namespace, descriptor, original signed manifests
+// and file metadata. This is NOT the final hash check: the unchanged
+// StageVerifiedBacklogSourceWindow hashes all data and SQL source rows before
+// committing, then ingestSourceBatch hashes each original signed batch
+// before publishing its typed marker. No skipped trust boundary remains.
 func privateP8ReusableStage(ctx context.Context,g *PreparedGeneration,
     limits BacklogWindowLimits,index int,root string,
-    d BacklogCheckpointDescriptor)(string,bool,error){
-    if !privateP8OuterEvidenceMatches(ctx,root,d,index) {
-        // A forged/mismatched proof is a STOP, not permission to downgrade
-        // to a different source stage accidentally.
-        if ctx!=nil && ctx.Value(privateP8OuterEvidenceKey{})!=nil {
-            return "",false,errors.New("FI P8: source evidence identity mismatch")
-        }
-        return "",false,nil
-    }
-    if g==nil || d.EndBatch>len(g.Batches) {
-        return "",false,errors.New("FI P8: source generation batch range invalid")
+    d BacklogCheckpointDescriptor)(string,error){
+    if !privateP8Selected() || ctx==nil || g==nil || root=="" ||
+        !filepath.IsAbs(root) || filepath.Clean(root)!=root ||
+        index<1 || d.StartBatch<0 || d.EndBatch>len(g.Batches) ||
+        d.StartBatch>=d.EndBatch {
+        return "",errors.New("FI P8: invalid private signed artifact namespace or selection")
     }
     ds,err:=DescribeBacklogWindows(g,limits)
     if err!=nil || index>=len(ds) || ds[index]!=d {
-        return "",false,errors.New("FI P8: signed window descriptor changed")
+        return "",errors.New("FI P8: signed window descriptor changed")
     }
     dir:=filepath.Join(root,"receipt-"+d.ReceiptSHA256,
         fmt.Sprintf("window-%08d",index))
-    if err:=verifyPrivateBacklogRoot(root);err!=nil{return "",false,err}
-    if err:=verifyPrivateBacklogRoot(filepath.Dir(dir));err!=nil{return "",false,err}
-    if err:=verifyPrivateBacklogRoot(dir);err!=nil{return "",false,err}
-    descriptor,err:=readBacklogStageFile(filepath.Join(dir,"descriptor.json"),16<<10)
-    if err!=nil{return "",false,err}
-    var decoded BacklogCheckpointDescriptor
-    if err:=json.Unmarshal(descriptor,&decoded);err!=nil{return "",false,err}
-    if decoded!=d{return "",false,errors.New("FI P8: signed descriptor file mismatch")}
+    if err:=verifyPrivateBacklogRoot(root);err!=nil{return "",err}
+    if err:=verifyPrivateBacklogRoot(filepath.Dir(dir));err!=nil{return "",err}
+    if err:=verifyPrivateBacklogRoot(dir);err!=nil{return "",err}
+    raw,err:=readBacklogStageFile(filepath.Join(dir,"descriptor.json"),16<<10)
+    if err!=nil{return "",err}
+    var got BacklogCheckpointDescriptor
+    if err:=json.Unmarshal(raw,&got);err!=nil{return "",err}
+    if got!=d{return "",errors.New("FI P8: private stage descriptor differs from signed window")}
     for i:=d.StartBatch;i<d.EndBatch;i++{
-        if err:=ctx.Err();err!=nil{return "",false,err}
+        if err:=ctx.Err();err!=nil{return "",err}
         b:=g.Batches[i]
         manifest,err:=readBacklogStageFile(filepath.Join(dir,
             fmt.Sprintf("batch-%08d.manifest",i)),1<<20)
-        if err!=nil{return "",false,err}
-        digest:=sha256.Sum256(manifest)
-        if hex.EncodeToString(digest[:])!=b.ManifestSHA256 {
-            return "",false,fmt.Errorf("FI P8: manifest hash mismatch batch=%d",i)
+        if err!=nil{return "",err}
+        sum:=sha256.Sum256(manifest)
+        if hex.EncodeToString(sum[:])!=b.ManifestSHA256 {
+            return "",fmt.Errorf("FI P8: original signed manifest SHA changed batch=%d",i)
         }
         path:=filepath.Join(dir,fmt.Sprintf("batch-%08d.data",i))
         info,err:=os.Lstat(path)
-        if err!=nil{return "",false,err}
+        if err!=nil{return "",err}
         if !info.Mode().IsRegular() || info.Mode().Perm()!=0600 ||
-            info.Mode()&os.ModeSymlink!=0 ||
-            info.Size()!=b.Manifest.DataBytes {
-            return "",false,fmt.Errorf("FI P8: staged data metadata changed batch=%d",i)
+            info.Mode()&os.ModeSymlink!=0 || info.Size()!=b.Manifest.DataBytes {
+            return "",fmt.Errorf("FI P8: staged signed data metadata changed batch=%d",i)
         }
     }
-    return dir,true,nil
+    return dir,nil
 }
