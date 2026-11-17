@@ -253,12 +253,15 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if report!=nil{
         for wi:=startWindow;wi<end;wi++{
             d:=ds[wi]
+            windowDuration:=time.Duration(0)
+            if wi==end-1 {windowDuration=elapsed}
             report(BacklogContinuousProgress{
                 BatchesSeen:d.EndBatch,TotalBatches:len(g.Batches),
                 RecordsInspected:uint64(totalRows),WindowCommitted:wi,
                 WindowRecords:d.EndRecord-d.StartRecord,
                 TotalWindows:len(ds),RecordsDurable:d.EndRecord,
-                TypedDuration:elapsed,WindowDuration:elapsed,Elapsed:elapsed,
+                TypedDuration:windowDuration,WindowDuration:windowDuration,
+                Elapsed:elapsed,
             })
         }
     }
