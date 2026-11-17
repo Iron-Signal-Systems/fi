@@ -180,3 +180,42 @@ The unchanged source pin remains:
 `6baf59d36bb3b4d51f4e26f5be54de178279de8f`.
 This role-discovery fix has passed static audit only; no successful
 postfix P7 SQL replay has yet been demonstrated.
+
+## Fourth first-test controller — verified source directory boundary
+
+The 2026-11-17 third C220 trial passed private PostgreSQL role
+discovery and the exact `data_directory` protection but failed before
+any window SQL on missing physical directory:
+`receipt-.../window-00000001` (`lstat: no such file or directory`).
+The optimized `-deferred-verified-clone` path is allowed to defer the
+physical copy, whereas `StageVerifiedBacklogSourceWindow` requires
+verified data files on disk.
+
+The P7-only entry now explicitly creates the private signed stage via
+the underlying physical materializer, requires the exact receipt path,
+verifies EVERY manifest and data SHA against the authenticated signed
+cache, then commits the durable parent ledger. A new Go/race fixture
+reproduces the deferred missing-file case and proves tampered files and
+a changed signed descriptor fail closed.
+
+The final M6.1 USN in-memory state is now checked after all five SQL
+writer acknowledgements, before any typed completion marker (avoids
+reading mutable capture state during SQL projection).
+
+**Fourth source pin**:
+`546c6a1e1a12f30bb0f54c70809dee978afea5f3`.
+
+**Fourth private Go/race runner**:
+`ec9f99bdf2ca82717ade94ae0d814d81c8bd99db`.
+
+**Fourth clean SQL replay runner**:
+`93e27858d93b22acc2e5ab810ffdae86a315acf1`.
+
+**Fourth top-level controller**:
+`2c6fa62bccb49f5b9cf6dc074ddd9decdb385f8b`.
+
+The SQL replay is still **NOT accepted** until this exact pinned
+candidate passes on C220. Do not run one of the previous superseded
+controllers. The P7 acceptance gate now additionally requires and
+archives `P7_MATERIALIZED_WINDOWS.txt`, exactly two verified windows
+and the full 431 signed batches.
