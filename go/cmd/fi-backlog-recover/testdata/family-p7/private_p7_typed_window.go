@@ -129,7 +129,7 @@ func stagePrivateP7FiveWriterTypedWindow(
         // and per-window acceptance gates retain their original meaning.
         fmt.Printf("FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=%d signed_batches=%d records=%d bytes=%d original_cache_unchanged=true\n",
             index,d.EndBatch-d.StartBatch,d.EndRecord-d.StartRecord,d.DataBytes)
-        fmt.Printf("FI P8 VERIFIED OUTER ARTIFACT REUSED index=%d records=%d signed_batches=%d full_data_rehashes_avoided=2 manifest_sha_rechecked=true\n",
+        fmt.Printf("FI P8 VERIFIED OUTER ARTIFACT REUSED index=%d records=%d signed_batches=%d full_data_rehashes_avoided=4 manifest_sha_rechecked=true\n",
             index,d.EndRecord-d.StartRecord,d.EndBatch-d.StartBatch)
     }
     fmt.Printf("FI P7 VERIFIED ARTIFACT CHECKPOINT COMMITTED index=%d signed_batches=%d records=%d source_rows=pending typed_marker=absent\n",
