@@ -12,9 +12,9 @@ case "$1" in preflight|tests|p7) mode=$1;;*) fail 'unsupported mode';;esac
 [ "$2" = 20261115T153532Z ] ||
     fail 'only the previously accepted signed W512 seed is allowed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=029e851ca8f6c486cbc3795640adcee05365485a
-testrunnerpin=e4b7d15187b0486f823517770518094a57addc84
-runnerpin=85d4511ffa88dcaf7e3a12db3d594de38ac2904a
+sourcepin=1458e22daac56ad390e5ab247b6df655bc510f0f
+testrunnerpin=0a9a2009600722af95ed1ec5b2aeb355224e03da
+runnerpin=dc11d92d46e8b38f9015ef09f6b9b8b070ae7efb
 testpath=go/cmd/fi-backlog-recover/run_private_p7_five_sql_compile_c220_host.sh
 runpath=go/cmd/fi-backlog-recover/run_private_five_sql_w512_c220_host.sh
 p5=/var/tmp/fi-window-chunks-family-p3-20261116T123717Z
@@ -57,7 +57,8 @@ grep -Fxq "sourcepin=$sourcepin" "$testscript" &&
 grep -Fxq "sourcecommit=$sourcepin" "$runner" ||
     fail 'P7 source pin disagrees across C220 runners'
 grep -Fq 'go127 test -race' "$testscript" &&
-grep -Fq 'TestPrivateP7' "$testscript" &&
+grep -Fq 'TestPrivateP[78]' "$testscript" &&
+grep -Fq 'FI P8 SAME-PROCESS ARTIFACT REUSE PASS' "$runner" &&
 grep -Fq 'FI W512 P7 SIGNED CANONICAL SHA PASS' "$runner" &&
 grep -Fq 'sha_once_shortcut=disabled' "$runner" &&
 grep -Fq 'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS' "$runner" &&
@@ -109,6 +110,7 @@ esac
 summary="$out/SUMMARY.txt"
 [ -s "$summary" ] || fail 'P7 SQL run summary missing'
 for expected in \
+    'FI P8 SAME-PROCESS ARTIFACT REUSE PASS windows=2 signed_batches=431 records=997434 full_data_rehashes_avoided=4 historical_sql_source_scan=retained original_sha=retained' \
     'FI W512 P7 SIGNED CANONICAL SHA PASS windows=2 signed_batches=431 sha_once_shortcut=disabled canonical_sha256=every_batch original_manifest=unchanged' \
     'FI W512 P7 SOURCE CHECKPOINT CHAIN PASS windows=2 artifact_markers=2 source_markers=2 signed_batches=431 records=997434' \
     'FI W512 P7 PHYSICAL SIGNED STAGE PASS windows=2 signed_batches=431 records=997434 original_cache_unchanged=true' \
@@ -131,7 +133,7 @@ printf '%s\n' "$accepted" |
 printf '%s\n' "$accepted" |
     grep -Fq 'min_workers=2 max_workers=16 max_slots=80 credits=32 writer=5 authoritative=0 accepted=0' ||
     fail 'P7 five SQL writers or SoR isolation failed'
-for file in P7_MATERIALIZED_WINDOWS.txt P7_SOURCE_CHAIN.txt P7_SQL_FAMILIES.txt P7_PUBLISHED.txt P6_FILE_VALIDATION.txt \
+for file in P7_MATERIALIZED_WINDOWS.txt P8_REUSED.txt P7_SOURCE_CHAIN.txt P7_SQL_FAMILIES.txt P7_PUBLISHED.txt P6_FILE_VALIDATION.txt \
     P6_FAMILY_HANDOFFS.txt SIGNED_BATCHES.txt P5_WINDOW_LANES.tsv \
     FAMILY_DYNAMIC_SUMMARY.tsv FAMILY_LANE_SUMMARY.tsv W512_CHECKPOINTS.tsv
 do
@@ -152,11 +154,12 @@ rps=$(awk -v sec="$secs" 'BEGIN{if(sec<=0)exit 1;printf "%.3f",997434/sec}') ||
     printf 'experiment\twriters\trecords\tseconds\trecords_per_sec\n'
     printf 'P5_persistent\t1\t997434\t237.995\t4190.987\n'
     printf 'P6_single_writer\t1\t997434\t247.626\t4027.986\n'
-    printf 'P7_five_writers\t5\t997434\t%s\t%s\n' "$secs" "$rps"
-} > "$runroot/P5_P6_P7_COMPARISON.tsv"
+    printf 'P7_five_writers\t5\t997434\t461.391\t2161.798\n'
+    printf 'P8_artifact_evidence\t5\t997434\t%s\t%s\n' "$secs" "$rps"
+} > "$runroot/P5_P6_P7_P8_COMPARISON.tsv"
 printf '%s\n' "$out" > "$runroot/PRIVATE_SQL_OUTPUT_PATH"
-echo '===== MATCHED P5 / P6 / P7 TWO-WINDOW RESULTS ====='
-cat "$runroot/P5_P6_P7_COMPARISON.tsv"
+echo '===== MATCHED P5 / P6 / P7 / P8 TWO-WINDOW RESULTS ====='
+cat "$runroot/P5_P6_P7_P8_COMPARISON.tsv"
 echo '===== P7 FIVE ACTUAL POSTGRESQL FAMILY WRITERS ====='
 cat "$runroot/P7_SQL_FAMILIES.txt"
-printf 'FI C220 P7 FIVE PG SQL PRIVATE ACCEPTED windows=2 source_batches=431 records=997434 writers=5 authoritative=0 accepted=0 output=%s\n' "$runroot"
+printf 'FI C220 P8 FIVE PG SQL PRIVATE ACCEPTED windows=2 source_batches=431 records=997434 writers=5 authoritative=0 accepted=0 output=%s\n' "$runroot"
