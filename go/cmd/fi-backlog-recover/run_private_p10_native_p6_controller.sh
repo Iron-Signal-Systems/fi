@@ -3,7 +3,7 @@
 # SQL writers. C220 disposable PostgreSQL clone only. No P7 code or bridge.
 set -eu
 umask 077
-fail(){printf 'FI P10 STOP: %s\n' "$*" >&2;exit 1;}
+fail() { printf 'FI P10 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
 [ "$#" -eq 2 ] || fail 'usage: sh controller preflight|p10 20261115T153532Z'
 case "$1" in preflight|p10) mode=$1;;*)fail 'unknown mode';;esac
