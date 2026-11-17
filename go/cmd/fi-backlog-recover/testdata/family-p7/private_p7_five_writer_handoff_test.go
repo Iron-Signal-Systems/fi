@@ -361,12 +361,14 @@ func TestPrivateP7CanonicalSignedReaderDoesNotRequireLegacyK32Chunk(t *testing.T
     // W128 mixed-family routing, but P7 has its own five-family P6 buffer
     // session and never creates a legacy backlogTypedChunkDirective.
     owner:=&privateP6Buffers{}
-    outer:=context.WithValue(context.Background(),privateMixedFamilyBuffersKey{},true)
-    outer=context.WithValue(outer,privateDependencyBuffersKey{},true)
+    // Use the established H16/K32/P3/F3 test fixture so the failure
+    // specifically proves an absent K32 chunk, not an invalid profile.
+    outer:=privateDependencyTestContext(t)
     outer=context.WithValue(outer,privateP6WindowContextKey{},owner)
     outer=context.WithValue(outer,backlogTypedChunkContextKey{},backlogTypedChunkDirective{})
-    if err:=validatePrivateFamilyRoute(outer);err==nil {
-        t.Fatal("FI P7 fixture did not reproduce legacy K32 rejection")
+    if err:=validatePrivateFamilyRoute(outer);err==nil||
+        err.Error()!="FI PRIVATE BUFFER ROUTE STOP: signed batch has no active K32 typed buffer" {
+        t.Fatalf("FI P7 fixture did not reproduce batch 205 rejection: %v",err)
     }
 
     signed:=privateP7CanonicalSignedBatchContext(outer,205)
