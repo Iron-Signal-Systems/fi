@@ -9,7 +9,7 @@ fail(){ echo "FI P7 FIVE-WRITER STOP: $*" >&2; exit 1; }
     [ "$#" -eq 1 ] || fail 'root@c220 required; mode preflight|tests'
 case "$1" in preflight|tests) mode=$1;; *) fail 'unknown mode';; esac
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=6dc23afcad1d9be3f53bc363af67ec2f2175d874
+sourcepin=ca1a6690b67bf00995c3106702b0eea5ccc6e4a4
 p6pin=be622cf547f750ba20b111720219e82a44eaa56c
 anchor=/var/tmp/fi-window-chunks-family-p3-20261116T230127Z
 bundle="$anchor/fi-w512-family-p3-pilot2-20261116T230127Z.tar.gz"
@@ -50,7 +50,7 @@ dst="/home/jwood/fi-p7-five-writer-go-tests-$stamp"
     { echo 'FI P7: test destination already exists' >&2; exit 1; }
 mkdir -m 0700 "$dst"
 cp -R "$base" "$dst/optimized-source"
-files='private_p7_five_writer_handoff.go private_p7_five_writer_handoff_test.go private_p7_postgres_writers.go private_p7_atomic_publish.go private_p7_window_setup.go private_p7_window_session.go'
+files='private_p7_five_writer_handoff.go private_p7_five_writer_handoff_test.go private_p7_postgres_writers.go private_p7_atomic_publish.go private_p7_window_setup.go private_p7_window_session.go private_p7_typed_window.go'
 for item in $files; do
     test ! -e "$dst/optimized-source/go/internal/recordingest/$item" ||
         { echo "FI P7: source unexpectedly preexisting $item" >&2; exit 1; }
