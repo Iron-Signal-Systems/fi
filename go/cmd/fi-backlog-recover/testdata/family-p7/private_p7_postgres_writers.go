@@ -37,6 +37,9 @@ type privateP7PGFamily struct{
     fieldPartition string
     baseContext context.Context
     profile ingestStageProfile
+    // Per-SQL-family counters must never be shared across five goroutines.
+    // In particular, USN nested NTFS processing can overlap File COPY.
+    ntfsTiming *ntfsStageTimingCounters
     totalRecords int64
     totalHandoffs int64
     totalElapsed time.Duration
@@ -130,7 +133,11 @@ func(w *privateP7PGFamily) Write(ctx context.Context,rows []privateP6Record)erro
     writer:=&privateP6SQLCoordinator{tx:shadow,sourceID:w.sourceID,profile:&w.profile}
     // Private scope: no concurrent family may share mutable NTFS caches,
     // hash/ACE COPY streams, USN change buffers or their transaction.
-    projectCtx:=context.WithValue(w.baseContext,ntfsObjectCacheContextKey{},newNTFSObjectCache())
+    if w.ntfsTiming==nil {
+        return errors.New("FI P7 family: dedicated native NTFS timing ledger is missing")
+    }
+    projectCtx:=context.WithValue(w.baseContext,ntfsStageTimingContextKey{},w.ntfsTiming)
+    projectCtx=context.WithValue(projectCtx,ntfsObjectCacheContextKey{},newNTFSObjectCache())
     projectCtx=context.WithValue(projectCtx,ntfsScopeIdentityCacheContextKey{},newNTFSScopeIdentityCache())
     hashCopy:=newContentHashCopyState()
     aceCopy:=newACECopyState()
@@ -140,8 +147,8 @@ func(w *privateP7PGFamily) Write(ctx context.Context,rows []privateP6Record)erro
     projectCtx=context.WithValue(projectCtx,usnChangeCopyContextKey{},usnCopy)
     // Value-bearing scoped context MUST carry the caller's exact signed
     // generation, scope and USN capture state. It is never synthesized here.
-    if _,ok:=projectCtx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters);!ok{
-        return errors.New("FI P7 family: original NTFS validation counters absent")
+    if projectCtx.Value(ntfsStageTimingContextKey{})!=w.ntfsTiming {
+        return errors.New("FI P7 family: its native NTFS validation ledger was replaced")
     }
     if w.family==privateP6USN {
         if projectCtx.Value(usnCaptureContextKey{})==nil {
@@ -197,7 +204,7 @@ func newPrivateP7PostgresFiveWriter(ctx context.Context,dsn,sourceID,
         }
         return &privateP7PGFamily{
             conn:c,family:f,sourceID:sourceID,fieldPartition:fieldPartition,
-            baseContext:ctx,
+            baseContext:ctx,ntfsTiming:&ntfsStageTimingCounters{},
         },nil
     }
     sink,err:=newPrivateP7FiveWriter(ctx,ledger,factory)
