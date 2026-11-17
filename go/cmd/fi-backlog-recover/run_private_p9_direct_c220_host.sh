@@ -56,7 +56,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=34ad2e976d8a6ed44ec5ac063e13350c67153de8
+sourcecommit=5acbf0ae6cdea1f9ee66cc936ef4016a729ae6ea
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -427,7 +427,7 @@ for item in private_p9_direct_stream.go private_p9_direct_stream_test.go; do
     > "$src/go/internal/recordingest/$item" || exit 1
 done
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
-git -C "$expected" show "$sourcecommit:go/internal/recordingest/backlog_verified_cache_recovery.go" |
+git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
   cmp -s - "$cached" || {
     echo 'FI P9 SOURCE STOP: original cached recovery tree changed; no unsafe patch' >&2;exit 1;
   }
