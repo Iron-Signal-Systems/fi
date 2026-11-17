@@ -211,3 +211,72 @@ The initial original cache and accepted P5/P6 controls are unchanged.
 The fresh compiled C220 test and five-connection SQL replay have
 **not yet executed** against this third correction. P7 is still
 unaccepted and has no measured throughput.
+
+## Fourth C220 attempt — 2026-11-17 07:41 UTC: deferred artifact marker absent
+
+The four-stage private C220 trial using controller
+`2c6fa62bccb49f5b9cf6dc074ddd9decdb385f8b`
+passed authentication, source/pin preflight, P7 compiler/unit/race tests,
+P6 regression, private PostgreSQL role discovery and `data_directory`
+proof, and successfully materialized and verified W512 index 1:
+
+```text
+FI P7 PRIVATE MATERIALIZED WINDOW VERIFIED index=1 signed_batches=216 records=499052 bytes=2146829460 original_cache_unchanged=true
+```
+
+It then stopped **before signed source-row SQL staging or any five-writer
+typed ingestion**:
+
+```text
+FI P7: authenticated durable source pre-stage:
+FI backlog source stage: verified-artifact checkpoint missing or invalid:
+no rows in result set
+```
+
+Reason: the accepted `-deferred-verified-clone` joined-transaction
+recovery can defer the separate
+`fi_recovery.verified_artifact_window` checkpoint. P7 had introduced
+physical materialization and then directly called
+`StageVerifiedBacklogSourceWindow`, which correctly rejects the
+missing committed artifact checkpoint.
+
+### Mandatory sequence correction (clone only)
+
+The P7 entry now requires ALL THREE stages in this exact order:
+
+1. `privateP7MaterializeSignedWindow` — private 0700 window, original
+   SHA-256 manifest/data copy and verification;
+2. `RecordVerifiedBacklogArtifactWindow` — independently committed
+   signed `fi_recovery.verified_artifact_window` checkpoint. This
+   function independently re-verifies source bytes, checks immutable
+   original transfer/receipt/descriptor identity, enforces exact
+   previous checkpoint continuity, and commits before returning;
+3. `StageVerifiedBacklogSourceWindow` — independently verifies the
+   artifact checkpoint, scans and hashes every signed source record,
+   inserts `fi_recovery.pending_source_record`, verifies all SQL source
+   rows before committing `fi_recovery.source_window`.
+
+Only then may `privateP7PrepareCommittedWindow` create its Security
+field partition and open five separate typed PostgreSQL writers.
+The final W512 completion marker remains a separate verified transaction.
+
+The runner explicitly checks the three chronological receipts for BOTH
+windows, requiring 216+215=431 signed batches and 499,052+498,382=
+997,434 records. It preserves and archives
+`P7_MATERIALIZED_WINDOWS.txt` and `P7_SOURCE_CHAIN.txt`; it fails
+closed if a checkpoint is missing, out of order or duplicated.
+
+### Current pinned correction
+
+- Exact source with physical+artifact+source chain:
+  `03881677b33fe428154157fe07e8a7ec235d63c8`
+- Go / Go-race / accepted P6 regression runner:
+  `4e874be099e7d8b0fb1df3b198a191f27e096ebc`
+- Private five SQL writer runner with chronological ledger acceptance:
+  `080a74cafe2b5e4575e5ca913b48bf79ef58ba81`
+- Top-level controller:
+  `b7737a4df3a72ab40e365371a782b0cdf755afe2`
+
+This corrected source has **not yet completed** the first C220 replay,
+and neither 2-window P7 correctness nor throughput is accepted.
+The authoritative SoR and signed cache remain unchanged.
