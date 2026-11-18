@@ -50,6 +50,18 @@ sh "$runner" preflight "$2" ||
   fail 'original P6 seed/source preflight rejected'
 printf 'FI P11 NATIVE P6 PREFLIGHT PASS source=%s runner=%s postgres_started=false\n' "$sourcepin" "$runnerpin"
 [ "$mode" = preflight ] && exit 0
+if [ "$mode" = compile ]; then
+  compilelog="$runroot/P11.compile.txt"
+  if ! sh "$runner" compile "$2" > "$compilelog" 2>&1; then
+    tail -n 100 "$compilelog" >&2 || :
+    fail 'P11 private Go and race tests failed; no database started'
+  fi
+  cat "$compilelog"
+  grep -Fxq 'FI P11 C220 PRIVATE GO/RACE GATE PASS original_seed_unchanged=true postgres_started=false' "$compilelog" ||
+    fail 'P11 no-database compile receipt missing'
+  echo 'FI P11 C220 GO/RACE COMPILE ACCEPTED original_seed_unchanged=true postgres_started=false'
+  exit 0
+fi
 log="$runroot/P11.console.txt"
 status="$runroot/P11.exit"
 ( if sh "$runner" family "$2";then printf '0\n' > "$status";else printf '1\n' > "$status";fi ) 2>&1 | tee "$log"
