@@ -55,7 +55,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=83b57529dc4635c88eb7de7ed695f57196716877
+sourcecommit=c7c90da05fa2cabc06189f7c6e43bcb30c9a3002
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -179,12 +179,15 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/family-p11/private_p11_direct.go \
   go/cmd/fi-backlog-recover/testdata/family-p11/private_p11_direct_test.go \
   go/cmd/fi-backlog-recover/testdata/family-p11/private_p11_modules.go \
+  go/cmd/fi-backlog-recover/testdata/family-p11/private_p12_security_field_envelope.go \
+  go/cmd/fi-backlog-recover/testdata/family-p11/private_p12_security_field_envelope_test.go \
+  go/cmd/fi-backlog-recover/testdata/family-p11/private_p12_security_field_envelope_patcher.go \
   go/cmd/fi-backlog-recover/testdata/family-p11/private_p11_cached_recovery.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=28 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=31 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -394,6 +397,20 @@ for item in private_p11_five_sql.go private_p11_direct.go private_p11_direct_tes
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p11/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
+# P12 changes only the SECURITY child field COPY envelope, solely in this
+# disposable optimized source. Original P1/P3 limits remain unchanged unless
+# the P11 Security lane carries the isolated P12 context key.
+for item in private_p12_security_field_envelope.go private_p12_security_field_envelope_test.go; do
+  [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
+  git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p11/$item" \
+    > "$src/go/internal/recordingest/$item" || exit 1
+done
+p12patch="$src/go/cmd/fi-backlog-recover/patchers/p12_field_envelope"
+mkdir -p "$p12patch" || exit 1
+git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/family-p11/private_p12_security_field_envelope_patcher.go" \
+  > "$p12patch/main.go" || exit 1
+(cd "$src/go" && GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
+  ./cmd/fi-backlog-recover/patchers/p12_field_envelope "$src") || exit 1
 # Historical C220 original is the only allowed cache entrypoint source.
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
 git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
@@ -445,10 +462,10 @@ mv "$trustfile.c220" "$trustfile" || exit 1
 (cd "$src/go" &&
  FI_W512_P6_FAMILY_SQL= FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
-   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateP11)' -count=1 &&
+   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateP11|TestPrivateP12)' -count=1 &&
  FI_W512_P6_FAMILY_SQL= FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -race \
-   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateP11)' -count=1 &&
+   ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateP11|TestPrivateP12)' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover
 ) > "$root/private-trust-path-build.log" 2>&1 || {
@@ -675,6 +692,12 @@ grep '^FI P11 SECURITY COPY PROFILE ' "$log" > "$out/$name/P11_SECURITY_COPY.txt
 grep -Fq 'events=892110 ' "$out/$name/P11_SECURITY_COPY.txt" &&
 grep -Eq 'fields=[1-9][0-9]* ' "$out/$name/P11_SECURITY_COPY.txt" ||
   fail 'P11 Security event/child COPY profiling count mismatch'
+grep -E '^FI P12 SECURITY FIELD ENVELOPE ' "$log" > "$out/$name/P12_FIELD_ENVELOPE.txt" ||
+  fail 'P12 private Security field envelope not observed'
+grep -Fxq 'FI P12 SECURITY FIELD ENVELOPE effective_rows=65536 effective_bytes=16777216 original_p3_rows=32768 original_p3_bytes=8388608 family=Security clone_only=true' "$out/$name/P12_FIELD_ENVELOPE.txt" ||
+  fail 'P12 field envelope does not match private-only test'
+grep -Eq 'field_calls=[1-9][0-9]* ' "$out/$name/P11_SECURITY_COPY.txt" ||
+  fail 'P12 original field COPY call counts not captured'
 grep '^FI P11 P6 FIVE SQL PASS ' "$log" > "$out/$name/P11_FAMILIES.txt" ||
   fail 'P11 all five SQL worker handoffs missing'
 grep -Fq 'windows=2 records=997434 ' "$out/$name/P11_FAMILIES.txt" &&
@@ -704,7 +727,7 @@ tar -C "$out" -czf "$out/fi-w512-p11-direct-$stamp.tar.gz" RUN_MANIFEST.txt SUMM
   "$name/recover.log" "$name/P11_READ.txt" "$name/P11_BACKENDS.txt" \
   "$name/P11_FAMILIES.txt" "$name/P11_PREP.txt" "$name/P11_P5_LANES.txt" \
   "$name/P11_SQL_PROFILE.txt" "$name/P11_SECURITY_COPY.txt" \
-  "$name/RESULT.txt" "$name/WINDOWS.txt" \
+  "$name/P12_FIELD_ENVELOPE.txt" "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/iostat.txt" "$name/vmstat.txt" || fail 'P11 metrics bundle failed'
