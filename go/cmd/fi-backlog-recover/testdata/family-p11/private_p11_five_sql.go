@@ -179,6 +179,11 @@ func(w *privateP11FiveSQL) writeFamily(ctx context.Context,lane *privateP11SQLLa
         w.sourceID,profile)
     if err!=nil{return err}
     writeCtx,hashCopy,aceCopy,usnCopy:=privateP11BoundedProjectorContext(ctx)
+    if lane.family==privateP6Security {
+        // P12 is opt-in only through this isolated experiment's Security lane.
+        // Other four families and original P3/P1 limits remain unchanged.
+        writeCtx=privateP12SecurityFieldEnvelopeContext(writeCtx)
+    }
     // Each lane owns its family-specific P6 projection module. The common
     // coordinator is used only for the exact signed (batch,ordinal) FK lookup.
     // The original central five-family SQL switch is not on this path.
@@ -204,6 +209,18 @@ func(w *privateP11FiveSQL) writeFamily(ctx context.Context,lane *privateP11SQLLa
         s.ChildPrepare+=counters.ChildPrepare
         s.ScopeCopy+=counters.ScopeCopy
         s.FieldCopy+=counters.FieldCopy
+        s.FieldLatency.Calls+=counters.FieldLatency.Calls
+        s.FieldLatency.AtLeastOneSecond+=counters.FieldLatency.AtLeastOneSecond
+        s.FieldLatency.AtLeastFiveSeconds+=counters.FieldLatency.AtLeastFiveSeconds
+        if counters.FieldLatency.Calls>0{
+            if s.FieldLatency.Calls==counters.FieldLatency.Calls ||
+                counters.FieldLatency.Min<s.FieldLatency.Min{
+                s.FieldLatency.Min=counters.FieldLatency.Min
+            }
+            if counters.FieldLatency.Max>s.FieldLatency.Max{
+                s.FieldLatency.Max=counters.FieldLatency.Max
+            }
+        }
     }
     // The same privateProjectionTx rewrites all five family's COPY
     // targets into fi_recovery_projection. Drain *before* SQL COMMIT:
@@ -320,10 +337,15 @@ func(w *privateP11FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
     // Per-stage durations are cumulative and may be nested; do not add
     // them to the P11 overall wall clock or parallel family timings.
     s:=w.lanes[privateP6Security].securityCopies
-    fmt.Printf("FI P11 SECURITY COPY PROFILE batches=%d events=%d scopes=%d fields=%d source_bytes=%d source_copy=%s event_copy=%s scope_copy=%s field_copy=%s child_prepare=%s bulk_id_lookup=%s bulk_prepare=%s\n",
+    avg:=time.Duration(0)
+    if s.FieldLatency.Calls>0{avg=s.FieldCopy/time.Duration(s.FieldLatency.Calls)}
+    fmt.Printf("FI P11 SECURITY COPY PROFILE batches=%d events=%d scopes=%d fields=%d source_bytes=%d source_copy=%s event_copy=%s scope_copy=%s field_copy=%s child_prepare=%s bulk_id_lookup=%s bulk_prepare=%s field_calls=%d field_avg=%s field_min=%s field_max=%s ge_1s=%d ge_5s=%d\n",
         s.Batches,s.Events,s.Scopes,s.Fields,s.SourceBytes,
         s.SourceCopy,s.EventCopy,s.ScopeCopy,s.FieldCopy,
-        s.ChildPrepare,s.IDLookup,s.Prepare)
+        s.ChildPrepare,s.IDLookup,s.Prepare,
+        s.FieldLatency.Calls,avg,s.FieldLatency.Min,s.FieldLatency.Max,
+        s.FieldLatency.AtLeastOneSecond,s.FieldLatency.AtLeastFiveSeconds)
+    fmt.Printf("FI P12 SECURITY FIELD ENVELOPE effective_rows=65536 effective_bytes=16777216 original_p3_rows=32768 original_p3_bytes=8388608 family=Security clone_only=true\n")
     return w.parentRows,total,family
 }
 func(w *privateP11FiveSQL) Close(){
