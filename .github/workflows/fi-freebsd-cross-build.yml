@@ -132,6 +132,18 @@ jobs:
           assert "P11_PREP.txt" in runner
           assert "P11_SQL_PROFILE.txt" in runner
           assert "P11_SECURITY_COPY.txt" in runner
+          assert "private_p12_security_field_envelope.go" in runner
+          assert "private_p12_security_field_envelope_patcher.go" in runner
+          assert "TestPrivateP11|TestPrivateP12" in runner
+          assert "P12_FIELD_ENVELOPE.txt" in runner
+          assert "field_calls=%d" in sql
+          assert "privateP12SecurityFieldEnvelopeContext(writeCtx)" in sql
+          assert "field_copy=?" not in sql
+          patcher=Path("cmd/fi-backlog-recover/testdata/family-p11/private_p12_security_field_envelope_patcher.go").read_text()
+          assert 'privateP12SecurityFieldEnvelopeSelected(ctx) {return 65536}' in patcher
+          assert 'privateP12SecurityFieldEnvelopeSelected(ctx) {return 16 << 20}' in patcher
+          test=Path("cmd/fi-backlog-recover/testdata/family-p11/private_p12_security_field_envelope_test.go").read_text()
+          assert 'TestPrivateP12SecurityFieldEnvelopeOnlyChangesPrivateP3' in test
           assert "P11_SECURITY_COPY.txt" in controller
           assert "FI P11 SECURITY COPY PROFILE " in sql
           assert "s.FieldCopy+=counters.FieldCopy" in sql
