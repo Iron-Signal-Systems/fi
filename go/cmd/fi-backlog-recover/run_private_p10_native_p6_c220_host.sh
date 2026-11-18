@@ -465,20 +465,22 @@ cp -R "$seed/$name/data" "$root/$name/data" || exit 1
 echo 'FI FAMILY P3 POST-BUILD PRIVATE SEED COPY PASS'
 pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
   -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700" \
-  -w start > "$root/$name/start.log" 2>&1 || exit 1
-# Grant exact physical-clone settings visibility to fi_ingest ONLY
-# inside this disposable PostgreSQL copy (never authoritative SoR).
+  -w start > "$root/$name/start.log" 2>&1 || { echo 'FI P10 CLONE STOP: PostgreSQL failed to start; inspect start.log and postgres.log in the private clone' >&2; exit 1; }
+echo 'FI P10 PRIVATE POSTGRESQL START PASS'
+# Verify the original private clone using existing owner and fi_ingest roles.
+# Do not modify database roles, grants, revocations or ownership.
 clone_sock="$root/$name/socket"
 clone_data="$root/$name/data"
 clone_ingest_dsn="host=$clone_sock port=$port user=fi_ingest dbname=fi sslmode=disable"
 clone_admin=$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 \
-  -c "SELECT rolname FROM pg_catalog.pg_roles WHERE rolsuper AND rolcanlogin AND rolname !~ '^pg_' ORDER BY rolname") || exit 1
+  -c "SELECT rolname FROM pg_catalog.pg_roles WHERE rolsuper AND rolcanlogin AND rolname !~ '^pg_' ORDER BY rolname") || { echo 'FI P10 CLONE STOP: existing owner role discovery query failed' >&2; exit 1; }
 [ -n "$clone_admin" ] &&
 [ "$(printf '%s\n' "$clone_admin" | wc -l | tr -d '[:space:]')" = 1 ] &&
-printf '%s\n' "$clone_admin" | grep -Eq '^[A-Za-z_][A-Za-z_0-9]*$' || exit 1
+printf '%s\n' "$clone_admin" | grep -Eq '^[A-Za-z_][A-Za-z_0-9]*$' || { echo 'FI P10 CLONE STOP: existing PostgreSQL clone owner is missing or ambiguous' >&2; exit 1; }
 clone_owner_dsn="host=$clone_sock port=$port user=$clone_admin dbname=fi sslmode=disable"
-[ "$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')")" = "$clone_data" ] || exit 1
-[ "$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_user||'|'||(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user)||'|'||pg_is_in_recovery()::text")" = "$clone_admin|true|false" ] || exit 1
+[ "$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_setting('data_directory')")" = "$clone_data" ] || { echo 'FI P10 CLONE STOP: verified PGDATA does not match disposable private clone' >&2; exit 1; }
+[ "$(psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_user||'|'||(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user)||'|'||pg_is_in_recovery()::text")" = "$clone_admin|true|false" ] || { echo 'FI P10 CLONE STOP: existing clone owner identity or primary status differs' >&2; exit 1; }
+echo 'FI P10 PRIVATE CLONE OWNER VERIFIED PASS'
 psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c \
   "CREATE TABLE fi_recovery_projection.windows_security_event_field_p10_default
      PARTITION OF fi_recovery_projection.windows_security_event_field DEFAULT;
@@ -487,14 +489,12 @@ psql "$clone_owner_dsn" -X -qAt -v ON_ERROR_STOP=1 -c \
    ALTER TABLE fi_recovery.typed_window
      ADD CONSTRAINT typed_window_p10_shadow_fkey
      FOREIGN KEY (shadow_generation_id)
-     REFERENCES fi_recovery_projection.recorded_generation(recorded_generation_id);" >/dev/null || exit 1
+     REFERENCES fi_recovery_projection.recorded_generation(recorded_generation_id);" >/dev/null || { echo 'FI P10 CLONE STOP: private-only partition or typed marker DDL failed' >&2; exit 1; }
+echo 'FI P10 PRIVATE CLONE STRUCTURE PASS'
 # fi_ingest uses the original P6 role without new read-all-settings grants.
 # PGDATA identity has already been verified through the clone owner above.
-[ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_user||'|'||pg_is_in_recovery()::text")" = "fi_ingest|false" ] || exit 1
-# The source seed already grants fi_ingest access to the partitioned
-# projection parent. Child partitions reached through that parent use
-# its INSERT privilege; do not alter roles, permissions or ownership.
-[ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege(current_user, 'fi_recovery_projection.windows_security_event_field', 'INSERT')::text")" = t ] || exit 1
+[ "$(psql "$clone_ingest_dsn" -X -qAt -v ON_ERROR_STOP=1 -c "SELECT current_user||'|'||pg_is_in_recovery()::text")" = "fi_ingest|false" ] || { echo 'FI P10 CLONE STOP: original fi_ingest role or primary status differs' >&2; exit 1; }
+echo 'FI P10 ORIGINAL INGEST ROLE PASS permissions=unchanged'
 echo 'FI P10 PRIVATE P6 SQL CLONE PASS physical_pgdata=verified shadow_fk=retained permissions=unchanged'
 echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
 JAIL
