@@ -9,8 +9,8 @@ fail() { printf 'FI P11 STOP: %s\n' "$*" >&2; exit 1; }
 case "$1" in preflight|compile|p11) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only accepted signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=33a3ca87e2101f258a03d5395720314c282ea5ed
-runnerpin=1aea0b1ea991b951376d1c099ae350ea56163e07
+sourcepin=83b57529dc4635c88eb7de7ed695f57196716877
+runnerpin=9001e847009406e5223f6a79cb17a3c118a0d23f
 runnerpath=go/cmd/fi-backlog-recover/run_private_p11_p5_p6_native_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -36,6 +36,7 @@ grep -Fxq "sourcecommit=$sourcepin" "$runner" &&
 grep -Fq 'go127 test -race' "$runner" &&
 grep -Fq 'TestPrivateP11' "$runner" &&
 grep -Fq 'private_p11_direct.go' "$runner" &&
+grep -Fq 'P11_SECURITY_COPY.txt' "$runner" &&
 grep -Fq 'FI P11 NATIVE P6 DIRECT SOURCE PASS p7_bridge=none source_stage=none' "$runner" &&
 grep -Fq 'FI P11 P6 FIVE SQL PASS' "$runner" &&
 grep -Fq 'FI C220 P11 P5-P6 NATIVE FAMILY ACCEPTED' "$runner" ||
@@ -74,7 +75,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted P11 private SQL output location';;esac
 grep -Fq 'FI C220 P11 P5-P6 NATIVE FAMILY ACCEPTED windows=2 records=997434 ' "$out/SUMMARY.txt" ||
   fail 'native five-writer direct benchmark acceptance missing'
-for f in P11_READ.txt P11_BACKENDS.txt P11_FAMILIES.txt P11_PREP.txt P11_P5_LANES.txt P11_SQL_PROFILE.txt RESULT.txt WINDOWS.txt;do
+for f in P11_READ.txt P11_BACKENDS.txt P11_FAMILIES.txt P11_PREP.txt P11_P5_LANES.txt P11_SQL_PROFILE.txt P11_SECURITY_COPY.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "P11 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
