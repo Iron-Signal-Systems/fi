@@ -55,7 +55,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=33a3ca87e2101f258a03d5395720314c282ea5ed
+sourcecommit=83b57529dc4635c88eb7de7ed695f57196716877
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -667,6 +667,14 @@ grep '^FI P11 SQL PROFILE ' "$log" > "$out/$name/P11_SQL_PROFILE.txt" ||
   fail 'P11 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/P11_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
   fail 'P11 did not report the source parent and five SQL family lanes'
+# Expose the original P6 Security COPY counters once, without altering the
+# C220 clone schema, SQL module, staging, or network/PG permissions.
+grep '^FI P11 SECURITY COPY PROFILE ' "$log" > "$out/$name/P11_SECURITY_COPY.txt" ||
+  fail 'P11 existing Security COPY timing counters not retained'
+[ "$(wc -l < "$out/$name/P11_SECURITY_COPY.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq 'events=892110 ' "$out/$name/P11_SECURITY_COPY.txt" &&
+grep -Eq 'fields=[1-9][0-9]* ' "$out/$name/P11_SECURITY_COPY.txt" ||
+  fail 'P11 Security event/child COPY profiling count mismatch'
 grep '^FI P11 P6 FIVE SQL PASS ' "$log" > "$out/$name/P11_FAMILIES.txt" ||
   fail 'P11 all five SQL worker handoffs missing'
 grep -Fq 'windows=2 records=997434 ' "$out/$name/P11_FAMILIES.txt" &&
@@ -695,7 +703,8 @@ printf 'FI C220 P11 P5-P6 NATIVE FAMILY ACCEPTED windows=2 records=997434 elapse
 tar -C "$out" -czf "$out/fi-w512-p11-direct-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/P11_READ.txt" "$name/P11_BACKENDS.txt" \
   "$name/P11_FAMILIES.txt" "$name/P11_PREP.txt" "$name/P11_P5_LANES.txt" \
-  "$name/P11_SQL_PROFILE.txt" "$name/RESULT.txt" "$name/WINDOWS.txt" \
+  "$name/P11_SQL_PROFILE.txt" "$name/P11_SECURITY_COPY.txt" \
+  "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/iostat.txt" "$name/vmstat.txt" || fail 'P11 metrics bundle failed'
