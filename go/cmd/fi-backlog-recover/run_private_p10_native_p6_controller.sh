@@ -10,7 +10,7 @@ case "$1" in preflight|p10) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only accepted signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=201bd2d1b6d0c70a70ae8f3ba36dbd7fd795eab9
-runnerpin=db93c59469fe8f7952a2c17cb06644cd16bbb695
+runnerpin=021e32930ab6e2c0dbed7100ab593e148c4c301a
 runnerpath=go/cmd/fi-backlog-recover/run_private_p10_native_p6_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
