@@ -84,6 +84,12 @@ jobs:
               "P10 must still verify exact PGDATA through existing clone owner"
           )
           assert 'fi_ingest|false' in src, "P10 must keep original ingest role and no standby"
+          assert 'has_table_privilege(' not in src, (
+              "P10 must not add an unnecessary privilege probe that stopped the prior clone"
+          )
+          assert 'FI P10 ORIGINAL INGEST ROLE PASS permissions=unchanged' in src, (
+              "P10 must preserve and confirm existing P6 fi_ingest role without grants"
+          )
           print("FI P10 P6 BOUNDED ACE/HASH/USN COPY AND ORIGINAL PRIVILEGES PASS")
           PY
           for source in ./cmd/fi-backlog-recover/testdata/family-p10/*.go; do
