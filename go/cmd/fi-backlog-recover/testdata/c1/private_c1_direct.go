@@ -78,6 +78,49 @@ func privateC1SourceBatchIDs(ctx context.Context,reader *pgx.Conn,
     return ids,nil
 }
 
+// C1's five SQL writers commit individual family handoffs. They therefore
+// cannot promise a single PostgreSQL transaction across six connections.
+// Before any write, reject a clone containing partial source rows or a
+// completion marker in the requested signed range. A failed/incomplete C1
+// development run is restarted ONLY from a newly verified clean private clone;
+// never replay into dirty relational tables or invent a typed checkpoint.
+func privateC1CleanDestinationStatus(typedMarkers int64,sourceRowsFound bool) error {
+    if typedMarkers<0{return errors.New("FI C1: invalid destination checkpoint count")}
+    if typedMarkers!=0||sourceRowsFound {
+        return fmt.Errorf("FI C1: partial or already projected destination markers=%d rows_present=%t; create a new verified private clone before replay",typedMarkers,sourceRowsFound)
+    }
+    return nil
+}
+
+func privateC1RequireCleanDestination(ctx context.Context,reader *pgx.Conn,
+    g *PreparedGeneration,ds []BacklogCheckpointDescriptor,start,end int)error {
+    if ctx==nil||reader==nil||g==nil||start<1||end<=start||end>len(ds){
+        return errors.New("FI C1: invalid clean-start guard inputs")
+    }
+    var typedMarkers int64
+    if err:=reader.QueryRow(ctx,`SELECT count(*) FROM fi_recovery.typed_window
+WHERE window_index >= $1`,start).Scan(&typedMarkers);err!=nil {
+        return fmt.Errorf("FI C1: typed prefix guard: %w",err)
+    }
+    if err:=privateC1CleanDestinationStatus(typedMarkers,false);err!=nil{return err}
+    for wi:=start;wi<end;wi++ {
+        ids,err:=privateC1SourceBatchIDs(ctx,reader,g,ds[wi])
+        if err!=nil{return fmt.Errorf("FI C1: signed W%d parent identity guard: %w",wi,err)}
+        if len(ids)==0{return fmt.Errorf("FI C1: signed W%d has no source batch identities",wi)}
+        var existing bool
+        if err=reader.QueryRow(ctx,`SELECT EXISTS(
+SELECT 1 FROM fi_recovery_projection.source_record
+WHERE source_batch_id = ANY($1::bigint[]))`,ids).Scan(&existing);err!=nil{
+            return fmt.Errorf("FI C1: source parent guard W%d: %w",wi,err)
+        }
+        if err=privateC1CleanDestinationStatus(typedMarkers,existing);err!=nil{
+            return fmt.Errorf("FI C1: signed W%d is not clean: %w",wi,err)
+        }
+    }
+    fmt.Printf("FI C1 CLEAN START PASS windows=%d..%d signed_parents_absent=true typed_markers_absent=true restart_requires_fresh_clone=true\n",start,end-1)
+    return nil
+}
+
 // Original P5 pool and its bounded family dispatch are shared across ALL
 // signed batches and BOTH W512 reporting windows, not reconstructed at a
 // signed-batch/window boundary. The caller owns one reader and SHA-256 hasher.
@@ -231,6 +274,12 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     want,err:=hex.DecodeString(ds[startWindow-1].DigestSHA256)
     if err!=nil||subtle.ConstantTimeCompare(prevDigest,want)!=1{
         return empty,errors.New("FI C1: existing signed seed checkpoint does not match")
+    }
+    // Guard every requested signed window BEFORE opening or writing through
+    // the six SQL connections. Never continue an interrupted C1 run against
+    // partially committed per-family rows.
+    if err=privateC1RequireCleanDestination(ctx,reader,g,ds,startWindow,end);err!=nil{
+        return empty,err
     }
     // Keep the original P6 cross-batch USN and File identity semantics.
     // No reset or forced buffer flush at a W512 reporting boundary.
