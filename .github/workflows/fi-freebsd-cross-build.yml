@@ -136,9 +136,9 @@ jobs:
           assert "FI P11 SECURITY COPY PROFILE " in sql
           assert "s.FieldCopy+=counters.FieldCopy" in sql
           assert "s.EventCopy+=counters.EventCopy" in sql
-          assert "sourcecommit=83b57529dc4635c88eb7de7ed695f57196716877" in runner
-          assert "sourcepin=83b57529dc4635c88eb7de7ed695f57196716877" in controller
-          assert "runnerpin=9001e847009406e5223f6a79cb17a3c118a0d23f" in controller
+          assert "sourcecommit=c7c90da05fa2cabc06189f7c6e43bcb30c9a3002" in runner
+          assert "sourcepin=c7c90da05fa2cabc06189f7c6e43bcb30c9a3002" in controller
+          assert "runnerpin=d510b7dc56e5e37699b3009c5453e4de37a29f83" in controller
           assert not any(k in runner for k in ("GRANT pg_read_all_settings", "GRANT SELECT, INSERT", "REVOKE ALL"))
           assert "patchers/p7_parallel_bridge" not in runner
           assert runner.splitlines().count("JAIL")==1
