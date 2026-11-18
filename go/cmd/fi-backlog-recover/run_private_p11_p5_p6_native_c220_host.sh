@@ -8,9 +8,9 @@ set -eu
 umask 077
 fail(){ printf 'FI W512 PILOT STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] && [ "$#" -eq 2 ] ||
-    fail 'usage on root@c220: sh runner preflight|family YYYYMMDDTHHMMSSZ'
+    fail 'usage on root@c220: sh runner preflight|compile|family YYYYMMDDTHHMMSSZ'
 case "$1" in
-  preflight|family) mode=$1 ;;
+  preflight|compile|family) mode=$1 ;;
   *) fail 'mode must be preflight or family' ;;
 esac
 # P6: 5 separate SoR relational ingestion modules, same P5 preparers.
@@ -325,7 +325,7 @@ cleanup(){
 trap cleanup 0
 trap 'exit 130' 2
 trap 'exit 143' 15
-jexec -U jwood fi-dev sh -s "$seed" "$root" "$name" "$port" "$sourcecommit" <<'JAIL'
+jexec -U jwood fi-dev sh -s "$seed" "$root" "$name" "$port" "$sourcecommit" "$mode" <<'JAIL'
 set -eu
 umask 077
 seed=$1
@@ -333,6 +333,7 @@ root=$2
 name=$3
 port=$4
 sourcecommit=$5
+mode=$6
 [ "$(id -un)" = jwood ] && [ "$(psql --version)" = 'psql (PostgreSQL) 18.6' ] || exit 1
 [ ! -e "$root" ] && [ ! -e "$seed/$name/data/postmaster.pid" ] || exit 1
 pg_ctl -D "$seed/$name/data" status >/dev/null 2>&1 && exit 1
@@ -460,6 +461,12 @@ mv "$root/fi-optfield-recover.c220" "$root/fi-optfield-recover" || exit 1
 sha256 -q "$root/fi-optfield-recover" > "$root/recover.sha256" || exit 1
 printf 'FI C220 PRIVATE TRUST PATH PATCH PASS source=pinned_b01ff0 benchmark_only=true compiler=go127 root_ca=migrated signing_ca=migrated crl=current_receiver source_registry=migrated\n'
 
+# Compile-only acceptance uses the exact original C220 optimized seed.
+# Tests/race/build complete before any PostgreSQL data copy or startup.
+if [ "$mode" = compile ]; then
+  echo 'FI P11 PRIVATE SOURCE GO/RACE COMPILE PASS original_seed=unchanged postgres_started=false'
+  exit 0
+fi
 # All pinned overlay compilation and tests passed. Clone PostgreSQL only now.
 cp -R "$seed/$name/data" "$root/$name/data" || exit 1
 [ "$(cat "$root/$name/data/PG_VERSION")" = 18 ] || exit 1
@@ -499,6 +506,10 @@ echo 'FI P11 ORIGINAL INGEST ROLE PASS permissions=unchanged'
 echo 'FI P11 PRIVATE P6 SQL CLONE PASS physical_pgdata=verified shadow_fk=retained permissions=unchanged'
 echo 'FI W512 PILOT OFFLINE SEED COPY PASS'
 JAIL
+if [ "$mode" = compile ]; then
+  echo 'FI P11 C220 PRIVATE GO/RACE GATE PASS original_seed_unchanged=true postgres_started=false'
+  exit 0
+fi
 mkdir -m 700 "$out" "$out/$name" "$private_root" ||
   fail 'private benchmark output initialization failed'
 [ "$(stat -f %d "$private_root")" = "$(stat -f %d "$cache")" ] ||
