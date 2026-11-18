@@ -5,12 +5,12 @@ set -eu
 umask 077
 fail() { printf 'FI P11 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
-[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|p11 20261115T153532Z'
-case "$1" in preflight|p11) mode=$1;;*)fail 'unknown mode';;esac
+[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|p11 20261115T153532Z'
+case "$1" in preflight|compile|p11) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only accepted signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=33a3ca87e2101f258a03d5395720314c282ea5ed
-runnerpin=3984acfce7bfefb231c0ea8ceb39c496c16def4e
+runnerpin=1aea0b1ea991b951376d1c099ae350ea56163e07
 runnerpath=go/cmd/fi-backlog-recover/run_private_p11_p5_p6_native_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
