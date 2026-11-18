@@ -152,7 +152,12 @@ jobs:
           for f in private_p6_family_buffers_test.go private_p6_file_proof_test.go private_p6_sql_coordinator.go private_p6_sql_security.go private_p6_sql_ntfs.go private_p6_sql_coverage.go private_p6_sql_usn.go private_p6_sql_other.go; do
             cp "./cmd/fi-backlog-recover/testdata/family-p6/$f" "$dst/"
           done
-          cp ./cmd/fi-backlog-recover/testdata/family-p11/*.go "$dst/"
+          for f in private_p6_family_buffers.go private_p11_five_sql.go private_p11_direct.go private_p11_direct_test.go private_p11_modules.go; do
+            cp "./cmd/fi-backlog-recover/testdata/family-p11/$f" "$dst/"
+          done
+          # The C220 runner replaces backlog_verified_cache_recovery.go
+          # in its isolated historical clone. Do not compile that replacement
+          # alongside the default source in this Linux-only unit-test copy.
           cd "$tmp/fi-go"
           go test -count=1 ./internal/recordingest -run '^TestPrivateP11'
           go test -race -count=1 ./internal/recordingest -run '^TestPrivateP11'
