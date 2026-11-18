@@ -38,6 +38,10 @@ type privateP11SQLLane struct {
     identityLookup time.Duration
     projectionWall time.Duration
     commitWall time.Duration
+    // Only this lane goroutine writes these original SecurityBulk counters.
+    // They are aggregates of P6's existing projector/COPY measurements;
+    // no extra SQL, source staging, or per-row timer is introduced.
+    securityCopies securityBulkTimingCounters
 }
 type privateP11FiveSQL struct {
     parent *pgx.Conn
@@ -182,6 +186,25 @@ func(w *privateP11FiveSQL) writeFamily(ctx context.Context,lane *privateP11SQLLa
     lane.identityLookup+=lookupTime
     lane.projectionWall+=projectTime
     if e!=nil{return e}
+    if lane.family==privateP6Security {
+        // The original P6 projector already populated this per-handoff
+        // profile. Accumulate those counters before it goes out of scope.
+        // No instrumentation is placed inside event or field COPY loops.
+        counters:=profile.SecurityBulk
+        s:=&lane.securityCopies
+        s.Batches+=counters.Batches
+        s.Events+=counters.Events
+        s.Scopes+=counters.Scopes
+        s.Fields+=counters.Fields
+        s.SourceBytes+=counters.SourceBytes
+        s.Prepare+=counters.Prepare
+        s.SourceCopy+=counters.SourceCopy
+        s.IDLookup+=counters.IDLookup
+        s.EventCopy+=counters.EventCopy
+        s.ChildPrepare+=counters.ChildPrepare
+        s.ScopeCopy+=counters.ScopeCopy
+        s.FieldCopy+=counters.FieldCopy
+    }
     // The same privateProjectionTx rewrites all five family's COPY
     // targets into fi_recovery_projection. Drain *before* SQL COMMIT:
     // pending hashes/ACEs/USN changes and reasons are real FK children.
@@ -292,6 +315,15 @@ func(w *privateP11FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
             privateP6FamilyNames[lane.family],lane.committed,lane.handoffs,lane.sqlWall,
             lane.identityLookup,lane.projectionWall,lane.commitWall)
     }
+    // Security's 285s projector wall is already known. Break it into
+    // original P6 event/scope/field COPY timing and unchanged child setup.
+    // Per-stage durations are cumulative and may be nested; do not add
+    // them to the P11 overall wall clock or parallel family timings.
+    s:=w.lanes[privateP6Security].securityCopies
+    fmt.Printf("FI P11 SECURITY COPY PROFILE batches=%d events=%d scopes=%d fields=%d source_bytes=%d source_copy=%s event_copy=%s scope_copy=%s field_copy=%s child_prepare=%s bulk_id_lookup=%s bulk_prepare=%s\n",
+        s.Batches,s.Events,s.Scopes,s.Fields,s.SourceBytes,
+        s.SourceCopy,s.EventCopy,s.ScopeCopy,s.FieldCopy,
+        s.ChildPrepare,s.IDLookup,s.Prepare)
     return w.parentRows,total,family
 }
 func(w *privateP11FiveSQL) Close(){
