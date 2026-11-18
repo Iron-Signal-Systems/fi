@@ -133,60 +133,23 @@ jobs:
           assert "P11_SQL_PROFILE.txt" in runner
           assert "sourcecommit=33a3ca87e2101f258a03d5395720314c282ea5ed" in runner
           assert "sourcepin=33a3ca87e2101f258a03d5395720314c282ea5ed" in controller
-          assert "runnerpin=3984acfce7bfefb231c0ea8ceb39c496c16def4e" in controller
+          assert "runnerpin=1aea0b1ea991b951376d1c099ae350ea56163e07" in controller
           assert not any(k in runner for k in ("GRANT pg_read_all_settings", "GRANT SELECT, INSERT", "REVOKE ALL"))
           assert "patchers/p7_parallel_bridge" not in runner
           assert runner.splitlines().count("JAIL")==1
+          assert "preflight|compile|family" in runner
+          assert "mode=$6" in runner
+          assert runner.index('if [ "$mode" = compile ]; then') < runner.index('cp -R "$seed/$name/data"')
+          assert "FI P11 C220 PRIVATE GO/RACE GATE PASS" in runner
+          assert "preflight|compile|p11" in controller
           print("FI P11 P5-P6 ARCHITECTURE AND RUNNER SOURCE PASS")
           PY
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          cp -a . "$tmp/fi-go"
-          dst="$tmp/fi-go/internal/recordingest"
-          cp ./cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation.go "$dst/"
-          cp ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go "$dst/"
-          cp ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go "$dst/"
-          for f in private_family_preparation_p3.go private_family_preparation_p3_test.go private_family_dynamic_p4.go private_family_dynamic_p4_test.go private_family_persistent_p5.go private_family_persistent_p5_test.go; do
-            cp "./cmd/fi-backlog-recover/testdata/family-p3/$f" "$dst/"
-          done
-          for f in private_p6_family_buffers_test.go private_p6_file_proof_test.go private_p6_sql_coordinator.go private_p6_sql_security.go private_p6_sql_ntfs.go private_p6_sql_coverage.go private_p6_sql_usn.go private_p6_sql_other.go; do
-            cp "./cmd/fi-backlog-recover/testdata/family-p6/$f" "$dst/"
-          done
-          for f in private_p6_family_buffers.go private_p11_five_sql.go private_p11_direct.go private_p11_direct_test.go private_p11_modules.go; do
-            cp "./cmd/fi-backlog-recover/testdata/family-p11/$f" "$dst/"
-          done
-          # The C220 runner replaces backlog_verified_cache_recovery.go
-          # in its isolated historical clone. Do not compile that replacement
-          # alongside the default source in this Linux-only unit-test copy.
-          # Reproduce the EXACT relevant P5/P6 source-shape amendments from
-          # the C220 original family P3 patcher, in this disposable Linux
-          # unit-test copy. Unmodified base types do not contain P5's
-          # header, credit-budget, telemetry or private payload fields.
-          python3 - "$dst" <<'PY'
-          import json, re, sys
-          from pathlib import Path
-          patcher = Path("cmd/fi-backlog-recover/patchers/family_p3_c220/main.go").read_text()
-          edits = patcher.split("edits:=[]struct{path,old,new string}{",1)[1].split("  files:=map[string]string{}",1)[0]
-          pat = re.compile(r'\{\s*"([^"]+)",\s*"((?:\\.|[^"\\])*)",\s*"((?:\\.|[^"\\])*)",\s*\}', re.S)
-          selected=0
-          for path, escaped_old, escaped_new in pat.findall(edits):
-              filename=Path(path).name
-              if filename not in ("private_parallel_preparation.go", "record.go"):
-                  continue
-              target=Path(sys.argv[1])/filename
-              old=json.loads('"'+escaped_old+'"')
-              new=json.loads('"'+escaped_new+'"')
-              raw=target.read_text()
-              assert raw.count(old)==1, f"P11 exact P3 source patch mismatch: {filename}: {old[:55]}"
-              target.write_text(raw.replace(old,new,1))
-              selected+=1
-          assert selected==12, f"P11 expected 12 original P3/P5 structural source edits, got {selected}"
-          print("FI P11 TEST COPY ORIGINAL P5/P6 SOURCE STRUCTURE PASS")
-          PY
-          cd "$tmp/fi-go"
-          go test -count=1 ./internal/recordingest -run '^TestPrivateP11'
-          go test -race -count=1 ./internal/recordingest -run '^TestPrivateP11'
-          echo 'FI P11 P5-P6 NATIVE FIVE-FAMILY GO TEST/RACE PASS'
+          # The accepted C220 optimized-source is NOT the default repository
+          # tree; its P5/P6 File validation and H16 performance code differs.
+          # Compiling against reconstructed Linux stubs is not acceptance.
+          # The exact C220 runner's 'compile' mode runs the real Go/race
+          # tests and exits before copying or starting PostgreSQL.
+          echo 'FI P11 LINUX SYNTAX/ARCHITECTURE PASS exact-C220-seed-go-race-pending'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
