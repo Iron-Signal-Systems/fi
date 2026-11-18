@@ -158,6 +158,31 @@ jobs:
           # The C220 runner replaces backlog_verified_cache_recovery.go
           # in its isolated historical clone. Do not compile that replacement
           # alongside the default source in this Linux-only unit-test copy.
+          # Reproduce the EXACT relevant P5/P6 source-shape amendments from
+          # the C220 original family P3 patcher, in this disposable Linux
+          # unit-test copy. Unmodified base types do not contain P5's
+          # header, credit-budget, telemetry or private payload fields.
+          python3 - "$dst" <<'PY'
+          import json, re, sys
+          from pathlib import Path
+          patcher = Path("cmd/fi-backlog-recover/patchers/family_p3_c220/main.go").read_text()
+          edits = patcher.split("edits:=[]struct{path,old,new string}{",1)[1].split("  files:=map[string]string{}",1)[0]
+          pat = re.compile(r'\{\s*"([^"]+)",\s*"((?:\\.|[^"\\])*)",\s*"((?:\\.|[^"\\])*)",\s*\}', re.S)
+          selected=0
+          for path, escaped_old, escaped_new in pat.findall(edits):
+              filename=Path(path).name
+              if filename not in ("private_parallel_preparation.go", "record.go"):
+                  continue
+              target=Path(sys.argv[1])/filename
+              old=json.loads('"'+escaped_old+'"')
+              new=json.loads('"'+escaped_new+'"')
+              raw=target.read_text()
+              assert raw.count(old)==1, f"P11 exact P3 source patch mismatch: {filename}: {old[:55]}"
+              target.write_text(raw.replace(old,new,1))
+              selected+=1
+          assert selected==12, f"P11 expected 12 original P3/P5 structural source edits, got {selected}"
+          print("FI P11 TEST COPY ORIGINAL P5/P6 SOURCE STRUCTURE PASS")
+          PY
           cd "$tmp/fi-go"
           go test -count=1 ./internal/recordingest -run '^TestPrivateP11'
           go test -race -count=1 ./internal/recordingest -run '^TestPrivateP11'
