@@ -96,6 +96,67 @@ jobs:
             gofmt -e "$source" > /dev/null
           done
           echo 'FI P10 NATIVE P6 RUNNER/SOURCE SYNTAX PASS'
+      - name: P11 P5-P6 native family source, design and runnable Go tests
+        run: |
+          set -euo pipefail
+          sh -n ./cmd/fi-backlog-recover/run_private_p11_p5_p6_native_controller.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_p11_p5_p6_native_c220_host.sh
+          for source in ./cmd/fi-backlog-recover/testdata/family-p11/*.go; do
+            gofmt -e "$source" >/dev/null
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("cmd/fi-backlog-recover/testdata/family-p11")
+          direct = (path / "private_p11_direct.go").read_text()
+          sql = (path / "private_p11_five_sql.go").read_text()
+          modules = (path / "private_p11_modules.go").read_text()
+          runner = Path("cmd/fi-backlog-recover/run_private_p11_p5_p6_native_c220_host.sh").read_text()
+          controller = Path("cmd/fi-backlog-recover/run_private_p11_p5_p6_native_controller.sh").read_text()
+          assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
+          assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
+          assert "pool.newStream(ctx,reader,prepare)" in direct
+          assert "io.TeeReader(f,hasher)" in direct
+          assert "privateHeaderFirstPrepare" in direct
+          assert "tryPrepareSinglePassSecurity(raw)" not in direct
+          assert "buffers.Add(ctx,privateP6Record{" in direct
+          assert "privateP11SQLModules[i]" in sql
+          assert "coordinator.Family(" not in sql
+          assert all(s in modules for s in (
+              "(*privateP6SQLCoordinator).security",
+              "(*privateP6SQLCoordinator).ntfs",
+              "(*privateP6SQLCoordinator).coverage",
+              "(*privateP6SQLCoordinator).usn",
+              "(*privateP6SQLCoordinator).other",
+          ))
+          assert "private_p11_modules.go" in runner
+          assert "P11_PREP.txt" in runner
+          assert "P11_SQL_PROFILE.txt" in runner
+          assert "sourcecommit=33a3ca87e2101f258a03d5395720314c282ea5ed" in runner
+          assert "sourcepin=33a3ca87e2101f258a03d5395720314c282ea5ed" in controller
+          assert "runnerpin=3984acfce7bfefb231c0ea8ceb39c496c16def4e" in controller
+          assert not any(k in runner for k in ("GRANT pg_read_all_settings", "GRANT SELECT, INSERT", "REVOKE ALL"))
+          assert "patchers/p7_parallel_bridge" not in runner
+          assert runner.splitlines().count("JAIL")==1
+          print("FI P11 P5-P6 ARCHITECTURE AND RUNNER SOURCE PASS")
+          PY
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          cp -a . "$tmp/fi-go"
+          dst="$tmp/fi-go/internal/recordingest"
+          cp ./cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation.go "$dst/"
+          cp ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go "$dst/"
+          cp ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go "$dst/"
+          for f in private_family_preparation_p3.go private_family_preparation_p3_test.go private_family_dynamic_p4.go private_family_dynamic_p4_test.go private_family_persistent_p5.go private_family_persistent_p5_test.go; do
+            cp "./cmd/fi-backlog-recover/testdata/family-p3/$f" "$dst/"
+          done
+          for f in private_p6_family_buffers_test.go private_p6_file_proof_test.go private_p6_sql_coordinator.go private_p6_sql_security.go private_p6_sql_ntfs.go private_p6_sql_coverage.go private_p6_sql_usn.go private_p6_sql_other.go; do
+            cp "./cmd/fi-backlog-recover/testdata/family-p6/$f" "$dst/"
+          done
+          cp ./cmd/fi-backlog-recover/testdata/family-p11/*.go "$dst/"
+          cd "$tmp/fi-go"
+          go test -count=1 ./internal/recordingest -run '^TestPrivateP11'
+          go test -race -count=1 ./internal/recordingest -run '^TestPrivateP11'
+          echo 'FI P11 P5-P6 NATIVE FIVE-FAMILY GO TEST/RACE PASS'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
