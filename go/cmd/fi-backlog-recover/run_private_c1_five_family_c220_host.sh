@@ -8,10 +8,10 @@ set -eu
 umask 077
 fail(){ printf 'FI W512 PILOT STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] && [ "$#" -eq 2 ] ||
-    fail 'usage on root@c220: sh runner preflight|compile|family YYYYMMDDTHHMMSSZ'
+    fail 'usage on root@c220: sh runner preflight|compile|family|inject-file YYYYMMDDTHHMMSSZ'
 case "$1" in
-  preflight|compile|family) mode=$1 ;;
-  *) fail 'mode must be preflight or family' ;;
+  preflight|compile|family|inject-file) mode=$1 ;;
+  *) fail 'mode must be preflight, compile, family or inject-file' ;;
 esac
 # P6: 5 separate SoR relational ingestion modules, same P5 preparers.
 [ "${FI_W512_P6_FAMILY_SQL:-}" = 1 ] ||
@@ -613,7 +613,15 @@ export FI_W512_C1_P6_DIRECT=1
 export FI_W512_C1_STOP_WINDOWS=2
 export FI_W512_C1_SQL_DSN="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable"
 export FI_W512_C1_EXPECTED_PGDATA="$root/$name/data"
-if ! /usr/bin/time -l "$recover" \
+# Explicit crash/restart-development proof: the File family transaction is
+# committed before the C1 injection returns failure. The incomplete attempt
+# MUST NOT create a typed-window checkpoint or be reused as a clean replay.
+if [ "$mode" = inject-file ]; then
+    export FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT=1
+else
+    unset FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT
+fi
+if /usr/bin/time -l "$recover" \
   -private-w512-2g -private-hash-h16 \
   -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
   -source=iss-fs-22a.iss.local \
@@ -626,8 +634,25 @@ if ! /usr/bin/time -l "$recover" \
   -processing-chunk-records=32768 -continuous-private -start-window=1 \
   -max-windows=0 -max-runtime=0 -test-stop-after-windows=2 \
   -deferred-verified-clone -verified-cache-root="$cache" > "$out/$name/recover.log" 2>&1; then
-    tail -n 100 "$out/$name/recover.log" >&2 || :
-    fail 'W512 two-worker recovery rejected'
+    [ "$mode" != inject-file ] ||
+      fail 'C1 post-commit failure injection unexpectedly returned success'
+else
+    if [ "$mode" != inject-file ]; then
+        tail -n 100 "$out/$name/recover.log" >&2 || :
+        fail 'C1 signed development recovery returned an error'
+    fi
+    grep -Fq 'FI C1 DEVELOPMENT INJECTION: File SQL committed;' "$out/$name/recover.log" ||
+        fail 'C1 requested File post-commit fault did not occur'
+    [ "$(sql 'SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= 1')" = 0 ] ||
+        fail 'C1 incorrectly advanced a typed-window marker after File failure'
+    parent_count=$(sql 'SELECT count(*) FROM fi_recovery_projection.source_record')
+    case "$parent_count" in *[!0-9]*|'') fail 'C1 invalid partially committed source count';; esac
+    [ "$parent_count" -gt 493478 ] ||
+        fail 'C1 injection did not preserve a verifiable partial SQL source ledger'
+    unset FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT
+    printf 'FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS parent_rows=%s typed_windows_added=0 file_postcommit_failure=true dirty_clone_discard_required=true authoritative=0 published=0\n' "$parent_count" |
+        tee -a "$out/SUMMARY.txt"
+    exit 0
 fi
 for pid in "$iostatpid" "$vmstatpid"; do
     kill -TERM "$pid" 2>/dev/null || :
