@@ -264,6 +264,20 @@ func privateC1RecoverDirect(ctx context.Context,reader,writer *pgx.Conn,
     var empty BacklogGenerationVerification
     if !privateC1Enabled()||ctx==nil||g==nil||reader==nil||writer==nil||
         len(ds)<2||reader==writer{return empty,errors.New("FI C1: original P6 direct clone not selected")}
+    // The 8GiB experiment changes only post-seed report/marker grouping;
+    // the five-family buffer/SQL pipeline is never reset on either size.
+    if group:=os.Getenv("FI_W512_C1_GROUP_GIB");group!=""{
+        n,e:=strconv.Atoi(group)
+        if e!=nil{return empty,fmt.Errorf("FI C1: invalid 8GiB group size %q",group)}
+        replanned,stop,rows,sourceBytes,e:=privateC1EightGiBGroups(g,ds,n)
+        if e!=nil{return empty,e}
+        if startWindow!=1 || os.Getenv("FI_W512_C1_STOP_WINDOWS")!=strconv.Itoa(stop){
+            return empty,errors.New("FI C1 8GiB: stop count must match 2GiB/4GiB signed grouping")
+        }
+        ds=replanned
+        fmt.Printf("FI C1 EIGHT GIB SIGNED PLAN group_gib=%d new_windows=%d new_records=%d new_source_bytes=%d first_batch=%d last_batch=%d seed_unchanged=true identical_prefix=true\n",
+            n,stop,rows,sourceBytes,ds[1].StartBatch,ds[stop].EndBatch)
+    }
     end,err:=privateC1StopIndex(startWindow,len(ds))
     if err!=nil{return empty,err}
     var prevDigest []byte
