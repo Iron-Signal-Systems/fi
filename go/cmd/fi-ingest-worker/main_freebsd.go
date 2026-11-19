@@ -27,6 +27,7 @@ import (
 
 type workerConfig struct {
 	Workers                int
+	SQLWorkersMax          int
 	SecurityProfile        string
 	IngestSlots            chan struct{}
 	ConnectionString       string
@@ -202,6 +203,9 @@ func main() {
 	)
 
 	workers := flags.Int("workers", 1, "maximum concurrent source generation ingests")
+	// Reserved FI backend setting for the C1 shared adaptive SQL pool.
+	// Does not activate C1 on the ordinary unreleased ingest code path.
+	sqlWorkersMax := flags.Int("sql-workers-max", 5, "maximum adaptive SQL workers within a generation (1..16)")
 	// The flag selects a fixed profile for an entire generation. It does not
 	// activate the adaptive controller or modify the default service setting.
 	securityProfile := flags.String("security-profile", "P1", "fixed Windows Security ingest profile: P1, P2, P3, P4, or P5")
@@ -214,6 +218,10 @@ func main() {
 	// Reject unknown names before opening PostgreSQL or consulting trust state.
 	if _, err := fiFixedSecurityProfileContext(context.Background(), *securityProfile); err != nil {
 		fail(err)
+	}
+
+	if *sqlWorkersMax < 1 || *sqlWorkersMax > 16 {
+		fail(errors.New("sql-workers-max must be between 1 and 16"))
 	}
 
 	if *pollInterval <= 0 {
@@ -326,6 +334,7 @@ func main() {
 
 	config := workerConfig{
 		Workers:                *workers,
+		SQLWorkersMax:          *sqlWorkersMax,
 		SecurityProfile:        *securityProfile,
 		ConnectionString:       *connectionString,
 		CustodyRoot:            *custodyRoot,
