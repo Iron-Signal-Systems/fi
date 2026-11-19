@@ -617,7 +617,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf 'FI FAMILY C1 P5-P6 DIRECT START start_index=1 windows=2 prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n' | tee "$out/SUMMARY.txt"
+printf "FI FAMILY C1 P5-P6 DIRECT START start_index=1 windows=2 prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\\n" | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 export FI_W512_C1_STOP_WINDOWS=2
@@ -753,7 +753,7 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 staged_source_rows_added=0 artifact_copies=0 authoritative=0 accepted=0\n' "$elapsed" |
+printf "FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 staged_source_rows_added=0 artifact_copies=0 authoritative=0 accepted=0\\n" "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-w512-c1-direct-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
