@@ -221,7 +221,24 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
     startedCommit:=time.Now()
     err=tx.Commit(ctx)
     lane.commitWall+=time.Since(startedCommit)
-    return err
+    if err!=nil{return err}
+    // DEVELOPMENT FAILURE INJECTION: the File transaction is deliberately
+    // already durable when this error is returned. Finish/MarkTyped must
+    // refuse the incomplete generation; the next attempt must fail its
+    // clean-start guard unless it runs from a new, verified private clone.
+    // This never runs without the exact C1 private clone selection gate.
+    if privateC1PostCommitFailpoint(lane.family) {
+        return errors.New("FI C1 DEVELOPMENT INJECTION: File SQL committed; typed checkpoint must not advance; discard dirty clone")
+    }
+    return nil
+}
+
+
+// privateC1PostCommitFailpoint is deliberately restricted to C1's private
+// clone. It is NOT a production SQL behavior or an automatic retry.
+func privateC1PostCommitFailpoint(f privateP6Family) bool {
+    return f==privateP6File && privateC1Enabled() &&
+        os.Getenv("FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT")=="1"
 }
 
 func(w *privateC1FiveSQL) Source(ctx context.Context,rows []privateP6Record)error{
