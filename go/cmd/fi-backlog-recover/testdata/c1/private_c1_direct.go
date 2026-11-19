@@ -264,19 +264,36 @@ func privateC1RecoverDirect(ctx context.Context,reader,writer *pgx.Conn,
     var empty BacklogGenerationVerification
     if !privateC1Enabled()||ctx==nil||g==nil||reader==nil||writer==nil||
         len(ds)<2||reader==writer{return empty,errors.New("FI C1: original P6 direct clone not selected")}
-    // The 8GiB experiment changes only post-seed report/marker grouping;
-    // the five-family buffer/SQL pipeline is never reset on either size.
+    // C1 4GiB full-backlog is clone-only, preserving the original seed
+    // descriptor. Bounded P5/P6/SQL workers persist across all groups.
+    // Partial 8GiB experiments remain on their existing strict stop path.
+    fullRun:=os.Getenv("FI_W512_C1_FULL_BACKLOG")=="1"
+    if fullRun && (startWindow!=1 ||
+        os.Getenv("FI_W512_C1_GROUP_GIB")!="4" ||
+        os.Getenv("FI_W512_C1_STOP_WINDOWS")!=""){
+        return empty,errors.New("FI C1 FULL: require seed start=1, 4GiB groups and no requested stop")
+    }
     if group:=os.Getenv("FI_W512_C1_GROUP_GIB");group!=""{
         n,e:=strconv.Atoi(group)
-        if e!=nil{return empty,fmt.Errorf("FI C1: invalid 8GiB group size %q",group)}
+        if e!=nil{return empty,fmt.Errorf("FI C1: invalid group size %q",group)}
         replanned,stop,rows,sourceBytes,e:=privateC1EightGiBGroups(g,ds,n)
         if e!=nil{return empty,e}
-        if startWindow!=1 || os.Getenv("FI_W512_C1_STOP_WINDOWS")!=strconv.Itoa(stop){
+        if !fullRun && (startWindow!=1 ||
+            os.Getenv("FI_W512_C1_STOP_WINDOWS")!=strconv.Itoa(stop)){
             return empty,errors.New("FI C1 8GiB: stop count must match 2GiB/4GiB signed grouping")
         }
         ds=replanned
-        fmt.Printf("FI C1 EIGHT GIB SIGNED PLAN group_gib=%d new_windows=%d new_records=%d new_source_bytes=%d first_batch=%d last_batch=%d seed_unchanged=true identical_prefix=true\n",
-            n,stop,rows,sourceBytes,ds[1].StartBatch,ds[stop].EndBatch)
+        if fullRun{
+            fmt.Printf("FI C1 FULL BACKLOG SIGNED PLAN group_gib=4 new_windows=%d new_records=%d new_source_bytes=%d first_batch=%d last_batch=%d signed_batches=%d seeded_records=%d seed_unchanged=true no_record_window_limit=true\n",
+                len(ds)-1,g.Receipt.RecordCount-ds[0].EndRecord,
+                g.Receipt.DataBytes-ds[0].DataBytes,ds[1].StartBatch,
+                ds[len(ds)-1].EndBatch,len(g.Batches),ds[0].EndRecord)
+        }else{
+            fmt.Printf("FI C1 EIGHT GIB SIGNED PLAN group_gib=%d new_windows=%d new_records=%d new_source_bytes=%d first_batch=%d last_batch=%d seed_unchanged=true identical_prefix=true\n",
+                n,stop,rows,sourceBytes,ds[1].StartBatch,ds[stop].EndBatch)
+        }
+    } else if fullRun {
+        return empty,errors.New("FI C1 FULL: missing mandatory 4GiB source grouping")
     }
     end,err:=privateC1StopIndex(startWindow,len(ds))
     if err!=nil{return empty,err}
@@ -381,6 +398,9 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // The two-window test intentionally stops after its durable private
     // prefix. Never fabricate a complete-generation acceptance.
     if end<len(ds){return empty,context.Canceled}
+    if fullRun {
+        return privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)
+    }
     verified,err:=VerifyCompleteBacklogTypedGeneration(ctx,reader,g,limits)
     if err!=nil{return empty,err}
     return verified,nil
