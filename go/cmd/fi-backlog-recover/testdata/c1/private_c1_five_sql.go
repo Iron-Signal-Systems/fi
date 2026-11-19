@@ -111,6 +111,17 @@ func (w *privateC1FiveSQL) familyLimit() int {
     }
     return w.maxWorkers
 }
+// The P6 USN projector binds each object to a preceding capture boundary
+// using signed source-record order and a generation-local capture map.
+// Unrelated SQL families can run concurrently, but a later USN handoff
+// must not begin SQL before the prior USN handoff COMMITTED. A single
+// outstanding USN handoff preserves this without weakening capture checks.
+func (w *privateC1FiveSQL) familyHandoffLimit(f privateP6Family) int {
+    if f==privateP6USN {
+        return 1
+    }
+    return w.familyLimit()
+}
 
 func privateC1Enabled() bool {
     return os.Getenv("FI_W512_C1_P6_DIRECT")=="1" &&
@@ -482,7 +493,7 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
     }
     if w.failed!=nil{return w.failed}
     lane:=w.lanes[f]
-    if len(lane.outstanding)>=w.familyLimit(){
+    if len(lane.outstanding)>=w.familyHandoffLimit(f){
         started:=time.Now()
         lane.backpressureWaits++
         err:=w.waitNextFamily(ctx,f)
