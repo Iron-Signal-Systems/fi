@@ -541,7 +541,7 @@ func(w *privateC1FiveSQL) WaitAll(ctx context.Context)error{
         lane.mu.Unlock()
     }
     if total!=w.parentRows {
-        return fmt.Errorf("FI C1: five committed child counts %d differ from P6 signed parent count %d",total,w.parentRows)
+        return fmt.Errorf("FI C1: shared pool committed child count %d differs from signed parent count %d",total,w.parentRows)
     }
     return nil
 }
