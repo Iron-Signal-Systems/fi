@@ -78,7 +78,7 @@ func privateC1SourceBatchIDs(ctx context.Context,reader *pgx.Conn,
     return ids,nil
 }
 
-// C1's five SQL writers commit individual family handoffs. They therefore
+// C1's shared SQL workers commit individual family handoffs. They therefore
 // cannot promise a single PostgreSQL transaction across six connections.
 // Before any write, reject a clone containing partial source rows or a
 // completion marker in the requested signed range. A failed/incomplete C1
@@ -330,7 +330,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     }
     // W512 is only a reporting boundary. The P6 buffers were never
     // drained or re-created inside the loop above.
-    if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 five-family drain: %w",err)}
+    if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 shared-pool five-family drain: %w",err)}
     parents,children,family:=sink.Stats()
     if parents!=totalRows||children!=totalRows{
         return empty,fmt.Errorf("FI C1: source/child count mismatch source=%d typed=%d signed=%d",
@@ -344,7 +344,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
         prepTotals.batches,prepTotals.records,prepTotals.readerTime,
         prepTotals.workerTime,prepTotals.writerWait)
     elapsed:=time.Since(started)
-    fmt.Printf("FI C1 P6 FIVE SQL PASS windows=%d records=%d bytes=%d families=5 parent=1 five_committed=%d security=%d file=%d coverage=%d usn=%d other=%d source_staging=none duration=%s\n",
+    fmt.Printf("FI C1 P6 SHARED SQL PASS windows=%d records=%d bytes=%d families=5 parent=1 five_committed=%d security=%d file=%d coverage=%d usn=%d other=%d source_staging=none duration=%s\n",
         end-startWindow,totalRows,totalBytes,children,
         family[0],family[1],family[2],family[3],family[4],elapsed)
     // C1 has ONE durable marker barrier at test completion, not
