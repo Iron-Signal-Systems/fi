@@ -10,6 +10,7 @@ package recordingest
 import (
     "context"
     "errors"
+    "fmt"
     "strings"
     "testing"
     "time"
@@ -18,9 +19,9 @@ import (
 func privateC1BackpressureFixture()(*privateC1FiveSQL,*privateC1SQLLane,[privateC1MaxFamilyHandoffsInFlight]chan error){
     parent:=&privateC1SourceAck{done:make(chan struct{})}
     close(parent.done) // original ordered source SQL commit is complete
-    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent}
-    lane:=&privateC1SQLLane{family:privateP6Security,
-        jobs:make(chan privateC1SQLJob,1)}
+    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
+        maxWorkers:1,workerCount:1,jobs:make(chan privateC1SQLJob,1)}
+    lane:=&privateC1SQLLane{family:privateP6Security}
     w.lanes[privateP6Security]=lane
     var acks [privateC1MaxFamilyHandoffsInFlight]chan error
     for i:=range acks{
@@ -52,7 +53,7 @@ func TestPrivateC1P5P6OnlyOldestHandoffWaitsAtBound(t *testing.T){
         t.Fatalf("C1 did not record exact continuous P6 backpressure: %d",lane.backpressureWaits)
     }
     select{
-    case job:=<-lane.jobs:
+    case job:=<-w.jobs:
         if len(job.rows)!=1||job.rows[0].ordinal!=row.ordinal||
            lane.outstanding[len(lane.outstanding)-1]!=job.done{
             t.Fatal("C1 newly admitted SQL handoff changed signed row or ACK")
@@ -72,7 +73,7 @@ func TestPrivateC1P5P6OldestHandoffErrorStopsAdmission(t *testing.T){
     if err==nil||!strings.Contains(err.Error(),"injected committed-family error"){
         t.Fatalf("C1 swallowed failed PostgreSQL family ACK: %v",err)
     }
-    if len(lane.jobs)!=0||len(lane.outstanding)!=3||w.failed==nil{
+    if len(w.jobs)!=0||len(lane.outstanding)!=3||w.failed==nil{
         t.Fatal("C1 admitted another SQL buffer after prior family failure")
     }
 }
@@ -189,5 +190,64 @@ func TestPrivateC1OrderedSourceCancelDoesNotDiscardACK(t *testing.T){
     }
     if len(w.sourceOutstanding)!=1 || w.sourceOutstanding[0]!=ack {
         t.Fatal("FI C1 lost unacknowledged parent SQL handoff on cancel")
+    }
+}
+
+func TestPrivateC1AdaptiveSQLWorkersMaxValidation(t *testing.T){
+    t.Setenv("FI_W512_C1_SQL_WORKERS_MAX","")
+    if n,e:=privateC1SQLWorkersMax();e!=nil||n!=5{
+        t.Fatalf("expected default 5, got %d %v",n,e)
+    }
+    for _,n:=range []int{1,2,5,8,12,16}{
+        t.Setenv("FI_W512_C1_SQL_WORKERS_MAX",fmt.Sprint(n))
+        if got,e:=privateC1SQLWorkersMax();e!=nil||got!=n{
+            t.Fatalf("requested %d shared workers, got %d %v",n,got,e)
+        }
+    }
+    for _,s:=range []string{"0","17","-1","bogus","1.5"," 5","0000"}{
+        t.Setenv("FI_W512_C1_SQL_WORKERS_MAX",s)
+        if _,e:=privateC1SQLWorkersMax();e==nil{
+            t.Fatalf("accepted invalid shared SQL worker maximum %q",s)
+        }
+    }
+}
+func TestPrivateC1SharedSQLQueueAcceptsAnyFamily(t *testing.T){
+    parent:=&privateC1SourceAck{done:make(chan struct{})}
+    close(parent.done)
+    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
+        maxWorkers:5,workerCount:5,jobs:make(chan privateC1SQLJob,5)}
+    for f:=privateP6Family(0);f<privateP6FamilyCount;f++{
+        w.lanes[f]=&privateC1SQLLane{family:f}
+        if e:=w.Family(context.Background(),f,
+            []privateP6Record{privateP6Fixture(int(f)+1,1,privateC1TestKind(f))});e!=nil{
+            t.Fatal(e)
+        }
+    }
+    if len(w.jobs)!=5{t.Fatal("one shared SQL queue did not receive all five families")}
+    seen:=make(map[privateP6Family]bool)
+    for i:=0;i<5;i++{
+        job:=<-w.jobs
+        if job.source!=parent||seen[job.family]||job.done!=w.lanes[job.family].outstanding[0]{
+            t.Fatal("shared SQL worker job lost family/identity or duplicate ACK")
+        }
+        seen[job.family]=true
+    }
+    if len(seen)!=5{t.Fatal("a family was pinned to its own SQL queue")}
+}
+func privateC1TestKind(f privateP6Family)string{
+    switch f{
+    case privateP6Security:return "WindowsSecurityEvent"
+    case privateP6File:return "FileObservation"
+    case privateP6Coverage:return "WindowsSecurityCoverage"
+    case privateP6USN:return "USNReadBoundary"
+    default:return "CollectorIdentity"
+    }
+}
+func TestPrivateC1SharedSQLFamilyBoundFollowsMax(t *testing.T){
+    for _,n:=range []int{1,4,5,8,12,16}{
+        w:=&privateC1FiveSQL{maxWorkers:n}
+        want:=n
+        if want<4{want=4}
+        if w.familyLimit()!=want{t.Fatalf("max %d family capacity=%d, want %d",n,w.familyLimit(),want)}
     }
 }
