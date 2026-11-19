@@ -155,6 +155,63 @@ jobs:
           # The exact C220 runner's 'compile' mode runs the real Go/race
           # tests and exits before copying or starting PostgreSQL.
           echo 'FI P11 LINUX SYNTAX/ARCHITECTURE PASS exact-C220-seed-go-race-pending'
+      - name: C1 five-family development architecture and source invariants
+        run: |
+          set -euo pipefail
+          sh -n ./cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh
+          for source in ./cmd/fi-backlog-recover/testdata/c1/*.go; do
+            gofmt -e "$source" >/dev/null
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          core=Path("cmd/fi-backlog-recover/testdata/c1")
+          direct=(core/"private_c1_direct.go").read_text()
+          sql=(core/"private_c1_five_sql.go").read_text()
+          buffers=(core/"private_c1_family_buffers.go").read_text()
+          modules=(core/"private_c1_modules.go").read_text()
+          tests=(core/"private_c1_correctness_test.go").read_text()
+          runner=Path("cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh").read_text()
+          controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
+          assert "sourcecommit=3fd55cb256ec5903741a4c8397d92a546360f48f" in runner
+          assert "sourcepin=3fd55cb256ec5903741a4c8397d92a546360f48f" in controller
+          assert "runnerpin=f64bb3407b045c75519f73a77dccc479886fb7a2" in controller
+          assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
+          assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
+          assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
+          assert "pool.newStream(ctx,reader,prepare)" in direct
+          assert "io.TeeReader(f,hasher)" in direct
+          assert "buffers.Add(ctx,privateP6Record{" in direct
+          assert "privateC1SQLModules[i]" in sql
+          assert "privateC1PostCommitFailpoint(lane.family)" in sql
+          assert "privateC1CleanDestinationStatus" in direct
+          assert "fi_recovery_projection.source_record" in direct
+          assert 'window-complete' not in buffers
+          assert 'end-of-input' in buffers
+          assert "privateP6USN" in buffers and "WaitFamily(ctx,privateP6File)" in buffers
+          assert "WaitAll(ctx)" in buffers
+          assert "privateC1MarkTyped" in direct
+          assert "privateC1CleanDestinationStatus" in tests
+          assert "TestPrivateC1RefusesDirtyPartialOrAlreadyCompletedDestination" in tests
+          assert "TestPrivateC1PostCommitInjectionNeverSelectableOutsideDevelopment" in tests
+          assert all(s in modules for s in (
+             "(*privateP6SQLCoordinator).security",
+             "(*privateP6SQLCoordinator).ntfs",
+             "(*privateP6SQLCoordinator).coverage",
+             "(*privateP6SQLCoordinator).usn",
+             "(*privateP6SQLCoordinator).other",
+          ))
+          assert "testdata/c1/private_c1_family_buffers.go" in runner
+          assert "testdata/c1/private_c1_direct.go" in runner
+          assert "TestPrivateC1" in runner
+          assert "FI C1 CLEAN START PASS" in runner
+          assert not any(k in runner for k in ("GRANT pg_read_all_settings","REVOKE ALL","patchers/p7_parallel_bridge"))
+          assert "preflight|compile|c1" in controller
+          assert "preflight|compile|family" in runner
+          assert runner.index('if [ "$mode" = compile ]; then') < runner.index('cp -R "$seed/$name/data"')
+          print("FI C1 P5 + P6 DEVELOPMENT ARCHITECTURE AND SAFETY SOURCE PASS")
+          PY
+          echo 'FI C1 Go syntax/architecture PASS; exact C220 compiled Go/race and full SQL test remain required'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
