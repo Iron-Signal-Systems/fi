@@ -98,4 +98,14 @@ done
 # here are signed data, five-family relational correctness and clean SQL
 # shutdown. The historical P5/P6 receipts above only pin the original input.
 cat "$runroot/C1_FAMILIES.txt"
+cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
+elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
+seconds=$(awk -v t="$elapsed" 'BEGIN{
+  n=split(t,a,"m");if(n!=2)exit 1
+  sub(/s$/,"",a[2]);if(a[1]<0||a[2]<0)exit 1
+  printf "%.3f",a[1]*60+a[2]
+}') || fail 'C1 reported an invalid duration'
+rate=$(awk -v t="$seconds" 'BEGIN{if(t<=0)exit 1;printf "%.2f",997434/t}') ||
+  fail 'C1 reported an invalid throughput'
+printf 'FI C1 DEVELOPMENT THROUGHPUT records=997434 elapsed_seconds=%s records_per_second=%s family_sql_writers=5\n' "$seconds" "$rate"
 printf 'FI C1 DEVELOPMENT INTEGRATION PASS windows=2 records=997434 sql_family_writers=5 source_parent_writers=1 clean_start=true source_staging=none authoritative=0 published=0 output=%s\n' "$runroot"
