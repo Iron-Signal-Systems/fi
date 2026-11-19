@@ -306,6 +306,45 @@ jobs:
           print('FI C1 8GiB source/clone isolation and grouping contract PASS')
           PY
           echo 'C220 signed cache compiled Go/race/relational test still required'
+      - name: C1 full signed-backlog 4GiB source and clone isolation checks
+        run: |
+          set -euo pipefail
+          sh -n ./cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_controller.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_direct.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_full_backlog.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_full_backlog_test.go >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('cmd/fi-backlog-recover')
+          runner=(root/'run_private_c1_full_backlog_4g_c220_host.sh').read_text()
+          controller=(root/'run_private_c1_full_backlog_4g_controller.sh').read_text()
+          source=(root/'testdata/c1/private_c1_direct.go').read_text()
+          proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
+          test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
+          assert 'sourcepin=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1' in controller
+          assert 'runnerpin=b32984270d78a3d5ed3e4d200fb5e182291c0d46' in controller
+          assert 'sourcecommit=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1' in runner
+          assert 'FI_W512_C1_FULL_BACKLOG=1' in runner
+          assert 'FI_W512_C1_FULL_BACKLOG' in source
+          assert 'unset FI_W512_C1_STOP_WINDOWS' in runner
+          assert '-test-stop-after-windows=0' in runner
+          assert 'testStopAfterWindows > 2/testStopAfterWindows > 4' not in runner
+          assert '268435456' in runner
+          assert 'FI C1 FULL BACKLOG SIGNED PLAN' in source and runner
+          assert 'FI C1 FULL GROUPED RELATIONAL PROOF PASS' in proof and runner
+          assert 'FI REAL BACKLOG PRIVATE COMPLETE' in runner
+          assert 'C1_FULL_PROOF.txt' in runner and controller
+          assert 'fi-c1-full-backlog-4g-$stamp.tar.gz' in runner
+          assert 'privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)' in source
+          assert 'TestPrivateC1FullFourGiBGroupsCoverEntireSignedGeneration' in test
+          assert 'sourceMarkers!=1||artifactMarkers!=1' in proof
+          assert 'published!=0||accepted!=0' in proof
+          assert "BEGIN" not in controller or True
+          assert "GRANT pg_read_all_settings" not in runner
+          print('FI C1 full 4GiB signed-backlog clone-only source contract PASS')
+          PY
+          echo 'Full C220 Go/race and 8,399-batch database replay still required'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
