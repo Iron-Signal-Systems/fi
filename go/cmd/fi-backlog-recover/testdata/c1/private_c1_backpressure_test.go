@@ -16,7 +16,9 @@ import (
 )
 
 func privateC1BackpressureFixture()(*privateC1FiveSQL,*privateC1SQLLane,[privateC1MaxFamilyHandoffsInFlight]chan error){
-    w:=&privateC1FiveSQL{ctx:context.Background()}
+    parent:=&privateC1SourceAck{done:make(chan struct{})}
+    close(parent.done) // original ordered source SQL commit is complete
+    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent}
     lane:=&privateC1SQLLane{family:privateP6Security,
         jobs:make(chan privateC1SQLJob,1)}
     w.lanes[privateP6Security]=lane
@@ -170,5 +172,22 @@ func TestPrivateC1KnownSecurityIDsOnlyWhenEnabled(t *testing.T){
     }
     if len(privateC1KnownSourceIDs(context.Background()))!=0 {
         t.Fatal("FI C1 used source IDs without a signed SQL lookup")
+    }
+}
+
+func TestPrivateC1OrderedSourceCancelDoesNotDiscardACK(t *testing.T){
+    ack:=&privateC1SourceAck{done:make(chan struct{})}
+    ctx,cancel:=context.WithCancel(context.Background())
+    cancel()
+    if err:=privateC1AwaitSource(ctx,ack);!errors.Is(err,context.Canceled){
+        t.Fatalf("FI C1 source waiting ignored cancellation: %v",err)
+    }
+    w:=&privateC1FiveSQL{ctx:context.Background(),
+        sourceOutstanding:[]*privateC1SourceAck{ack}}
+    if err:=w.waitNextSource(ctx);!errors.Is(err,context.Canceled){
+        t.Fatalf("FI C1 ordered parent wait did not fail closed: %v",err)
+    }
+    if len(w.sourceOutstanding)!=1 || w.sourceOutstanding[0]!=ack {
+        t.Fatal("FI C1 lost unacknowledged parent SQL handoff on cancel")
     }
 }
