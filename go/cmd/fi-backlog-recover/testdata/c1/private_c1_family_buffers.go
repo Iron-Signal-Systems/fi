@@ -2,9 +2,10 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
-// P6 disposable W512 clone ONLY. Family-capacity handoffs use the existing
-// single, atomic typed-window SQL transaction. This C1 development code must not be enabled
-// by ordinary FI or by frozen accepted P5.
+// C1 DEVELOPMENT ONLY: original P5 preparation feeds five independent P6
+// family buffers and five independently committing PostgreSQL family writers.
+// The source ledger stays ordered; the typed checkpoint is withheld until
+// all family commits and relational checks complete.
 package recordingest
 
 import (
@@ -66,9 +67,9 @@ func (r privateP6Record) valid()bool{
         r.prepared.Record.Version==SpoolRecordVersion
 }
 
-// A new transactional SQL sink is deliberately NOT free to commit each
-// family. All methods execute inside the SAME W512 pgx.Tx; the caller commits
-// once, only after finish() and every existing SQL integrity gate succeeds.
+// C1 commits each family handoff on its dedicated PostgreSQL connection.
+// The source identity ledger uses its own ordered connection. There is NO
+// single cross-connection SQL transaction; completion markers are gated.
 type privateP6SQLHandoff interface{
     Source(ctx context.Context, rows []privateP6Record)error
     Family(ctx context.Context, family privateP6Family, rows []privateP6Record)error
@@ -226,9 +227,9 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     return nil
 }
 
-// This is the only unconditional drain, at the true end of signed input. Signed batch and K32 boundaries
-// DO NOT call Finish. The existing typed W512 transaction still commits
-// atomically only after every table, FK and source-window check passes.
+// This is the only unconditional drain at the true end of signed input.
+// Signed batch, K32 and W512 reporting boundaries do NOT call Finish.
+// All five SQL workers must ACK before a typed completion marker can advance.
 func(b *privateP6Buffers) Finish(ctx context.Context)error{
     if b==nil||ctx==nil||b.finished||b.failed!=nil{return errors.New("FI P6: invalid final window barrier")}
     if err:=b.flushSource(ctx);err!=nil{return err}
@@ -239,9 +240,8 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
     }{
         if err:=b.flushFamily(ctx,f,"end-of-input");err!=nil{return err}
     }
-    // P6's old coordinator was synchronous. In this P10 private copy,
-    // all five asynchronous PostgreSQL handoffs must acknowledge durable
-    // completion before any typed-window marker can be committed.
+    // P6's original SQL coordinator was synchronous. C1 waits for all five
+    // independent family SQL commits before completing the signed input.
     if wait,ok:=b.sink.(interface{WaitAll(context.Context)error});ok{
         if err:=wait.WaitAll(ctx);err!=nil{
             b.failed=fmt.Errorf("FI P6 direct: five-family commit barrier: %w",err)
