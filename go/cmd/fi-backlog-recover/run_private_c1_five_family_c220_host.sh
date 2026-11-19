@@ -60,7 +60,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=849db45325f7f79331be585e11d28567c4beedef
+sourcecommit=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -720,7 +720,8 @@ awk -v cap="$sqlmax" '{
   for(i=1;i<=NF;i++){split($i,p,"=");x[p[1]]=p[2]}
   if(x["workers_peak"]<1||x["workers_peak"]>cap||x["workers_current"]<1||
      x["workers_current"]>cap||x["busy"]!=0)exit 1
-  if(cap>1&&x["workers_peak"]<2)exit 1
+  if(cap>1&&(x["workers_peak"]<2||x["security_sql_peak"]<2))exit 1
+  if(x["security_sql_peak"]<1||x["security_sql_peak"]>cap||x["jobs_completed"]<5)exit 1
 }' "$out/$name/C1_POOL.txt" || fail 'C1 adaptive SQL worker bound or scale-up proof missing'
 # Expose the original P6 Security COPY counters once, without altering the
 # C220 clone schema, SQL module, staging, or network/PG permissions.
@@ -730,7 +731,7 @@ grep '^FI C1 SECURITY COPY PROFILE ' "$log" > "$out/$name/C1_SECURITY_COPY.txt" 
 grep -Fq 'events=892110 ' "$out/$name/C1_SECURITY_COPY.txt" &&
 grep -Eq 'fields=[1-9][0-9]* ' "$out/$name/C1_SECURITY_COPY.txt" ||
   fail 'C1 Security event/child COPY profiling count mismatch'
-grep '^FI C1 P6 FIVE SQL PASS ' "$log" > "$out/$name/C1_FAMILIES.txt" ||
+grep '^FI C1 P6 SHARED SQL PASS ' "$log" > "$out/$name/C1_FAMILIES.txt" ||
   fail 'C1 all five SQL worker handoffs missing'
 grep -Fq 'windows=2 records=997434 ' "$out/$name/C1_FAMILIES.txt" &&
 grep -Fq 'five_committed=997434 ' "$out/$name/C1_FAMILIES.txt" &&
