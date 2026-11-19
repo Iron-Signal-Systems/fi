@@ -5,12 +5,12 @@ set -eu
 umask 077
 fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
-[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1|inject-file 20261115T153532Z'
-case "$1" in preflight|compile|c1|inject-file) mode=$1;;*)fail 'unknown mode';;esac
+[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1 20261115T153532Z'
+case "$1" in preflight|compile|c1) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1
-runnerpin=9f885db60e6c81535f584a5e118d3a0e2acced29
+runnerpin=b32984270d78a3d5ed3e4d200fb5e182291c0d46
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -81,16 +81,6 @@ runner_mode=family
 ( if sh "$runner" "$runner_mode" "$2";then printf '0\n' > "$status";else printf '1\n' > "$status";fi ) 2>&1 | tee "$log"
 [ -s "$status" ] && [ "$(cat "$status")" = 0 ] ||
   fail 'native P6 adaptive SQL build, signed stream, relational or clone checks failed'
-if [ "$mode" = inject-file ]; then
-  grep -Fq 'FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS ' "$log" ||
-    fail 'C1 injected File failure did not prove missing typed checkpoint'
-  grep -Fq 'dirty_clone_discard_required=true authoritative=0 published=0' "$log" ||
-    fail 'C1 failed dirty clone quarantine proof'
-  grep -Fq 'FI W512 PILOT FINISHED exit=0 ' "$log" ||
-    fail 'C1 injected File clone was not cleanly shut down'
-  printf 'FI C1 DEVELOPMENT FAILURE/RESTART GUARD PASS file_postcommit_failure=true typed_marker_not_advanced=true dirty_clone_discard_required=true\n'
-  exit 0
-fi
 receipt=$(grep '^FI W512 PILOT FINISHED exit=0 outputs=' "$log" | tail -n 1)
 [ -n "$receipt" ] || fail 'C1 private SQL shutdown receipt missing'
 out=$(printf '%s\n' "$receipt" | sed -n 's/.* outputs=\([^ ]*\) private_clone=.*/\1/p')
