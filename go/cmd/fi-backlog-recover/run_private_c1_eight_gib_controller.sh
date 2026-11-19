@@ -10,7 +10,7 @@ case "$1" in preflight|compile|c1|inject-file) mode=$1;;*)fail 'unknown mode';;e
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3
-runnerpin=5868fb01944397853089b6bceffcc137a22fe5df
+runnerpin=be36d70b0a7a1491f38ad8b383ae26f50a0f5c88
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_eight_gib_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -117,9 +117,26 @@ seconds=$(awk -v t="$elapsed" 'BEGIN{
   sub(/s$/,"",a[2]);if(a[1]<0||a[2]<0)exit 1
   printf "%.3f",a[1]*60+a[2]
 }') || fail 'C1 reported an invalid duration'
-records=$(sed -n 's/.* new_records=\\([0-9]*\\) .*/\\1/p' "$runroot/C1_PLAN.txt")
-bytes=$(sed -n 's/.* new_source_bytes=\\([0-9]*\\) .*/\\1/p' "$runroot/C1_PLAN.txt")
-lastbatch=$(sed -n 's/.* last_batch=\\([0-9]*\\) .*/\\1/p' "$runroot/C1_PLAN.txt")
+# Parse whitespace-separated key=value fields, not sed BRE backrefs.
+# A bad/missing field fails closed after the validated SQL replay receipt.
+plan_field() {
+  awk -v want="$1" '
+    /^FI C1 EIGHT GIB SIGNED PLAN / {
+      for(i=1;i<=NF;i++) {
+        n=split($i,p,"=")
+        if(n==2 && p[1]==want && p[2]~/^[0-9]+$/) {
+          print p[2]
+          found=1
+          exit
+        }
+      }
+    }
+    END {if(!found)exit 1}
+  ' "$runroot/C1_PLAN.txt"
+}
+records=$(plan_field new_records) || fail 'signed 8GiB record count missing'
+bytes=$(plan_field new_source_bytes) || fail 'signed 8GiB byte count missing'
+lastbatch=$(plan_field last_batch) || fail 'signed 8GiB last batch missing'
 [ -n "$records" ] && [ -n "$bytes" ] && [ -n "$lastbatch" ] || fail 'signed 8GiB counts missing'
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported an invalid throughput'
