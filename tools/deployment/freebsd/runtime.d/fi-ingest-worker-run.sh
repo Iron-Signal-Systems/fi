@@ -48,6 +48,14 @@ done
 
 fi_ingest_worker_workers="${fi_ingest_worker_workers:-1}"
 
+# Independent of the number of concurrently ingested source generations:
+# C1 shared relational SQL workers can grow from one to this hard limit.
+fi_ingest_worker_sql_workers_max="${fi_ingest_worker_sql_workers_max:-5}"
+case "$fi_ingest_worker_sql_workers_max" in
+    [1-9]|1[0-6]) ;;
+    *) fail "fi_ingest_worker_sql_workers_max must be a decimal integer from 1 to 16" ;;
+esac
+
 case "$fi_ingest_worker_workers" in
     ""|*[!0-9]*)
         fail "fi_ingest_worker_workers must be an integer"
@@ -95,6 +103,7 @@ export PGPASSFILE="$fi_ingest_worker_pgpass"
 set -- \
     -postgres "$fi_ingest_worker_postgres" \
     -workers "$fi_ingest_worker_workers" \
+    -sql-workers-max "$fi_ingest_worker_sql_workers_max" \
     -security-profile "$fi_ingest_worker_security_profile" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
