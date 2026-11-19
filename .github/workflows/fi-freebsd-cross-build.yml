@@ -173,9 +173,9 @@ jobs:
           tests=(core/"private_c1_correctness_test.go").read_text()
           runner=Path("cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh").read_text()
           controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
-          assert "sourcecommit=832ff8053c839ea631fdeb93567ee77d03177253" in runner
-          assert "sourcepin=832ff8053c839ea631fdeb93567ee77d03177253" in controller
-          assert "runnerpin=d7636b35bd1319987871896cdecd596528ae4b82" in controller
+          assert "sourcecommit=9f8ca781d4fb32df75d6ca113d1d2f00c5f554a2" in runner
+          assert "sourcepin=9f8ca781d4fb32df75d6ca113d1d2f00c5f554a2" in controller
+          assert "runnerpin=de21452c716b78c6298f4f3ccc30a85587f2310b" in controller
           assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
           assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
           assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
@@ -183,6 +183,13 @@ jobs:
           assert "io.TeeReader(f,hasher)" in direct
           assert "buffers.Add(ctx,privateP6Record{" in direct
           assert "privateC1SQLModules[i]" in sql
+          assert "privateC1MaxFamilyHandoffsInFlight = 4" in sql
+          assert "err:=w.waitNextFamily(ctx,f)" in sql
+          assert "lane.backpressureWaits++" in sql
+          assert "FI C1 P6 CONTINUOUS FAMILY" in sql
+          assert "private_c1_backpressure_test.go" in runner
+          assert "C1_CONTINUOUS_FAMILIES.txt" in runner
+          assert "C1_CONTINUOUS_FAMILIES.txt" in controller
           assert "privateC1PostCommitFailpoint(lane.family)" in sql
           assert "privateC1CleanDestinationStatus" in direct
           assert "fi_recovery_projection.source_record" in direct
@@ -194,6 +201,10 @@ jobs:
           assert "privateC1CleanDestinationStatus" in tests
           assert "TestPrivateC1RefusesDirtyPartialOrAlreadyCompletedDestination" in tests
           assert "TestPrivateC1PostCommitInjectionNeverSelectableOutsideDevelopment" in tests
+          backpressure=(core/"private_c1_backpressure_test.go").read_text()
+          assert "TestPrivateC1P5P6OnlyOldestHandoffWaitsAtBound" in backpressure
+          assert "TestPrivateC1P5P6OldestHandoffErrorStopsAdmission" in backpressure
+          assert "TestPrivateC1P6DependencyAndFinalFullFenceStillWaitsAll" in backpressure
           assert all(s in modules for s in (
              "(*privateP6SQLCoordinator).security",
              "(*privateP6SQLCoordinator).ntfs",
