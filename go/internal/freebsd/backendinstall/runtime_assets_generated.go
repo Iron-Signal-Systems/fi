@@ -213,7 +213,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: 67a4bebd9c61b24215b93dc4e748c7e68def7a720338fbe7749214990adaeebd
+// SHA256: 569c676de0801ee8997e45f447ab6fa4fb15f2640fe42bf3039ae9dd416e8f39
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -264,6 +264,14 @@ done
 
 fi_ingest_worker_workers="${fi_ingest_worker_workers:-1}"
 
+# Independent of the number of concurrently ingested source generations:
+# C1 shared relational SQL workers can grow from one to this hard limit.
+fi_ingest_worker_sql_workers_max="${fi_ingest_worker_sql_workers_max:-5}"
+case "$fi_ingest_worker_sql_workers_max" in
+    [1-9]|1[0-6]) ;;
+    *) fail "fi_ingest_worker_sql_workers_max must be a decimal integer from 1 to 16" ;;
+esac
+
 case "$fi_ingest_worker_workers" in
     ""|*[!0-9]*)
         fail "fi_ingest_worker_workers must be an integer"
@@ -311,6 +319,7 @@ export PGPASSFILE="$fi_ingest_worker_pgpass"
 set -- \
     -postgres "$fi_ingest_worker_postgres" \
     -workers "$fi_ingest_worker_workers" \
+    -sql-workers-max "$fi_ingest_worker_sql_workers_max" \
     -security-profile "$fi_ingest_worker_security_profile" \
     -generation-custody-root /var/db/fi/custody/generation \
     -generation-recorded-root /var/db/fi/custody/recorded \
@@ -483,7 +492,7 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: 408116c93be9342e72cd984798cc828c6eca709dcbf82d0fdf0ff9ec60b44169
+// SHA256: 7c0bde8b9b5d454fa9f1dbe8b4ce476006a7b6161a60d4627fed0cf126284fbf
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
@@ -496,6 +505,10 @@ fi_ingest_worker_namespaces="NO"
 fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
+
+# Maximum adaptive SQL workers within one generation; 1-16 (default 5).
+# Separate from fi_ingest_worker_workers (concurrent source generations).
+fi_ingest_worker_sql_workers_max="5"
 
 # P3: tested Windows Security COPY profile, 4096 records / 16 MiB.
 fi_ingest_worker_security_profile="P3"
