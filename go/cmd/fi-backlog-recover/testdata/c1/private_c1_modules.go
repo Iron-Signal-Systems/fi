@@ -16,6 +16,17 @@ import (
     "time"
 )
 
+type privateC1KnownSourceIDsKey struct{}
+
+// Existing P6 security bulk COPY historically performs its own FK lookup.
+// C1's family module already proved the exact source batch/ordinal mapping;
+// reuse it for the second COPY stage, never query the same IDs twice.
+func privateC1KnownSourceIDs(ctx context.Context) []int64 {
+    if ctx==nil||!privateC1Enabled(){return nil}
+    ids,_:=ctx.Value(privateC1KnownSourceIDsKey{}).([]int64)
+    return ids
+}
+
 type privateC1FamilyModule struct {
     family privateP6Family
     project func(*privateP6SQLCoordinator, context.Context,
@@ -52,6 +63,9 @@ func (module privateC1FamilyModule) execute(w *privateP6SQLCoordinator,
     lookup:=time.Since(started)
     if err!=nil{return lookup,0,fmt.Errorf("FI C1: %s source FK lookup: %w",
         privateP6FamilyNames[module.family],err)}
+    if module.family==privateP6Security{
+        ctx=context.WithValue(ctx,privateC1KnownSourceIDsKey{},ids)
+    }
     started=time.Now()
     err=module.project(w,ctx,rows,ids)
     elapsed:=time.Since(started)

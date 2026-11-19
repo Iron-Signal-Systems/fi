@@ -112,7 +112,32 @@ checkpoint may advance after a failed SQL ACK.
 
 C1 Go/race regression tests cover oldest-only admission, in-flight bound,
 FIFO ordering, error propagation, cancellation, and the full dependency
-fence. The C220 test runner writes `C1_CONTINUOUS_FAMILIES.txt` with
+fence.
+
+## Second direct P5/P6 correction — ordered parent SQL must not stop preparation
+
+Code review found that the signed reader was executing each ordered
+source-parent PostgreSQL COPY synchronously while the five family SQL lanes
+were otherwise asynchronous. C1 now has one *bounded, ordered* source-parent
+queue (four handoffs maximum) and its original dedicated SQL connection.
+Each family job waits on a broadcast completion fence for the exact latest
+committed parent set it needs. This happens in its SQL worker, **not** in
+the shared P5 preparation consumer. The one oldest source ACK is retired
+only when the four-handoff limit is reached. Source identity, parent-first FK
+visibility, and File-before-USN are unchanged. No extra data store or SQL
+connection is created.
+
+In addition, the Security family already resolved every parent ID from its
+signed batch and ordinal before invoking original P6 Security bulk COPY.
+A C1-only context passes those verified IDs into the original COPY code,
+avoiding its duplicate SQL FK lookup; P5, P6 and normal FI retain their
+original lookup. SQL row values, copy targets, FKs and field children remain
+unchanged.
+
+**These are code changes, not C220 performance results.** The exact C220
+compile/race gate, signed two-window data and FK proof, five-writer replay,
+post-File-commit failure injection, and ten-window continuity still must be
+run; exact same-database recovery is not yet implemented. The C220 test runner writes `C1_CONTINUOUS_FAMILIES.txt` with
 `backpressure_waits` and `backpressure_wall` for all five families.
 
 **A speedup is not yet claimed.** A complete C220 signed two-window replay

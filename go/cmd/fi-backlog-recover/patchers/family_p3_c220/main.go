@@ -151,6 +151,13 @@ func main() {
       "copied, err := tx.CopyFrom(ctx, pgx.Identifier{\"fi\", \"source_record\"}, sourceColumns, sourceRows)",
       "var copied int64\n    var err error\n    if privateP6SourceAlreadyInserted(ctx) {\n        copied=int64(len(pending)) // parent already inserted in exact custody order\n    }else{\n        copied,err=tx.CopyFrom(ctx,pgx.Identifier{\"fi\",\"source_record\"},sourceColumns,sourceRows)\n    }",
     },
+    // C1 only: P6 already mapped each Security parent by exact signed
+    // (batch,ordinal). Do not perform the identical PostgreSQL lookup again.
+    {
+      "go/internal/recordingest/security_bulk.go",
+      "ids, err := lookupBulkSourceRecordIDs(ctx, tx, batchIDs, ordinals)",
+      "ids := privateC1KnownSourceIDs(ctx)\n    if len(ids)==0 {\n        ids,err=lookupBulkSourceRecordIDs(ctx,tx,batchIDs,ordinals)\n    }\n    if len(ids)!=len(pending) {return fmt.Errorf(\"FI C1: Security resolved source ID count mismatched\")}\n    for _,id:=range ids {if id<=0{return errors.New(\"FI C1: unresolved signed Security source FK\")}}",
+    },
   }
   files:=map[string]string{}
   perms:=map[string]os.FileMode{}

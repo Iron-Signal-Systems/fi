@@ -101,3 +101,74 @@ func TestPrivateC1P5P6ContextCancellationStopsOldestWait(t *testing.T){
         t.Fatal("C1 cancellation discarded unacknowledged SQL handoffs")
     }
 }
+
+// Parent commits must be a broadcast fence: both the Security and File
+// workers can depend on one source ACK without stealing its result.
+func TestPrivateC1OrderedSourceBroadcastAndFailure(t *testing.T){
+    ctx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
+    defer cancel()
+    ack:=&privateC1SourceAck{done:make(chan struct{})}
+    started:=make(chan struct{},2)
+    results:=make(chan error,2)
+    for i:=0;i<2;i++{
+        go func(){started<-struct{}{};results<-privateC1AwaitSource(ctx,ack)}()
+    }
+    <-started
+    <-started
+    fail:=errors.New("injected parent commit failure")
+    ack.err=fail
+    close(ack.done)
+    for i:=0;i<2;i++{
+        if err:=<-results;!errors.Is(err,fail) {
+            t.Fatalf("FI C1 parent SQL failure lost across dependent lanes: %v",err)
+        }
+    }
+}
+func TestPrivateC1OrderedSourceOldestOnlyAdmission(t *testing.T){
+    w:=&privateC1FiveSQL{ctx:context.Background(),
+        sourceJobs:make(chan privateC1SourceJob,2)}
+    for i:=0;i<privateC1MaxFamilyHandoffsInFlight;i++{
+        ack:=&privateC1SourceAck{done:make(chan struct{})}
+        w.sourceOutstanding=append(w.sourceOutstanding,ack)
+        w.sourceLast=ack
+    }
+    oldest:=w.sourceOutstanding[0]
+    close(oldest.done)
+    ctx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
+    defer cancel()
+    if err:=w.Source(ctx,[]privateP6Record{privateP6Fixture(1,1,"FileObservation")});err!=nil{
+        t.Fatal(err)
+    }
+    if len(w.sourceOutstanding)!=privateC1MaxFamilyHandoffsInFlight ||
+        w.sourceBackpressureWaits!=1 ||
+        w.sourceOutstanding[0]==oldest ||
+        w.sourceLast!=w.sourceOutstanding[len(w.sourceOutstanding)-1]{
+        t.Fatal("FI C1 ordered source waited for all instead of one oldest ACK")
+    }
+    select{
+    case job:=<-w.sourceJobs:
+        if job.ack!=w.sourceLast || len(job.rows)!=1 {
+            t.Fatal("FI C1 ordered source handoff detached from signed identity")
+        }
+    default:
+        t.Fatal("FI C1 ordered source was not enqueued")
+    }
+}
+func TestPrivateC1KnownSecurityIDsOnlyWhenEnabled(t *testing.T){
+    ctx:=context.WithValue(context.Background(),privateC1KnownSourceIDsKey{},
+        []int64{11,22})
+    if len(privateC1KnownSourceIDs(ctx))!=0{
+        t.Fatal("FI C1 Security source IDs leaked into the regular projector")
+    }
+    t.Setenv("FI_W512_C1_P6_DIRECT","1")
+    t.Setenv("FI_W512_P6_FAMILY_SQL","1")
+    t.Setenv("FI_W512_P7_SQL_WRITERS","")
+    t.Setenv("FI_W512_P8_REUSE","")
+    t.Setenv("FI_W512_P9_DIRECT_STREAM","")
+    if ids:=privateC1KnownSourceIDs(ctx);len(ids)!=2||ids[0]!=11||ids[1]!=22{
+        t.Fatal("FI C1 exact signed Security IDs not forwarded")
+    }
+    if len(privateC1KnownSourceIDs(context.Background()))!=0 {
+        t.Fatal("FI C1 used source IDs without a signed SQL lookup")
+    }
+}

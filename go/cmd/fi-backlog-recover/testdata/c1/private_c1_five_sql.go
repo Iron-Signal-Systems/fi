@@ -26,8 +26,19 @@ import (
 // not the entire queue, so the SQL lane never waits for a new burst.
 const privateC1MaxFamilyHandoffsInFlight = 4
 
+// A source ACK can be observed by every dependent family without consuming
+// the result. Closing done publishes err to all readers (Go channel happens-before).
+type privateC1SourceAck struct {
+    done chan struct{}
+    err error
+}
+type privateC1SourceJob struct {
+    rows []privateP6Record
+    ack *privateC1SourceAck
+}
 type privateC1SQLJob struct {
     rows []privateP6Record
+    source *privateC1SourceAck
     done chan error
 }
 type privateC1SQLLane struct {
@@ -52,6 +63,12 @@ type privateC1SQLLane struct {
 }
 type privateC1FiveSQL struct {
     parent *pgx.Conn
+    sourceJobs chan privateC1SourceJob
+    sourceOutstanding []*privateC1SourceAck // signed reader only
+    sourceLast *privateC1SourceAck // latest ordered parent commit fence
+    sourceWG sync.WaitGroup
+    sourceBackpressureWaits int64
+    sourceBackpressureWall time.Duration
     lanes [privateP6FamilyCount]*privateC1SQLLane
     sourceID string
     ctx context.Context
@@ -105,7 +122,8 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
         return nil,errors.New("FI C1: private P6 five-writer feature not selected")
     }
     owner,cancel:=context.WithCancel(ctx)
-    w:=&privateC1FiveSQL{ctx:owner,cancel:cancel,sourceID:sourceID}
+    w:=&privateC1FiveSQL{ctx:owner,cancel:cancel,sourceID:sourceID,
+        sourceJobs:make(chan privateC1SourceJob,2)}
     cleanup:=func(){
         cancel()
         if w.parent!=nil { _=w.parent.Close(context.Background()) }
@@ -129,7 +147,10 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
             module:privateC1SQLModules[i],
             conn:conn,jobs:make(chan privateC1SQLJob,2)}
     }
-    // Only after every connection is verified do SQL goroutines begin.
+    // Exactly one ordered source writer, plus five independent family writers.
+    // The signed reader no longer executes PostgreSQL COPY itself.
+    w.sourceWG.Add(1)
+    go w.runSource()
     for _,lane:=range w.lanes{
         w.wg.Add(1)
         go w.runLane(lane)
@@ -138,11 +159,32 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     return w,nil
 }
 
+func privateC1AwaitSource(ctx context.Context, ack *privateC1SourceAck) error {
+    if ctx==nil||ack==nil{return errors.New("FI C1: missing ordered source-parent fence")}
+    select{
+    case <-ctx.Done():return ctx.Err()
+    case <-ack.done:return ack.err
+    }
+}
+
+func(w *privateC1FiveSQL) runSource(){
+    defer w.sourceWG.Done()
+    var failed error
+    for job:=range w.sourceJobs {
+        if failed==nil {failed=w.writeSource(w.ctx,job.rows)}
+        job.ack.err=failed
+        close(job.ack.done)
+    }
+}
+
 func(w *privateC1FiveSQL) runLane(lane *privateC1SQLLane){
     defer w.wg.Done()
     for job:=range lane.jobs {
         started:=time.Now()
-        err:=w.writeFamily(w.ctx,lane,job.rows)
+        // The parent ledger is a true SQL prerequisite, not an instruction
+        // to block unrelated P5 family preparation on the caller goroutine.
+        err:=privateC1AwaitSource(w.ctx,job.source)
+        if err==nil {err=w.writeFamily(w.ctx,lane,job.rows)}
         lane.sqlWall+=time.Since(started)
         if err==nil{
             lane.committed+=int64(len(job.rows))
@@ -248,24 +290,69 @@ func privateC1PostCommitFailpoint(f privateP6Family) bool {
         os.Getenv("FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT")=="1"
 }
 
-func(w *privateC1FiveSQL) Source(ctx context.Context,rows []privateP6Record)error{
-    if w==nil||w.closed||len(rows)==0{return errors.New("FI C1: invalid source parent handoff")}
-    if w.failed!=nil{return w.failed}
+// Only the source goroutine uses the ordered PostgreSQL parent connection.
+func(w *privateC1FiveSQL) writeSource(ctx context.Context,rows []privateP6Record)error{
     startedSource:=time.Now()
     tx,err:=w.parent.Begin(ctx)
-    if err!=nil{w.failed=err;return err}
+    if err!=nil{return err}
     defer tx.Rollback(context.Background())
     coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx},
         w.sourceID,&ingestStageProfile{})
     if err==nil{err=coordinator.Source(ctx,rows)}
     if err==nil{err=tx.Commit(ctx)}
-    if err!=nil{
-        w.failed=fmt.Errorf("FI C1: ordered P6 source parent failed: %w",err)
-        return w.failed
-    }
+    if err!=nil{return fmt.Errorf("FI C1: ordered P6 source parent failed: %w",err)}
     w.parentRows+=int64(len(rows))
     w.parentHandoffs++
     w.parentSQLWall+=time.Since(startedSource)
+    return nil
+}
+
+// Source enqueues signed-order parent rows; there is one PostgreSQL
+// writer, no staging table, and at most four bounded in-flight handoffs.
+// Child writers await the precise most recent parent ACK in their own lanes.
+func(w *privateC1FiveSQL) Source(ctx context.Context,rows []privateP6Record)error{
+    if w==nil||w.closed||len(rows)==0||w.sourceJobs==nil{
+        return errors.New("FI C1: invalid source parent handoff")
+    }
+    if w.failed!=nil{return w.failed}
+    if len(w.sourceOutstanding)>=privateC1MaxFamilyHandoffsInFlight {
+        started:=time.Now()
+        w.sourceBackpressureWaits++
+        err:=w.waitNextSource(ctx)
+        w.sourceBackpressureWall+=time.Since(started)
+        if err!=nil{return err}
+    }
+    ack:=&privateC1SourceAck{done:make(chan struct{})}
+    job:=privateC1SourceJob{rows:rows,ack:ack}
+    select {
+    case <-ctx.Done():return ctx.Err()
+    case <-w.ctx.Done():return w.ctx.Err()
+    case w.sourceJobs<-job:
+    }
+    w.sourceOutstanding=append(w.sourceOutstanding,ack)
+    w.sourceLast=ack
+    return nil
+}
+
+func(w *privateC1FiveSQL) waitNextSource(ctx context.Context)error{
+    if w==nil||ctx==nil||len(w.sourceOutstanding)==0{
+        return errors.New("FI C1: invalid ordered parent acknowledgment")
+    }
+    ack:=w.sourceOutstanding[0]
+    if err:=privateC1AwaitSource(ctx,ack);err!=nil{
+        w.failed=fmt.Errorf("FI C1: ordered source parent commit: %w",err)
+        return w.failed
+    }
+    w.sourceOutstanding[0]=nil
+    w.sourceOutstanding=w.sourceOutstanding[1:]
+    return nil
+}
+
+func(w *privateC1FiveSQL) WaitSource(ctx context.Context)error{
+    if w==nil{return errors.New("FI C1: missing ordered source writer")}
+    for len(w.sourceOutstanding)>0{
+        if err:=w.waitNextSource(ctx);err!=nil{return err}
+    }
     return nil
 }
 
@@ -285,7 +372,8 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
         lane.backpressureWaitWall+=time.Since(started)
         if err!=nil{return err}
     }
-    job:=privateC1SQLJob{rows:rows,done:make(chan error,1)}
+    if w.sourceLast==nil{return errors.New("FI C1: family has no ordered source-parent fence")}
+    job:=privateC1SQLJob{rows:rows,source:w.sourceLast,done:make(chan error,1)}
     select{
     case <-ctx.Done():return ctx.Err()
     case <-w.ctx.Done():return w.ctx.Err()
@@ -333,7 +421,9 @@ func(w *privateC1FiveSQL) WaitFamily(ctx context.Context,f privateP6Family)error
 }
 func(w *privateC1FiveSQL) WaitAll(ctx context.Context)error{
     if w==nil{return errors.New("FI C1: missing five SQL lanes")}
-    var joined error
+    // Ensure every source parent is durable before the final typed marker.
+    // Already-running family connections can still process earlier parents.
+    joined:=w.WaitSource(ctx)
     // All 5 can run concurrently; wait only after all family buffers
     // have handed off their final batches.
     for f:=privateP6Family(0);f<privateP6FamilyCount;f++{
@@ -357,6 +447,9 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
     }
     fmt.Printf("FI C1 SQL PROFILE family=SourceParent rows=%d handoffs=%d sql_wall=%s\n",
         w.parentRows,w.parentHandoffs,w.parentSQLWall)
+    fmt.Printf("FI C1 ORDERED SOURCE BACKPRESSURE max_outstanding=%d waits=%d wall=%s remaining_ack=%d\n",
+        privateC1MaxFamilyHandoffsInFlight,w.sourceBackpressureWaits,
+        w.sourceBackpressureWall,len(w.sourceOutstanding))
     for _,lane:=range w.lanes{
         fmt.Printf("FI C1 SQL PROFILE family=%s rows=%d handoffs=%d sql_wall=%s fk_lookup=%s projector=%s commit=%s\n",
             privateP6FamilyNames[lane.family],lane.committed,lane.handoffs,lane.sqlWall,
@@ -379,9 +472,13 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
 func(w *privateC1FiveSQL) Close(){
     if w==nil||w.closed{return}
     w.closed=true
+    if w.sourceJobs!=nil {close(w.sourceJobs)}
     for _,lane:=range w.lanes {
         if lane!=nil {close(lane.jobs)}
     }
+    // Family workers may be awaiting a source commit, so join its writer
+    // first. Never close the parent connection while COPY is active.
+    w.sourceWG.Wait()
     w.wg.Wait()
     w.cancel()
     for _,lane:=range w.lanes{
