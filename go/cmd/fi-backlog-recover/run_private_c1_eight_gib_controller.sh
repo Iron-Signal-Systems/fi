@@ -45,7 +45,7 @@ grep -Fq 'FI C1 EIGHT GIB SIGNED PLAN' "$runner" &&
 grep -Fq 'C1_PLAN.txt' "$runner" &&
 grep -Fq 'C1_POOL.txt' "$runner" &&
 grep -Fq 'FI C1 SHARED SQL POOL' "$runner" &&
-grep -Fq 'FI C220 C1 FIVE-FAMILY DEV PASS' "$runner" ||
+grep -Fq 'FI C220 C1 EIGHT GIB DEV PASS' "$runner" ||
   fail 'native P6 SQL or signed record acceptance scripts mismatched'
 sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-12}
 case "$sqlmax" in [1-9]|1[0-6]) ;; *) fail 'SQL worker maximum must be 1..16';; esac
