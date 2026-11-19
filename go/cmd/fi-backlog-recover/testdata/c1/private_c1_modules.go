@@ -3,7 +3,7 @@
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
 // C1 private C220 clone: five independent SQL modules, one per original P6
-// record family. Each module is bound to exactly one PostgreSQL family lane,
+// record family. Each module runs on any available shared SQL worker,
 // reuses its original P6 projector and COPY implementations, and shares only
 // the canonical signed source-record identity lookup. No central SQL switch,
 // additional source staging, window-boundary flush, or database role changes.
@@ -41,7 +41,7 @@ var privateC1SQLModules = [privateP6FamilyCount]privateC1FamilyModule{
     {privateP6Other, (*privateP6SQLCoordinator).other},
 }
 
-// Exactly one bounded handoff goes into the lane's own P6 SQL module.
+// A bounded family handoff is dispatched to one shared SQL worker and its P6 module.
 // Parents are looked up by original signed source batch plus ordinal, and
 // every row is validated against the module's declared family before SQL.
 func (module privateC1FamilyModule) execute(w *privateP6SQLCoordinator,
