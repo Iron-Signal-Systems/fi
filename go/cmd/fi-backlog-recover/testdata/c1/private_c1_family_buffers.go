@@ -3,7 +3,7 @@
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
 // C1 DEVELOPMENT ONLY: original P5 preparation feeds five independent P6
-// family buffers and five independently committing PostgreSQL family writers.
+// family buffers and one adaptive shared PostgreSQL SQL worker pool.
 // The source ledger stays ordered; the typed checkpoint is withheld until
 // all family commits and relational checks complete.
 package recordingest
@@ -67,7 +67,7 @@ func (r privateP6Record) valid()bool{
         r.prepared.Record.Version==SpoolRecordVersion
 }
 
-// C1 commits each family handoff on its dedicated PostgreSQL connection.
+// C1 schedules each family handoff on an available shared PostgreSQL worker.
 // The source identity ledger uses its own ordered connection. There is NO
 // single cross-connection SQL transaction; completion markers are gated.
 type privateP6SQLHandoff interface{
@@ -198,7 +198,7 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     if f==privateP6USN && len(b.lanes[privateP6File].pending)>0{
         if err:=b.flushFamily(ctx,privateP6File,"dependency");err!=nil{return err}
     }
-    // The five SQL workers commit independently. A File handoff must
+    // Shared SQL workers commit jobs independently. A File handoff must
     // become SQL-visible before dependent USN starts; other families
     // remain queued and are not drained by this dependency.
     if f==privateP6USN {
@@ -229,7 +229,7 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
 
 // This is the only unconditional drain at the true end of signed input.
 // Signed batch, K32 and W512 reporting boundaries do NOT call Finish.
-// All five SQL workers must ACK before a typed completion marker can advance.
+// All five families must ACK before a typed completion marker can advance.
 func(b *privateP6Buffers) Finish(ctx context.Context)error{
     if b==nil||ctx==nil||b.finished||b.failed!=nil{return errors.New("FI P6: invalid final window barrier")}
     if err:=b.flushSource(ctx);err!=nil{return err}
@@ -241,7 +241,7 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
         if err:=b.flushFamily(ctx,f,"end-of-input");err!=nil{return err}
     }
     // P6's original SQL coordinator was synchronous. C1 waits for all five
-    // independent family SQL commits before completing the signed input.
+    // shared worker commits across all five families before signed input completes.
     if wait,ok:=b.sink.(interface{WaitAll(context.Context)error});ok{
         if err:=wait.WaitAll(ctx);err!=nil{
             b.failed=fmt.Errorf("FI P6 direct: five-family commit barrier: %w",err)
@@ -271,7 +271,7 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
             lane.capacityHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
             lane.peakRows,lane.peakBytes)
     }
-    fmt.Printf("FI C1 FINAL SOURCE AND FAMILY DRAIN window=%d source=%d typed=%d families=5 sql_writers=5 clone_only=true completion=all_families\n",
+    fmt.Printf("FI C1 FINAL SOURCE AND FAMILY DRAIN window=%d source=%d typed=%d families=5 sql_writers=adaptive_shared clone_only=true completion=all_families\n",
         b.window,b.source.records,complete)
     return nil
 }
