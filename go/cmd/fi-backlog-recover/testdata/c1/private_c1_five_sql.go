@@ -51,6 +51,7 @@ type privateC1SQLLane struct {
     handoffs int64
     err error
     sqlWall time.Duration
+    sourceParentWaitWall time.Duration
     identityLookup time.Duration
     projectionWall time.Duration
     commitWall time.Duration
@@ -180,12 +181,16 @@ func(w *privateC1FiveSQL) runSource(){
 func(w *privateC1FiveSQL) runLane(lane *privateC1SQLLane){
     defer w.wg.Done()
     for job:=range lane.jobs {
-        started:=time.Now()
-        // The parent ledger is a true SQL prerequisite, not an instruction
-        // to block unrelated P5 family preparation on the caller goroutine.
+        // Distinguish waiting on parent custody from real family SQL time.
+        // Otherwise this overlap would appear as an artificial SQL slowdown.
+        parentWaitStarted:=time.Now()
         err:=privateC1AwaitSource(w.ctx,job.source)
-        if err==nil {err=w.writeFamily(w.ctx,lane,job.rows)}
-        lane.sqlWall+=time.Since(started)
+        lane.sourceParentWaitWall+=time.Since(parentWaitStarted)
+        if err==nil {
+            sqlStarted:=time.Now()
+            err=w.writeFamily(w.ctx,lane,job.rows)
+            lane.sqlWall+=time.Since(sqlStarted)
+        }
         if err==nil{
             lane.committed+=int64(len(job.rows))
             lane.handoffs++
@@ -451,9 +456,9 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
         privateC1MaxFamilyHandoffsInFlight,w.sourceBackpressureWaits,
         w.sourceBackpressureWall,len(w.sourceOutstanding))
     for _,lane:=range w.lanes{
-        fmt.Printf("FI C1 SQL PROFILE family=%s rows=%d handoffs=%d sql_wall=%s fk_lookup=%s projector=%s commit=%s\n",
+        fmt.Printf("FI C1 SQL PROFILE family=%s rows=%d handoffs=%d sql_wall=%s parent_wait=%s fk_lookup=%s projector=%s commit=%s\n",
             privateP6FamilyNames[lane.family],lane.committed,lane.handoffs,lane.sqlWall,
-            lane.identityLookup,lane.projectionWall,lane.commitWall)
+            lane.sourceParentWaitWall,lane.identityLookup,lane.projectionWall,lane.commitWall)
         fmt.Printf("FI C1 P6 CONTINUOUS FAMILY family=%s max_outstanding=%d backpressure_waits=%d backpressure_wall=%s remaining_ack=%d\n",
             privateP6FamilyNames[lane.family],privateC1MaxFamilyHandoffsInFlight,
             lane.backpressureWaits,lane.backpressureWaitWall,len(lane.outstanding))
