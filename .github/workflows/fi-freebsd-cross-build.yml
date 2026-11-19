@@ -254,6 +254,99 @@ jobs:
           print("FI C1 P5 + P6 DEVELOPMENT ARCHITECTURE AND SAFETY SOURCE PASS")
           PY
           echo 'FI C1 Go syntax/architecture PASS; exact C220 compiled Go/race and full SQL test remain required'
+      - name: C1 backend SQL worker configuration and FreeBSD cross-build
+        run: |
+          set -euo pipefail
+          gofmt -e ./cmd/fi-ingest-worker/main_freebsd.go >/dev/null
+          gofmt -e ./internal/freebsd/backendinstall/runtime_assets_generated.go >/dev/null
+          gofmt -e ./internal/freebsd/backendinstall/runtime_sql_workers_test.go >/dev/null
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fi-ingest-worker-c1-freebsd ./cmd/fi-ingest-worker
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go test -c -o /tmp/fi-backendinstall-c1-freebsd.test ./internal/freebsd/backendinstall
+          go test -count=1 ./internal/freebsd/backendinstall -run '^TestManagedIngestAdaptiveSQLWorkersBound$|^TestRuntimeStaticAssetsRemainExact
+        run: go test -count=1 -v ./internal/crlpublish
+      - name: PostgreSQL relay wire-protocol unit tests
+        run: go test -count=1 -v ./cmd/fi-backlog-pg-relay
+      - name: Previously authenticated signed-cache replay and tamper rejection
+        run: go test -count=1 -v ./internal/recordingest -run 'TestIndexedPrivate(VerifiedCacheNoCurrentCRLButExactOriginalHashes|WindowLimitsAllowed)'
+      - name: W128 to K32 independent family routing and durability
+        run: go test -count=1 -v ./internal/recordingest -run 'TestPrivateContinuous(K32|FamiliesDoNotFlush|SecurityCapacityFlush|SQLFailure|FlushesAtExactCapacity)'
+      - name: Original H16 combined Security/coverage buffering without SQL redesign
+        run: |
+          go test -count=1 -v ./internal/recordingest -run '^TestH16Combined'
+          go build -o /tmp/fi-h16-combined-patcher ./cmd/fi-backlog-recover/patchers/h16_combined_buffer
+      - name: Header-first W512 clone-only source and FreeBSD runner syntax
+        run: |
+          set +e
+          sh -n ./cmd/fi-backlog-recover/run_private_h16_parallel_a_w512_c220_p2_host.sh
+          baseline_status=$?
+          sh -n ./cmd/fi-backlog-recover/run_private_header_first_w512_c220_p2_host.sh
+          header_status=$?
+          bash -n ./cmd/fi-backlog-recover/run_private_header_first_w512_c220_p2_host.sh
+          bash_status=$?
+          printf 'FI SHELL SYNTAX baseline_posix=%s header_posix=%s header_bash=%s\n' "$baseline_status" "$header_status" "$bash_status"
+          [ "$header_status" = 0 ] || exit "$header_status"
+          set -e
+          for source in \
+            ./internal/recordingest/private_canonical_spool_dispatch.go \
+            ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go \
+            ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go; do
+            echo "FI GO SYNTAX $source"
+            if ! gofmt -e "$source" >/tmp/fi-header-first-gofmt.log 2>&1; then
+              echo "FI GO SYNTAX FAIL $source"
+              cat /tmp/fi-header-first-gofmt.log
+              exit 1
+            fi
+          done
+          go test -count=1 ./internal/recordingest -run '^TestCanonicalDispatch'
+          go build -o /tmp/fi-header-first-w512-patcher ./cmd/fi-backlog-recover/patchers/header_first_c220
+      - name: Header-first P2 isolated Go compile and stream acceptance
+        run: |
+          scratch=$(mktemp -d /tmp/fi-header-p2-ci-XXXXXXXX)
+          trap 'rm -rf "$scratch"' EXIT
+          cp -R . "$scratch/go"
+          pkg="$scratch/go/internal/recordingest"
+          cp ./cmd/fi-backlog-recover/testdata/h16-parallel-a/private_parallel_preparation.go "$pkg/private_parallel_preparation.go"
+          cp ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go "$pkg/private_header_first_p2.go"
+          cp ./cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2_test.go "$pkg/private_header_first_p2_test.go"
+          python3 - "$pkg/private_parallel_preparation.go" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          src = p.read_text()
+          anchor = "type privateParallelLine struct {\n    ordinal int64"
+          replacement = "type privateParallelLine struct {\n    headerKind string\n    headerFamily spoolDispatchFamily\n    ordinal int64"
+          if src.count(anchor) != 1:
+              raise SystemExit("FI HEADER FIRST CI STOP: privateParallelLine anchor mismatch")
+          p.write_text(src.replace(anchor, replacement, 1))
+          PY
+          cat > "$pkg/private_h16_ci_stub.go" <<'STUB'
+          package recordingest
+          import "context"
+          // CI-only stub. C220 uses the exact real H16 patch, not this file.
+          func privateH16CombinedFileProfileValid(context.Context) bool { return true }
+          STUB
+          (cd "$scratch/go" &&
+           go test -count=1 ./internal/recordingest -run '^TestPrivateHeaderFirstP2' &&
+           GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go test -c -o "$scratch/header-first-freebsd.test" ./internal/recordingest)
+          echo 'FI HEADER FIRST P2 ISOLATED GO AND FREEBSD TEST BUILD PASS'
+      - name: FreeBSD recovery executable and typed-test cross compilation
+        env:
+          GOOS: freebsd
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          sh -n ./cmd/fi-backlog-recover/run_fixed_w128_chunk_benchmarks.sh
+          sh -n ./cmd/fi-backlog-recover/run_cached_wal_benchmarks.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_continuous_family_w34_host.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_h16_combined_buffers_w34_host.sh
+          sh -n ./cmd/fi-backlog-recover/provision_four_benchmark_clusters.sh
+          go build -o /tmp/fi-backlog-recover-freebsd ./cmd/fi-backlog-recover
+          go build -o /tmp/fi-backlog-pg-relay-freebsd ./cmd/fi-backlog-pg-relay
+          go build -o /tmp/fi-crl-publish-freebsd ./cmd/fi-crl-publish
+          go build -o /tmp/fi-backlog-publish-freebsd ./cmd/fi-backlog-publish
+          go test -c -o /tmp/fi-recordingest-freebsd.test ./internal/recordingest
+          go test -c -tags fi_backlog_typed_window_integration -o /tmp/fi-recordingest-freebsd-integrated.test ./internal/recordingest
+
+          echo 'FI C1 BACKEND SQL WORKER CONFIG AND RUNTIME COMPILE PASS'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
