@@ -9,8 +9,8 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 case "$1" in preflight|compile|c1) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1
-runnerpin=50c1bd6cbfe8677d6ae5ed1ebe919ad753fa7421
+sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e
+runnerpin=3edfc7696bc709157991976b6b05edf72c951007
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -41,6 +41,8 @@ grep -Fq 'C1_CONTINUOUS_FAMILIES.txt' "$runner" &&
 grep -Fq 'C1_SECURITY_COPY.txt' "$runner" &&
 grep -Fq 'FI C1 NATIVE P6 DIRECT SOURCE PASS p7_bridge=none source_stage=none' "$runner" &&
 grep -Fq 'FI C1 P6 SHARED SQL PASS' "$runner" &&
+grep -Fq 'private_c1_backpressure_test.go' "$runner" &&
+grep -Fq 'TestPrivateC1' "$runner" &&
 grep -Fq 'FI C1 FULL BACKLOG SIGNED PLAN' "$runner" &&
 grep -Fq 'C1_PLAN.txt' "$runner" &&
 grep -Fq 'C1_POOL.txt' "$runner" &&
