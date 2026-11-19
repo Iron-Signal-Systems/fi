@@ -322,9 +322,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1' in controller
-          assert 'runnerpin=50c1bd6cbfe8677d6ae5ed1ebe919ad753fa7421' in controller
-          assert 'sourcecommit=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1' in runner
+          assert 'sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e' in controller
+          assert 'runnerpin=3edfc7696bc709157991976b6b05edf72c951007' in controller
+          assert 'sourcecommit=6ecee24c98bba5c5876850ccce08be81e46b066e' in runner
           assert 'FI_W512_C1_FULL_BACKLOG=1' in runner
           assert 'FI_W512_C1_FULL_BACKLOG' in source
           assert 'unset FI_W512_C1_STOP_WINDOWS' in runner
@@ -338,6 +338,14 @@ jobs:
           assert 'fi-c1-full-backlog-4g-$stamp.tar.gz' in runner
           assert 'privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)' in source
           assert 'TestPrivateC1FullFourGiBGroupsCoverEntireSignedGeneration' in test
+          sql=(root/'testdata/c1/private_c1_five_sql.go').read_text()
+          race=(root/'testdata/c1/private_c1_backpressure_test.go').read_text()
+          assert 'if f==privateP6USN' in sql
+          assert 'return 1' in sql
+          assert 'len(lane.outstanding)>=w.familyHandoffLimit(f)' in sql
+          assert 'TestPrivateC1USNRequiresPreviousCommittedSQLACK' in race
+          assert 'TestPrivateC1USNPrecedingSQLFailureStopsLaterHandoff' in race
+          assert 'go127 test -race' in runner
           assert 'sourceMarkers!=1||artifactMarkers!=1' in proof
           assert 'published!=0||accepted!=0' in proof
           assert "GRANT pg_read_all_settings" not in runner
