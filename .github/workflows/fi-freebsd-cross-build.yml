@@ -280,7 +280,7 @@ jobs:
           test=(root/'testdata/c1/private_c1_eight_gib_group_test.go').read_text()
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           assert 'sourcepin=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3' in controller
-          assert 'runnerpin=6ef89ff81381e84c4bf8acfa9b4aef047d641965' in controller
+          assert 'runnerpin=5868fb01944397853089b6bceffcc137a22fe5df' in controller
           assert 'sourcecommit=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3' in runner
           assert 'private_c1_eight_gib_group.go' in runner
           assert 'private_c1_eight_gib_group_test.go' in runner
