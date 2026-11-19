@@ -664,7 +664,9 @@ else
     tail -n 100 "$out/$name/recover.log" >&2 || :
     fail 'C1 signed full-backlog development recovery returned an error'
 fi
-ull || :
+for pid in "$iostatpid" "$vmstatpid"; do
+    kill -TERM "$pid" 2>/dev/null || :
+    wait "$pid" 2>/dev/null || :
 done
 iostatpid=
 vmstatpid=
