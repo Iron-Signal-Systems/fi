@@ -21,6 +21,11 @@ import (
     "github.com/jackc/pgx/v5"
 )
 
+// C1 retains P6's bounded capacity handoffs: a family may have four
+// SQL buffers in flight. Backpressure consumes ONE oldest acknowledgment,
+// not the entire queue, so the SQL lane never waits for a new burst.
+const privateC1MaxFamilyHandoffsInFlight = 4
+
 type privateC1SQLJob struct {
     rows []privateP6Record
     done chan error
@@ -38,6 +43,8 @@ type privateC1SQLLane struct {
     identityLookup time.Duration
     projectionWall time.Duration
     commitWall time.Duration
+    backpressureWaits int64 // owner: signed reader goroutine
+    backpressureWaitWall time.Duration
     // Only this lane goroutine writes these original SecurityBulk counters.
     // They are aggregates of P6's existing projector/COPY measurements;
     // no extra SQL, source staging, or per-row timer is introduced.
@@ -268,11 +275,15 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
     }
     if w.failed!=nil{return w.failed}
     lane:=w.lanes[f]
-    // At most 4 pending handed-off buffers per family; each is itself
-    // bounded by the original P6 row/byte capacity. Do not grow an
-    // unlimited backlog waiting for a slow SQL family.
-    if len(lane.outstanding)>=4 {
-        if err:=w.WaitFamily(ctx,f);err!=nil{return err}
+    // P5 keeps preparing while this family's P6 SQL writer is active.
+    // Preserve the four-buffer cap, but wait for ONLY the oldest commit
+    // when full. Draining all four here caused recurrent SQL writer gaps.
+    if len(lane.outstanding)>=privateC1MaxFamilyHandoffsInFlight {
+        started:=time.Now()
+        lane.backpressureWaits++
+        err:=w.waitNextFamily(ctx,f)
+        lane.backpressureWaitWall+=time.Since(started)
+        if err!=nil{return err}
     }
     job:=privateC1SQLJob{rows:rows,done:make(chan error,1)}
     select{
@@ -284,20 +295,39 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
     return nil
 }
 
-func(w *privateC1FiveSQL) WaitFamily(ctx context.Context,f privateP6Family)error{
-    if w==nil||f>=privateP6FamilyCount{return errors.New("FI C1: invalid SQL family barrier")}
+// The signed reader owns the outstanding FIFO. An ACK is retired only
+// after its SQL transaction completes. This is the same FIFO used for
+// File-before-USN dependency fences and for C1's final five-family gate.
+func(w *privateC1FiveSQL) waitNextFamily(ctx context.Context,f privateP6Family)error{
+    if w==nil||ctx==nil||w.ctx==nil||f>=privateP6FamilyCount||w.lanes[f]==nil{
+        return errors.New("FI C1: invalid oldest SQL family acknowledgment")
+    }
     lane:=w.lanes[f]
-    pending:=lane.outstanding
-    lane.outstanding=nil
-    for _,ack:=range pending {
-        select{
-        case <-ctx.Done():return ctx.Err()
-        case err:=<-ack:
-            if err!=nil{
-                w.failed=fmt.Errorf("FI C1: family %s SQL commit: %w",privateP6FamilyNames[f],err)
-                return w.failed
-            }
+    if len(lane.outstanding)==0{return nil}
+    ack:=lane.outstanding[0]
+    select{
+    case <-ctx.Done():return ctx.Err()
+    case <-w.ctx.Done():return w.ctx.Err()
+    case err,ok:=<-ack:
+        // Retire only the acknowledged handoff. Other completed or
+        // in-progress SQL jobs remain queued, maintaining continuity.
+        lane.outstanding[0]=nil
+        lane.outstanding=lane.outstanding[1:]
+        if !ok&&err==nil{err=errors.New("missing SQL writer acknowledgment")}
+        if err!=nil{
+            w.failed=fmt.Errorf("FI C1: family %s SQL commit: %w",privateP6FamilyNames[f],err)
+            return w.failed
         }
+        return nil
+    }
+}
+
+func(w *privateC1FiveSQL) WaitFamily(ctx context.Context,f privateP6Family)error{
+    if w==nil||ctx==nil||f>=privateP6FamilyCount||w.lanes[f]==nil{
+        return errors.New("FI C1: invalid SQL family barrier")
+    }
+    for len(w.lanes[f].outstanding)>0{
+        if err:=w.waitNextFamily(ctx,f);err!=nil{return err}
     }
     return nil
 }
@@ -331,6 +361,9 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
         fmt.Printf("FI C1 SQL PROFILE family=%s rows=%d handoffs=%d sql_wall=%s fk_lookup=%s projector=%s commit=%s\n",
             privateP6FamilyNames[lane.family],lane.committed,lane.handoffs,lane.sqlWall,
             lane.identityLookup,lane.projectionWall,lane.commitWall)
+        fmt.Printf("FI C1 P6 CONTINUOUS FAMILY family=%s max_outstanding=%d backpressure_waits=%d backpressure_wall=%s remaining_ack=%d\n",
+            privateP6FamilyNames[lane.family],privateC1MaxFamilyHandoffsInFlight,
+            lane.backpressureWaits,lane.backpressureWaitWall,len(lane.outstanding))
     }
     // Security's 285s projector wall is already known. Break it into
     // original P6 event/scope/field COPY timing and unchanged child setup.
