@@ -175,7 +175,7 @@ jobs:
           controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
           assert "sourcecommit=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9" in runner
           assert "sourcepin=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9" in controller
-          assert "runnerpin=3cce7a392f77544ac6b7eb9d465fe3c3d1bee788" in controller
+          assert "runnerpin=dd0454bba3c73681f95724775a96e05ed55bf1c9" in controller
           assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
           assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
           assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
