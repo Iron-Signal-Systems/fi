@@ -27,6 +27,11 @@ security_workers=16
 general_workers=64
 general_each=16
 family_workers=80  # reporting slots; 2..16 actual goroutines per lane
+sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-5}
+case "$sqlmax" in
+  [1-9]|1[0-6]) ;;
+  *) fail 'C1 SQL worker maximum must be an integer between 1 and 16' ;;
+esac
 
 seedstamp=$2
 case "$seedstamp" in
@@ -327,7 +332,7 @@ cleanup(){
 trap cleanup 0
 trap 'exit 130' 2
 trap 'exit 143' 15
-jexec -U jwood fi-dev sh -s "$seed" "$root" "$name" "$port" "$sourcecommit" "$mode" <<'JAIL'
+jexec -U jwood fi-dev sh -s "$seed" "$root" "$name" "$port" "$sourcecommit" "$mode" "$sqlmax" <<'JAIL'
 set -eu
 umask 077
 seed=$1
@@ -336,6 +341,7 @@ name=$3
 port=$4
 sourcecommit=$5
 mode=$6
+sqlmax=$7
 [ "$(id -un)" = jwood ] && [ "$(psql --version)" = 'psql (PostgreSQL) 18.6' ] || exit 1
 [ ! -e "$root" ] && [ ! -e "$seed/$name/data/postmaster.pid" ] || exit 1
 pg_ctl -D "$seed/$name/data" status >/dev/null 2>&1 && exit 1
@@ -584,7 +590,9 @@ worker_max=16
 per_family_dynamic=true
 inflight_limit=32
 pending_raw_bytes_max=268435456
-sql_writers=5
+sql_workers_min=1
+sql_workers_max=$sqlmax
+sql_worker_assignment=shared_adaptive
 private_only=true
 private_signed_artifact_root=$private_root
 clone_only_same_filesystem_required=true
@@ -609,8 +617,9 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf 'FI FAMILY C1 P5-P6 DIRECT START start_index=1 windows=2 prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=5 buffers=persistent_across_windows\n' | tee "$out/SUMMARY.txt"
+printf 'FI FAMILY C1 P5-P6 DIRECT START start_index=1 windows=2 prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n' | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
+export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 export FI_W512_C1_STOP_WINDOWS=2
 export FI_W512_C1_SQL_DSN="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable"
 export FI_W512_C1_EXPECTED_PGDATA="$root/$name/data"
@@ -678,10 +687,10 @@ awk '/^FI C1 P6 DIRECT READ /{
 }END{if(bad||seen[1]!=1||seen[2]!=1||n!=997434||batches!=431)exit 1}' "$out/$name/C1_READ.txt" ||
   fail 'C1 signed direct W512 source counts/markers invalid'
 grep '^FI C1 P6 NATIVE SQL BACKENDS ' "$log" > "$out/$name/C1_BACKENDS.txt" ||
-  fail 'C1 five independent native P6 SQL backends missing'
+  fail 'C1 shared native P6 SQL pool missing'
 [ "$(wc -l < "$out/$name/C1_BACKENDS.txt" | tr -d ' ')" = 1 ] &&
-grep -Fq 'family_writers=5 distinct_pids=6 clone_only=true' "$out/$name/C1_BACKENDS.txt" ||
-  fail 'C1 not five separate family writer PostgreSQL sessions'
+grep -Fq "shared_workers_initial=1 workers_max=$sqlmax distinct_pids=2 clone_only=true" "$out/$name/C1_BACKENDS.txt" ||
+  fail 'C1 shared SQL worker pool did not start from one verified connection'
 # C1 adds the original P5 five-family parallel Go preparation pool,
 # retained across all 431 signed batches and both W512 reporting windows.
 grep '^FI C1 P5 PREP COMPLETE ' "$log" > "$out/$name/C1_PREP.txt" ||
@@ -695,13 +704,24 @@ grep '^FI P5 PERSISTENT WINDOW FAMILY ' "$log" > "$out/$name/C1_P5_LANES.txt" ||
 grep '^FI C1 P6 CONTINUOUS FAMILY ' "$log" > "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
   fail 'C1 P5/P6 sliding-ACK continuous family proof missing'
 [ "$(wc -l < "$out/$name/C1_CONTINUOUS_FAMILIES.txt" | tr -d '[:space:]')" = 5 ] &&
-grep -Fq 'family=Security max_outstanding=4 ' "$out/$name/C1_CONTINUOUS_FAMILIES.txt" &&
-grep -Fq 'family=NTFSFile max_outstanding=4 ' "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
+grep -Fq "family=Security max_outstanding=$( [ "$sqlmax" -gt 4 ] && echo "$sqlmax" || echo 4) " "$out/$name/C1_CONTINUOUS_FAMILIES.txt" &&
+grep -Fq "family=NTFSFile max_outstanding=$( [ "$sqlmax" -gt 4 ] && echo "$sqlmax" || echo 4) " "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
   fail 'C1 continuous P6 family backpressure/report mismatch'
 grep '^FI C1 SQL PROFILE ' "$log" > "$out/$name/C1_SQL_PROFILE.txt" ||
   fail 'C1 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/C1_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
   fail 'C1 did not report the source parent and five SQL family lanes'
+grep '^FI C1 SHARED SQL POOL ' "$log" > "$out/$name/C1_POOL.txt" ||
+  fail 'C1 dynamic SQL worker pool metrics missing'
+[ "$(wc -l < "$out/$name/C1_POOL.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq "workers_min=1 workers_max=$sqlmax " "$out/$name/C1_POOL.txt" ||
+  fail 'C1 SQL pool bounds differ from configured maximum'
+awk -v cap="$sqlmax" '{
+  for(i=1;i<=NF;i++){split($i,p,"=");x[p[1]]=p[2]}
+  if(x["workers_peak"]<1||x["workers_peak"]>cap||x["workers_current"]<1||
+     x["workers_current"]>cap||x["busy"]!=0)exit 1
+  if(cap>1&&x["workers_peak"]<2)exit 1
+}' "$out/$name/C1_POOL.txt" || fail 'C1 adaptive SQL worker bound or scale-up proof missing'
 # Expose the original P6 Security COPY counters once, without altering the
 # C220 clone schema, SQL module, staging, or network/PG permissions.
 grep '^FI C1 SECURITY COPY PROFILE ' "$log" > "$out/$name/C1_SECURITY_COPY.txt" ||
@@ -733,13 +753,13 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 elapsed=%s writer=5 P5_prep=5x2_to_16 staged_source_rows_added=0 artifact_copies=0 authoritative=0 accepted=0\n' "$elapsed" |
+printf 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 staged_source_rows_added=0 artifact_copies=0 authoritative=0 accepted=0\n' "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-w512-c1-direct-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
   "$name/C1_FAMILIES.txt" "$name/C1_PREP.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
-  "$name/C1_CONTINUOUS_FAMILIES.txt" \
+  "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
