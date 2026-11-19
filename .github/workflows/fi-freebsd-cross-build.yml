@@ -173,9 +173,9 @@ jobs:
           tests=(core/"private_c1_correctness_test.go").read_text()
           runner=Path("cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh").read_text()
           controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
-          assert "sourcecommit=5110a2f122957ae0f336377a0a32dd1c8dd953b9" in runner
-          assert "sourcepin=5110a2f122957ae0f336377a0a32dd1c8dd953b9" in controller
-          assert "runnerpin=5261b5b234d27d641990cc5dda9853ef6c5a2ff9" in controller
+          assert "sourcecommit=849db45325f7f79331be585e11d28567c4beedef" in runner
+          assert "sourcepin=849db45325f7f79331be585e11d28567c4beedef" in controller
+          assert "runnerpin=3dec096f7edeff002769058054324b36b23f5425" in controller
           assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
           assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
           assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
@@ -189,6 +189,8 @@ jobs:
           assert "FI C1 P6 CONTINUOUS FAMILY" in sql
           assert "sourceJobs:make(chan privateC1SourceJob,2)" in sql
           assert "privateC1AwaitSource(w.ctx,job.source)" in sql
+          assert "sourceParentWaitWall" in sql
+          assert "parent_wait=%s" in sql
           assert "w.WaitSource(ctx)" in sql
           assert "privateC1KnownSourceIDs(ctx)" in Path("cmd/fi-backlog-recover/patchers/family_p3_c220/main.go").read_text()
           assert "privateC1KnownSourceIDsKey" in modules
