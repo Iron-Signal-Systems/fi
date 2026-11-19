@@ -809,6 +809,9 @@ tar -C "$out" -czf "$out/fi-c1-8g-group-$group-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
   "$name/iostat.txt" "$name/vmstat.txt" || fail 'C1 metrics bundle failed'
+bundle="$out/fi-c1-8g-group-$group-$stamp.tar.gz"
+[ -s "$bundle" ] || fail 'C1 signed 8GiB metrics bundle missing'
+bundle_sha=$(sha256 -q "$bundle") || fail 'C1 signed 8GiB metrics bundle SHA failed'
+[ "${#bundle_sha}" -eq 64 ] || fail 'C1 signed 8GiB metrics bundle SHA invalid'
 printf 'FI C1 PRIVATE METRICS BUNDLE PASS path=%s sha256=%s\n' \
-  "$out/fi-w512-c1-direct-$stamp.tar.gz" \
-  "$(sha256 -q "$out/fi-w512-c1-direct-$stamp.tar.gz")"
+  "$bundle" "$bundle_sha"
