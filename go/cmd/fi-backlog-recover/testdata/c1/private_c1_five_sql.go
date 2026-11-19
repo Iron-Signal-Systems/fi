@@ -77,6 +77,9 @@ type privateC1FiveSQL struct {
     mu sync.Mutex
     workerCount int
     busyWorkers int
+    activeSecuritySQL int
+    peakSecuritySQL int
+    completedJobs int64
     peakWorkers int
     scaleUps int
     scaleDowns int
@@ -237,9 +240,22 @@ func (w *privateC1FiveSQL) runWorker(conn *pgx.Conn,pid int64){
             parentWait:=time.Since(parentStarted)
             var sqlWall time.Duration
             if err==nil{
+                if job.family==privateP6Security{
+                    w.mu.Lock()
+                    w.activeSecuritySQL++
+                    if w.activeSecuritySQL>w.peakSecuritySQL{
+                        w.peakSecuritySQL=w.activeSecuritySQL
+                    }
+                    w.mu.Unlock()
+                }
                 sqlStarted:=time.Now()
                 err=w.writeFamily(w.ctx,lane,conn,job.rows)
                 sqlWall=time.Since(sqlStarted)
+                if job.family==privateP6Security{
+                    w.mu.Lock()
+                    w.activeSecuritySQL--
+                    w.mu.Unlock()
+                }
             }
             lane.mu.Lock()
             lane.sourceParentWaitWall+=parentWait
@@ -253,6 +269,7 @@ func (w *privateC1FiveSQL) runWorker(conn *pgx.Conn,pid int64){
             lane.mu.Unlock()
             w.mu.Lock()
             w.busyWorkers--
+            w.completedJobs++
             w.mu.Unlock()
             job.done<-err
             close(job.done)
@@ -572,9 +589,9 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
         s.SourceCopy,s.EventCopy,s.ScopeCopy,s.FieldCopy,
         s.ChildPrepare,s.IDLookup,s.Prepare)
     w.mu.Lock()
-    fmt.Printf("FI C1 SHARED SQL POOL workers_min=1 workers_max=%d workers_peak=%d workers_current=%d busy=%d scale_ups=%d scale_downs=%d available_connections=%d\n",
+    fmt.Printf("FI C1 SHARED SQL POOL workers_min=1 workers_max=%d workers_peak=%d workers_current=%d busy=%d scale_ups=%d scale_downs=%d available_connections=%d security_sql_peak=%d jobs_completed=%d\n",
         w.maxWorkers,w.peakWorkers,w.workerCount,w.busyWorkers,
-        w.scaleUps,w.scaleDowns,len(w.pids)-1)
+        w.scaleUps,w.scaleDowns,len(w.pids)-1,w.peakSecuritySQL,w.completedJobs)
     w.mu.Unlock()
     return w.parentRows,total,family
 }
