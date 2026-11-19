@@ -55,7 +55,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=832ff8053c839ea631fdeb93567ee77d03177253
+sourcecommit=9f8ca781d4fb32df75d6ca113d1d2f00c5f554a2
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -180,12 +180,13 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_direct_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_modules.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_cached_recovery.go \
-  go/cmd/fi-backlog-recover/testdata/c1/private_c1_correctness_test.go
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_correctness_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_backpressure_test.go
 do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=29 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=30 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -390,7 +391,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
 ) || exit 1
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
-for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_correctness_test.go private_c1_modules.go; do
+for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -691,6 +692,12 @@ grep '^FI P5 PERSISTENT WINDOW FAMILY ' "$log" > "$out/$name/C1_P5_LANES.txt" ||
   fail 'C1 original P5 family worker summary absent'
 [ "$(wc -l < "$out/$name/C1_P5_LANES.txt" | tr -d '[:space:]')" = 5 ] ||
   fail 'C1 did not retain all five original P5 preparation lanes'
+grep '^FI C1 P6 CONTINUOUS FAMILY ' "$log" > "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
+  fail 'C1 P5/P6 sliding-ACK continuous family proof missing'
+[ "$(wc -l < "$out/$name/C1_CONTINUOUS_FAMILIES.txt" | tr -d '[:space:]')" = 5 ] &&
+grep -Fq 'family=Security max_outstanding=4 ' "$out/$name/C1_CONTINUOUS_FAMILIES.txt" &&
+grep -Fq 'family=NTFSFile max_outstanding=4 ' "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
+  fail 'C1 continuous P6 family backpressure/report mismatch'
 grep '^FI C1 SQL PROFILE ' "$log" > "$out/$name/C1_SQL_PROFILE.txt" ||
   fail 'C1 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/C1_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
@@ -732,6 +739,7 @@ tar -C "$out" -czf "$out/fi-w512-c1-direct-$stamp.tar.gz" RUN_MANIFEST.txt SUMMA
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
   "$name/C1_FAMILIES.txt" "$name/C1_PREP.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
+  "$name/C1_CONTINUOUS_FAMILIES.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
