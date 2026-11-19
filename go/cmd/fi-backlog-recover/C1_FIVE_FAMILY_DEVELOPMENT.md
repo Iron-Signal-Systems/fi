@@ -17,12 +17,14 @@ acceptance statement. Do not label earlier tests as released or accepted.
    File-to-USN dependency. Never flush another family because a signed
    batch, read chunk, or W512 reporting window ended. At true end of input,
    drain the remaining partial buffers once.
-3. **SQL:** five persistent family-specific connections and SQL modules
-   (one per family) plus one separate *ordered source-parent* connection.
-   Preserve source-batch/ordinal identity rather than SQL-ID assumptions;
-   retain every original relational projector, source FK, child COPY, check,
-   and unique key. File SQL commit becomes visible before a dependent USN
-   writer starts. The source ledger writer is not a sixth *family* writer.
+3. **SQL:** one adaptive shared pool of 1..16 PostgreSQL projection workers
+   starts with one real connection and grows when ready family handoffs
+   outnumber idle workers. No SQL connection belongs permanently to a family.
+   Idle extra workers retire after 30 seconds. A separate ordered parent
+   writer retains the signed source ledger and source-FK broadcast fences.
+   Preserve source batch/ordinal, original five relational projectors,
+   child COPY, FKs and keys; wait for every File SQL commit before dependent
+   USN begins. No sixth family or extra staging layer.
 4. **Data:** original signed cache and manifest readback; 13 record kinds;
    49-table relational source model; no second source staging, duplicate
    signed payload store, additional source artifact copy, or canonical
@@ -37,8 +39,8 @@ acceptance statement. Do not label earlier tests as released or accepted.
 
 The C1 development path is implemented under `testdata/c1`, and a
 C220-only disposable-clone controller runs it against the authenticated
-W512 source. **Five independently committing PostgreSQL connections
-cannot give all-family ACID atomicity across six sessions.** Source/typed
+W512 source. **Multiple independently committing PostgreSQL connections
+cannot give all-family ACID atomicity across the shared pool and parent.** Source/typed
 rows may remain on an interrupted private clone with *no completed typed
 checkpoint*. The implemented C1 clean-start guard rejects any retry
 against that dirty clone, instead of silently duplicating or skipping
@@ -55,8 +57,9 @@ this path on the canonical FI database.
   the persistent P6 buffer set and clean-destination SQL guard
 - `testdata/c1/private_c1_family_buffers.go` — five capacity-driven
   buffers, File-to-USN prerequisite and final-only drain
-- `testdata/c1/private_c1_five_sql.go` — five independent family SQL
-  modules/sessions, source parent and barrier; optional File post-commit
+- `testdata/c1/private_c1_five_sql.go` — one adaptive shared 1..16 SQL
+  connection pool scheduling five original P6 modules, an ordered source
+  parent and final barrier; optional File post-commit
   failure injection restricted to C1 private development
 - `testdata/c1/private_c1_modules.go` — original P6 Security, NTFS,
   Coverage, USN and Other relational projectors
@@ -76,8 +79,9 @@ and the actual FreeBSD build against the isolated C220 optimized source.
 - `preflight`: source/seed, trust, filesystem and original P5/P6 proof
 - `compile`: full C1 Go/race/build, no PostgreSQL started
 - `c1`: two-window signed replay; 431 batches, 997434 original records,
-  five SQL family writers plus one ordered source writer, all relational
-  checks, five family completion and clean clone shutdown
+  adaptive shared SQL workers (default cap 5; C220 test variable
+  `FI_W512_C1_SQL_WORKERS_MAX` accepts 1..16) plus one ordered source
+  writer, all relational checks, five family completion and clean shutdown
 - `inject-file`: development-only File SQL commit succeeds but C1
   deliberately fails *after* commit; verify zero new typed-window markers
   and dirty-clone quarantine, then stop and discard that clone
@@ -146,6 +150,43 @@ fault test. Judge improvement against the 304.735-second C1 starting run,
 not against a new architecture or unrelated COPY tuning. The original
 Security relational field COPY remains a likely throughput limiter after
 removing unnecessary ACK-drain gaps.
+
+## C1 shared adaptive SQL pool — November 19 design implementation
+
+The original C220 C1 dedicated-family experiment measured 997,434 signed
+records / 293.366 seconds = **3,399.96 records/sec**. The Security SQL
+lane spent 287.468 seconds, including 221.216 seconds in Security field
+COPY. Parent wait was 0.228 seconds and family backpressure 0.000309
+seconds. Serial Security SQL COPY, not parent waiting, was the limiting
+path. The original P5 rate was 4,190.99 records/sec.
+
+The new C1 development branch replaces the **five pinned one-per-family
+SQL writers** with **one shared ready-job queue** and a dynamically sized
+worker pool. Five P5 preparation lanes and five original P6 family buffers
+remain. Each submitted buffer carries its family, original signed source
+rows and prerequisite parent-commit ACK. Every shared worker owns a real
+PostgreSQL connection and a fresh per-transaction projector/COPY context.
+Security can occupy multiple connections at once. Worker count starts at
+1, grows when ready jobs exceed idle workers up to the cap, and extra
+connections retire after 30 seconds idle. Each family retains bounded
+outstanding jobs (at least 4; at most the configured pool cap), and the
+queue has a 2x-cap bounded capacity.
+
+The backend runtime setting is
+`fi_ingest_worker_sql_workers_max="5"` in
+`/etc/rc.conf.d/fi_ingest_worker`, validated 1..16 and passed to
+`fi-ingest-worker -sql-workers-max`. It is distinct from the existing
+`fi_ingest_worker_workers` concurrent-source-generation limit. The
+ordinary FI ingest runtime does **not** yet invoke the C1 clone-only
+experimental SQL pool; adding this flag does not activate C1 or change
+live SQL behavior. The isolated C220 runner uses the equivalent explicit
+`FI_W512_C1_SQL_WORKERS_MAX` value for its C1 test.
+
+**The new shared-pool branch is not yet measured on C220.** Verify compile,
+race, same signed two-window relational result, File post-commit fault,
+1/5/8/12/16 caps, and full cross-window integrity before comparing speed.
+Pool SQL times are summed across concurrent workers and must not be
+confused with elapsed wall time. Any failed attempt requires a new clone.
 
 ## Remaining work
 
