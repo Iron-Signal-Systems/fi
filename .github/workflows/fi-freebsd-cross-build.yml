@@ -142,7 +142,11 @@ jobs:
           assert not any(k in runner for k in ("GRANT pg_read_all_settings", "GRANT SELECT, INSERT", "REVOKE ALL"))
           assert "patchers/p7_parallel_bridge" not in runner
           assert runner.splitlines().count("JAIL")==1
-          assert "preflight|compile|family" in runner
+          assert "preflight|compile|family|inject-file" in runner
+          assert "FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS" in runner
+          assert "FI C1 DEVELOPMENT FAILURE/RESTART GUARD PASS" in controller
+          assert 'typed_window WHERE window_index >= 1' in runner
+          assert 'FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT=1' in runner
           assert "mode=$6" in runner
           assert runner.index('if [ "$mode" = compile ]; then') < runner.index('cp -R "$seed/$name/data"')
           assert "FI P11 C220 PRIVATE GO/RACE GATE PASS" in runner
@@ -175,7 +179,7 @@ jobs:
           controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
           assert "sourcecommit=3fd55cb256ec5903741a4c8397d92a546360f48f" in runner
           assert "sourcepin=3fd55cb256ec5903741a4c8397d92a546360f48f" in controller
-          assert "runnerpin=f64bb3407b045c75519f73a77dccc479886fb7a2" in controller
+          assert "runnerpin=acbe2639800616a299275ca58c6e71fb9981fef1" in controller
           assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
           assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
           assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
@@ -206,7 +210,7 @@ jobs:
           assert "TestPrivateC1" in runner
           assert "FI C1 CLEAN START PASS" in runner
           assert not any(k in runner for k in ("GRANT pg_read_all_settings","REVOKE ALL","patchers/p7_parallel_bridge"))
-          assert "preflight|compile|c1" in controller
+          assert "preflight|compile|c1|inject-file" in controller
           assert "preflight|compile|family" in runner
           assert runner.index('if [ "$mode" = compile ]; then') < runner.index('cp -R "$seed/$name/data"')
           print("FI C1 P5 + P6 DEVELOPMENT ARCHITECTURE AND SAFETY SOURCE PASS")
