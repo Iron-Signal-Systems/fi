@@ -11,6 +11,10 @@ fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
 
+# Maximum adaptive SQL workers within one generation; 1-16 (default 5).
+# Separate from fi_ingest_worker_workers (concurrent source generations).
+fi_ingest_worker_sql_workers_max="5"
+
 # P3: tested Windows Security COPY profile, 4096 records / 16 MiB.
 fi_ingest_worker_security_profile="P3"
 
