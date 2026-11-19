@@ -173,9 +173,9 @@ jobs:
           tests=(core/"private_c1_correctness_test.go").read_text()
           runner=Path("cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh").read_text()
           controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
-          assert "sourcecommit=849db45325f7f79331be585e11d28567c4beedef" in runner
-          assert "sourcepin=849db45325f7f79331be585e11d28567c4beedef" in controller
-          assert "runnerpin=3dec096f7edeff002769058054324b36b23f5425" in controller
+          assert "sourcecommit=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9" in runner
+          assert "sourcepin=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9" in controller
+          assert "runnerpin=3cce7a392f77544ac6b7eb9d465fe3c3d1bee788" in controller
           assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
           assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
           assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
@@ -183,6 +183,22 @@ jobs:
           assert "io.TeeReader(f,hasher)" in direct
           assert "buffers.Add(ctx,privateP6Record{" in direct
           assert "privateC1SQLModules[i]" in sql
+          assert "jobs:make(chan privateC1SQLJob,max*2)" in sql
+          assert "go w.runWorker(conn,pid)" in sql
+          assert "if err:=w.growWorkers(ctx)" in sql
+          assert "activeSecuritySQL" in sql
+          assert "peakSecuritySQL" in sql
+          assert "workers_min=1 workers_max=%d workers_peak=%d" in sql
+          assert "FI C1 P6 SHARED SQL PASS" in direct
+          assert "sql_workers_max=$sqlmax" in runner
+          assert "C1_POOL.txt" in runner and "C1_POOL.txt" in controller
+          assert "FI_W512_C1_SQL_WORKERS_MAX" in runner
+          assert "fi_ingest_worker_sql_workers_max" in Path("../tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template").read_text()
+          assert "-sql-workers-max" in Path("../go/cmd/fi-ingest-worker/main_freebsd.go").read_text() or "sql-workers-max" in Path("../go/cmd/fi-ingest-worker/main_freebsd.go").read_text()
+          assert "TestPrivateC1SharedSQLQueueAcceptsAnyFamily" in Path("cmd/fi-backlog-recover/testdata/c1/private_c1_backpressure_test.go").read_text()
+          assert "TestPrivateC1AdaptiveSQLWorkersMaxValidation" in Path("cmd/fi-backlog-recover/testdata/c1/private_c1_backpressure_test.go").read_text()
+          assert "conn *pgx.Conn" not in sql.split("type privateC1SQLLane struct {",1)[1].split("}",1)[0]
+          assert "jobs chan privateC1SQLJob" not in sql.split("type privateC1SQLLane struct {",1)[1].split("}",1)[0]
           assert "privateC1MaxFamilyHandoffsInFlight = 4" in sql
           assert "err:=w.waitNextFamily(ctx,f)" in sql
           assert "lane.backpressureWaits++" in sql
@@ -208,6 +224,7 @@ jobs:
           assert "privateC1CleanDestinationStatus" in tests
           assert "TestPrivateC1RefusesDirtyPartialOrAlreadyCompletedDestination" in tests
           assert "TestPrivateC1PostCommitInjectionNeverSelectableOutsideDevelopment" in tests
+          assert "FI C1 SHARED SQL POOL" in sql
           backpressure=(core/"private_c1_backpressure_test.go").read_text()
           assert "TestPrivateC1P5P6OnlyOldestHandoffWaitsAtBound" in backpressure
           assert "TestPrivateC1P5P6OldestHandoffErrorStopsAdmission" in backpressure
