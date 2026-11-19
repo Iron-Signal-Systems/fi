@@ -9,8 +9,8 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 case "$1" in preflight|compile|c1|inject-file) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=832ff8053c839ea631fdeb93567ee77d03177253
-runnerpin=d7636b35bd1319987871896cdecd596528ae4b82
+sourcepin=9f8ca781d4fb32df75d6ca113d1d2f00c5f554a2
+runnerpin=de21452c716b78c6298f4f3ccc30a85587f2310b
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -37,6 +37,7 @@ grep -Fq 'go127 test -race' "$runner" &&
 grep -Fq 'TestPrivateC1' "$runner" &&
 grep -Fq 'private_c1_direct.go' "$runner" &&
 grep -Fq 'FI C1 CLEAN START PASS' "$runner" &&
+grep -Fq 'C1_CONTINUOUS_FAMILIES.txt' "$runner" &&
 grep -Fq 'C1_SECURITY_COPY.txt' "$runner" &&
 grep -Fq 'FI C1 NATIVE P6 DIRECT SOURCE PASS p7_bridge=none source_stage=none' "$runner" &&
 grep -Fq 'FI C1 P6 FIVE SQL PASS' "$runner" &&
@@ -88,7 +89,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 ' "$out/SUMMARY.txt" ||
   fail 'native five-writer direct benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PREP.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PREP.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
