@@ -251,3 +251,93 @@ func TestPrivateC1SharedSQLFamilyBoundFollowsMax(t *testing.T){
         if w.familyLimit()!=want{t.Fatalf("max %d family capacity=%d, want %d",n,w.familyLimit(),want)}
     }
 }
+
+ 
+// The original P6 projector guarantees ordered USN source-bound captures.
+// C1 must not let a later USN SQL transaction race a still-uncommitted
+// preceding capture transaction on a different shared SQL worker.
+func TestPrivateC1USNRequiresPreviousCommittedSQLACK(t *testing.T){
+    parent:=&privateC1SourceAck{done:make(chan struct{})}
+    close(parent.done)
+    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
+        maxWorkers:16,workerCount:16,jobs:make(chan privateC1SQLJob,8)}
+    w.lanes[privateP6USN]=&privateC1SQLLane{family:privateP6USN}
+    w.lanes[privateP6Security]=&privateC1SQLLane{family:privateP6Security}
+    if got:=w.familyHandoffLimit(privateP6USN);got!=1 {
+        t.Fatalf("C1 USN SQL limit=%d, must be one committed handoff",got)
+    }
+    if got:=w.familyHandoffLimit(privateP6Security);got!=16 {
+        t.Fatalf("C1 must not throttle unrelated Security SQL: %d",got)
+    }
+    first:=privateP6Fixture(1,1,"USNReadBoundary")
+    next:=privateP6Fixture(2,1,"USNObjectObservation")
+    if err:=w.Family(context.Background(),privateP6USN,[]privateP6Record{first});err!=nil{
+        t.Fatal(err)
+    }
+    firstJob:=<-w.jobs
+    if firstJob.family!=privateP6USN||firstJob.rows[0].signedBatchIndex!=1 {
+        t.Fatal("C1 lost signed USN boundary handoff")
+    }
+    ctx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
+    defer cancel()
+    result:=make(chan error,1)
+    go func(){result<-w.Family(ctx,privateP6USN,[]privateP6Record{next})}()
+    select{
+    case err:=<-result:
+        t.Fatalf("C1 admitted later USN before boundary commit: %v",err)
+    case <-time.After(30*time.Millisecond):
+        // The second signed USN handoff must wait for first SQL commit.
+    }
+    if len(w.jobs)!=0{
+        t.Fatal("C1 queued out-of-order USN transaction")
+    }
+    // Other families still use the full shared queue and do not require
+    // the USN transaction's ACK.
+    if err:=w.Family(ctx,privateP6Security,[]privateP6Record{
+        privateP6Fixture(2,2,"WindowsSecurityEvent"),
+    });err!=nil{
+        t.Fatalf("C1 USN dependency stalled unrelated SQL family: %v",err)
+    }
+    if job:=<-w.jobs;job.family!=privateP6Security{
+        t.Fatal("C1 blocked unrelated Security SQL by USN dependency")
+    }
+    firstJob.done<-nil // the first USN transaction has committed
+    select{
+    case err:=<-result:
+        if err!=nil{t.Fatalf("C1 failed to admit next USN after ACK: %v",err)}
+    case <-ctx.Done():
+        t.Fatal("C1 deadlocked after USN SQL commit")
+    }
+    select{
+    case secondJob:=<-w.jobs:
+        if secondJob.family!=privateP6USN||
+            secondJob.rows[0].signedBatchIndex!=2||
+            w.lanes[privateP6USN].backpressureWaits!=1 {
+            t.Fatal("C1 second USN handoff lost signed order or ACK barrier")
+        }
+    default:
+        t.Fatal("C1 never dispatched second USN after first commit")
+    }
+}
+
+func TestPrivateC1USNPrecedingSQLFailureStopsLaterHandoff(t *testing.T){
+    parent:=&privateC1SourceAck{done:make(chan struct{})}
+    close(parent.done)
+    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
+        maxWorkers:16,workerCount:16,jobs:make(chan privateC1SQLJob,8)}
+    w.lanes[privateP6USN]=&privateC1SQLLane{family:privateP6USN}
+    if e:=w.Family(context.Background(),privateP6USN,[]privateP6Record{
+        privateP6Fixture(1,1,"USNReadBoundary"),
+    });e!=nil{t.Fatal(e)}
+    original:=<-w.jobs
+    original.done<-errors.New("injected USN capture transaction rolled back")
+    e:=w.Family(context.Background(),privateP6USN,[]privateP6Record{
+        privateP6Fixture(2,1,"USNObjectObservation"),
+    })
+    if e==nil||!strings.Contains(e.Error(),"rolled back"){
+        t.Fatalf("C1 allowed object after failed capture: %v",e)
+    }
+    if len(w.jobs)!=0||len(w.lanes[privateP6USN].outstanding)!=0{
+        t.Fatal("C1 leaked subsequent USN SQL after capture failure")
+    }
+}
