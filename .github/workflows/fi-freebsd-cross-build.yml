@@ -264,6 +264,40 @@ jobs:
           GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go test -c -o /tmp/fi-backendinstall-c1-freebsd.test ./internal/freebsd/backendinstall
           go test -count=1 ./internal/freebsd/backendinstall -run 'TestManagedIngestAdaptiveSQLWorkersBound|TestRuntimeStaticAssetsRemainExact'
           echo 'FI C1 BACKEND SQL WORKER CONFIG AND RUNTIME COMPILE PASS'
+      - name: C1 eight-GiB signed grouping test and controller source contract
+        run: |
+          set -euo pipefail
+          sh -n ./cmd/fi-backlog-recover/run_private_c1_eight_gib_controller.sh
+          sh -n ./cmd/fi-backlog-recover/run_private_c1_eight_gib_c220_host.sh
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_eight_gib_group.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_eight_gib_group_test.go >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('cmd/fi-backlog-recover')
+          runner=(root/'run_private_c1_eight_gib_c220_host.sh').read_text()
+          controller=(root/'run_private_c1_eight_gib_controller.sh').read_text()
+          code=(root/'testdata/c1/private_c1_eight_gib_group.go').read_text()
+          test=(root/'testdata/c1/private_c1_eight_gib_group_test.go').read_text()
+          source=(root/'testdata/c1/private_c1_direct.go').read_text()
+          assert 'sourcepin=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3' in controller
+          assert 'runnerpin=6ef89ff81381e84c4bf8acfa9b4aef047d641965' in controller
+          assert 'sourcecommit=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3' in runner
+          assert 'private_c1_eight_gib_group.go' in runner
+          assert 'private_c1_eight_gib_group_test.go' in runner
+          assert 'FI_C1_8G_GROUP_GIB' in runner
+          assert 'FI_W512_C1_GROUP_GIB' in runner and 'FI_W512_C1_GROUP_GIB' in source
+          assert 'testStopAfterWindows > 2/testStopAfterWindows > 4' in runner
+          assert 'C1_PLAN.txt' in runner and 'C1_PLAN.txt' in controller
+          assert 'TestPrivateC1EightGiBGroupPairsHaveExactSignedCutoff' in test
+          assert 'signed seed checkpoint' in code
+          assert 'backlogDigestString(h' in code and 'backlogDigestNumber(h' in code
+          assert 'FI C1 EIGHT GIB SIGNED PLAN' in source
+          assert 'RUN_MANIFEST.txt' in runner
+          assert runner.splitlines().count('JAIL')==1
+          assert not any(k in runner for k in ('GRANT pg_read_all_settings','REVOKE ALL', 'patchers/p7_parallel_bridge'))
+          print('FI C1 8GiB source/clone isolation and grouping contract PASS')
+          PY
+          echo 'C220 signed cache compiled Go/race/relational test still required'
       - name: Signed root CRL renewal validation tests
         run: go test -count=1 -v ./internal/crlpublish
       - name: PostgreSQL relay wire-protocol unit tests
