@@ -173,9 +173,9 @@ jobs:
           tests=(core/"private_c1_correctness_test.go").read_text()
           runner=Path("cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh").read_text()
           controller=Path("cmd/fi-backlog-recover/run_private_c1_five_family_controller.sh").read_text()
-          assert "sourcecommit=9f8ca781d4fb32df75d6ca113d1d2f00c5f554a2" in runner
-          assert "sourcepin=9f8ca781d4fb32df75d6ca113d1d2f00c5f554a2" in controller
-          assert "runnerpin=de21452c716b78c6298f4f3ccc30a85587f2310b" in controller
+          assert "sourcecommit=5110a2f122957ae0f336377a0a32dd1c8dd953b9" in runner
+          assert "sourcepin=5110a2f122957ae0f336377a0a32dd1c8dd953b9" in controller
+          assert "runnerpin=5261b5b234d27d641990cc5dda9853ef6c5a2ff9" in controller
           assert direct.index("privateC1RequireCleanDestination(") < direct.index("newPrivateC1FiveSQL(")
           assert direct.index("newPrivateP5Pool(ctx,startWindow)") < direct.index("for wi:=startWindow;wi<end;wi++")
           assert direct.index("newPrivateP6Buffers(startWindow,sink)") < direct.index("for wi:=startWindow;wi<end;wi++")
@@ -187,6 +187,11 @@ jobs:
           assert "err:=w.waitNextFamily(ctx,f)" in sql
           assert "lane.backpressureWaits++" in sql
           assert "FI C1 P6 CONTINUOUS FAMILY" in sql
+          assert "sourceJobs:make(chan privateC1SourceJob,2)" in sql
+          assert "privateC1AwaitSource(w.ctx,job.source)" in sql
+          assert "w.WaitSource(ctx)" in sql
+          assert "privateC1KnownSourceIDs(ctx)" in Path("cmd/fi-backlog-recover/patchers/family_p3_c220/main.go").read_text()
+          assert "privateC1KnownSourceIDsKey" in modules
           assert "private_c1_backpressure_test.go" in runner
           assert "C1_CONTINUOUS_FAMILIES.txt" in runner
           assert "C1_CONTINUOUS_FAMILIES.txt" in controller
@@ -205,6 +210,9 @@ jobs:
           assert "TestPrivateC1P5P6OnlyOldestHandoffWaitsAtBound" in backpressure
           assert "TestPrivateC1P5P6OldestHandoffErrorStopsAdmission" in backpressure
           assert "TestPrivateC1P6DependencyAndFinalFullFenceStillWaitsAll" in backpressure
+          assert "TestPrivateC1OrderedSourceBroadcastAndFailure" in backpressure
+          assert "TestPrivateC1OrderedSourceOldestOnlyAdmission" in backpressure
+          assert "TestPrivateC1KnownSecurityIDsOnlyWhenEnabled" in backpressure
           assert all(s in modules for s in (
              "(*privateP6SQLCoordinator).security",
              "(*privateP6SQLCoordinator).ntfs",
