@@ -10,8 +10,8 @@ fail(){ printf 'FI W512 PILOT STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] && [ "$#" -eq 2 ] ||
     fail 'usage on root@c220: sh runner preflight|compile|family|inject-file YYYYMMDDTHHMMSSZ'
 case "$1" in
-  preflight|compile|family|inject-file) mode=$1 ;;
-  *) fail 'mode must be preflight, compile, family or inject-file' ;;
+  preflight|compile|family) mode=$1 ;;
+  *) fail 'mode must be preflight, compile or family' ;;
 esac
 # P6: 5 separate SoR relational ingestion modules, same P5 preparers.
 [ "${FI_W512_P6_FAMILY_SQL:-}" = 1 ] ||
@@ -101,9 +101,9 @@ seed_kib=$(jexec -U jwood fi-dev du -Aks "$seed/$name/data" | awk '{print $1}') 
 free_kib=$(jexec -U jwood fi-dev df -Pk "$seed" | awk 'END{print $4}') ||
     fail 'cannot determine available private storage'
 case "$seed_kib:$free_kib" in *[!0-9:]*|:*) fail 'invalid storage preflight figures';; esac
-need_kib=$((seed_kib+8388608))
+need_kib=$((seed_kib+268435456))
 [ "$seed_kib" -gt 0 ] && [ "$free_kib" -gt "$need_kib" ] ||
-    fail "insufficient space for private seed copy and 8GiB headroom (need_kib=$need_kib free_kib=$free_kib)"
+    fail "insufficient space for private seed copy and 256GiB headroom (need_kib=$need_kib free_kib=$free_kib)"
 printf 'FI C220 W512 P2 STORAGE PREFLIGHT PASS seed_apparent_kib=%s available_kib=%s required_kib=%s\n' "$seed_kib" "$free_kib" "$need_kib"
 socket="$root/$name/socket/.s.PGSQL.$port"
 rsocket="$out/pg-$name/.s.PGSQL.$port"
@@ -132,8 +132,8 @@ clone_feature=$(zpool get -H -o value feature@block_cloning fast) ||
   fail 'cannot inspect fast ZFS block cloning feature'
 case "$clone_feature" in active|enabled) :;; *)
   fail "fast ZFS block cloning feature unavailable: $clone_feature";; esac
-[ "$(df -Pk "$private_parent" | awk 'END {print $4}')" -gt 8388608 ] ||
-  fail 'fast private artifacts need at least 8 GiB available'
+[ "$(df -Pk "$private_parent" | awk 'END {print $4}')" -gt 268435456 ] ||
+  fail 'fast full-backlog private artifacts need at least 256 GiB available'
 printf 'FI C220 CLONE FS PREFLIGHT PASS cache_dev=%s destination_dev=%s zfs_pool=fast bclone_enabled=1 feature=%s root=%s\n' \
  "$cache_dev" "$dest_dev" "$clone_feature" "$private_root"
 [ "$(df -Pk /var/tmp | awk 'END {print $4}')" -gt 8388608 ] ||
@@ -420,14 +420,8 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/pri
   > "$cached" || exit 1
 echo "FI C1 NATIVE P6 DIRECT SOURCE PASS p7_bridge=none source_stage=none"
 
-# The 4-window stop is clone-only. Extend the original isolated-test guard
-# from two to four reporting windows, never touching the accepted seed files.
-cli="$src/go/cmd/fi-backlog-recover/main_freebsd.go"
-[ "$(grep -Foc 'testStopAfterWindows > 2' "$cli")" = 1 ] || {
-  echo 'FI C1 8GiB: unexpected original controlled-stop guard' >&2; exit 1;
-}
-sed 's/testStopAfterWindows > 2/testStopAfterWindows > 4/' "$cli" > "$cli.c1-8g" || exit 1
-mv "$cli.c1-8g" "$cli" || exit 1
+# Full backlog uses original 0=unlimited controlled-stop handling.
+# Do not change main_freebsd.go or widen its isolated benchmark stop gate.
 # Pin the original resolver source exactly BEFORE replacing four filesystem
 # path constants. Cryptographic signature, certificate and CRL logic is intact.
 git -C "$expected" show b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/generation_trust.go |
@@ -650,14 +644,8 @@ export FI_W512_C1_GROUP_GIB=4
 export FI_W512_C1_FULL_BACKLOG=1
 export FI_W512_C1_SQL_DSN="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable"
 export FI_W512_C1_EXPECTED_PGDATA="$root/$name/data"
-# Explicit crash/restart-development proof: the File family transaction is
-# committed before the C1 injection returns failure. The incomplete attempt
-# MUST NOT create a typed-window checkpoint or be reused as a clean replay.
-if [ "$mode" = inject-file ]; then
-    export FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT=1
-else
-    unset FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT
-fi
+# No injected failure in the full backlog throughput/correctness experiment.
+unset FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT
 if /usr/bin/time -l "$recover" \
   -private-w512-2g -private-hash-h16 \
   -private-mixed-family-buffers -private-dependency-buffers -private-parallel-prep-a \
@@ -671,29 +659,12 @@ if /usr/bin/time -l "$recover" \
   -processing-chunk-records=32768 -continuous-private -start-window=1 \
   -max-windows=0 -max-runtime=0 -test-stop-after-windows=0 \
   -deferred-verified-clone -verified-cache-root="$cache" > "$out/$name/recover.log" 2>&1; then
-    [ "$mode" != inject-file ] ||
-      fail 'C1 post-commit failure injection unexpectedly returned success'
+    :
 else
-    if [ "$mode" != inject-file ]; then
-        tail -n 100 "$out/$name/recover.log" >&2 || :
-        fail 'C1 signed development recovery returned an error'
-    fi
-    grep -Fq 'FI C1 DEVELOPMENT INJECTION: File SQL committed;' "$out/$name/recover.log" ||
-        fail 'C1 requested File post-commit fault did not occur'
-    [ "$(sql 'SELECT count(*) FROM fi_recovery.typed_window WHERE window_index >= 1')" = 0 ] ||
-        fail 'C1 incorrectly advanced a typed-window marker after File failure'
-    parent_count=$(sql 'SELECT count(*) FROM fi_recovery_projection.source_record')
-    case "$parent_count" in *[!0-9]*|'') fail 'C1 invalid partially committed source count';; esac
-    [ "$parent_count" -gt 493478 ] ||
-        fail 'C1 injection did not preserve a verifiable partial SQL source ledger'
-    unset FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT
-    printf 'FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS parent_rows=%s typed_windows_added=0 file_postcommit_failure=true dirty_clone_discard_required=true authoritative=0 published=0\n' "$parent_count" |
-        tee -a "$out/SUMMARY.txt"
-    exit 0
+    tail -n 100 "$out/$name/recover.log" >&2 || :
+    fail 'C1 signed full-backlog development recovery returned an error'
 fi
-for pid in "$iostatpid" "$vmstatpid"; do
-    kill -TERM "$pid" 2>/dev/null || :
-    wait "$pid" 2>/dev/null || :
+ull || :
 done
 iostatpid=
 vmstatpid=
