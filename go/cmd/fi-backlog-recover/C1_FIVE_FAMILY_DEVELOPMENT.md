@@ -87,6 +87,41 @@ seed, and must never run while the live FI ingest worker is active. Do not
 bypass a failing check or modify PostgreSQL roles, grants, indexes, or
 canonical FI tables to make the experiment pass.
 
+## P5/P6 continuous handoff improvement (C1 development)
+
+C220 two-window C1 observation: 997434 signed records in 304.735 seconds
+(~3273 records/sec), with five independently committing family SQL lanes.
+P5 and P6 are the original development architecture foundations, not
+comparison candidates to promote or release.
+
+The first C1 throughput correction retains the **P5 five-family priority-fill
+preparation**, **P6 per-family capacity/dependency buffers**, and **five
+dedicated PostgreSQL family SQL lanes**. Previous SQL backpressure forced the
+signed-source reader to wait for *every* one of the four outstanding family
+handoff acknowledgments whenever that family reached its four-buffer bound.
+This created a burst/drain cycle and could leave a family SQL worker idle.
+
+C1 now retires **only the oldest completed SQL handoff** when a family has
+four outstanding buffers and immediately enqueues the next capacity handoff.
+Unrelated families remain independent. File-to-USN dependencies still use the
+full File family SQL acknowledgment fence, and the final completion barrier
+still awaits all five family writers. No extra SQL writers, source
+materialization, COPY-envelope changes, buffer capacities, schema or
+permissions are introduced. Failure still stops admission, and no typed
+checkpoint may advance after a failed SQL ACK.
+
+C1 Go/race regression tests cover oldest-only admission, in-flight bound,
+FIFO ordering, error propagation, cancellation, and the full dependency
+fence. The C220 test runner writes `C1_CONTINUOUS_FAMILIES.txt` with
+`backpressure_waits` and `backpressure_wall` for all five families.
+
+**A speedup is not yet claimed.** A complete C220 signed two-window replay
+must pass the same data and SQL integrity checks and the File post-commit
+fault test. Judge improvement against the 304.735-second C1 starting run,
+not against a new architecture or unrelated COPY tuning. The original
+Security relational field COPY remains a likely throughput limiter after
+removing unnecessary ACK-drain gaps.
+
 ## Remaining work
 
 After the full C220 build and two-window/fault-injection checks pass,
