@@ -378,7 +378,7 @@ done
 # source. Supply the C1-owned P6 buffer implementation BEFORE that audit,
 # not after it. This is the accepted P6 buffer with only SQL ACK barriers.
 [ ! -e "$src/go/internal/recordingest/private_p6_family_buffers.go" ] || exit 1
-git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/private_p6_family_buffers.go" \
+git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/private_c1_family_buffers.go" \
   > "$src/go/internal/recordingest/private_p6_family_buffers.go" || exit 1
 [ -s "$src/go/internal/recordingest/private_p6_family_buffers.go" ] || exit 1
 mkdir -p "$src/go/cmd/fi-backlog-recover/patchers/family_p3_c220" || exit 1
@@ -701,7 +701,7 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf 'FI C220 C1 P5-P6 NATIVE FAMILY ACCEPTED windows=2 records=997434 elapsed=%s writer=5 P5_prep=5x2_to_16 staged_source_rows_added=0 artifact_copies=0 authoritative=0 accepted=0\n' "$elapsed" |
+printf 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 elapsed=%s writer=5 P5_prep=5x2_to_16 staged_source_rows_added=0 artifact_copies=0 authoritative=0 accepted=0\n' "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-w512-c1-direct-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
