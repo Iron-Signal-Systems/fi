@@ -5,12 +5,12 @@ set -eu
 umask 077
 fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
-[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1 20261115T153532Z'
-case "$1" in preflight|compile|c1) mode=$1;;*)fail 'unknown mode';;esac
+[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1|inject-file 20261115T153532Z'
+case "$1" in preflight|compile|c1|inject-file) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=3fd55cb256ec5903741a4c8397d92a546360f48f
-runnerpin=f64bb3407b045c75519f73a77dccc479886fb7a2
+runnerpin=acbe2639800616a299275ca58c6e71fb9981fef1
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -66,9 +66,21 @@ if [ "$mode" = compile ]; then
 fi
 log="$runroot/C1.console.txt"
 status="$runroot/C1.exit"
-( if sh "$runner" family "$2";then printf '0\n' > "$status";else printf '1\n' > "$status";fi ) 2>&1 | tee "$log"
+runner_mode=family
+[ "$mode" != inject-file ] || runner_mode=inject-file
+( if sh "$runner" "$runner_mode" "$2";then printf '0\n' > "$status";else printf '1\n' > "$status";fi ) 2>&1 | tee "$log"
 [ -s "$status" ] && [ "$(cat "$status")" = 0 ] ||
   fail 'native P6 five-writer Go build, signed stream, relational or clone acceptance failed'
+if [ "$mode" = inject-file ]; then
+  grep -Fq 'FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS ' "$log" ||
+    fail 'C1 injected File failure did not prove missing typed checkpoint'
+  grep -Fq 'dirty_clone_discard_required=true authoritative=0 published=0' "$log" ||
+    fail 'C1 failed dirty clone quarantine proof'
+  grep -Fq 'FI W512 PILOT FINISHED exit=0 ' "$log" ||
+    fail 'C1 injected File clone was not cleanly shut down'
+  printf 'FI C1 DEVELOPMENT FAILURE/RESTART GUARD PASS file_postcommit_failure=true typed_marker_not_advanced=true dirty_clone_discard_required=true\n'
+  exit 0
+fi
 receipt=$(grep '^FI W512 PILOT FINISHED exit=0 outputs=' "$log" | tail -n 1)
 [ -n "$receipt" ] || fail 'C1 private SQL shutdown receipt missing'
 out=$(printf '%s\n' "$receipt" | sed -n 's/.* outputs=\([^ ]*\) private_clone=.*/\1/p')
