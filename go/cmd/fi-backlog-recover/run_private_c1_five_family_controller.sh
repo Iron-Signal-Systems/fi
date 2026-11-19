@@ -9,8 +9,8 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 case "$1" in preflight|compile|c1|inject-file) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=849db45325f7f79331be585e11d28567c4beedef
-runnerpin=3dec096f7edeff002769058054324b36b23f5425
+sourcepin=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9
+runnerpin=3cce7a392f77544ac6b7eb9d465fe3c3d1bee788
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -40,9 +40,14 @@ grep -Fq 'FI C1 CLEAN START PASS' "$runner" &&
 grep -Fq 'C1_CONTINUOUS_FAMILIES.txt' "$runner" &&
 grep -Fq 'C1_SECURITY_COPY.txt' "$runner" &&
 grep -Fq 'FI C1 NATIVE P6 DIRECT SOURCE PASS p7_bridge=none source_stage=none' "$runner" &&
-grep -Fq 'FI C1 P6 FIVE SQL PASS' "$runner" &&
+grep -Fq 'FI C1 P6 SHARED SQL PASS' "$runner" &&
+grep -Fq 'C1_POOL.txt' "$runner" &&
+grep -Fq 'FI C1 SHARED SQL POOL' "$runner" &&
 grep -Fq 'FI C220 C1 FIVE-FAMILY DEV PASS' "$runner" ||
   fail 'native P6 SQL or signed record acceptance scripts mismatched'
+sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-5}
+case "$sqlmax" in [1-9]|1[0-6]) ;; *) fail 'SQL worker maximum must be 1..16';; esac
+export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 export FI_W512_P6_FAMILY_SQL=1
 export FI_W512_P5_PERSISTENT=1
 export FI_W512_P3_DYNAMIC_MIN=2
@@ -89,7 +94,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 ' "$out/SUMMARY.txt" ||
   fail 'native five-writer direct benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PREP.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PREP.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -99,6 +104,7 @@ done
 # shutdown. The historical P5/P6 receipts above only pin the original input.
 cat "$runroot/C1_FAMILIES.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
+cat "$runroot/C1_POOL.txt"
 elapsed=$(sed -n 's/.*committed_window_time=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
 seconds=$(awk -v t="$elapsed" 'BEGIN{
   n=split(t,a,"m");if(n!=2)exit 1
@@ -107,5 +113,5 @@ seconds=$(awk -v t="$elapsed" 'BEGIN{
 }') || fail 'C1 reported an invalid duration'
 rate=$(awk -v t="$seconds" 'BEGIN{if(t<=0)exit 1;printf "%.2f",997434/t}') ||
   fail 'C1 reported an invalid throughput'
-printf 'FI C1 DEVELOPMENT THROUGHPUT records=997434 elapsed_seconds=%s records_per_second=%s family_sql_writers=5\n' "$seconds" "$rate"
-printf 'FI C1 DEVELOPMENT INTEGRATION PASS windows=2 records=997434 sql_family_writers=5 source_parent_writers=1 clean_start=true source_staging=none authoritative=0 published=0 output=%s\n' "$runroot"
+printf 'FI C1 DEVELOPMENT THROUGHPUT records=997434 elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=$sqlmax\n' "$seconds" "$rate"
+printf 'FI C1 DEVELOPMENT INTEGRATION PASS windows=2 records=997434 sql_families=5 shared_sql_workers_max=$sqlmax source_parent_writers=1 clean_start=true source_staging=none authoritative=0 published=0 output=%s\n' "$runroot"
