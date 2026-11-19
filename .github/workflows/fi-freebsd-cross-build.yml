@@ -280,7 +280,7 @@ jobs:
           test=(root/'testdata/c1/private_c1_eight_gib_group_test.go').read_text()
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           assert 'sourcepin=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3' in controller
-          assert 'runnerpin=5868fb01944397853089b6bceffcc137a22fe5df' in controller
+          assert 'runnerpin=be36d70b0a7a1491f38ad8b383ae26f50a0f5c88' in controller
           assert 'sourcecommit=1ca8d7b8992f50ad5b70ec41e416237b1b6513f3' in runner
           assert 'private_c1_eight_gib_group.go' in runner
           assert 'private_c1_eight_gib_group_test.go' in runner
@@ -288,6 +288,14 @@ jobs:
           assert 'FI_W512_C1_GROUP_GIB' in runner and 'FI_W512_C1_GROUP_GIB' in source
           assert 'testStopAfterWindows > 2/testStopAfterWindows > 4' in runner
           assert 'C1_PLAN.txt' in runner and 'C1_PLAN.txt' in controller
+          assert 'bundle="$out/fi-c1-8g-group-$group-$stamp.tar.gz"' in runner
+          assert '[ -s "$bundle" ]' in runner and 'bundle_sha=$(sha256 -q "$bundle")' in runner
+          assert 'records=$(plan_field new_records)' in controller
+          assert 'bytes=$(plan_field new_source_bytes)' in controller
+          assert 'lastbatch=$(plan_field last_batch)' in controller
+          assert "n=split($i,p,\"=\")" in controller
+          assert "new_records=\\\\(" not in controller
+          assert "fi-w512-c1-direct-$stamp.tar.gz" not in runner
           assert 'TestPrivateC1EightGiBGroupPairsHaveExactSignedCutoff' in test
           assert 'signed seed checkpoint' in code
           assert 'backlogDigestString(h' in code and 'backlogDigestNumber(h' in code
