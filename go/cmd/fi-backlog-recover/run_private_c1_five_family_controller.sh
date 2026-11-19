@@ -1,6 +1,6 @@
 #!/bin/sh
-# FI C1: original P5/P6 development implementation with five concurrent
-# SQL writers. C220 disposable PostgreSQL clone only. No P7 code or bridge.
+# FI C1: five P5/P6 families feeding an adaptive 1..16 shared SQL pool.
+# C220 disposable PostgreSQL clone only. No P7 code or bridge.
 set -eu
 umask 077
 fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
@@ -10,7 +10,7 @@ case "$1" in preflight|compile|c1|inject-file) mode=$1;;*)fail 'unknown mode';;e
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=95c96b6e3f31fa3144375c50acccb2ca0f9f7fe9
-runnerpin=3cce7a392f77544ac6b7eb9d465fe3c3d1bee788
+runnerpin=dd0454bba3c73681f95724775a96e05ed55bf1c9
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_five_family_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -76,7 +76,7 @@ runner_mode=family
 [ "$mode" != inject-file ] || runner_mode=inject-file
 ( if sh "$runner" "$runner_mode" "$2";then printf '0\n' > "$status";else printf '1\n' > "$status";fi ) 2>&1 | tee "$log"
 [ -s "$status" ] && [ "$(cat "$status")" = 0 ] ||
-  fail 'native P6 five-writer Go build, signed stream, relational or clone acceptance failed'
+  fail 'native P6 adaptive SQL build, signed stream, relational or clone checks failed'
 if [ "$mode" = inject-file ]; then
   grep -Fq 'FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS ' "$log" ||
     fail 'C1 injected File failure did not prove missing typed checkpoint'
@@ -93,7 +93,7 @@ out=$(printf '%s\n' "$receipt" | sed -n 's/.* outputs=\([^ ]*\) private_clone=.*
 case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq 'FI C220 C1 FIVE-FAMILY DEV PASS windows=2 records=997434 ' "$out/SUMMARY.txt" ||
-  fail 'native five-writer direct benchmark acceptance missing'
+  fail 'native shared-SQL benchmark acceptance missing'
 for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PREP.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
@@ -113,5 +113,5 @@ seconds=$(awk -v t="$elapsed" 'BEGIN{
 }') || fail 'C1 reported an invalid duration'
 rate=$(awk -v t="$seconds" 'BEGIN{if(t<=0)exit 1;printf "%.2f",997434/t}') ||
   fail 'C1 reported an invalid throughput'
-printf 'FI C1 DEVELOPMENT THROUGHPUT records=997434 elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=$sqlmax\n' "$seconds" "$rate"
-printf 'FI C1 DEVELOPMENT INTEGRATION PASS windows=2 records=997434 sql_families=5 shared_sql_workers_max=$sqlmax source_parent_writers=1 clean_start=true source_staging=none authoritative=0 published=0 output=%s\n' "$runroot"
+printf 'FI C1 DEVELOPMENT THROUGHPUT records=997434 elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s\n' "$seconds" "$rate" "$sqlmax"
+printf 'FI C1 DEVELOPMENT INTEGRATION PASS windows=2 records=997434 sql_families=5 shared_sql_workers_max=%s source_parent_writers=1 clean_start=true source_staging=none authoritative=0 published=0 output=%s\n' "$sqlmax" "$runroot"
