@@ -142,11 +142,7 @@ jobs:
           assert not any(k in runner for k in ("GRANT pg_read_all_settings", "GRANT SELECT, INSERT", "REVOKE ALL"))
           assert "patchers/p7_parallel_bridge" not in runner
           assert runner.splitlines().count("JAIL")==1
-          assert "preflight|compile|family|inject-file" in runner
-          assert "FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS" in runner
-          assert "FI C1 DEVELOPMENT FAILURE/RESTART GUARD PASS" in controller
-          assert 'typed_window WHERE window_index >= 1' in runner
-          assert 'FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT=1' in runner
+          assert "preflight|compile|family" in runner
           assert "mode=$6" in runner
           assert runner.index('if [ "$mode" = compile ]; then') < runner.index('cp -R "$seed/$name/data"')
           assert "FI P11 C220 PRIVATE GO/RACE GATE PASS" in runner
@@ -211,7 +207,11 @@ jobs:
           assert "FI C1 CLEAN START PASS" in runner
           assert not any(k in runner for k in ("GRANT pg_read_all_settings","REVOKE ALL","patchers/p7_parallel_bridge"))
           assert "preflight|compile|c1|inject-file" in controller
-          assert "preflight|compile|family" in runner
+          assert "preflight|compile|family|inject-file" in runner
+          assert "FI C1 DEVELOPMENT FAILURE CONTAINMENT PASS" in runner
+          assert "FI C1 DEVELOPMENT FAILURE/RESTART GUARD PASS" in controller
+          assert 'typed_window WHERE window_index >= 1' in runner
+          assert 'FI_C1_DEV_FAIL_AFTER_FILE_SQL_COMMIT=1' in runner
           assert runner.index('if [ "$mode" = compile ]; then') < runner.index('cp -R "$seed/$name/data"')
           print("FI C1 P5 + P6 DEVELOPMENT ARCHITECTURE AND SAFETY SOURCE PASS")
           PY
