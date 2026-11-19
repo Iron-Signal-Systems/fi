@@ -323,7 +323,7 @@ jobs:
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
           assert 'sourcepin=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1' in controller
-          assert 'runnerpin=b32984270d78a3d5ed3e4d200fb5e182291c0d46' in controller
+          assert 'runnerpin=50c1bd6cbfe8677d6ae5ed1ebe919ad753fa7421' in controller
           assert 'sourcecommit=cf35941edd6dee1fcad764b1ad8eecbc1601f2f1' in runner
           assert 'FI_W512_C1_FULL_BACKLOG=1' in runner
           assert 'FI_W512_C1_FULL_BACKLOG' in source
@@ -340,7 +340,6 @@ jobs:
           assert 'TestPrivateC1FullFourGiBGroupsCoverEntireSignedGeneration' in test
           assert 'sourceMarkers!=1||artifactMarkers!=1' in proof
           assert 'published!=0||accepted!=0' in proof
-          assert "BEGIN" not in controller or True
           assert "GRANT pg_read_all_settings" not in runner
           print('FI C1 full 4GiB signed-backlog clone-only source contract PASS')
           PY
