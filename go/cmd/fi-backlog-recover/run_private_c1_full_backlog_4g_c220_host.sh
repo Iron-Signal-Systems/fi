@@ -207,6 +207,7 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_commit_ready.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_commit_ready_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_sparse_age_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_prefix8_proof.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_prefix8_proof_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_modules.go \
@@ -221,7 +222,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=42 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=43 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -429,7 +430,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
 ) || exit 1
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
-for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_commit_ready.go private_c1_commit_ready_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
+for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_commit_ready.go private_c1_commit_ready_test.go private_c1_sparse_age_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -449,9 +450,13 @@ grep -Fq 'privateC1AsyncVerifyGroup' \
 grep -Fq 'CommitFamily(rows)' \
   "$src/go/internal/recordingest/private_c1_five_sql.go" &&
 grep -Fq 'CommitSource(rows)' \
-  "$src/go/internal/recordingest/private_c1_five_sql.go" ||
-  { echo 'FI C1 STOP: durable SQL readiness not installed in isolated C1 source' >&2; exit 1; }
-echo 'FI C1 COMMIT-READY SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked no_flush_changes=true'
+  "$src/go/internal/recordingest/private_c1_five_sql.go" &&
+grep -Fq 'privateC1SparseMaxBatchLag = 64' \
+  "$src/go/internal/recordingest/private_p6_family_buffers.go" &&
+grep -Fq 'flushAgedSparse(ctx,row.signedBatchIndex)' \
+  "$src/go/internal/recordingest/private_p6_family_buffers.go" ||
+  { echo 'FI C1 STOP: durable readiness or sparse-age signed-batch watermark missing' >&2; exit 1; }
+echo 'FI C1 COMMIT-READY SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked sparse_max_batch_lag=64 no_group_flush=true'
 # Historical C220 original is the only allowed cache entrypoint source.
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
 git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
@@ -852,6 +857,12 @@ grep '^FI C1 COMMIT READY ' "$log" > "$out/$name/C1_COMMIT_READY.txt" ||
 [ "$(wc -l < "$out/$name/C1_COMMIT_READY.txt" | tr -d '[:space:]')" = "$windows" ] &&
 grep -Fq 'signed_sha_sealed=true no_group_flush=true' "$out/$name/C1_COMMIT_READY.txt" ||
   fail 'C1 did not emit exact durable source+family and signed-SHA ready notifications'
+if [ "$prefix8" = 1 ]; then
+  # If the sparse-family tails still only flush at final Finish(), we
+  # failed to fix the architecture regardless of correctness or timing.
+  grep '^FI P6 FAMILY ' "$log" | grep -Eq 'family=(Coverage|USNDependency|Other) .* age=[1-9][0-9]* ' ||
+    fail 'C1 8GiB sparse watermark had no SQL handoffs before final drain'
+fi
 grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
   fail 'C1 independent read-only group proofs missing'
 [ "$(wc -l < "$out/$name/C1_ASYNC_VERIFY.txt" | tr -d '[:space:]')" = "$windows" ] &&
