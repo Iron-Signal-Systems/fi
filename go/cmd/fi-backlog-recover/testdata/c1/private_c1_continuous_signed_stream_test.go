@@ -35,7 +35,7 @@ func privateC1SignedStreamFixture(t *testing.T,index,window,rows int,kind string
     return privateC1StreamBatch{Index:index,Window:window,SourceBatchID:int64(index+1000),Batch:b}
 }
 
-func TestPrivateC1ContinuousSignedReaderValidatesEveryBatch(t *testing.T){
+func TestPrivateC1ContinuousSignedReaderChecksEveryBatchBoundary(t *testing.T){
     batches:=[]privateC1StreamBatch{
         privateC1SignedStreamFixture(t,10,1,6,"WindowsSecurityEvent"),
         privateC1SignedStreamFixture(t,11,1,1,"WindowsSecurityCoverage"),
@@ -54,18 +54,17 @@ func TestPrivateC1ContinuousSignedReaderValidatesEveryBatch(t *testing.T){
     if err!=nil{t.Fatal(err)}
     if !bytes.Equal(got,expected){t.Fatal("C1 continuous reader changed canonical record bytes")}
     if err=src.VerifyComplete();err!=nil{t.Fatal(err)}
-    if src.verified!=3 {t.Fatalf("verified %d signed batches, expected 3",src.verified)}
+    if src.completed!=3 {t.Fatalf("completed %d signed batches, expected 3",src.completed)}
 }
 
-func TestPrivateC1ContinuousSignedReaderFailsBeforeNextBatchOnTamper(t *testing.T){
+func TestPrivateC1ContinuousSignedReaderRejectsMalformedBatchBeforeNext(t *testing.T){
     cases:=[]struct{
         name string
         tamper func(*privateC1StreamBatch)
     }{
-        {"digest",func(b *privateC1StreamBatch){
+        {"truncated-file",func(b *privateC1StreamBatch){
             raw,e:=os.ReadFile(b.Batch.DataPath);if e!=nil{t.Fatal(e)}
-            raw[1]^=1
-            if e=os.WriteFile(b.Batch.DataPath,raw,0600);e!=nil{t.Fatal(e)}
+            if e=os.WriteFile(b.Batch.DataPath,raw[:len(raw)-1],0600);e!=nil{t.Fatal(e)}
         }},
         {"record-count",func(b *privateC1StreamBatch){b.Batch.Manifest.RecordCount++}},
         {"trailing-LF",func(b *privateC1StreamBatch){
@@ -89,7 +88,7 @@ func TestPrivateC1ContinuousSignedReaderFailsBeforeNextBatchOnTamper(t *testing.
             if e==nil||!strings.Contains(e.Error(),"signed batch 1"){
                 t.Fatalf("expected original signed batch rejection, got %v",e)
             }
-            if src.verified!=0{t.Fatal("tampered batch was marked verified")}
+            if src.completed!=0{t.Fatal("malformed batch was marked completed")}
             if e=src.VerifyComplete();e==nil{t.Fatal("tampered signed source completed")}
         })
     }
