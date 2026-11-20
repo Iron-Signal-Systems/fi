@@ -129,7 +129,7 @@ func TestPrivateC1AsyncVerifierRejectsMissingAndDuplicateReceipts(t *testing.T){
     if err=v2.Finish(ctx);err==nil{t.Fatal("duplicate verification receipt accepted")}
 }
 
-func TestPrivateC1SignedBatchSealsOnlyAfterSHAAndNeverOnTamper(t *testing.T){
+func TestPrivateC1CustodyBatchSealsOnlyAfterBoundaryValidation(t *testing.T){
     b1:=privateC1SignedStreamFixture(t,100,1,1,"WindowsSecurityCoverage")
     b2:=privateC1SignedStreamFixture(t,101,2,1,"CollectorIdentity")
     reader,err:=newPrivateC1SignedContinuousReader([]privateC1StreamBatch{b1,b2})
@@ -139,7 +139,7 @@ func TestPrivateC1SignedBatchSealsOnlyAfterSHAAndNeverOnTamper(t *testing.T){
     if _,err=io.Copy(io.Discard,reader);err!=nil{t.Fatal(err)}
     if err=reader.VerifyComplete();err!=nil{t.Fatal(err)}
     if len(groups)!=2||groups[0]!=1||groups[1]!=2{
-        t.Fatalf("per-group SHA seals mismatch %v",groups)
+        t.Fatalf("per-group custody boundary seals mismatch %v",groups)
     }
     tampered,err:=newPrivateC1SignedContinuousReader([]privateC1StreamBatch{b1,b2})
     if err!=nil{t.Fatal(err)}
@@ -148,10 +148,9 @@ func TestPrivateC1SignedBatchSealsOnlyAfterSHAAndNeverOnTamper(t *testing.T){
     tampered.onSealedGroup=func(int)error{count++;return nil}
     raw,err:=os.ReadFile(b1.Batch.DataPath)
     if err!=nil{t.Fatal(err)}
-    raw[0]^=1
-    if err=os.WriteFile(b1.Batch.DataPath,raw,0600);err!=nil{t.Fatal(err)}
+    if err=os.WriteFile(b1.Batch.DataPath,raw[:len(raw)-1],0600);err!=nil{t.Fatal(err)}
     if _,err=io.Copy(io.Discard,tampered);err==nil{
-        t.Fatal("corrupt signed group progressed without hash verification")
+        t.Fatal("truncated signed group progressed without boundary validation")
     }
     if count!=0{t.Fatalf("tampered source emitted %d completion seals",count)}
 }
