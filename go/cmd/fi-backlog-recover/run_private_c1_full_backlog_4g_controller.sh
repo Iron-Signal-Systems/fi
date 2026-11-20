@@ -35,7 +35,7 @@ grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=1464
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=abee61ed5450d4e6ac9f928e3677d82976f2a4d2
-runnerpin=69c927776ff0c5dbecefd125783f20be489e98e6
+runnerpin=c99b1db4cabcc340f8a63f2858395d6ef3d3a53a
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
