@@ -222,16 +222,12 @@ func privateC1MarkTyped(ctx context.Context,writer *pgx.Conn,
     if already!=0{return errors.New("FI C1: destination already has typed markers")}
     receipt,err:=hex.DecodeString(ds[0].ReceiptSHA256)
     if err!=nil||len(receipt)!=32{return errors.New("FI C1: invalid signed generation receipt")}
+    // Every group already has its independent committed-data relational
+    // proof. This transaction only checks the immutable signed descriptor
+    // chain and atomically inserts typed completion markers; NEVER rescan
+    // all source and child tables or serialize ingestion on relational SQL.
     for i:=start;i<end;i++{
         d:=ds[i]
-        if err=verifyBacklogShadowWindowCounts(ctx,shadow,id,g.Batches[d.StartBatch:d.EndBatch],
-            int64(d.EndRecord-d.StartRecord),int64(d.DataBytes));err!=nil{
-            return fmt.Errorf("FI C1: signed window %d source count check: %w",i,err)
-        }
-        if err=verifyBacklogWindowProjectionCoverage(ctx,shadow,id,
-            g.Batches[d.StartBatch:d.EndBatch]);err!=nil{
-            return fmt.Errorf("FI C1: signed window %d relational check: %w",i,err)
-        }
         digest,err:=hex.DecodeString(d.DigestSHA256)
         if err!=nil||len(digest)!=32{return errors.New("FI C1: signed descriptor hash invalid")}
         previous,err:=hex.DecodeString(d.PreviousDigestSHA256)
@@ -249,10 +245,9 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
             receipt,i,digest,id,d.StartBatch,d.EndBatch,
             int64(d.EndRecord-d.StartRecord),int64(d.DataBytes),IngestVersion);err!=nil{return err}
     }
-    // Only when this is the complete generation, not a test prefix.
-    if end==len(ds){
-        if err=verifyGenerationProjectionCoverage(ctx,shadow,id);err!=nil{return err}
-    }
+    // The complete-generation signed receipt and anti-publication checks
+    // follow in privateC1VerifyCompleteGroupedReplay, not as a repeated
+    // synchronous relational scan inside this marker transaction.
     return tx.Commit(ctx)
 }
 
@@ -318,9 +313,17 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     ctx=context.WithValue(ctx,usnCaptureContextKey{},usn)
     ctx=context.WithValue(ctx,usnTimingContextKey{},&usnTimingCounters{})
     ctx=context.WithValue(ctx,backlogUSNCrossWindowContextKey{},true)
+    // A failed independent SQL proof cancels ingestion immediately. Every
+    // source/family/reader transaction inherits this cancellation context.
+    runCtx,abort:=context.WithCancel(ctx)
+    defer abort()
+    ctx=runCtx
+    commitReady,e:=newPrivateC1CommitReady(ds,startWindow,end)
+    if e!=nil{return empty,fmt.Errorf("FI C1: committed readiness init: %w",e)}
     dsn,pgdata:=os.Getenv("FI_W512_C1_SQL_DSN"),os.Getenv("FI_W512_C1_EXPECTED_PGDATA")
     sink,err:=newPrivateC1FiveSQL(ctx,dsn,pgdata,ds[0].SourceID)
     if err!=nil{return empty,err}
+    sink.commitReady=commitReady
     defer sink.Close()
     cacheDir,err:=backlogVerifiedCacheOpen(cacheRoot,g.ReceiptSHA256,
         g.Receipt.TransferSHA256,g.Receipt.BatchCount,g.Receipt.RecordCount,g.Receipt.DataBytes)
@@ -355,7 +358,8 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     }
     // Independent read-only verifier begins before record processing. It
     // has no access to the P6 shared SQL ACK queues and never writes markers.
-    verifier,e:=privateC1StartAsyncVerify(ctx,dsn,pgdata,g,ds,startWindow,end)
+    verifier,e:=privateC1StartAsyncVerify(ctx,dsn,pgdata,g,ds,startWindow,end,
+        commitReady.notifications,func(err error){abort()})
     if e!=nil{return empty,fmt.Errorf("FI C1: async relational verifier startup: %w",e)}
     defer verifier.Stop()
     // P5 preparation no longer drains and recreates one stream per signed
@@ -363,7 +367,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // batch's SHA-256, byte count, record count, and newline boundary before
     // opening the next. P6 remains continuous across all reporting windows.
     groupRows,groupBytes,e:=privateC1ConsumeContinuousSigned(
-        ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare,verifier.Seal)
+        ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare,commitReady.Seal)
     if e!=nil{return empty,fmt.Errorf("FI C1: continuous signed P5: %w",e)}
     var totalRows,totalBytes int64
     for wi:=startWindow;wi<end;wi++{
@@ -380,14 +384,18 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // W512 is only a reporting boundary. The P6 buffers were never
     // drained or re-created inside the loop above.
     if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 shared-pool five-family drain: %w",err)}
+    verifier.MarkDrained() // exact P6 final ACK boundary for timing evidence
+    if err=commitReady.FinishCommitted();err!=nil{
+        return empty,fmt.Errorf("FI C1: complete signed SQL commit receipts: %w",err)
+    }
     parents,children,family:=sink.Stats()
     if parents!=totalRows||children!=totalRows{
         return empty,fmt.Errorf("FI C1: source/child count mismatch source=%d typed=%d signed=%d",
             parents,children,totalRows)
     }
-    // All source and family commits have ACKed. Require each asynchronously
-    // verified sealed group to PASS before the original transactional
-    // typed-marker gate may even begin. No acceptance is possible on failure.
+    // All source and family commits have ACKed. The independent verifier
+    // must prove every signed group before any typed marker is written.
+    // The old synchronous relational scans are intentionally removed.
     if err=verifier.Finish(ctx);err!=nil{
         return empty,fmt.Errorf("FI C1: independent relational verification: %w",err)
     }
