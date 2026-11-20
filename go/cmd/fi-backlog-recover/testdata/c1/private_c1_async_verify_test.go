@@ -16,8 +16,17 @@ func TestPrivateC1AsyncVerifierCommitsDuringIngestWithoutFinalDrain(t *testing.T
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
     ready:=make(chan int,2)
+    secondMayFinish:=make(chan struct{})
     v,err:=newPrivateC1AsyncVerifier(ctx,1,3,ready,
-        func(ctx context.Context,wi int)error{return nil},nil,true)
+        func(ctx context.Context,wi int)error{
+            if wi==2 {
+                select{
+                case <-ctx.Done():return ctx.Err()
+                case <-secondMayFinish:
+                }
+            }
+            return nil
+        },nil,true)
     if err!=nil{t.Fatal(err)}
     defer v.Stop()
     ready<-1
@@ -30,6 +39,7 @@ func TestPrivateC1AsyncVerifierCommitsDuringIngestWithoutFinalDrain(t *testing.T
     }
     ready<-2
     v.MarkDrained()
+    close(secondMayFinish)
     close(ready)
     if err=v.Finish(ctx);err!=nil{t.Fatal(err)}
     if v.during!=1{
