@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=d1014ae03034a2b346848c87dbdb7003c39b0f2f
+sourcecommit=8ca3b8509a962ad73fbb192a8ce6d44fe7d4f843
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -205,6 +205,9 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_continuous_signed_stream_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_commit_ready.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_commit_ready_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_sparse_age_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_prefix8_proof.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_prefix8_proof_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_modules.go \
@@ -219,7 +222,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=40 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=43 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -427,11 +430,33 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
 ) || exit 1
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
-for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
+for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_commit_ready.go private_c1_commit_ready_test.go private_c1_sparse_age_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
+# The retired synchronous relational scans MUST NOT remain on the C1
+# typed-marker path. The new verifier owns those exact checks and marker
+# insertion is gated on every committed group proof.
+if grep -Eq 'verifyBacklogShadowWindowCounts|verifyBacklogWindowProjectionCoverage|verifyGenerationProjectionCoverage' \
+    "$src/go/internal/recordingest/private_c1_direct.go";then
+  echo 'FI C1 STOP: old synchronous relational scans remain on marker path' >&2
+  exit 1
+fi
+grep -Fq 'commitReady.FinishCommitted()' \
+  "$src/go/internal/recordingest/private_c1_direct.go" &&
+grep -Fq 'privateC1AsyncVerifyGroup' \
+  "$src/go/internal/recordingest/private_c1_async_verify.go" &&
+grep -Fq 'CommitFamily(rows)' \
+  "$src/go/internal/recordingest/private_c1_five_sql.go" &&
+grep -Fq 'CommitSource(rows)' \
+  "$src/go/internal/recordingest/private_c1_five_sql.go" &&
+grep -Fq 'privateC1SparseMaxBatchLag = 64' \
+  "$src/go/internal/recordingest/private_p6_family_buffers.go" &&
+grep -Fq 'flushAgedSparse(ctx,row.signedBatchIndex)' \
+  "$src/go/internal/recordingest/private_p6_family_buffers.go" ||
+  { echo 'FI C1 STOP: durable readiness or sparse-age signed-batch watermark missing' >&2; exit 1; }
+echo 'FI C1 COMMIT-READY SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked sparse_max_batch_lag=64 no_group_flush=true'
 # Historical C220 original is the only allowed cache entrypoint source.
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
 git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
@@ -822,14 +847,62 @@ grep '^FI C1 P6 NATIVE SQL BACKENDS ' "$log" > "$out/$name/C1_BACKENDS.txt" ||
 [ "$(wc -l < "$out/$name/C1_BACKENDS.txt" | tr -d ' ')" = 1 ] &&
 grep -Fq "shared_workers_initial=1 workers_max=$sqlmax distinct_pids=2 clone_only=true" "$out/$name/C1_BACKENDS.txt" ||
   fail 'C1 shared SQL worker pool did not start from one verified connection'
+# Do not grant a false PASS for a read-only worker that runs only AFTER
+# the final SQL drain. This was the exact failure of the prior C1 prototype.
+# Group readiness must come from exact PostgreSQL parent + family COMMITs,
+# with signed SHA already sealed. Verify every group once, and require at
+# least one completed relational proof BEFORE the P6 final-drain receipt.
+grep '^FI C1 COMMIT READY ' "$log" > "$out/$name/C1_COMMIT_READY.txt" ||
+  fail 'C1 durable SQL group-ready notifications missing'
+[ "$(wc -l < "$out/$name/C1_COMMIT_READY.txt" | tr -d '[:space:]')" = "$windows" ] &&
+grep -Fq 'signed_sha_sealed=true no_group_flush=true' "$out/$name/C1_COMMIT_READY.txt" ||
+  fail 'C1 did not emit exact durable source+family and signed-SHA ready notifications'
+if [ "$prefix8" = 1 ]; then
+  # If the sparse-family tails still only flush at final Finish(), we
+  # failed to fix the architecture regardless of correctness or timing.
+  grep '^FI P6 FAMILY ' "$log" | grep -Eq 'family=(Coverage|USNDependency|Other) .* age=[1-9][0-9]* ' ||
+    fail 'C1 8GiB sparse watermark had no SQL handoffs before final drain'
+fi
+grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
+  fail 'C1 independent read-only group proofs missing'
+[ "$(wc -l < "$out/$name/C1_ASYNC_VERIFY.txt" | tr -d '[:space:]')" = "$windows" ] &&
+awk -v expected="$windows" '
+{
+ delete p
+ for(i=1;i<=NF;i++){n=split($i,a,"=");if(n==2)p[a[1]]=a[2]}
+ w=p["window"]+0
+ if(w<1||w>expected||seen[w]++||p["attempts"]!="1"||
+    p["read_only"]!="true"||p["independent_connection"]!="true"||
+    p["commit_ready"]!="true")bad=1
+ if(p["phase"]=="during_ingest"){during++;if(w==1)first=1}
+ else if(p["phase"]!="after_drain")bad=1
+}
+END{
+ for(i=1;i<=expected;i++)if(seen[i]!=1)bad=1
+ if(bad||during<1||first!=1)exit 1
+}' "$out/$name/C1_ASYNC_VERIFY.txt" ||
+  fail 'C1 architecture FAIL: no verified first group during ongoing ingestion'
+awk '
+/^FI C1 ASYNC VERIFY PASS window=1 / && /phase=during_ingest / {prior=1}
+/^FI C1 P6 FINAL DRAIN START / {drain=1;if(!prior)exit 1}
+END {if(!drain||!prior)exit 1}
+' "$log" || fail 'C1 architecture FAIL: first-group proof did not complete before final P6 drain'
+# Stronger than 'before final drain': Group 1's proof must complete
+# BEFORE the final signed batch of Group 2 finishes streaming.
+awk '
+/^FI C1 ASYNC VERIFY PASS window=1 / && /phase=during_ingest / {prior=1}
+/^FI C1 P5 CONTINUOUS SIGNED STREAM PASS / {input_done=1;if(!prior)exit 1}
+END {if(!input_done||!prior)exit 1}
+' "$log" || fail 'C1 architecture FAIL: group1 proof completed only after Group2 signed input stopped'
+grep -Fq "FI C1 ASYNC VERIFY COMPLETE groups=$windows during_ingest=" "$log" &&
+grep -Fq 'original_relational_rescans=removed final_marker_gate=preserved' "$log" &&
+grep -Fq 'commit_ready=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
+! grep -Fq 'FI C1 ASYNC VERIFY FAIL ' "$log" ||
+  fail 'C1 commit-ready proof completion or fail-closed receipt missing'
+grep '^FI C1 P6 SQL DRAIN ' "$log" > "$out/$name/C1_SQL_DRAIN.txt" ||
+  fail 'C1 separate P6 SQL-drain performance receipt missing'
 # C1 adds the original P5 five-family parallel Go preparation pool,
 # retained across all signed batches and every 4GiB reporting window.
-grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
-  fail 'C1 read-only per-group background verification missing'
-[ "$(wc -l < "$out/$name/C1_ASYNC_VERIFY.txt" | tr -d '[:space:]')" = "$windows" ] &&
-grep -Fq 'read_only=true independent_connection=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
-grep -Fxq "FI C1 ASYNC VERIFY COMPLETE groups=$windows independent_read_only=true sealed_sha=true final_marker_unchanged=true" "$log" ||
-  fail 'C1 independent background verification proof missing, incomplete or not fail closed'
 grep '^FI C1 P5 CONTINUOUS SIGNED STREAM PASS ' "$log" > "$out/$name/C1_STREAM.txt" ||
   fail 'C1 did not verify one continuous P5 preparation stream'
 [ "$(wc -l < "$out/$name/C1_STREAM.txt" | tr -d '[:space:]')" = 1 ] &&
@@ -896,11 +969,11 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none authoritative=0 accepted=0\n" "$elapsed" |
+printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none commit_ready=true original_relational_rescans=removed authoritative=0 accepted=0\n" "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
-  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_P5_LANES.txt" \
+  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \

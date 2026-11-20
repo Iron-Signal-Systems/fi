@@ -8,81 +8,125 @@ import (
     "errors"
     "io"
     "os"
-    "sync/atomic"
     "testing"
     "time"
 )
 
-func TestPrivateC1AsyncVerifierRunsBeforeFinalDrain(t *testing.T){
+func TestPrivateC1AsyncVerifierCommitsDuringIngestWithoutFinalDrain(t *testing.T){
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
-    calls:=make(chan int,4)
-    var ready atomic.Bool
-    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,func(ctx context.Context,wi int)error{
-        select{case calls<-wi:default:}
-        if !ready.Load(){return errors.New("FI C1 test: P6 SQL still in flight")}
-        return nil
-    })
+    ready:=make(chan int,2)
+    secondMayFinish:=make(chan struct{})
+    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,ready,
+        func(ctx context.Context,wi int)error{
+            if wi==2 {
+                select{
+                case <-ctx.Done():return ctx.Err()
+                case <-secondMayFinish:
+                }
+            }
+            return nil
+        },nil,true)
     if err!=nil{t.Fatal(err)}
     defer v.Stop()
-    if err=v.Seal(1);err!=nil{t.Fatal(err)}
+    ready<-1
+    // Wait for the verified PASS receipt itself before signaling SQL drain:
+    // no speculative first-group retry and no post-drain false positive.
     select{
-    case wi:=<-calls:
-        if wi!=1{t.Fatalf("background verifier started group %d, expected 1",wi)}
-    case <-ctx.Done():
-        t.Fatal("no background verifier read while ingestion remained active")
+    case wi:=<-v.passed:
+        if wi!=1{t.Fatalf("expected first completed group, got %d",wi)}
+    case <-ctx.Done():t.Fatal("group 1 did not verify DURING ingestion")
     }
-    // The first group is not complete yet; sealing next group is nonblocking.
-    if err=v.Seal(2);err!=nil{t.Fatal(err)}
-    ready.Store(true)
+    ready<-2
+    v.MarkDrained()
+    close(secondMayFinish)
+    close(ready)
     if err=v.Finish(ctx);err!=nil{t.Fatal(err)}
-    if !v.checked[1]||!v.checked[2]{
-        t.Fatal("independent verifier failed to deliver complete group proofs")
+    if v.during!=1{
+        t.Fatalf("expected one proof before drain and one after, got %d",v.during)
     }
 }
 
-func TestPrivateC1AsyncVerifierFailsClosedAfterFinalSQLDrain(t *testing.T){
+func TestPrivateC1AsyncVerifierFailsClosedAndCallsBack(t *testing.T){
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
-    v,err:=newPrivateC1AsyncVerifier(ctx,1,2,func(context.Context,int)error{
-        return errors.New("FI C1 test: committed family projection missing")
-    })
+    ready:=make(chan int,1)
+    notified:=make(chan error,1)
+    v,err:=newPrivateC1AsyncVerifier(ctx,1,2,ready,
+        func(context.Context,int)error{
+            return errors.New("FI C1 test: committed typed root missing")
+        },
+        func(err error){notified<-err},false)
     if err!=nil{t.Fatal(err)}
     defer v.Stop()
-    if err=v.Seal(1);err!=nil{t.Fatal(err)}
-    if err=v.Finish(ctx);err==nil{
-        t.Fatal("C1 accepted a signed group with missing committed relational rows")
+    ready<-1
+    close(ready)
+    select{
+    case fail:=<-notified:
+        if fail==nil{t.Fatal("missing verifier error callback")}
+    case <-ctx.Done():t.Fatal("the verifier did not report failure")
     }
-    if v.checked[1]{
-        t.Fatal("C1 reported successful async verification of missing projection")
+    if err=v.Finish(ctx);err==nil{
+        t.Fatal("C1 advanced with a failed independent SQL proof")
     }
 }
 
-func TestPrivateC1AsyncVerifierStopWithoutAnySealedGroup(t *testing.T){
+func TestPrivateC1AsyncVerifierRejectsNoOverlappingSuccess(t *testing.T){
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
-    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,func(context.Context,int)error{
-        t.Fatal("unexpected SQL verification while no group is sealed")
-        return nil
-    })
+    ready:=make(chan int,2)
+    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,ready,
+        func(context.Context,int)error{return nil},nil,true)
+    if err!=nil{t.Fatal(err)}
+    defer v.Stop()
+    v.MarkDrained()
+    ready<-1
+    ready<-2
+    close(ready)
+    if err=v.Finish(ctx);err==nil{
+        t.Fatal("accepted group proofs that completed only after final P6 drain")
+    }
+}
+
+func TestPrivateC1AsyncVerifierStopWithoutAnyReadyGroup(t *testing.T){
+    ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+    defer cancel()
+    ready:=make(chan int,2)
+    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,ready,
+        func(context.Context,int)error{
+            t.Fatal("unexpected relational query without durable group receipt")
+            return nil
+        },nil,false)
     if err!=nil{t.Fatal(err)}
     completed:=make(chan struct{})
     go func(){v.Stop();close(completed)}()
     select{
     case <-completed:
-    case <-ctx.Done():t.Fatal("asynchronous verifier cancellation stranded idle worker")
+    case <-ctx.Done():t.Fatal("committed verifier cancellation stranded idle worker")
     }
 }
 
-func TestPrivateC1AsyncVerifierRejectsMissingAndOutOfOrderGroups(t *testing.T){
+func TestPrivateC1AsyncVerifierRejectsMissingAndDuplicateReceipts(t *testing.T){
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
-    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,func(context.Context,int)error{return nil})
+    ready:=make(chan int,2)
+    v,err:=newPrivateC1AsyncVerifier(ctx,1,3,ready,
+        func(context.Context,int)error{return nil},nil,false)
     if err!=nil{t.Fatal(err)}
     defer v.Stop()
-    if err=v.Seal(2);err==nil{t.Fatal("out of order hash seal accepted")}
-    if err=v.Seal(1);err!=nil{t.Fatal(err)}
-    if err=v.Finish(ctx);err==nil{t.Fatal("missing sealed group accepted")}
+    ready<-1
+    close(ready)
+    if err=v.Finish(ctx);err==nil{t.Fatal("missing second verification accepted")}
+    repeated:=make(chan int,3)
+    v2,err:=newPrivateC1AsyncVerifier(ctx,1,3,repeated,
+        func(context.Context,int)error{return nil},nil,false)
+    if err!=nil{t.Fatal(err)}
+    defer v2.Stop()
+    repeated<-1
+    repeated<-1
+    repeated<-2
+    close(repeated)
+    if err=v2.Finish(ctx);err==nil{t.Fatal("duplicate verification receipt accepted")}
 }
 
 func TestPrivateC1SignedBatchSealsOnlyAfterSHAAndNeverOnTamper(t *testing.T){
