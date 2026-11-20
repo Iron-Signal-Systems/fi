@@ -64,6 +64,7 @@ type privateC1SQLLane struct {
 }
 type privateC1FiveSQL struct {
     parent *pgx.Conn
+    commitReady *privateC1CommitReady // immutable attachment before any source/family job
     sourceJobs chan privateC1SourceJob
     sourceOutstanding []*privateC1SourceAck // signed reader only
     sourceLast *privateC1SourceAck
@@ -410,6 +411,13 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
     if privateC1PostCommitFailpoint(lane.family) {
         return errors.New("FI C1 DEVELOPMENT INJECTION: File SQL committed; typed checkpoint must not advance; discard dirty clone")
     }
+    // PostgreSQL COMMIT ACK is the only event that makes typed rows durable.
+    // Do not count a queued or prepared SQL handoff as verified input.
+    if w.commitReady!=nil{
+        if err:=w.commitReady.CommitFamily(rows);err!=nil{
+            return fmt.Errorf("FI C1: committed family readiness: %w",err)
+        }
+    }
     return nil
 }
 
@@ -432,6 +440,11 @@ func(w *privateC1FiveSQL) writeSource(ctx context.Context,rows []privateP6Record
     if err==nil{err=coordinator.Source(ctx,rows)}
     if err==nil{err=tx.Commit(ctx)}
     if err!=nil{return fmt.Errorf("FI C1: ordered P6 source parent failed: %w",err)}
+    if w.commitReady!=nil{
+        if err:=w.commitReady.CommitSource(rows);err!=nil{
+            return fmt.Errorf("FI C1: committed source readiness: %w",err)
+        }
+    }
     w.parentRows+=int64(len(rows))
     w.parentHandoffs++
     w.parentSQLWall+=time.Since(startedSource)
