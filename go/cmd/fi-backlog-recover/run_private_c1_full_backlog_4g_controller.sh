@@ -6,7 +6,7 @@ umask 077
 fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
 [ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1 20261115T153532Z'
-case "$1" in preflight|compile|c1) mode=$1;;*)fail 'unknown mode';;esac
+case "$1" in preflight|compile|c1|prefix8) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 # Stage 2 is only meaningful after the Stage 1 full 8GB/4MB run passes.
 # Fail closed on a missing or mismatched complete private-replay receipt.
@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=6119df0db1536d5a3f908be1b373a750c2da2632
-runnerpin=dafceaf4627b5dadfcba9156fc329fa265a60455
+sourcepin=5c10640a93fd0215ea628bfdcd24ba0b03203478
+runnerpin=a00cccd76e5e87d5dfb54556ee16630426c1be56
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -94,6 +94,7 @@ export FI_C1_PG_WAL_BUFFERS=16MB
 export FI_W512_P6_FAMILY_SQL=1
 export FI_W512_P5_PERSISTENT=1
 export FI_C1_DEV_ASYNC_VERIFY=1
+if [ "$mode" = prefix8 ];then export FI_C1_DEV_PREFIX8=1;else export FI_C1_DEV_PREFIX8=0;fi
 export FI_W512_P3_DYNAMIC_MIN=2
 export FI_W512_P3_DYNAMIC_MAX=16
 unset FI_W512_P7_SQL_WRITERS FI_W512_P8_REUSE FI_W512_P9_DIRECT_STREAM
@@ -179,7 +180,7 @@ receipt=$(grep '^FI W512 PILOT FINISHED exit=0 outputs=' "$log" | tail -n 1)
 out=$(printf '%s\n' "$receipt" | sed -n 's/.* outputs=\([^ ]*\) private_clone=.*/\1/p')
 case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
-grep -Fq "FI C220 C1 FULL BACKLOG DEV PASS groups=" "$out/SUMMARY.txt" ||
+grep -Fq "FI C220 C1 DEV PASS prefix8=$FI_C1_DEV_PREFIX8 groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
 for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_ASYNC_VERIFY.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
@@ -209,7 +210,7 @@ seconds=$(awk -v t="$elapsed" 'BEGIN {
 }') || fail 'C1 full reported an invalid duration'
 plan_field() {
   awk -v want="$1" '
-    /^FI C1 FULL BACKLOG SIGNED PLAN / {
+    /^FI C1 (FULL BACKLOG|EIGHT GIB) SIGNED PLAN / {
       for(i=1;i<=NF;i++) {
         n=split($i,p,"=")
         if(n==2 && p[1]==want && p[2]~/^[0-9]+$/) {
@@ -220,15 +221,28 @@ plan_field() {
     END {if(!found)exit 1}
   ' "$runroot/C1_PLAN.txt"
 }
-records=$(plan_field new_records) || fail 'signed complete backlog record count missing'
-bytes=$(plan_field new_source_bytes) || fail 'signed complete backlog bytes missing'
-lastbatch=$(plan_field last_batch) || fail 'signed complete backlog final batch missing'
-groups=$(plan_field new_windows) || fail 'signed complete backlog group count missing'
-signed_batches=$(plan_field signed_batches) || fail 'signed complete backlog source batches missing'
-[ "$lastbatch" = "$signed_batches" ] && [ "$groups" -gt 2 ] ||
-  fail 'full backlog signed source incomplete'
+records=$(plan_field new_records) || fail 'signed backlog record count missing'
+bytes=$(plan_field new_source_bytes) || fail 'signed backlog byte count missing'
+lastbatch=$(plan_field last_batch) || fail 'signed end batch missing'
+groups=$(plan_field new_windows) || fail 'signed 4GiB group count missing'
+if [ "$mode" = prefix8 ];then
+  [ "$groups" = 2 ] && [ "$lastbatch" -lt 8399 ] &&
+  [ "$bytes" -ge 8522825728 ] && [ "$bytes" -le 8589934592 ] ||
+    fail '8GiB prefix contains wrong signed range'
+  grep -Fq "groups=2 windows=3 source_records=$((493478+records)) new_records=$records source_bytes=$bytes signed_batches=$lastbatch full_generation=false" "$runroot/C1_FULL_PROOF.txt" ||
+    fail '8GiB signed prefix-only proof incorrect'
+else
+  signed_batches=$(plan_field signed_batches) || fail 'complete signed batch count missing'
+  [ "$lastbatch" = "$signed_batches" ] && [ "$groups" -gt 2 ] ||
+    fail 'complete signed generation missing'
+fi
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
-  fail 'C1 reported an invalid throughput'
-printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
-printf 'FI C1 ASYNC RELATIONAL VERIFIER CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=continuous_p5_previous_run read_only=true final_marker_unchanged=true proof=clone_only\n'
-printf 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=%s records=%s source_bytes=%s last_batch=%s signed_batches=%s shared_sql_workers_max=%s source_parent_writers=1 seed_unchanged=true clean_start=true typed_full=true artifact_source_markers=seed_only private_clone_only=true authoritative=0 published=0 output=%s\n' "$groups" "$records" "$bytes" "$lastbatch" "$signed_batches" "$sqlmax" "$runroot"
+  fail 'C1 reported invalid throughput'
+if [ "$mode" = prefix8 ];then
+  printf 'FI C1 ASYNC 8G PREFIX THROUGHOUT records=%s source_bytes=%s group_gib=4 groups=2 elapsed_seconds=%s records_per_second=%s full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
+  printf 'FI C1 ASYNC 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s sealed_sha=true read_only_proof=true all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
+else
+  printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
+  printf 'FI C1 ASYNC RELATIONAL VERIFIER CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=continuous_p5_previous_run read_only=true final_marker_unchanged=true proof=clone_only\n'
+  printf 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=%s records=%s source_bytes=%s last_batch=%s signed_batches=%s shared_sql_workers_max=%s source_parent_writers=1 seed_unchanged=true clean_start=true typed_full=true artifact_source_markers=seed_only private_clone_only=true authoritative=0 published=0 output=%s\n' "$groups" "$records" "$bytes" "$lastbatch" "$signed_batches" "$sqlmax" "$runroot"
+fi
