@@ -21,9 +21,21 @@ grep -Fxq 'FI C1 POSTGRES WAL A/B CANDIDATE max_wal_size=8GB wal_buffers=4MB ori
 grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=8399 records=15140785 bytes=65205192753 typed_markers=16 source_parent_rows=15140785 authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$prior/run.log" &&
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior/run.log" ||
   fail 'Stage 1 8GB/4MB full source/relational acceptance receipt not verified'
+# Compare this P5 implementation against the completed 8GB/16MB run,
+# not against the earlier 4MB WAL-buffer experiment.
+prior16=${FI_C1_WAL16_BASELINE_REPORT:-}
+case "$prior16" in /var/tmp/fi-c1-pgwal16.*) ;; *)
+  fail 'set FI_C1_WAL16_BASELINE_REPORT to the successful 8GB/16MB report directory' ;;
+esac
+[ -d "$prior16" ] && [ ! -L "$prior16" ] && [ -s "$prior16/run.log" ] ||
+  fail '8GB/16MB full-run comparator log is missing'
+grep -Fxq 'FI C1 POSTGRES WAL BUFFER A/B CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=8GB_4MB proof=clone_only' "$prior16/run.log" &&
+grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=8399 records=15140785 bytes=65205192753 typed_markers=16 source_parent_rows=15140785 authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$prior16/run.log" &&
+grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
+  fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e
-runnerpin=e922b9d52f1152a0f1776030261975457845e4b9
+sourcepin=28bfcd969152c4860b4d4ba5f232b57a8a3e94c7
+runnerpin=f5b0592c66225463d126d3930accfde045ac6461
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -55,6 +67,9 @@ grep -Fq 'C1_SECURITY_COPY.txt' "$runner" &&
 grep -Fq 'FI C1 NATIVE P6 DIRECT SOURCE PASS p7_bridge=none source_stage=none' "$runner" &&
 grep -Fq 'FI C1 P6 SHARED SQL PASS' "$runner" &&
 grep -Fq 'private_c1_backpressure_test.go' "$runner" &&
+grep -Fq 'private_c1_continuous_signed_stream.go' "$runner" &&
+grep -Fq 'private_c1_continuous_signed_stream_test.go' "$runner" &&
+grep -Fq 'C1_STREAM.txt' "$runner" &&
 grep -Fq 'TestPrivateC1' "$runner" &&
 grep -Fq 'FI C1 FULL BACKLOG SIGNED PLAN' "$runner" &&
 grep -Fq 'C1_PLAN.txt' "$runner" &&
@@ -109,7 +124,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 FULL BACKLOG DEV PASS groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -121,6 +136,7 @@ cat "$runroot/C1_PLAN.txt"
 cat "$runroot/C1_FULL_PROOF.txt"
 cat "$runroot/C1_COMPLETE.txt"
 cat "$runroot/C1_FAMILIES.txt"
+cat "$runroot/C1_STREAM.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
@@ -156,5 +172,5 @@ signed_batches=$(plan_field signed_batches) || fail 'signed complete backlog sou
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported an invalid throughput'
 printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
-printf 'FI C1 POSTGRES WAL BUFFER A/B CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=8GB_4MB proof=clone_only\n'
+printf 'FI C1 CONTINUOUS P5 CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=8GB_16MB_per_batch_session proof=clone_only\n'
 printf 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=%s records=%s source_bytes=%s last_batch=%s signed_batches=%s shared_sql_workers_max=%s source_parent_writers=1 seed_unchanged=true clean_start=true typed_full=true artifact_source_markers=seed_only private_clone_only=true authoritative=0 published=0 output=%s\n' "$groups" "$records" "$bytes" "$lastbatch" "$signed_batches" "$sqlmax" "$runroot"
