@@ -682,6 +682,7 @@ vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
 printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gib=$group prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
+export FI_C1_DEV_ASYNC_VERIFY=1
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 if [ "$prefix8" = 1 ];then
   export FI_W512_C1_STOP_WINDOWS=2
