@@ -3,10 +3,10 @@
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
 // Clone-only C1: independent P6 COMMIT-readiness accounting. Group boundaries
-// are NOT P5/P6 flush or restart boundaries. An exact signed group becomes
-// eligible for read-only verification after its last signed batch passes SHA,
-// every source-parent SQL transaction commits, and every typed-family SQL
-// transaction commits. These are transactional success receipts, not merely
+// are NOT P5/P6 flush or restart boundaries. An original receiver-verified
+// group becomes eligible for read-only verification after all of its cached
+// batch boundaries pass count/byte/LF checks, every source-parent SQL
+// transaction commits, and every typed-family SQL transaction commits. These are transactional success receipts, not merely
 // enqueued jobs or ACKs waiting in the reader's FIFO.
 package recordingest
 
@@ -66,7 +66,7 @@ func newPrivateC1CommitReady(ds []BacklogCheckpointDescriptor,start,end int)(
     return t,nil
 }
 
-// Called from the SHA-verified reader, never from the SQL workers.
+// Called by the continuous custody-bound reader, never by SQL workers.
 func(t *privateC1CommitReady) Seal(wi int)error{
     if t==nil{return errors.New("FI C1 committed readiness: nil tracker")}
     t.mu.Lock()
@@ -137,7 +137,7 @@ func(t *privateC1CommitReady) readyLocked(wi int)error{
         g.ready=true
         select{
         case t.notifications<-wi:
-            fmt.Printf("FI C1 COMMIT READY window=%d source_committed=%d typed_committed=%d signed_sha_sealed=true no_group_flush=true\n",
+            fmt.Printf("FI C1 COMMIT READY window=%d source_committed=%d typed_committed=%d custody_batch_sealed=true no_group_flush=true\n",
                 wi,g.source,g.typed)
         default:
             t.failed=errors.New("FI C1 committed readiness: bounded verifier queue unexpectedly full")
