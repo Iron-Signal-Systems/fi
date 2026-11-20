@@ -348,7 +348,7 @@ jobs:
           assert 'go127 test -race' in runner
           assert '-c max_wal_size=8GB' in runner
           assert "pg_max_wal=8GB" in runner
-          assert "pg_wal_buffers=4MB" in runner
+          assert "pg_wal_buffers=16MB" in runner
           assert "SHOW max_wal_size" in runner
           assert "SHOW wal_buffers" in runner
           assert '"$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl"' in runner
