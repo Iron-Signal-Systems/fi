@@ -360,6 +360,8 @@ jobs:
           assert 'pg_total_relation_size(relid)' in runner
           assert "FI_C1_PG_MAX_WAL_SIZE=8GB" in controller
           assert "FI_C1_PG_WAL_BUFFERS=16MB" in controller
+          assert "FI_C1_WAL8_BASELINE_REPORT" in controller
+          assert "Stage 1 8GB/4MB full source/relational acceptance receipt" in controller
           assert 'sourceMarkers!=1||artifactMarkers!=1' in proof
           assert 'published!=0||accepted!=0' in proof
           assert "GRANT pg_read_all_settings" not in runner
