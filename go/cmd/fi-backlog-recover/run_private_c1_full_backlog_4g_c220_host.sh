@@ -887,6 +887,13 @@ awk '
 /^FI C1 P6 FINAL DRAIN START / {drain=1;if(!prior)exit 1}
 END {if(!drain||!prior)exit 1}
 ' "$log" || fail 'C1 architecture FAIL: first-group proof did not complete before final P6 drain'
+# Stronger than 'before final drain': Group 1's proof must complete
+# BEFORE the final signed batch of Group 2 finishes streaming.
+awk '
+/^FI C1 ASYNC VERIFY PASS window=1 / && /phase=during_ingest / {prior=1}
+/^FI C1 P5 CONTINUOUS SIGNED STREAM PASS / {input_done=1;if(!prior)exit 1}
+END {if(!input_done||!prior)exit 1}
+' "$log" || fail 'C1 architecture FAIL: group1 proof completed only after Group2 signed input stopped'
 grep -Fq "FI C1 ASYNC VERIFY COMPLETE groups=$windows during_ingest=" "$log" &&
 grep -Fq 'original_relational_rescans=removed final_marker_gate=preserved' "$log" &&
 grep -Fq 'commit_ready=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
