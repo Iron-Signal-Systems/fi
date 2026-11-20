@@ -8,9 +8,22 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1 20261115T153532Z'
 case "$1" in preflight|compile|c1) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
+# Stage 2 is only meaningful after the Stage 1 full 8GB/4MB run passes.
+# Fail closed on a missing or mismatched complete private-replay receipt.
+prior=${FI_C1_WAL8_BASELINE_REPORT:-}
+case "$prior" in
+  /var/tmp/fi-c1-pgwal8.*) ;;
+  *) fail 'set FI_C1_WAL8_BASELINE_REPORT to the successful Stage 1 report directory' ;;
+esac
+[ -d "$prior" ] && [ ! -L "$prior" ] && [ -s "$prior/run.log" ] ||
+  fail 'Stage 1 8GB/4MB full-run log is missing'
+grep -Fxq 'FI C1 POSTGRES WAL A/B CANDIDATE max_wal_size=8GB wal_buffers=4MB original_full_run=1GB_4MB proof=clone_only' "$prior/run.log" &&
+grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=8399 records=15140785 bytes=65205192753 typed_markers=16 source_parent_rows=15140785 authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$prior/run.log" &&
+grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior/run.log" ||
+  fail 'Stage 1 8GB/4MB full source/relational acceptance receipt not verified'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e
-runnerpin=4421b8e4c67229c6dff8edc371cb8274f4bd4182
+runnerpin=e922b9d52f1152a0f1776030261975457845e4b9
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -47,6 +60,7 @@ grep -Fq 'FI C1 FULL BACKLOG SIGNED PLAN' "$runner" &&
 grep -Fq 'C1_PLAN.txt' "$runner" &&
 grep -Fq 'C1_POOL.txt' "$runner" &&
 grep -Fq 'max_wal_size=8GB' "$runner" &&
+grep -Fq 'wal_buffers=16MB' "$runner" &&
 grep -Fq 'checkpointer_after.jsonl' "$runner" &&
 grep -Fq 'tables_after.jsonl' "$runner" &&
 grep -Fq 'FI C1 SHARED SQL POOL' "$runner" &&
@@ -58,7 +72,7 @@ group=4
 export FI_C1_FULL_BACKLOG_GROUP_GIB=4
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 export FI_C1_PG_MAX_WAL_SIZE=8GB
-export FI_C1_PG_WAL_BUFFERS=4MB
+export FI_C1_PG_WAL_BUFFERS=16MB
 export FI_W512_P6_FAMILY_SQL=1
 export FI_W512_P5_PERSISTENT=1
 export FI_W512_P3_DYNAMIC_MIN=2
@@ -142,5 +156,5 @@ signed_batches=$(plan_field signed_batches) || fail 'signed complete backlog sou
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported an invalid throughput'
 printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
-printf 'FI C1 POSTGRES WAL A/B CANDIDATE max_wal_size=8GB wal_buffers=4MB original_full_run=1GB_4MB proof=clone_only\n'
+printf 'FI C1 POSTGRES WAL BUFFER A/B CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=8GB_4MB proof=clone_only\n'
 printf 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=%s records=%s source_bytes=%s last_batch=%s signed_batches=%s shared_sql_workers_max=%s source_parent_writers=1 seed_unchanged=true clean_start=true typed_full=true artifact_source_markers=seed_only private_clone_only=true authoritative=0 published=0 output=%s\n' "$groups" "$records" "$bytes" "$lastbatch" "$signed_batches" "$sqlmax" "$runroot"

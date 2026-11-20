@@ -48,10 +48,13 @@ WAL buffers, and durability options stay unchanged.
   no canonical/Accepted/published rows, clean shutdown, unchanged seed.
 - **No improvement or correctness claimed for B until its C220 evidence exists.**
 
-## Stage 2 — WAL buffers A/B (next isolated branch, NOT enabled in Stage 1)
+## Stage 2 — WAL buffers A/B (candidate implemented; C220 execution pending)
 
-Only after Stage 1 passes and its metrics are reviewed, compare fresh
-8GB/4MB versus 8GB/16MB private clones. `wal_buffers` is a start-time
+Branch `dev/c1-pgwal-buffers16m-20261120` pins a second disposable
+clone candidate with `max_wal_size=8GB`, `wal_buffers=16MB` and
+otherwise identical C1 source, worker limits, signed data and telemetry.
+It must **not** be run until the Stage 1 8GB/4MB result is verified.
+Compare fresh 8GB/4MB versus 8GB/16MB private clones. `wal_buffers` is a start-time
 PostgreSQL setting, not a safe live ingest adjustment. Keep
 `max_wal_size=8GB`; do not change WAL segment size, checkpoint_timeout,
 or any durability setting. Decide based on `wal_buffers_full`,
