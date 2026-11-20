@@ -78,10 +78,10 @@ grep -Fq 'private_c1_async_verify_test.go' "$runner" &&
 grep -Fq 'private_c1_commit_ready.go' "$runner" &&
 grep -Fq 'private_c1_commit_ready_test.go' "$runner" &&
 grep -Fq 'private_c1_sparse_age_test.go' "$runner" &&
-grep -Fq 'sparse_max_batch_lag=64' "$runner" &&
+grep -Fq 'C1 added sparse-family SQL handoffs to schedule B' "$runner" &&
 grep -Fq 'C1_COMMIT_READY.txt' "$runner" &&
 grep -Fq 'C1_SQL_DRAIN.txt' "$runner" &&
-grep -Fq 'architecture FAIL: no verified first group' "$runner" &&
+grep -Fq 'C1 read-only B proof incomplete or incorrectly reported' "$runner" &&
 grep -Fq 'C1_ASYNC_VERIFY.txt' "$runner" &&
 grep -Fq 'C1_STREAM.txt' "$runner" &&
 grep -Fq 'TestPrivateC1' "$runner" &&
