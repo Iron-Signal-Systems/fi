@@ -55,7 +55,7 @@ flushes, exact source counts and fail-closed sparse SQL write errors.
 2. Go unit tests, race tests and build must pass **before PostgreSQL clone startup**.
 3. The 8 GiB cutoff must equal the same original signed-batch prefix as the existing 2 GiB/4 GiB plan; preserve the immutable seed and original signed receipt.
 4. Exactly two `FI C1 COMMIT READY` notifications, with source/typed committed counts equal signed group totals, signed seal and no group-flush flag.
-5. Exactly two one-shot `FI C1 ASYNC VERIFY PASS` receipts; **Group 1 MUST show `phase=during_ingest` and `attempts=1`**. A first-group pass after final drain is an **architecture FAIL**, even when every relational check passes.
+5. Exactly two one-shot `FI C1 ASYNC VERIFY PASS` receipts; **Group 1 MUST show `phase=during_ingest` and `attempts=1`**, and its PASS receipt must appear **before** `FI C1 P5 CONTINUOUS SIGNED STREAM PASS` (before Group 2's last signed input completes), as well as before `FI C1 P6 FINAL DRAIN START`. A first-group pass merely during final SQL flushing is an **architecture FAIL**, even when every relational check passes.
 6. Final `FI C1 ASYNC VERIFY COMPLETE` must have nonzero `during_ingest` and preserve marker-gate ordering. No async failure, no incomplete/unmatched signed groups, no Accepted/publication, and clone PostgreSQL shutdown clean.
 7. 5-second host/process/ZFS/disk telemetry must start before the private benchmark and be finalized on exit; archive `C1.telemetry.tar.gz`.
 8. Capture both `FI C1 P6 SQL DRAIN elapsed=...` and total C1 processing duration to distinguish true P5/P6 progress from verification/marker tail.
