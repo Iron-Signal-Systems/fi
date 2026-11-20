@@ -21,7 +21,10 @@ func privateC1ValidateEightGiBPrefix(g *PreparedGeneration,
     if g==nil||end!=3||len(ds)<=end||
         ds[0].EndBatch<=0||ds[0].EndRecord==0||
         ds[0].StartBatch!=0||ds[0].StartRecord!=0||
-        ds[end].EndBatch>=len(g.Batches)||
+        // The last SELECTED prefix group must stop before the source ends.
+        // ds[end] describes the remaining tail and may itself end at the
+        // full-generation boundary; that is not a prefix completion.
+        ds[end-1].EndBatch>=len(g.Batches)||
         ds[0].ReceiptSHA256!=g.ReceiptSHA256 {
         return errors.New("FI C1 8G: expected exactly two nonterminal signed groups after immutable seed")
     }
