@@ -353,12 +353,17 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
             })
         }
     }
+    // Independent read-only verifier begins before record processing. It
+    // has no access to the P6 shared SQL ACK queues and never writes markers.
+    verifier,e:=privateC1StartAsyncVerify(ctx,dsn,pgdata,g,ds,startWindow,end)
+    if e!=nil{return empty,fmt.Errorf("FI C1: async relational verifier startup: %w",e)}
+    defer verifier.Stop()
     // P5 preparation no longer drains and recreates one stream per signed
     // batch. The signed reader still finishes and validates every original
     // batch's SHA-256, byte count, record count, and newline boundary before
     // opening the next. P6 remains continuous across all reporting windows.
     groupRows,groupBytes,e:=privateC1ConsumeContinuousSigned(
-        ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare)
+        ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare,verifier.Seal)
     if e!=nil{return empty,fmt.Errorf("FI C1: continuous signed P5: %w",e)}
     var totalRows,totalBytes int64
     for wi:=startWindow;wi<end;wi++{
@@ -379,6 +384,12 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if parents!=totalRows||children!=totalRows{
         return empty,fmt.Errorf("FI C1: source/child count mismatch source=%d typed=%d signed=%d",
             parents,children,totalRows)
+    }
+    // All source and family commits have ACKed. Require each asynchronously
+    // verified sealed group to PASS before the original transactional
+    // typed-marker gate may even begin. No acceptance is possible on failure.
+    if err=verifier.Finish(ctx);err!=nil{
+        return empty,fmt.Errorf("FI C1: independent relational verification: %w",err)
     }
     if err=privateC1MarkTyped(ctx,writer,g,ds,startWindow,end);err!=nil{
         return empty,fmt.Errorf("FI C1: final signed relational marker: %w",err)
