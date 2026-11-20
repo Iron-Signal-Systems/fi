@@ -323,7 +323,7 @@ jobs:
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
           assert 'sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e' in controller
-          assert 'runnerpin=3edfc7696bc709157991976b6b05edf72c951007' in controller
+          assert 'runnerpin=6e4ffefb8e111feecfa42e8520094b2100646bf2' in controller
           assert 'sourcecommit=6ecee24c98bba5c5876850ccce08be81e46b066e' in runner
           assert 'FI_W512_C1_FULL_BACKLOG=1' in runner
           assert 'FI_W512_C1_FULL_BACKLOG' in source
@@ -346,6 +346,17 @@ jobs:
           assert 'TestPrivateC1USNRequiresPreviousCommittedSQLACK' in race
           assert 'TestPrivateC1USNPrecedingSQLFailureStopsLaterHandoff' in race
           assert 'go127 test -race' in runner
+          assert '-c max_wal_size=8GB' in runner
+          assert "pg_max_wal=8GB" in runner
+          assert "pg_wal_buffers=4MB" in runner
+          assert "SHOW max_wal_size" in runner
+          assert "SHOW wal_buffers" in runner
+          assert '"$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl"' in runner
+          assert '"$name/tables_before.jsonl" "$name/tables_after.jsonl"' in runner
+          assert '"$name/indexes_before.jsonl" "$name/indexes_after.jsonl"' in runner
+          assert '"$name/bgwriter_before.jsonl" "$name/bgwriter_after.jsonl"' in runner
+          assert "FI_C1_PG_MAX_WAL_SIZE=8GB" in controller
+          assert "FI_C1_PG_WAL_BUFFERS=4MB" in controller
           assert 'sourceMarkers!=1||artifactMarkers!=1' in proof
           assert 'published!=0||accepted!=0' in proof
           assert "GRANT pg_read_all_settings" not in runner
