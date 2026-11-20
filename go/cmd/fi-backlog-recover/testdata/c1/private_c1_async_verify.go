@@ -29,6 +29,7 @@ type privateC1AsyncVerifier struct {
     done chan struct{}
     start,end int
     checked []bool
+    passed chan int // bounded proof-completion receipts for tests and diagnostics
     during int
     check func(context.Context,int)error
     onFailure func(error)
@@ -47,6 +48,7 @@ func newPrivateC1AsyncVerifier(ctx context.Context,start,end int,
     v:=&privateC1AsyncVerifier{
         ctx:own,cancel:cancel,ready:ready,
         start:start,end:end,checked:make([]bool,end),
+        passed:make(chan int,end-start),
         finalDrain:make(chan struct{}),done:make(chan struct{}),
         check:check,onFailure:onFailure,requireDuring:requireDuring,
     }
@@ -87,6 +89,7 @@ func(v *privateC1AsyncVerifier) run(){
         v.checked[wi]=true
         fmt.Printf("FI C1 ASYNC VERIFY PASS window=%d attempts=1 phase=%s duration=%s read_only=true independent_connection=true commit_ready=true\n",
             wi,phase,time.Since(started))
+        v.passed<-wi
     }
 }
 
