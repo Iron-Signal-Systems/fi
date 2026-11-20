@@ -14,6 +14,12 @@ import (
     "fmt"
 )
 
+// A continuously advancing signed-batch watermark gives low-volume families
+// bounded SQL-commit latency without a 4GiB group flush or full SQL barrier.
+// This threshold is deliberately in ORIGINAL SIGNED BATCHES, not W512 groups.
+// Security and File continue their original capacity/byte-limit policy.
+const privateC1SparseMaxBatchLag = 64
+
 type privateP6WindowContextKey struct{}
 func privateP6BuffersFromContext(ctx context.Context)*privateP6Buffers{
     if ctx==nil{return nil}
@@ -86,6 +92,7 @@ type privateP6Lane struct{
     handoffs int64
     records int64
     capacityHandoffs int64
+    ageHandoffs int64
     dependencyHandoffs int64
     finalHandoffs int64
     peakRows int
@@ -147,6 +154,13 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
         b.failed=errors.New("FI P6: invalid signed identity, bytes or original record order")
         return b.failed
     }
+    // P6's original capacity flushes do not commit small final tails in
+    // Coverage, USN or Other until the true end of all signed input. That
+    // prevents even Group 1 of a 2-group run from being independently
+    // verified while Group 2 is ingested. Age-based SMALL-lane handoffs
+    // solve that without looking at or flushing on a group boundary.
+    // The sink queues SQL; this is not WaitAll or a typed-marker barrier.
+    if err=b.flushAgedSparse(ctx,row.signedBatchIndex);err!=nil{return err}
     // Flush the shared source identity ledger before it exceeds its own
     // capacity. Source rows are inserted in true signed order, so USN's
     // established preceding-source-record-id relation still works.
@@ -168,6 +182,25 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
     b.lastBatch,b.lastOrdinal=row.signedBatchIndex,row.ordinal
     if privateP6Full(lane){
         if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
+    }
+    return nil
+}
+
+// Once a sparse lane's OLDEST pending signed batch is more than 64 signed
+// batches behind current input, submit it to SQL. Revisit on every signed
+// record so a lane with NO later rows is still committed during continued
+// input. This is an opportunistic bounded-latency handoff, NOT a drain at
+// a reporting group boundary and not a read-side verification shortcut.
+func(b *privateP6Buffers) flushAgedSparse(ctx context.Context,atBatch int)error{
+    for _,family:=range []privateP6Family{
+        privateP6Coverage,privateP6USN,privateP6Other,
+    }{
+        lane:=&b.lanes[family]
+        if len(lane.pending)==0{continue}
+        if atBatch-lane.pending[0].signedBatchIndex<privateC1SparseMaxBatchLag{
+            continue
+        }
+        if err:=b.flushFamily(ctx,family,"age");err!=nil{return err}
     }
     return nil
 }
@@ -218,6 +251,7 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     lane.handoffs++
     switch reason{
     case "capacity":lane.capacityHandoffs++
+    case "age":lane.ageHandoffs++
     case "dependency":lane.dependencyHandoffs++
     case "end-of-input":lane.finalHandoffs++
     default:panic("FI P6: unsupported flush reason")
@@ -266,9 +300,9 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
         b.window,b.source.records,b.source.handoffs,b.source.limit.bytes)
     for family:=privateP6Family(0);family<privateP6FamilyCount;family++{
         lane:=&b.lanes[family]
-        fmt.Printf("FI P6 FAMILY window=%d family=%s rows=%d handoffs=%d capacity=%d dependency=%d final=%d peak_rows=%d peak_bytes=%d complete=true\n",
+        fmt.Printf("FI P6 FAMILY window=%d family=%s rows=%d handoffs=%d capacity=%d age=%d dependency=%d final=%d peak_rows=%d peak_bytes=%d complete=true\n",
             b.window,privateP6FamilyNames[family],lane.records,lane.handoffs,
-            lane.capacityHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
+            lane.capacityHandoffs,lane.ageHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
             lane.peakRows,lane.peakBytes)
     }
     fmt.Printf("FI C1 FINAL SOURCE AND FAMILY DRAIN window=%d source=%d typed=%d families=5 sql_writers=adaptive_shared clone_only=true completion=all_families\n",
