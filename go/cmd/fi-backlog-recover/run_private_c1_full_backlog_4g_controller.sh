@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=d1014ae03034a2b346848c87dbdb7003c39b0f2f
-runnerpin=77840e5806133fe9643e3a22572e6f71905d3a1f
+sourcepin=fb3d95ffcb35f199a2eac7c966e5f3ea76d8e6ca
+runnerpin=37c6b03026d7a00ec2cb51e37431e563b32aa956
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -75,6 +75,11 @@ grep -Fq 'private_c1_continuous_signed_stream.go' "$runner" &&
 grep -Fq 'private_c1_continuous_signed_stream_test.go' "$runner" &&
 grep -Fq 'private_c1_async_verify.go' "$runner" &&
 grep -Fq 'private_c1_async_verify_test.go' "$runner" &&
+grep -Fq 'private_c1_commit_ready.go' "$runner" &&
+grep -Fq 'private_c1_commit_ready_test.go' "$runner" &&
+grep -Fq 'C1_COMMIT_READY.txt' "$runner" &&
+grep -Fq 'C1_SQL_DRAIN.txt' "$runner" &&
+grep -Fq 'architecture FAIL: no verified first group' "$runner" &&
 grep -Fq 'C1_ASYNC_VERIFY.txt' "$runner" &&
 grep -Fq 'C1_STREAM.txt' "$runner" &&
 grep -Fq 'TestPrivateC1' "$runner" &&
@@ -186,7 +191,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 DEV PASS prefix8=$FI_C1_DEV_PREFIX8 groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_ASYNC_VERIFY.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -199,7 +204,9 @@ cat "$runroot/C1_FULL_PROOF.txt"
 cat "$runroot/C1_COMPLETE.txt"
 cat "$runroot/C1_FAMILIES.txt"
 cat "$runroot/C1_STREAM.txt"
+cat "$runroot/C1_COMMIT_READY.txt"
 cat "$runroot/C1_ASYNC_VERIFY.txt"
+cat "$runroot/C1_SQL_DRAIN.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
@@ -244,7 +251,7 @@ rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%
   fail 'C1 reported invalid throughput'
 if [ "$mode" = prefix8 ];then
   printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 elapsed_seconds=%s records_per_second=%s full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
-  printf 'FI C1 ASYNC 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s sealed_sha=true read_only_proof=true all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
+  printf 'FI C1 COMMIT-READY 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s signed_sha=true one_shot_relational_proofs=true group1_during_ingest=true original_relational_rescans=removed all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
 else
   printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
   printf 'FI C1 ASYNC RELATIONAL VERIFIER CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=continuous_p5_previous_run read_only=true final_marker_unchanged=true proof=clone_only\n'
