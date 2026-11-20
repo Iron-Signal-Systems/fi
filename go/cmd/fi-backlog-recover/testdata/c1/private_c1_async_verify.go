@@ -80,8 +80,16 @@ func(v *privateC1AsyncVerifier) Seal(wi int)error{
 
 func(v *privateC1AsyncVerifier) run(){
     defer close(v.done)
-    for wi:=range v.sealed{
-        if v.ctx.Err()!=nil {v.err=v.ctx.Err();return}
+    for {
+        var wi int
+        select {
+        case <-v.ctx.Done():
+            v.err=v.ctx.Err()
+            return
+        case next,ok:=<-v.sealed:
+            if !ok{return}
+            wi=next
+        }
         attempts:=0
         started:=time.Now()
         for {
