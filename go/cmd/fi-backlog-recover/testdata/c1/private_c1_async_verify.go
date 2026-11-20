@@ -12,7 +12,6 @@ package recordingest
 
 import (
     "context"
-    "encoding/hex"
     "errors"
     "fmt"
     "os"
@@ -189,46 +188,6 @@ func privateC1AsyncVerifyGroup(ctx context.Context,conn *pgx.Conn,
         return fmt.Errorf("group %d relational-coverage proof: %w",wi,err)
     }
     return tx.Commit(ctx)
-}
-
-// An 8GiB prefix run must never be mistaken for an entire signed
-// generation. The private clone receives only the original seed and the
-// two complete 4GiB signed groups. All source and typed markers are checked
-// without publishing or advancing an authoritative generation.
-func privateC1VerifyEightGiBPrefix(ctx context.Context,conn *pgx.Conn,
-    g *PreparedGeneration,ds []BacklogCheckpointDescriptor,end int,
-)error{
-    if ctx==nil||conn==nil||g==nil||end!=3||len(ds)<=end||
-        os.Getenv("FI_C1_DEV_PREFIX8")!="1"{
-        return errors.New("FI C1 private prefix: exact two-group partial test required")
-    }
-    expectedRows:=int64(ds[end-1].EndRecord)
-    expectedBytes:=int64(ds[0].DataBytes)+int64(ds[1].DataBytes)+int64(ds[2].DataBytes)
-    receipt,err:=hex.DecodeString(g.ReceiptSHA256)
-    if err!=nil||len(receipt)!=32{return errors.New("FI C1 prefix: invalid original receipt")}
-    var typedRows,typedBytes,typedWindows,sourceRows,sourceWindows,artifactWindows,accepted,published int64
-    err=conn.QueryRow(ctx,`SELECT
- (SELECT count(*) FROM fi_recovery.typed_window WHERE receipt_sha256=$1),
- (SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window WHERE receipt_sha256=$1),
- (SELECT coalesce(sum(committed_bytes),0) FROM fi_recovery.typed_window WHERE receipt_sha256=$1),
- (SELECT count(*) FROM fi_recovery_projection.source_record),
- (SELECT count(*) FROM fi_recovery.source_window WHERE receipt_sha256=$1),
- (SELECT count(*) FROM fi_recovery.verified_artifact_window WHERE receipt_sha256=$1),
- (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'),
- (SELECT count(*) FROM fi.recorded_generation)`,receipt).Scan(
-        &typedWindows,&typedRows,&typedBytes,&sourceRows,
-        &sourceWindows,&artifactWindows,&accepted,&published)
-    if err!=nil{return err}
-    if typedWindows!=int64(end)||typedRows!=expectedRows||typedBytes!=expectedBytes||
-       sourceRows!=expectedRows||sourceWindows!=1||artifactWindows!=1||
-       accepted!=0||published!=0{
-        return fmt.Errorf("FI C1 prefix: partial clone proof failed typed_windows=%d rows=%d/%d bytes=%d/%d source_rows=%d source_markers=%d artifact_markers=%d accepted=%d published=%d",
-            typedWindows,typedRows,expectedRows,typedBytes,expectedBytes,
-            sourceRows,sourceWindows,artifactWindows,accepted,published)
-    }
-    fmt.Printf("FI C1 PRIVATE 8G PREFIX PROOF PASS groups=2 windows=3 source_records=%d new_records=%d source_bytes=%d signed_batches=%d full_generation=false authoritative=0 accepted=0 source_artifact_markers=seed_only\n",
-       expectedRows,expectedRows-int64(ds[0].EndRecord),int64(ds[1].DataBytes+ds[2].DataBytes),ds[2].EndBatch)
-    return nil
 }
 
 func privateC1StartAsyncVerify(ctx context.Context,dsn,pgdata string,
