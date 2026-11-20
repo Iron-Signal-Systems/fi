@@ -647,7 +647,12 @@ stats(){
       SELECT schemaname,relname,seq_scan,idx_scan,n_tup_ins,n_tup_upd,n_tup_del,
              n_tup_hot_upd,n_live_tup,n_dead_tup,n_ins_since_vacuum,
              vacuum_count,autovacuum_count,analyze_count,autoanalyze_count,
-             last_vacuum,last_autovacuum
+             total_vacuum_time,total_autovacuum_time,
+             total_analyze_time,total_autoanalyze_time,
+             last_vacuum,last_autovacuum,
+             pg_relation_size(relid) AS table_heap_bytes,
+             pg_indexes_size(relid) AS index_bytes,
+             pg_total_relation_size(relid) AS total_bytes
       FROM pg_stat_user_tables
       WHERE schemaname IN ('fi_recovery_projection','fi_recovery')
       ORDER BY schemaname,relname
