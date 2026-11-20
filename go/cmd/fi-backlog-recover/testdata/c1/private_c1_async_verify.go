@@ -105,7 +105,8 @@ func(v *privateC1AsyncVerifier) MarkDrained(){
 
 // Caller must first finalize P6 and close the commit-ready notification
 // channel. No marker is inserted until every read-only group proof passes.
-// In the 8GiB test, at least Group 1 must pass BEFORE final SQL drain.
+// B may complete before or after A's final drain. B's timing does not
+// dictate A's buffering policy or stop ongoing ingestion.
 func(v *privateC1AsyncVerifier) Finish(ctx context.Context)error{
     if v==nil||ctx==nil{return errors.New("FI C1 commit-ready verifier: invalid final gate")}
     v.MarkDrained()
@@ -173,7 +174,7 @@ func privateC1StartAsyncVerify(ctx context.Context,dsn,pgdata string,
     v,err:=newPrivateC1AsyncVerifier(ctx,start,end,ready,
         func(c context.Context,wi int)error{
             return privateC1AsyncVerifyGroup(c,conn,g,ds,wi)
-        },onFailure,true)
+        },onFailure,false)
     if err!=nil{_ =conn.Close(context.Background());return nil,err}
     go func(){<-v.done;_ =conn.Close(context.Background())}()
     fmt.Printf("FI C1 ASYNC VERIFY START groups=%d postgres_pid=%d read_only=true independent_connection=true trigger=durable_sql_acks one_attempt_per_ready_group=true\n",
