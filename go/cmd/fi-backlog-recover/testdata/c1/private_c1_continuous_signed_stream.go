@@ -42,6 +42,7 @@ type privateC1SignedContinuousReader struct {
     lastByte byte
     verified int
     failed error
+    onSealedGroup func(int)error // optional, invoked only after original batch SHA/count/bytes pass
 }
 
 func newPrivateC1SignedContinuousReader(batches []privateC1StreamBatch) (*privateC1SignedContinuousReader,error) {
@@ -98,6 +99,12 @@ func(s *privateC1SignedContinuousReader) finishBatch()error{
     }
     s.next++
     s.verified++
+    if s.onSealedGroup!=nil &&
+       (s.next==len(s.batches)||s.batches[s.next].Window!=b.Window){
+        if err:=s.onSealedGroup(b.Window);err!=nil{
+            return fmt.Errorf("FI C1 continuous: group %d verified SHA handoff: %w",b.Window,err)
+        }
+    }
     return nil
 }
 
@@ -169,12 +176,14 @@ func privateC1ConsumeContinuousSigned(ctx context.Context,pool *privateP5Pool,
     batches []privateC1StreamBatch,buffers *privateP6Buffers,
     totals *privateC1PrepTotals,windowCount int,
     prepare privateHeaderPrepareFunc,
+    onSealedGroup func(int)error,
 )([]int64,[]int64,error){
     if ctx==nil||pool==nil||buffers==nil||totals==nil||prepare==nil||windowCount<2{
         return nil,nil,errors.New("FI C1 continuous: invalid P5/P6 input")
     }
     source,err:=newPrivateC1SignedContinuousReader(batches)
     if err!=nil{return nil,nil,err}
+    source.onSealedGroup=onSealedGroup
     stream,err:=pool.newStream(ctx,bufio.NewReaderSize(source,128<<10),prepare)
     if err!=nil{_ =source.Close();return nil,nil,err}
     defer func(){stream.Close();_ =source.Close()}()

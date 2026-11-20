@@ -126,7 +126,7 @@ func TestPrivateC1ContinuousP5FeedsP6InOriginalBatchOrdinalOrder(t *testing.T){
     }
     var totals privateC1PrepTotals
     groupRows,groupBytes,err:=privateC1ConsumeContinuousSigned(
-        ctx,pool,batches,buffer,&totals,3,prepare)
+        ctx,pool,batches,buffer,&totals,3,prepare,nil)
     if err!=nil{t.Fatal(err)}
     if totals.batches!=3||totals.records!=42||groupRows[1]!=25||groupRows[2]!=17{
         t.Fatalf("C1 continuous batch tally mismatch totals=%+v windows=%v",totals,groupRows)

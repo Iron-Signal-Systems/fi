@@ -17,6 +17,8 @@ esac
 [ "${FI_W512_P6_FAMILY_SQL:-}" = 1 ] ||
     fail 'P6 requires explicit isolated SQL family redesign gate'
 [ "${FI_W512_P5_PERSISTENT:-}" = 1 ] || fail 'P5 persistent worker mode must be explicitly enabled'
+[ "${FI_C1_DEV_ASYNC_VERIFY:-}" = 1 ] ||
+    fail 'C1 independent read-only verifier must be explicitly enabled for this clone experiment'
 [ "${FI_W512_P3_DYNAMIC_MIN:-}" = 2 ] &&
 [ "${FI_W512_P3_DYNAMIC_MAX:-}" = 16 ] ||
     fail 'P4 priority-fill requires min=2 max=16'
@@ -44,7 +46,10 @@ pg_wal_buffers=16MB
     fail 'Stage 2 WAL buffer candidate requires exactly 16MB'
 [ "${FI_C1_FULL_BACKLOG_GROUP_GIB:-4}" = 4 ] ||
   fail 'C1 full signed backlog requires 4GiB groups'
+prefix8=${FI_C1_DEV_PREFIX8:-0}
+case "$prefix8" in 0|1) ;; *) fail 'FI_C1_DEV_PREFIX8 must be 0 or 1' ;; esac
 stop=0
+if [ "$prefix8" = 1 ];then stop=2;fi
 
 seedstamp=$2
 case "$seedstamp" in
@@ -73,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=28bfcd969152c4860b4d4ba5f232b57a8a3e94c7
+sourcecommit=d1014ae03034a2b346848c87dbdb7003c39b0f2f
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -198,6 +203,10 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_direct_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_continuous_signed_stream.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_continuous_signed_stream_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_prefix8_proof.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_prefix8_proof_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_modules.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_cached_recovery.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_correctness_test.go \
@@ -210,7 +219,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=36 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=40 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -418,7 +427,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
 ) || exit 1
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
-for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
+for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -588,7 +597,8 @@ for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
 done
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI C1 FULL SIGNED BACKLOG 4GiB PRIVATE CLONE
+FI C1 SIGNED BACKLOG 4GiB PRIVATE CLONE
+c1_private_8g_prefix=$prefix8
 family_p3_source_commit=$sourcecommit
 c1_group_gib=$group
 c1_source_target_gib=full_verified_generation
@@ -672,12 +682,20 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf "FI FAMILY C1 FULL BACKLOG DIRECT START start_index=1 groups=all group_gib=$group prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
+printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gib=$group prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
+export FI_C1_DEV_ASYNC_VERIFY=1
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
-unset FI_W512_C1_STOP_WINDOWS
-export FI_W512_C1_GROUP_GIB=4
-export FI_W512_C1_FULL_BACKLOG=1
+if [ "$prefix8" = 1 ];then
+  export FI_W512_C1_STOP_WINDOWS=2
+  export FI_W512_C1_GROUP_GIB=4
+  export FI_W512_C1_FULL_BACKLOG=0
+  export FI_C1_DEV_PREFIX8=1
+else
+  unset FI_W512_C1_STOP_WINDOWS FI_C1_DEV_PREFIX8
+  export FI_W512_C1_GROUP_GIB=4
+  export FI_W512_C1_FULL_BACKLOG=1
+fi
 export FI_W512_C1_SQL_DSN="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable"
 export FI_W512_C1_EXPECTED_PGDATA="$root/$name/data"
 # No injected failure in the full backlog throughput/correctness experiment.
@@ -695,10 +713,17 @@ if /usr/bin/time -l "$recover" \
   -processing-chunk-records=32768 -continuous-private -start-window=1 \
   -max-windows=0 -max-runtime=0 -test-stop-after-windows=0 \
   -deferred-verified-clone -verified-cache-root="$cache" > "$out/$name/recover.log" 2>&1; then
-    :
+    [ "$prefix8" = 0 ] || fail '8GiB prefix returned unexpected full-generation success'
 else
-    tail -n 100 "$out/$name/recover.log" >&2 || :
-    fail 'C1 signed full-backlog development recovery returned an error'
+    if [ "$prefix8" = 1 ] &&
+       grep -Fq 'FI C1 PRIVATE 8G PREFIX PROOF PASS groups=2 windows=3 ' "$out/$name/recover.log" &&
+       grep -Fq 'FI continuous private recovery: context canceled' "$out/$name/recover.log" &&
+       ! grep -Fq 'FI REAL BACKLOG PRIVATE COMPLETE ' "$out/$name/recover.log";then
+        echo 'FI C1 CONTROLLED PREFIX STOP PASS exact_two_4GiB_groups=true full_generation=false'
+    else
+        tail -n 100 "$out/$name/recover.log" >&2 || :
+        fail 'C1 signed replay failed before controlled 8GiB prefix proof'
+    fi
 fi
 for pid in "$iostatpid" "$vmstatpid"; do
     kill -TERM "$pid" 2>/dev/null || :
@@ -709,15 +734,24 @@ vmstatpid=
 stats after || fail 'postrun PostgreSQL stats unavailable'
 log="$out/$name/recover.log"
 echo "FI C1 POSTGRES WAL BUFFERS EXPERIMENT PASS max_wal_size=$pg_max_wal wal_buffers=$pg_wal_buffers durability=on checkpoint_stats=before_after clone_only=true"
-grep '^FI C1 FULL BACKLOG SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
-  fail 'C1 full 4GiB signed receipt plan absent'
-[ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
+if [ "$prefix8" = 1 ];then
+  grep '^FI C1 EIGHT GIB SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
+    fail 'C1 8GiB exact signed prefix plan absent'
+  [ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
+  grep -Fq 'group_gib=4 new_windows=2 ' "$out/$name/C1_PLAN.txt" &&
+  grep -Fq 'seed_unchanged=true identical_prefix=true' "$out/$name/C1_PLAN.txt" ||
+    fail 'C1 8GiB signed prefix plan invalid'
+else
+  grep '^FI C1 FULL BACKLOG SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
+    fail 'C1 full 4GiB signed receipt plan absent'
+  [ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
   grep -Fq 'group_gib=4 ' "$out/$name/C1_PLAN.txt" &&
   grep -Fq 'seed_unchanged=true no_record_window_limit=true' "$out/$name/C1_PLAN.txt" ||
-  fail 'C1 full signed generation plan invalid'
+    fail 'C1 full signed generation plan invalid'
+fi
 plan_field() {
   awk -v want="$1" '
-    /^FI C1 FULL BACKLOG SIGNED PLAN / {
+    /^FI C1 (FULL BACKLOG|EIGHT GIB) SIGNED PLAN / {
       for(i=1;i<=NF;i++){
         n=split($i,p,"=")
         if(n==2 && p[1]==want && p[2]~/^[0-9]+$/){print p[2];found=1;exit}
@@ -726,27 +760,48 @@ plan_field() {
     END {if(!found)exit 1}
   ' "$out/$name/C1_PLAN.txt"
 }
-rows=$(plan_field new_records) || fail 'C1 full signed record count missing'
-bytes=$(plan_field new_source_bytes) || fail 'C1 full signed bytes missing'
+rows=$(plan_field new_records) || fail 'C1 signed record count missing'
+bytes=$(plan_field new_source_bytes) || fail 'C1 signed bytes missing'
 lastbatch=$(plan_field last_batch) || fail 'C1 signed end batch missing'
 windows=$(plan_field new_windows) || fail 'C1 number of 4GiB groups missing'
-signed_batches=$(plan_field signed_batches) || fail 'C1 number of signed source batches missing'
-seeded=$(plan_field seeded_records) || fail 'C1 signed seed count missing'
-[ "$windows" -gt 2 ] && [ "$windows" -le 64 ] &&
-[ "$rows" -gt 10000000 ] && [ "$bytes" -gt 42949672960 ] &&
-[ "$lastbatch" = "$signed_batches" ] && [ "$seeded" = 493478 ] ||
-  fail 'C1 full signed source size/cutoff guard failed'
+if [ "$prefix8" = 1 ];then
+  signed_batches=$lastbatch
+  seeded=493478
+  [ "$windows" = 2 ] && [ "$rows" -gt 1000000 ] &&
+  [ "$bytes" -ge 8522825728 ] && [ "$bytes" -le 8589934592 ] &&
+  [ "$lastbatch" -lt 8399 ] && [ "$lastbatch" -gt 205 ] ||
+    fail 'C1 exact 8GiB signed prefix size or cutoff invalid'
+else
+  signed_batches=$(plan_field signed_batches) || fail 'C1 total signed batches missing'
+  seeded=$(plan_field seeded_records) || fail 'C1 signed seed count missing'
+  [ "$windows" -gt 2 ] && [ "$windows" -le 64 ] &&
+  [ "$rows" -gt 10000000 ] && [ "$bytes" -gt 42949672960 ] &&
+  [ "$lastbatch" = "$signed_batches" ] && [ "$seeded" = 493478 ] ||
+    fail 'C1 full signed source size/cutoff guard failed'
+fi
 grep -Fxq "FI C1 CLEAN START PASS windows=1..$windows signed_parents_absent=true typed_markers_absent=true restart_requires_fresh_clone=true" "$log" ||
-  fail 'C1 full clean signed destination guard absent'
-grep '^FI C1 FULL GROUPED RELATIONAL PROOF PASS ' "$log" > "$out/$name/C1_FULL_PROOF.txt" ||
-  fail 'C1 full clone relational verification proof absent'
-grep -Fq "windows=$((windows+1)) signed_batches=$signed_batches records=$((seeded+rows)) bytes=" "$out/$name/C1_FULL_PROOF.txt" &&
-grep -Fq 'authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$out/$name/C1_FULL_PROOF.txt" ||
-  fail 'C1 full clone proof totals/identity mismatched'
-grep '^FI REAL BACKLOG PRIVATE COMPLETE ' "$log" > "$out/$name/C1_COMPLETE.txt" ||
-  fail 'C1 full private-generation completion missing'
-grep -Fq "windows=$((windows+1)) records=$((seeded+rows)) " "$out/$name/C1_COMPLETE.txt" ||
-  fail 'C1 full receipt not complete'
+  fail 'C1 signed destination was not clean before replay'
+if [ "$prefix8" = 1 ];then
+  grep '^FI C1 PRIVATE 8G PREFIX PROOF PASS ' "$log" > "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 private 8GiB prefix-only SQL/marker proof missing'
+  grep -Fq "groups=2 windows=3 source_records=$((seeded+rows)) new_records=$rows source_bytes=$bytes signed_batches=$signed_batches full_generation=false authoritative=0 accepted=0" "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 prefix relational proof differs from signed target'
+  ! grep -q '^FI C1 FULL GROUPED RELATIONAL PROOF PASS ' "$log" ||
+    fail 'C1 incomplete prefix falsely declared full-generation proof'
+  ! grep -q '^FI REAL BACKLOG PRIVATE COMPLETE ' "$log" ||
+    fail 'C1 prefix falsely declared complete signed generation'
+  printf 'FI C1 PRIVATE PREFIX ONLY groups=2 full_generation=false\n' > "$out/$name/C1_COMPLETE.txt"
+else
+  grep '^FI C1 FULL GROUPED RELATIONAL PROOF PASS ' "$log" > "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 full clone relational verification proof absent'
+  grep -Fq "windows=$((windows+1)) signed_batches=$signed_batches records=$((seeded+rows)) bytes=" "$out/$name/C1_FULL_PROOF.txt" &&
+  grep -Fq 'authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 full clone proof totals/identity mismatched'
+  grep '^FI REAL BACKLOG PRIVATE COMPLETE ' "$log" > "$out/$name/C1_COMPLETE.txt" ||
+    fail 'C1 full private-generation completion missing'
+  grep -Fq "windows=$((windows+1)) records=$((seeded+rows)) " "$out/$name/C1_COMPLETE.txt" ||
+    fail 'C1 full receipt not complete'
+fi
 grep '^FI C1 P6 DIRECT READ ' "$log" > "$out/$name/C1_READ.txt" ||
   fail 'C1 full signed batch read receipts missing'
 awk -v expected="$rows" -v expected_bytes="$bytes" -v groups="$windows" '
@@ -769,10 +824,16 @@ grep -Fq "shared_workers_initial=1 workers_max=$sqlmax distinct_pids=2 clone_onl
   fail 'C1 shared SQL worker pool did not start from one verified connection'
 # C1 adds the original P5 five-family parallel Go preparation pool,
 # retained across all signed batches and every 4GiB reporting window.
+grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
+  fail 'C1 read-only per-group background verification missing'
+[ "$(wc -l < "$out/$name/C1_ASYNC_VERIFY.txt" | tr -d '[:space:]')" = "$windows" ] &&
+grep -Fq 'read_only=true independent_connection=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
+grep -Fxq "FI C1 ASYNC VERIFY COMPLETE groups=$windows independent_read_only=true sealed_sha=true final_marker_unchanged=true" "$log" ||
+  fail 'C1 independent background verification proof missing, incomplete or not fail closed'
 grep '^FI C1 P5 CONTINUOUS SIGNED STREAM PASS ' "$log" > "$out/$name/C1_STREAM.txt" ||
   fail 'C1 did not verify one continuous P5 preparation stream'
 [ "$(wc -l < "$out/$name/C1_STREAM.txt" | tr -d '[:space:]')" = 1 ] &&
-grep -Fq "batches=8194 sessions=1 records=$rows verified_sha256=8194 per_batch_manifest=true exact_ordinals=true buffers=bounded" "$out/$name/C1_STREAM.txt" ||
+grep -Fq "batches=$((signed_batches-205)) sessions=1 records=$rows verified_sha256=$((signed_batches-205)) per_batch_manifest=true exact_ordinals=true buffers=bounded" "$out/$name/C1_STREAM.txt" ||
   fail 'C1 continuous P5 signed-batch integrity or one-session proof missing'
 grep '^FI C1 P5 PREP COMPLETE ' "$log" > "$out/$name/C1_PREP.txt" ||
   fail 'C1 original P5 family preparation pool completion missing'
@@ -835,11 +896,11 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf "FI C220 C1 FULL BACKLOG DEV PASS groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none authoritative=0 accepted=0\n" "$elapsed" |
+printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none authoritative=0 accepted=0\n" "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
-  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_P5_LANES.txt" \
+  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
