@@ -313,11 +313,9 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     ctx=context.WithValue(ctx,usnCaptureContextKey{},usn)
     ctx=context.WithValue(ctx,usnTimingContextKey{},&usnTimingCounters{})
     ctx=context.WithValue(ctx,backlogUSNCrossWindowContextKey{},true)
-    // A failed independent SQL proof cancels ingestion immediately. Every
-    // source/family/reader transaction inherits this cancellation context.
-    runCtx,abort:=context.WithCancel(ctx)
-    defer abort()
-    ctx=runCtx
+    // A owns its ingestion context. B is a separate asynchronous verifier
+    // whose reported failures do not cancel, throttle or flush A. Publication
+    // and completion markers are still withheld if the B proof fails.
     commitReady,e:=newPrivateC1CommitReady(ds,startWindow,end)
     if e!=nil{return empty,fmt.Errorf("FI C1: committed readiness init: %w",e)}
     dsn,pgdata:=os.Getenv("FI_W512_C1_SQL_DSN"),os.Getenv("FI_W512_C1_EXPECTED_PGDATA")
@@ -359,13 +357,15 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // Independent read-only verifier begins before record processing. It
     // has no access to the P6 shared SQL ACK queues and never writes markers.
     verifier,e:=privateC1StartAsyncVerify(ctx,dsn,pgdata,g,ds,startWindow,end,
-        commitReady.notifications,func(err error){abort()})
+        commitReady.notifications,func(err error){
+            fmt.Printf("FI C1 VERIFIER CALLBACK error=%v action=report_and_withhold_marker ingestion_cancelled=false\n",err)
+        })
     if e!=nil{return empty,fmt.Errorf("FI C1: async relational verifier startup: %w",e)}
     defer verifier.Stop()
     // P5 preparation no longer drains and recreates one stream per signed
     // batch. The signed reader still finishes and validates every original
-    // batch's SHA-256, byte count, record count, and newline boundary before
-    // opening the next. P6 remains continuous across all reporting windows.
+    // batch's original manifest identity, byte count, record count and LF
+    // boundary before opening the next; no duplicate SHA-256 over batch data. P6 remains continuous across all reporting windows.
     groupRows,groupBytes,e:=privateC1ConsumeContinuousSigned(
         ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare,commitReady.Seal)
     if e!=nil{return empty,fmt.Errorf("FI C1: continuous signed P5: %w",e)}
