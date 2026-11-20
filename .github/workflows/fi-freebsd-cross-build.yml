@@ -323,7 +323,7 @@ jobs:
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
           assert 'sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e' in controller
-          assert 'runnerpin=4421b8e4c67229c6dff8edc371cb8274f4bd4182' in controller
+          assert 'runnerpin=e922b9d52f1152a0f1776030261975457845e4b9' in controller
           assert 'sourcecommit=6ecee24c98bba5c5876850ccce08be81e46b066e' in runner
           assert 'FI_W512_C1_FULL_BACKLOG=1' in runner
           assert 'FI_W512_C1_FULL_BACKLOG' in source
@@ -355,10 +355,11 @@ jobs:
           assert '"$name/tables_before.jsonl" "$name/tables_after.jsonl"' in runner
           assert '"$name/indexes_before.jsonl" "$name/indexes_after.jsonl"' in runner
           assert '"$name/bgwriter_before.jsonl" "$name/bgwriter_after.jsonl"' in runner
+          assert '-c wal_buffers=16MB' in runner
           assert 'total_autovacuum_time' in runner
           assert 'pg_total_relation_size(relid)' in runner
           assert "FI_C1_PG_MAX_WAL_SIZE=8GB" in controller
-          assert "FI_C1_PG_WAL_BUFFERS=4MB" in controller
+          assert "FI_C1_PG_WAL_BUFFERS=16MB" in controller
           assert 'sourceMarkers!=1||artifactMarkers!=1' in proof
           assert 'published!=0||accepted!=0' in proof
           assert "GRANT pg_read_all_settings" not in runner
