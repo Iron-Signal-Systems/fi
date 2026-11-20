@@ -195,3 +195,41 @@ extend the C1 development implementation to exact same-database
 idempotent/crash restart (without duplicate payload staging) and
 10-window continuity. A green CI syntax check is **not** a C220 runtime
 test. All work remains development.
+
+
+## C1 A/B independence correction — isolated test branch (November 20)
+
+The diagram defines two independently scheduled functions: **A** continuously
+consumes receiver-custodied source records through persistent P5 and five P6
+buffers to durable PostgreSQL transactions; **B** checks already committed
+SQL rows using its own read-only database connection. B never orders an
+extra P6 family flush or cancels A simply because a relational proof fails.
+A final typed completion marker still requires the B proof. The clone runner
+may therefore record B completing after the final SQL drain; this is not an
+ingestion failure and is not a reason to change A's transaction scheduling.
+
+For this **private-clone experiment only**, A reuses receiver-verified batch
+custody instead of calculating another whole-batch SHA-256 during replay.
+It still checks each manifest's signed digest representation, exact byte
+count, record count, original batch/record order and LF framing. Existing
+per-record SHA-256 in the relational source model is NOT removed. Original
+Windows sender and FI receiver signature/hash checks are unchanged.
+A cached file altered after receiver verification without changing byte count
+or LF framing is **not cryptographically detected by the C1 reader**:
+immutable custody and a separately reviewed proof of unchanged source bytes
+are mandatory before applying this optimization outside isolated clone tests.
+
+The 64-original-signed-batch sparse age trigger was removed. Security, File,
+Coverage, USN and Other buffer independently by capacity, dependencies and
+true end of input only. This restores A's original independent scheduling,
+without additional small PostgreSQL transactions merely to make B complete
+during ingestion. The C220 test harness checks all five families, SQL parent
+and child commitments, B read-only relational proof, and no authoritative
+publication on a newly disposable clone.
+
+**Important limitation:** B still runs as a separate goroutine and PostgreSQL
+session inside the private C1 test executable, NOT as a separate operating
+system process. This branch corrects scheduling/cancellation coupling but
+does not yet implement the diagram's strict two-OS-process deployment. Do
+not describe this as a fully implemented A/B process split, or deploy it to
+the authoritative FI SoR.
