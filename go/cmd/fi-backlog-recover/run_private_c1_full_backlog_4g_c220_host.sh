@@ -831,8 +831,9 @@ grep -Fq "shared_workers_initial=1 workers_max=$sqlmax distinct_pids=2 clone_onl
 # least one completed relational proof BEFORE the P6 final-drain receipt.
 grep '^FI C1 COMMIT READY ' "$log" > "$out/$name/C1_COMMIT_READY.txt" ||
   fail 'C1 durable SQL group-ready notifications missing'
-[ "$(wc -l < "$out/$name/C1_COMMIT_READY.txt" | tr -d '[:space:]')" = "$windows" ] ||
-  fail 'C1 did not emit exactly one durable ready notification per signed group'
+[ "$(wc -l < "$out/$name/C1_COMMIT_READY.txt" | tr -d '[:space:]')" = "$windows" ] &&
+grep -Fq 'signed_sha_sealed=true no_group_flush=true' "$out/$name/C1_COMMIT_READY.txt" ||
+  fail 'C1 did not emit exact durable source+family and signed-SHA ready notifications'
 grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
   fail 'C1 independent read-only group proofs missing'
 [ "$(wc -l < "$out/$name/C1_ASYNC_VERIFY.txt" | tr -d '[:space:]')" = "$windows" ] &&
@@ -854,6 +855,7 @@ END{
   fail 'C1 architecture FAIL: no verified first group during ongoing ingestion'
 grep -Fq "FI C1 ASYNC VERIFY COMPLETE groups=$windows during_ingest=" "$log" &&
 grep -Fq 'original_relational_rescans=removed final_marker_gate=preserved' "$log" &&
+grep -Fq 'commit_ready=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
 ! grep -Fq 'FI C1 ASYNC VERIFY FAIL ' "$log" ||
   fail 'C1 commit-ready proof completion or fail-closed receipt missing'
 grep '^FI C1 P6 SQL DRAIN ' "$log" > "$out/$name/C1_SQL_DRAIN.txt" ||
@@ -926,7 +928,7 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none authoritative=0 accepted=0\n" "$elapsed" |
+printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none commit_ready=true original_relational_rescans=removed authoritative=0 accepted=0\n" "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
