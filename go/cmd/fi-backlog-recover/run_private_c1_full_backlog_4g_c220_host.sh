@@ -434,6 +434,24 @@ for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.g
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
+# The retired synchronous relational scans MUST NOT remain on the C1
+# typed-marker path. The new verifier owns those exact checks and marker
+# insertion is gated on every committed group proof.
+if grep -Eq 'verifyBacklogShadowWindowCounts|verifyBacklogWindowProjectionCoverage|verifyGenerationProjectionCoverage' \
+    "$src/go/internal/recordingest/private_c1_direct.go";then
+  echo 'FI C1 STOP: old synchronous relational scans remain on marker path' >&2
+  exit 1
+fi
+grep -Fq 'commitReady.FinishCommitted()' \
+  "$src/go/internal/recordingest/private_c1_direct.go" &&
+grep -Fq 'privateC1AsyncVerifyGroup' \
+  "$src/go/internal/recordingest/private_c1_async_verify.go" &&
+grep -Fq 'CommitFamily(rows)' \
+  "$src/go/internal/recordingest/private_c1_five_sql.go" &&
+grep -Fq 'CommitSource(rows)' \
+  "$src/go/internal/recordingest/private_c1_five_sql.go" ||
+  { echo 'FI C1 STOP: durable SQL readiness not installed in isolated C1 source' >&2; exit 1; }
+echo 'FI C1 COMMIT-READY SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked no_flush_changes=true'
 # Historical C220 original is the only allowed cache entrypoint source.
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
 git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
