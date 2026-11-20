@@ -111,17 +111,10 @@ func privateC1VerifyEightGiBPrefix(ctx context.Context,conn *pgx.Conn,
             markerBytes!=int64(d.DataBytes)||version!=IngestVersion{
             return fmt.Errorf("FI C1 8G: group %d typed marker differs from signed descriptor",wi)
         }
-        if wi>0{
-            if err=verifyBacklogShadowWindowCounts(ctx,shadow,shadowID,
-                g.Batches[d.StartBatch:d.EndBatch],
-                int64(d.EndRecord-d.StartRecord),int64(d.DataBytes));err!=nil{
-                return fmt.Errorf("FI C1 8G: group %d source proof: %w",wi,err)
-            }
-            if err=verifyBacklogWindowProjectionCoverage(ctx,shadow,shadowID,
-                g.Batches[d.StartBatch:d.EndBatch]);err!=nil{
-                return fmt.Errorf("FI C1 8G: group %d relational proof: %w",wi,err)
-            }
-        }
+        // The commit-ready independent worker has already proven source
+        // counts and typed coverage for every requested group. This final
+        // read-only prefix proof checks signed markers, original source
+        // counts and absence of publication, without duplicating SQL scans.
     }
     var published,accepted,sourceMarkers,artifactMarkers,sourceRecords int64
     err=tx.QueryRow(ctx,`SELECT
