@@ -86,7 +86,7 @@ grep -Fq 'wal_buffers=16MB' "$runner" &&
 grep -Fq 'checkpointer_after.jsonl' "$runner" &&
 grep -Fq 'tables_after.jsonl' "$runner" &&
 grep -Fq 'FI C1 SHARED SQL POOL' "$runner" &&
-grep -Fq 'FI C220 C1 FULL BACKLOG DEV PASS' "$runner" ||
+grep -Fq 'FI C220 C1 DEV PASS prefix8=' "$runner" ||
   fail 'native P6 SQL or signed record acceptance scripts mismatched'
 sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-16}
 case "$sqlmax" in [1-9]|1[0-6]) ;; *) fail 'SQL worker maximum must be 1..16';; esac
