@@ -5,7 +5,7 @@ set -eu
 umask 077
 fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] &&
-[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1 20261115T153532Z'
+[ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|prefix8|c1 20261115T153532Z'
 case "$1" in preflight|compile|c1|prefix8) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 # Stage 2 is only meaningful after the Stage 1 full 8GB/4MB run passes.
@@ -49,7 +49,11 @@ grep -Fxq 'FI C220 W512 PERSISTENT P5 TWO-WINDOW ACCEPTED windows=2 new_records=
   fail 'P5 signed performance baseline changed'
 grep -Fxq 'FI C220 W512 ATOMIC FAMILY P6 TWO-WINDOW ACCEPTED windows=2 new_records=997434 elapsed=4m7.626s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0' "$p6/SUMMARY.txt" ||
   fail 'P6 accepted source/relational performance baseline changed'
-runroot=/var/tmp/fi-c1-full-backlog-4g-$(date -u '+%Y%m%dT%H%M%SZ')
+if [ "$mode" = prefix8 ];then
+  runroot=/var/tmp/fi-c1-async-prefix8-$(date -u '+%Y%m%dT%H%M%SZ')
+else
+  runroot=/var/tmp/fi-c1-full-backlog-4g-$(date -u '+%Y%m%dT%H%M%SZ')
+fi
 [ ! -e "$runroot" ] && [ ! -L "$runroot" ] || fail 'private C1 output path collision'
 mkdir -m 0700 "$runroot"
 runner="$runroot/pinned-c1-p6.sh"
@@ -239,7 +243,7 @@ fi
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported invalid throughput'
 if [ "$mode" = prefix8 ];then
-  printf 'FI C1 ASYNC 8G PREFIX THROUGHOUT records=%s source_bytes=%s group_gib=4 groups=2 elapsed_seconds=%s records_per_second=%s full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
+  printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 elapsed_seconds=%s records_per_second=%s full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
   printf 'FI C1 ASYNC 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s sealed_sha=true read_only_proof=true all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
 else
   printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
