@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=8ca3b8509a962ad73fbb192a8ce6d44fe7d4f843
-runnerpin=5873250c7bc70f793f1ee345e9a6bdfbefc510c7
+sourcepin=abee61ed5450d4e6ac9f928e3677d82976f2a4d2
+runnerpin=69c927776ff0c5dbecefd125783f20be489e98e6
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -253,7 +253,7 @@ rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%
   fail 'C1 reported invalid throughput'
 if [ "$mode" = prefix8 ];then
   printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 elapsed_seconds=%s records_per_second=%s full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
-  printf 'FI C1 COMMIT-READY 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s signed_sha=true one_shot_relational_proofs=true group1_during_ingest=true original_relational_rescans=removed all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
+  printf 'FI C1 COMMIT-READY 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s receiver_custody_sha=true one_shot_relational_proofs=true verifier_timing_independent=true original_relational_rescans=removed all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
 else
   printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
   printf 'FI C1 ASYNC RELATIONAL VERIFIER CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=continuous_p5_previous_run read_only=true final_marker_unchanged=true proof=clone_only\n'
