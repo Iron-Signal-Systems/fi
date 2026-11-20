@@ -25,7 +25,6 @@ func TestPrivateC1AsyncVerifierRunsBeforeFinalDrain(t *testing.T){
     })
     if err!=nil{t.Fatal(err)}
     defer v.Stop()
-    v.retry=10*time.Millisecond
     if err=v.Seal(1);err!=nil{t.Fatal(err)}
     select{
     case wi:=<-calls:
