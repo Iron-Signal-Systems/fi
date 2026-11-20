@@ -3,9 +3,10 @@
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
 // C1 private-clone experiment: one bounded signed-record preparation stream
-// over multiple independently authenticated cached batches. Each original
-// batch must still pass its own manifest/data SHA-256, record-count, byte-count
-// and newline-framing checks. There is no P6 batch or window flush.
+// over original receiver-authenticated cached batches. C1 does not calculate
+// a second whole-batch data SHA-256; receiver custody owns that proof. C1
+// checks manifest identity, byte/record counts and LF framing while consuming
+// the exact cached source. There is no P6 batch or window flush.
 package recordingest
 
 import (
@@ -13,11 +14,9 @@ import (
     "bytes"
     "context"
     "crypto/sha256"
-    "crypto/subtle"
     "encoding/hex"
     "errors"
     "fmt"
-    "hash"
     "io"
     "os"
 )
@@ -30,19 +29,18 @@ type privateC1StreamBatch struct {
 }
 
 // privateC1SignedContinuousReader is one io.Reader for the entire selected
-// signed generation, but never reads from batch N+1 before validating batch
-// N's exact original data SHA and counts. Only the P5 stream persists.
+// signed generation, but never reads from batch N+1 before checking batch
+// N's custody-bound manifest counts and framing. Only P5 stays continuous.
 type privateC1SignedContinuousReader struct {
     batches []privateC1StreamBatch
     next int
     file *os.File
-    hasher hash.Hash
     readBytes int64
     readRecords int64
     lastByte byte
-    verified int
+    completed int
     failed error
-    onSealedGroup func(int)error // optional, invoked only after original batch SHA/count/bytes pass
+    onSealedGroup func(int)error // original custody-bound batch reaches complete count/byte/LF boundary
 }
 
 func newPrivateC1SignedContinuousReader(batches []privateC1StreamBatch) (*privateC1SignedContinuousReader,error) {
@@ -70,10 +68,9 @@ func(s *privateC1SignedContinuousReader) openNext()error{
     stat,err:=f.Stat()
     if err!=nil||!stat.Mode().IsRegular()||stat.Size()!=b.Batch.Manifest.DataBytes{
         _=f.Close()
-        return fmt.Errorf("FI C1 continuous: batch %d original data file changed (stat=%v)",b.Index,err)
+        return fmt.Errorf("FI C1 continuous: signed batch %d original data file changed (stat=%v)",b.Index,err)
     }
     s.file=f
-    s.hasher=sha256.New()
     s.readBytes=0
     s.readRecords=0
     s.lastByte=0
@@ -82,27 +79,24 @@ func(s *privateC1SignedContinuousReader) openNext()error{
 
 func(s *privateC1SignedContinuousReader) finishBatch()error{
     b:=s.batches[s.next]
-    want,_:=hex.DecodeString(b.Batch.Manifest.DataSHA256)
-    got:=s.hasher.Sum(nil)
     valid:=s.readBytes==b.Batch.Manifest.DataBytes &&
         s.readRecords==int64(b.Batch.Manifest.RecordCount) &&
-        s.lastByte=='\n' &&
-        subtle.ConstantTimeCompare(want,got)==1
+        s.lastByte=='\n'
     closeErr:=s.file.Close()
     s.file=nil
     if !valid{
-        return fmt.Errorf("FI C1 continuous: signed batch %d SHA-256/count/bytes/LF mismatch got_records=%d expected_records=%d got_bytes=%d expected_bytes=%d",
+        return fmt.Errorf("FI C1 continuous: signed batch %d count/bytes/LF mismatch got_records=%d expected_records=%d got_bytes=%d expected_bytes=%d",
             b.Index,s.readRecords,b.Batch.Manifest.RecordCount,s.readBytes,b.Batch.Manifest.DataBytes)
     }
     if closeErr!=nil{
         return fmt.Errorf("FI C1 continuous: signed batch %d close: %w",b.Index,closeErr)
     }
     s.next++
-    s.verified++
+    s.completed++
     if s.onSealedGroup!=nil &&
        (s.next==len(s.batches)||s.batches[s.next].Window!=b.Window){
         if err:=s.onSealedGroup(b.Window);err!=nil{
-            return fmt.Errorf("FI C1 continuous: group %d verified SHA handoff: %w",b.Window,err)
+            return fmt.Errorf("FI C1 continuous: group %d completed custody-bound batch handoff: %w",b.Window,err)
         }
     }
     return nil
@@ -122,7 +116,6 @@ func(s *privateC1SignedContinuousReader) Read(p []byte)(int,error){
         }
         n,err:=s.file.Read(p)
         if n>0{
-            _,_=s.hasher.Write(p[:n])
             s.readBytes+=int64(n)
             s.readRecords+=int64(bytes.Count(p[:n],[]byte{'\n'}))
             s.lastByte=p[n-1]
@@ -156,8 +149,8 @@ func(s *privateC1SignedContinuousReader) Read(p []byte)(int,error){
 func(s *privateC1SignedContinuousReader) VerifyComplete()error{
     if s==nil{return errors.New("FI C1 continuous: nil signed source")}
     if s.failed!=nil{return s.failed}
-    if s.file!=nil||s.next!=len(s.batches)||s.verified!=len(s.batches){
-        return fmt.Errorf("FI C1 continuous: incomplete signed source verified=%d expected=%d",s.verified,len(s.batches))
+    if s.file!=nil||s.next!=len(s.batches)||s.completed!=len(s.batches){
+        return fmt.Errorf("FI C1 continuous: incomplete signed source completed=%d expected=%d",s.completed,len(s.batches))
     }
     return nil
 }
@@ -239,7 +232,7 @@ func privateC1ConsumeContinuousSigned(ctx context.Context,pool *privateP5Pool,
     totals.readerTime+=stream.readerTime
     totals.workerTime+=stream.workerTime
     totals.writerWait+=stream.waits
-    fmt.Printf("FI C1 P5 CONTINUOUS SIGNED STREAM PASS batches=%d sessions=1 records=%d verified_sha256=%d per_batch_manifest=true exact_ordinals=true buffers=bounded\n",
-        batchCursor,globalOrdinal,source.verified)
+    fmt.Printf("FI C1 P5 CONTINUOUS SIGNED STREAM PASS batches=%d sessions=1 records=%d sealed_batches=%d custody_sha256=receiver_verified per_batch_manifest=true exact_ordinals=true buffers=bounded\n",
+        batchCursor,globalOrdinal,source.completed)
     return rows,sizes,nil
 }
