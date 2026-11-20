@@ -19,6 +19,36 @@ The next benchmark is **two complete ~4 GiB signed groups (approximately 8 GiB t
 
 This is an independent Go worker on a separate PostgreSQL read-only session **inside the isolated C1 recovery program**, not an operating-system subprocess. Separating the verifier into its own OS process remains a separate architectural decision; the current objective is proof of non-blocking, durable readiness scheduling.
 
+## Regression from first commit-ready 8 GiB C220 run
+
+The first live clone test (2026-11-20 17:23Z) passed preflight,
+Go/race compilation and independent committed-readiness checks, but was
+**correctly rejected**: both groups only became COMMIT READY after
+`FI C1 P6 FINAL DRAIN START`. Both read-only proofs passed with
+`phase=after_drain`. Group 1's signed and committed counts were
+997,434, Group 2's 994,338; P6 SQL drain was 2m11.148684519s.
+
+Root cause: original P6 capacity-only handoffs leave the very small
+Coverage, USNDependency and Other family tails under their 512-record
+threshold until `Finish()`, potentially withholding Group 1's last
+committed typed rows even while Group 2 is already streaming.
+
+**C1 corrective experiment:** without changing original signed boundaries,
+SQL dependencies or a 4GiB group flush, a pending sparse-family buffer is
+submitted when its oldest signed batch is at least **64 original signed
+batch indexes behind current P5 input**. Security and NTFSFile continue
+the original capacity policy. The decision is based on batch age, never
+group number. This is an asynchronous SQL handoff, not a WaitAll or
+typed-marker barrier; USN still requires its File prerequisite ACK.
+The threshold only bounds sparse buffer admission delay: full SQL commit
+latency and actual read-only query duration remain measured at runtime.
+Do not claim the architecture passes until Group 1 actually completes
+its relational proof during continued signed ingestion.
+
+Additional tests check delayed sparse handoffs before final drain,
+preservation of File-before-USN ordering, absence of unrelated Security
+flushes, exact source counts and fail-closed sparse SQL write errors.
+
 ## Mandatory C220 gates
 
 1. The pinned controller and runner must identify exact Git commits and verify complete signed-cache/seed/CRL/clone/storage prerequisites. No running authoritative ingest worker or canonical SoR connection.
