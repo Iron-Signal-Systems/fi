@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=8ca3b8509a962ad73fbb192a8ce6d44fe7d4f843
+sourcecommit=abee61ed5450d4e6ac9f928e3677d82976f2a4d2
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
