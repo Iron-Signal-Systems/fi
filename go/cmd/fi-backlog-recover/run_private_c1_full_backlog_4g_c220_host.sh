@@ -17,6 +17,8 @@ esac
 [ "${FI_W512_P6_FAMILY_SQL:-}" = 1 ] ||
     fail 'P6 requires explicit isolated SQL family redesign gate'
 [ "${FI_W512_P5_PERSISTENT:-}" = 1 ] || fail 'P5 persistent worker mode must be explicitly enabled'
+[ "${FI_C1_DEV_ASYNC_VERIFY:-}" = 1 ] ||
+    fail 'C1 independent read-only verifier must be explicitly enabled for this clone experiment'
 [ "${FI_W512_P3_DYNAMIC_MIN:-}" = 2 ] &&
 [ "${FI_W512_P3_DYNAMIC_MAX:-}" = 16 ] ||
     fail 'P4 priority-fill requires min=2 max=16'
@@ -73,7 +75,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=28bfcd969152c4860b4d4ba5f232b57a8a3e94c7
+sourcecommit=6119df0db1536d5a3f908be1b373a750c2da2632
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -198,6 +200,8 @@ for asset in \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_direct_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_continuous_signed_stream.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_continuous_signed_stream_test.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_async_verify_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_modules.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_cached_recovery.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_correctness_test.go \
@@ -210,7 +214,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=36 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=38 clone_only=true min=2 max=16 sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -418,7 +422,7 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
 ) || exit 1
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
-for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
+for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -769,6 +773,12 @@ grep -Fq "shared_workers_initial=1 workers_max=$sqlmax distinct_pids=2 clone_onl
   fail 'C1 shared SQL worker pool did not start from one verified connection'
 # C1 adds the original P5 five-family parallel Go preparation pool,
 # retained across all signed batches and every 4GiB reporting window.
+grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
+  fail 'C1 read-only per-group background verification missing'
+[ "$(wc -l < "$out/$name/C1_ASYNC_VERIFY.txt" | tr -d '[:space:]')" = "$windows" ] &&
+grep -Fq 'read_only=true independent_connection=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
+grep -Fxq "FI C1 ASYNC VERIFY COMPLETE groups=$windows independent_read_only=true sealed_sha=true final_marker_unchanged=true" "$log" ||
+  fail 'C1 independent background verification proof missing, incomplete or not fail closed'
 grep '^FI C1 P5 CONTINUOUS SIGNED STREAM PASS ' "$log" > "$out/$name/C1_STREAM.txt" ||
   fail 'C1 did not verify one continuous P5 preparation stream'
 [ "$(wc -l < "$out/$name/C1_STREAM.txt" | tr -d '[:space:]')" = 1 ] &&
@@ -839,7 +849,7 @@ printf "FI C220 C1 FULL BACKLOG DEV PASS groups=$windows group_gib=4 records=$ro
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
-  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_P5_LANES.txt" \
+  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
