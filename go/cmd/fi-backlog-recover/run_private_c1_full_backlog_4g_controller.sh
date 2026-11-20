@@ -114,13 +114,66 @@ if [ "$mode" = compile ]; then
   echo 'FI C1 C220 GO/RACE COMPILE PASS original_seed_unchanged=true postgres_started=false'
   exit 0
 fi
+# Performance evidence is mandatory for the clone-only C1 experiment.
+# Start the original read-only C220 telemetry BEFORE the PostgreSQL clone
+# starts, then finalize it automatically even if the benchmark fails.
+telemetry_script="$runroot/pinned-c1-resource-telemetry.sh"
+jexec -U jwood fi-dev git -C "$repo" show \
+  "$runnerpin:go/cmd/fi-backlog-recover/run_private_c1_resource_telemetry_c220.sh" \
+  > "$telemetry_script" || fail 'pinned C220 resource telemetry source missing'
+chmod 0700 "$telemetry_script"
+sh -n "$telemetry_script" || fail 'resource telemetry shell syntax invalid'
+telemetry_dir=/var/tmp/fi-c1-resources-$(date -u '+%Y%m%dT%H%M%SZ')-async
+[ ! -e "$telemetry_dir" ] || fail 'resource telemetry destination already exists'
+monitorpid=
+finish_monitor(){
+  [ -n "$monitorpid" ] || return 0
+  kill -TERM "$monitorpid" 2>/dev/null || :
+  wait "$monitorpid" 2>/dev/null || :
+  monitorpid=
+  [ -s "$telemetry_dir/host_after.txt" ] &&
+  [ -s "$telemetry_dir/host_5s.txt" ] &&
+  [ -s "$telemetry_dir/processes_5s.txt" ] ||
+    fail 'C1 telemetry shutdown snapshots incomplete'
+  tar -C /var/tmp -czf "$runroot/C1.telemetry.tar.gz" \
+    "$(basename "$telemetry_dir")" ||
+    fail 'C1 automated telemetry archive creation failed'
+  tar -tzf "$runroot/C1.telemetry.tar.gz" >/dev/null ||
+    fail 'C1 automated telemetry archive integrity failed'
+  printf 'FI C1 AUTOMATED TELEMETRY CAPTURED path=%s samples=host_5s,processes_5s,zpool,disks\n' \
+    "$runroot/C1.telemetry.tar.gz"
+}
+trap 'finish_monitor' 0
+trap 'exit 130' 2
+trap 'exit 143' 15
+sh "$telemetry_script" "$telemetry_dir" > "$runroot/C1.telemetry.log" 2>&1 &
+monitorpid=$!
+ready=0
+i=0
+while [ "$i" -lt 25 ];do
+  if [ -s "$telemetry_dir/host_5s.txt" ] &&
+     [ -s "$telemetry_dir/processes_5s.txt" ];then
+    ready=1
+    break
+  fi
+  kill -0 "$monitorpid" 2>/dev/null ||
+    fail 'C1 telemetry process stopped before startup'
+  i=$((i+1))
+  sleep 1
+done
+[ "$ready" = 1 ] || fail 'C1 mandatory telemetry failed startup readiness'
+printf 'FI C1 AUTOMATED TELEMETRY READY path=%s before_ingest=true\n' "$telemetry_dir"
 log="$runroot/C1.console.txt"
 status="$runroot/C1.exit"
 runner_mode=family
 [ "$mode" != inject-file ] || runner_mode=inject-file
 ( if sh "$runner" "$runner_mode" "$2";then printf '0\n' > "$status";else printf '1\n' > "$status";fi ) 2>&1 | tee "$log"
+kill -0 "$monitorpid" 2>/dev/null ||
+  fail 'C1 mandatory telemetry died during the benchmark'
 [ -s "$status" ] && [ "$(cat "$status")" = 0 ] ||
   fail 'native P6 adaptive SQL build, signed stream, relational or clone checks failed'
+finish_monitor
+trap - 0 2 15
 receipt=$(grep '^FI W512 PILOT FINISHED exit=0 outputs=' "$log" | tail -n 1)
 [ -n "$receipt" ] || fail 'C1 private SQL shutdown receipt missing'
 out=$(printf '%s\n' "$receipt" | sed -n 's/.* outputs=\([^ ]*\) private_clone=.*/\1/p')
