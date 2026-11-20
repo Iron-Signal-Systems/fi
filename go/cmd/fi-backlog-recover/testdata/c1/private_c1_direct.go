@@ -385,6 +385,8 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // drained or re-created inside the loop above.
     if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 shared-pool five-family drain: %w",err)}
     verifier.MarkDrained() // exact P6 final ACK boundary for timing evidence
+    fmt.Printf("FI C1 P6 SQL DRAIN elapsed=%s records_admitted=%d verify_overlapped=true\n",
+        time.Since(started),totalRows)
     if err=commitReady.FinishCommitted();err!=nil{
         return empty,fmt.Errorf("FI C1: complete signed SQL commit receipts: %w",err)
     }
