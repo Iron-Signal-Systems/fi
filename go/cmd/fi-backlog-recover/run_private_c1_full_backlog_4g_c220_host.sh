@@ -871,6 +871,11 @@ END{
  if(bad||during<1||first!=1)exit 1
 }' "$out/$name/C1_ASYNC_VERIFY.txt" ||
   fail 'C1 architecture FAIL: no verified first group during ongoing ingestion'
+awk '
+/^FI C1 ASYNC VERIFY PASS window=1 / && /phase=during_ingest / {prior=1}
+/^FI C1 P6 FINAL DRAIN START / {drain=1;if(!prior)exit 1}
+END {if(!drain||!prior)exit 1}
+' "$log" || fail 'C1 architecture FAIL: first-group proof did not complete before final P6 drain'
 grep -Fq "FI C1 ASYNC VERIFY COMPLETE groups=$windows during_ingest=" "$log" &&
 grep -Fq 'original_relational_rescans=removed final_marker_gate=preserved' "$log" &&
 grep -Fq 'commit_ready=true' "$out/$name/C1_ASYNC_VERIFY.txt" &&
