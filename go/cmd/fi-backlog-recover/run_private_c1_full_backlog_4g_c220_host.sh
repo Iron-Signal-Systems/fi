@@ -33,6 +33,15 @@ case "$sqlmax" in
   *) fail 'C1 SQL worker maximum must be an integer between 1 and 16' ;;
 esac
 group=4
+# Controlled PostgreSQL checkpoint A/B: ONLY max_wal_size changes.
+# Original seed is 1GB/4MB; 8GB override exists solely on this private clone.
+# Keep wal_buffers and all durability settings at the proven baseline.
+pg_max_wal=8GB
+pg_wal_buffers=4MB
+[ "${FI_C1_PG_MAX_WAL_SIZE:-8GB}" = "$pg_max_wal" ] ||
+    fail 'this experimental runner requires exactly max_wal_size=8GB'
+[ "${FI_C1_PG_WAL_BUFFERS:-4MB}" = "$pg_wal_buffers" ] ||
+    fail 'WAL buffers must remain at the baseline 4MB for this A/B'
 [ "${FI_C1_FULL_BACKLOG_GROUP_GIB:-4}" = 4 ] ||
   fail 'C1 full signed backlog requires 4GiB groups'
 stop=0
@@ -492,7 +501,7 @@ cp -R "$seed/$name/data" "$root/$name/data" || exit 1
 [ "$(cat "$root/$name/data/PG_VERSION")" = 18 ] || exit 1
 echo 'FI FAMILY P3 POST-BUILD PRIVATE SEED COPY PASS'
 pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
-  -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700" \
+  -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700 -c max_wal_size=8GB" \
   -w start > "$root/$name/start.log" 2>&1 || { echo 'FI C1 CLONE STOP: PostgreSQL failed to start; inspect start.log and postgres.log in the private clone' >&2; exit 1; }
 echo 'FI C1 PRIVATE POSTGRESQL START PASS'
 # Verify the original private clone using existing owner and fi_ingest roles.
@@ -570,8 +579,9 @@ state=$(sql "SELECT count(*)::text||'|'||sum(committed_records)::text||'|'||
 [ "$(sql 'SELECT count(*) FROM fi.recorded_generation')" = 0 ] &&
 [ "$(sql "SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'")" = 0 ] ||
     fail 'canonical or Accepted rows present in private seed'
-[ "$(sql 'SHOW max_wal_size')" = 1GB ] &&
-[ "$(sql 'SHOW wal_buffers')" = 4MB ] || fail 'PostgreSQL WAL settings changed'
+[ "$(sql 'SHOW max_wal_size')" = "$pg_max_wal" ] &&
+[ "$(sql 'SHOW wal_buffers')" = "$pg_wal_buffers" ] ||
+    fail 'private PostgreSQL WAL experiment settings changed'
 for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
 done
@@ -611,6 +621,9 @@ inflight_limit=32
 pending_raw_bytes_max=268435456
 sql_workers_min=1
 sql_workers_max=$sqlmax
+pg_max_wal_size=$pg_max_wal
+pg_wal_buffers=$pg_wal_buffers
+pg_wal_experiment=checkpoint_size_only
 sql_worker_assignment=shared_adaptive
 private_only=true
 private_signed_artifact_root=$private_root
@@ -630,6 +643,27 @@ stats(){
     sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_wal) x' > "$out/$name/wal_$phase.jsonl"
     sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_checkpointer) x' > "$out/$name/checkpointer_$phase.jsonl"
     sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_io) x' > "$out/$name/io_$phase.jsonl"
+    sql "SELECT row_to_json(x)::text FROM (
+      SELECT schemaname,relname,seq_scan,idx_scan,n_tup_ins,n_tup_upd,n_tup_del,
+             n_tup_hot_upd,n_live_tup,n_dead_tup,n_ins_since_vacuum,
+             vacuum_count,autovacuum_count,analyze_count,autoanalyze_count,
+             total_vacuum_time,total_autovacuum_time,
+             total_analyze_time,total_autoanalyze_time,
+             last_vacuum,last_autovacuum,
+             pg_relation_size(relid) AS table_heap_bytes,
+             pg_indexes_size(relid) AS index_bytes,
+             pg_total_relation_size(relid) AS total_bytes
+      FROM pg_stat_user_tables
+      WHERE schemaname IN ('fi_recovery_projection','fi_recovery')
+      ORDER BY schemaname,relname
+    ) x" > "$out/$name/tables_$phase.jsonl"
+    sql "SELECT row_to_json(x)::text FROM (
+      SELECT schemaname,relname,indexrelname,idx_scan,idx_tup_read,idx_tup_fetch
+      FROM pg_stat_user_indexes
+      WHERE schemaname IN ('fi_recovery_projection','fi_recovery')
+      ORDER BY schemaname,relname,indexrelname
+    ) x" > "$out/$name/indexes_$phase.jsonl"
+    sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_bgwriter) x' > "$out/$name/bgwriter_$phase.jsonl"
 }
 stats before || fail 'pre-run PostgreSQL stats unavailable'
 iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
@@ -672,6 +706,7 @@ iostatpid=
 vmstatpid=
 stats after || fail 'postrun PostgreSQL stats unavailable'
 log="$out/$name/recover.log"
+echo "FI C1 POSTGRES WAL EXPERIMENT PASS max_wal_size=$pg_max_wal wal_buffers=$pg_wal_buffers durability=on checkpoint_stats=before_after clone_only=true"
 grep '^FI C1 FULL BACKLOG SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
   fail 'C1 full 4GiB signed receipt plan absent'
 [ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
@@ -802,11 +837,15 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
+  "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
   "$name/io_before.jsonl" "$name/io_after.jsonl" \
+  "$name/tables_before.jsonl" "$name/tables_after.jsonl" \
+  "$name/indexes_before.jsonl" "$name/indexes_after.jsonl" \
+  "$name/bgwriter_before.jsonl" "$name/bgwriter_after.jsonl" \
   "$name/iostat.txt" "$name/vmstat.txt" || fail 'C1 metrics bundle failed'
 bundle="$out/fi-c1-full-backlog-4g-$stamp.tar.gz"
-[ -s "$bundle" ] || fail 'C1 signed 8GiB metrics bundle missing'
-bundle_sha=$(sha256 -q "$bundle") || fail 'C1 signed 8GiB metrics bundle SHA failed'
-[ "${#bundle_sha}" -eq 64 ] || fail 'C1 signed 8GiB metrics bundle SHA invalid'
+[ -s "$bundle" ] || fail 'C1 full-backlog 4GiB metrics bundle missing'
+bundle_sha=$(sha256 -q "$bundle") || fail 'C1 full-backlog 4GiB metrics bundle SHA failed'
+[ "${#bundle_sha}" -eq 64 ] || fail 'C1 full-backlog 4GiB metrics bundle SHA invalid'
 printf 'FI C1 PRIVATE METRICS BUNDLE PASS path=%s sha256=%s\n' \
   "$bundle" "$bundle_sha"
