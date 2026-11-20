@@ -8,6 +8,19 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|c1 20261115T153532Z'
 case "$1" in preflight|compile|c1) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
+# Stage 2 is only meaningful after the Stage 1 full 8GB/4MB run passes.
+# Fail closed on a missing or mismatched complete private-replay receipt.
+prior=${FI_C1_WAL8_BASELINE_REPORT:-}
+case "$prior" in
+  /var/tmp/fi-c1-pgwal8.*) ;;
+  *) fail 'set FI_C1_WAL8_BASELINE_REPORT to the successful Stage 1 report directory' ;;
+esac
+[ -d "$prior" ] && [ ! -L "$prior" ] && [ -s "$prior/run.log" ] ||
+  fail 'Stage 1 8GB/4MB full-run log is missing'
+grep -Fxq 'FI C1 POSTGRES WAL A/B CANDIDATE max_wal_size=8GB wal_buffers=4MB original_full_run=1GB_4MB proof=clone_only' "$prior/run.log" &&
+grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=8399 records=15140785 bytes=65205192753 typed_markers=16 source_parent_rows=15140785 authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$prior/run.log" &&
+grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior/run.log" ||
+  fail 'Stage 1 8GB/4MB full source/relational acceptance receipt not verified'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e
 runnerpin=e922b9d52f1152a0f1776030261975457845e4b9
