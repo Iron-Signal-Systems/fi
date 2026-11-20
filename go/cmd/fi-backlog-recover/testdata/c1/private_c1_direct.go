@@ -383,9 +383,14 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     }
     // W512 is only a reporting boundary. The P6 buffers were never
     // drained or re-created inside the loop above.
+    // Treat entry into the one final P6 drain as the cutoff for proving
+    // verification DURING the continuous signed-input processing period.
+    // Merely completing a read-only query during final flush cannot pass
+    // the 8GiB concurrency architecture gate.
+    verifier.MarkDrained()
+    fmt.Printf("FI C1 P6 FINAL DRAIN START records_admitted=%d marker_unwritten=true\n",totalRows)
     if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 shared-pool five-family drain: %w",err)}
-    verifier.MarkDrained() // exact P6 final ACK boundary for timing evidence
-    fmt.Printf("FI C1 P6 SQL DRAIN elapsed=%s records_admitted=%d verify_overlapped=true\n",
+    fmt.Printf("FI C1 P6 SQL DRAIN elapsed=%s records_admitted=%d verifier_independent=true\n",
         time.Since(started),totalRows)
     if err=commitReady.FinishCommitted();err!=nil{
         return empty,fmt.Errorf("FI C1: complete signed SQL commit receipts: %w",err)
