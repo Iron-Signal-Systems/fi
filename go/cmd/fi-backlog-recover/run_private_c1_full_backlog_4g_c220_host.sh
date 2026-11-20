@@ -451,12 +451,17 @@ grep -Fq 'CommitFamily(rows)' \
   "$src/go/internal/recordingest/private_c1_five_sql.go" &&
 grep -Fq 'CommitSource(rows)' \
   "$src/go/internal/recordingest/private_c1_five_sql.go" &&
-grep -Fq 'privateC1SparseMaxBatchLag = 64' \
-  "$src/go/internal/recordingest/private_p6_family_buffers.go" &&
-grep -Fq 'flushAgedSparse(ctx,row.signedBatchIndex)' \
-  "$src/go/internal/recordingest/private_p6_family_buffers.go" ||
-  { echo 'FI C1 STOP: durable readiness or sparse-age signed-batch watermark missing' >&2; exit 1; }
-echo 'FI C1 COMMIT-READY SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked sparse_max_batch_lag=64 no_group_flush=true'
+grep -Fq 'commitReady.Seal' \
+  "$src/go/internal/recordingest/private_c1_direct.go" &&
+grep -Fq 'onFailure,false' \
+  "$src/go/internal/recordingest/private_c1_async_verify.go" ||
+  { echo 'FI C1 STOP: committed source/family readiness or independent verifier boundary missing' >&2; exit 1; }
+if grep -Eq 'privateC1SparseMaxBatchLag|flushAgedSparse' \
+  "$src/go/internal/recordingest/private_p6_family_buffers.go"; then
+  echo 'FI C1 STOP: retired B-driven sparse-family flush still present' >&2
+  exit 1
+fi
+echo 'FI C1 A/B SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked reader_seal=tracked verifier_independent=true sparse_age_flush=removed no_group_flush=true'
 # Historical C220 original is the only allowed cache entrypoint source.
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
 git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
