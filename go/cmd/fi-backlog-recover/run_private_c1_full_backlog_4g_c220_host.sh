@@ -46,7 +46,10 @@ pg_wal_buffers=16MB
     fail 'Stage 2 WAL buffer candidate requires exactly 16MB'
 [ "${FI_C1_FULL_BACKLOG_GROUP_GIB:-4}" = 4 ] ||
   fail 'C1 full signed backlog requires 4GiB groups'
+prefix8=${FI_C1_DEV_PREFIX8:-0}
+case "$prefix8" in 0|1) ;; *) fail 'FI_C1_DEV_PREFIX8 must be 0 or 1' ;; esac
 stop=0
+if [ "$prefix8" = 1 ];then stop=2;fi
 
 seedstamp=$2
 case "$seedstamp" in
@@ -75,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=6119df0db1536d5a3f908be1b373a750c2da2632
+sourcecommit=5c10640a93fd0215ea628bfdcd24ba0b03203478
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -592,7 +595,8 @@ for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
 done
 cat > "$out/RUN_MANIFEST.txt" <<EOF
-FI C1 FULL SIGNED BACKLOG 4GiB PRIVATE CLONE
+FI C1 SIGNED BACKLOG 4GiB PRIVATE CLONE
+c1_private_8g_prefix=$prefix8
 family_p3_source_commit=$sourcecommit
 c1_group_gib=$group
 c1_source_target_gib=full_verified_generation
@@ -676,12 +680,19 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf "FI FAMILY C1 FULL BACKLOG DIRECT START start_index=1 groups=all group_gib=$group prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
+printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gib=$group prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
-unset FI_W512_C1_STOP_WINDOWS
-export FI_W512_C1_GROUP_GIB=4
-export FI_W512_C1_FULL_BACKLOG=1
+if [ "$prefix8" = 1 ];then
+  export FI_W512_C1_STOP_WINDOWS=2
+  export FI_W512_C1_GROUP_GIB=4
+  export FI_W512_C1_FULL_BACKLOG=0
+  export FI_C1_DEV_PREFIX8=1
+else
+  unset FI_W512_C1_STOP_WINDOWS FI_C1_DEV_PREFIX8
+  export FI_W512_C1_GROUP_GIB=4
+  export FI_W512_C1_FULL_BACKLOG=1
+fi
 export FI_W512_C1_SQL_DSN="host=$out/pg-$name port=$port user=fi_ingest dbname=fi sslmode=disable"
 export FI_W512_C1_EXPECTED_PGDATA="$root/$name/data"
 # No injected failure in the full backlog throughput/correctness experiment.
@@ -699,10 +710,17 @@ if /usr/bin/time -l "$recover" \
   -processing-chunk-records=32768 -continuous-private -start-window=1 \
   -max-windows=0 -max-runtime=0 -test-stop-after-windows=0 \
   -deferred-verified-clone -verified-cache-root="$cache" > "$out/$name/recover.log" 2>&1; then
-    :
+    [ "$prefix8" = 0 ] || fail '8GiB prefix returned unexpected full-generation success'
 else
-    tail -n 100 "$out/$name/recover.log" >&2 || :
-    fail 'C1 signed full-backlog development recovery returned an error'
+    if [ "$prefix8" = 1 ] &&
+       grep -Fq 'FI C1 PRIVATE 8G PREFIX PROOF PASS groups=2 windows=3 ' "$out/$name/recover.log" &&
+       grep -Fq 'FI continuous private recovery: context canceled' "$out/$name/recover.log" &&
+       ! grep -Fq 'FI REAL BACKLOG PRIVATE COMPLETE ' "$out/$name/recover.log";then
+        echo 'FI C1 CONTROLLED PREFIX STOP PASS exact_two_4GiB_groups=true full_generation=false'
+    else
+        tail -n 100 "$out/$name/recover.log" >&2 || :
+        fail 'C1 signed replay failed before controlled 8GiB prefix proof'
+    fi
 fi
 for pid in "$iostatpid" "$vmstatpid"; do
     kill -TERM "$pid" 2>/dev/null || :
