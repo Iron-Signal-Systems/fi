@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=28bfcd969152c4860b4d4ba5f232b57a8a3e94c7
-runnerpin=f5b0592c66225463d126d3930accfde045ac6461
+sourcepin=6119df0db1536d5a3f908be1b373a750c2da2632
+runnerpin=dafceaf4627b5dadfcba9156fc329fa265a60455
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -69,6 +69,9 @@ grep -Fq 'FI C1 P6 SHARED SQL PASS' "$runner" &&
 grep -Fq 'private_c1_backpressure_test.go' "$runner" &&
 grep -Fq 'private_c1_continuous_signed_stream.go' "$runner" &&
 grep -Fq 'private_c1_continuous_signed_stream_test.go' "$runner" &&
+grep -Fq 'private_c1_async_verify.go' "$runner" &&
+grep -Fq 'private_c1_async_verify_test.go' "$runner" &&
+grep -Fq 'C1_ASYNC_VERIFY.txt' "$runner" &&
 grep -Fq 'C1_STREAM.txt' "$runner" &&
 grep -Fq 'TestPrivateC1' "$runner" &&
 grep -Fq 'FI C1 FULL BACKLOG SIGNED PLAN' "$runner" &&
@@ -90,6 +93,7 @@ export FI_C1_PG_MAX_WAL_SIZE=8GB
 export FI_C1_PG_WAL_BUFFERS=16MB
 export FI_W512_P6_FAMILY_SQL=1
 export FI_W512_P5_PERSISTENT=1
+export FI_C1_DEV_ASYNC_VERIFY=1
 export FI_W512_P3_DYNAMIC_MIN=2
 export FI_W512_P3_DYNAMIC_MAX=16
 unset FI_W512_P7_SQL_WRITERS FI_W512_P8_REUSE FI_W512_P9_DIRECT_STREAM
@@ -124,7 +128,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 FULL BACKLOG DEV PASS groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_ASYNC_VERIFY.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -137,6 +141,7 @@ cat "$runroot/C1_FULL_PROOF.txt"
 cat "$runroot/C1_COMPLETE.txt"
 cat "$runroot/C1_FAMILIES.txt"
 cat "$runroot/C1_STREAM.txt"
+cat "$runroot/C1_ASYNC_VERIFY.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
@@ -172,5 +177,5 @@ signed_batches=$(plan_field signed_batches) || fail 'signed complete backlog sou
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported an invalid throughput'
 printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
-printf 'FI C1 CONTINUOUS P5 CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=8GB_16MB_per_batch_session proof=clone_only\n'
+printf 'FI C1 ASYNC RELATIONAL VERIFIER CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=continuous_p5_previous_run read_only=true final_marker_unchanged=true proof=clone_only\n'
 printf 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=%s records=%s source_bytes=%s last_batch=%s signed_batches=%s shared_sql_workers_max=%s source_parent_writers=1 seed_unchanged=true clean_start=true typed_full=true artifact_source_markers=seed_only private_clone_only=true authoritative=0 published=0 output=%s\n' "$groups" "$records" "$bytes" "$lastbatch" "$signed_batches" "$sqlmax" "$runroot"
