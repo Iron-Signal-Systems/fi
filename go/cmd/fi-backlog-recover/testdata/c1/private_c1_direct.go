@@ -335,22 +335,35 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     var prepTotals privateC1PrepTotals
     fmt.Printf("FI C1 P5 PREP POOL START lanes=5 min=2 max=16 persistent_across_signed_batches=true persistent_across_W512=true\n")
     started:=time.Now()
-    var totalRows,totalBytes int64
+    // Resolve the original signed manifest and exact shadow source identity
+    // for every batch before opening the single continuous P5 session.
+    // These are verified receiver-custody artifacts, NOT new source staging.
+    signed:=make([]privateC1StreamBatch,0,len(g.Batches))
     for wi:=startWindow;wi<end;wi++{
         d:=ds[wi]
         if err=ctx.Err();err!=nil{return empty,err}
-        ids,err:=privateC1SourceBatchIDs(ctx,reader,g,d)
-        if err!=nil{return empty,err}
-        var seen,seenBytes int64
-        for offset,id:=range ids {
+        ids,e:=privateC1SourceBatchIDs(ctx,reader,g,d)
+        if e!=nil{return empty,e}
+        for offset,id:=range ids{
             index:=d.StartBatch+offset
-            b,err:=privateC1SignedCacheBatch(ctx,cacheDir,g,index)
-            if err!=nil{return empty,err}
-            n,bytes,err:=privateC1ReadSignedBatch(ctx,d.SourceID,index,id,b,buffers,pool,&prepTotals)
-            if err!=nil{return empty,fmt.Errorf("FI C1: signed batch %d: %w",index,err)}
-            seen+=n
-            seenBytes+=bytes
+            batch,e:=privateC1SignedCacheBatch(ctx,cacheDir,g,index)
+            if e!=nil{return empty,fmt.Errorf("FI C1: signed batch %d manifest: %w",index,e)}
+            signed=append(signed,privateC1StreamBatch{
+                Index:index,Window:wi,SourceBatchID:id,Batch:batch,
+            })
         }
+    }
+    // P5 preparation no longer drains and recreates one stream per signed
+    // batch. The signed reader still finishes and validates every original
+    // batch's SHA-256, byte count, record count, and newline boundary before
+    // opening the next. P6 remains continuous across all reporting windows.
+    groupRows,groupBytes,e:=privateC1ConsumeContinuousSigned(
+        ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare)
+    if e!=nil{return empty,fmt.Errorf("FI C1: continuous signed P5: %w",e)}
+    var totalRows,totalBytes int64
+    for wi:=startWindow;wi<end;wi++{
+        d:=ds[wi]
+        seen,seenBytes:=groupRows[wi],groupBytes[wi]
         if seen!=int64(d.EndRecord-d.StartRecord)||seenBytes!=int64(d.DataBytes){
             return empty,fmt.Errorf("FI C1: window %d signed source tally mismatched",wi)
         }
