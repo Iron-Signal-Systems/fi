@@ -421,7 +421,16 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     }
     // The two-window test intentionally stops after its durable private
     // prefix. Never fabricate a complete-generation acceptance.
-    if end<len(ds){return empty,context.Canceled}
+    if end<len(ds){
+        // Explicit two-group development prefix: fail closed on any incomplete
+        // SQL/relational proof and NEVER report full generation verification.
+        if os.Getenv("FI_C1_DEV_PREFIX8")=="1"{
+            if err=privateC1VerifyEightGiBPrefix(ctx,reader,g,ds,end);err!=nil{
+                return empty,fmt.Errorf("FI C1: 8GiB signed prefix: %w",err)
+            }
+        }
+        return empty,context.Canceled
+    }
     if fullRun {
         return privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)
     }
