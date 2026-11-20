@@ -731,15 +731,24 @@ vmstatpid=
 stats after || fail 'postrun PostgreSQL stats unavailable'
 log="$out/$name/recover.log"
 echo "FI C1 POSTGRES WAL BUFFERS EXPERIMENT PASS max_wal_size=$pg_max_wal wal_buffers=$pg_wal_buffers durability=on checkpoint_stats=before_after clone_only=true"
-grep '^FI C1 FULL BACKLOG SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
-  fail 'C1 full 4GiB signed receipt plan absent'
-[ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
+if [ "$prefix8" = 1 ];then
+  grep '^FI C1 EIGHT GIB SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
+    fail 'C1 8GiB exact signed prefix plan absent'
+  [ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
+  grep -Fq 'group_gib=4 new_windows=2 ' "$out/$name/C1_PLAN.txt" &&
+  grep -Fq 'seed_unchanged=true identical_prefix=true' "$out/$name/C1_PLAN.txt" ||
+    fail 'C1 8GiB signed prefix plan invalid'
+else
+  grep '^FI C1 FULL BACKLOG SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
+    fail 'C1 full 4GiB signed receipt plan absent'
+  [ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
   grep -Fq 'group_gib=4 ' "$out/$name/C1_PLAN.txt" &&
   grep -Fq 'seed_unchanged=true no_record_window_limit=true' "$out/$name/C1_PLAN.txt" ||
-  fail 'C1 full signed generation plan invalid'
+    fail 'C1 full signed generation plan invalid'
+fi
 plan_field() {
   awk -v want="$1" '
-    /^FI C1 FULL BACKLOG SIGNED PLAN / {
+    /^FI C1 (FULL BACKLOG|EIGHT GIB) SIGNED PLAN / {
       for(i=1;i<=NF;i++){
         n=split($i,p,"=")
         if(n==2 && p[1]==want && p[2]~/^[0-9]+$/){print p[2];found=1;exit}
@@ -748,27 +757,48 @@ plan_field() {
     END {if(!found)exit 1}
   ' "$out/$name/C1_PLAN.txt"
 }
-rows=$(plan_field new_records) || fail 'C1 full signed record count missing'
-bytes=$(plan_field new_source_bytes) || fail 'C1 full signed bytes missing'
+rows=$(plan_field new_records) || fail 'C1 signed record count missing'
+bytes=$(plan_field new_source_bytes) || fail 'C1 signed bytes missing'
 lastbatch=$(plan_field last_batch) || fail 'C1 signed end batch missing'
 windows=$(plan_field new_windows) || fail 'C1 number of 4GiB groups missing'
-signed_batches=$(plan_field signed_batches) || fail 'C1 number of signed source batches missing'
-seeded=$(plan_field seeded_records) || fail 'C1 signed seed count missing'
-[ "$windows" -gt 2 ] && [ "$windows" -le 64 ] &&
-[ "$rows" -gt 10000000 ] && [ "$bytes" -gt 42949672960 ] &&
-[ "$lastbatch" = "$signed_batches" ] && [ "$seeded" = 493478 ] ||
-  fail 'C1 full signed source size/cutoff guard failed'
+if [ "$prefix8" = 1 ];then
+  signed_batches=$lastbatch
+  seeded=493478
+  [ "$windows" = 2 ] && [ "$rows" -gt 1000000 ] &&
+  [ "$bytes" -ge 8522825728 ] && [ "$bytes" -le 8589934592 ] &&
+  [ "$lastbatch" -lt 8399 ] && [ "$lastbatch" -gt 205 ] ||
+    fail 'C1 exact 8GiB signed prefix size or cutoff invalid'
+else
+  signed_batches=$(plan_field signed_batches) || fail 'C1 total signed batches missing'
+  seeded=$(plan_field seeded_records) || fail 'C1 signed seed count missing'
+  [ "$windows" -gt 2 ] && [ "$windows" -le 64 ] &&
+  [ "$rows" -gt 10000000 ] && [ "$bytes" -gt 42949672960 ] &&
+  [ "$lastbatch" = "$signed_batches" ] && [ "$seeded" = 493478 ] ||
+    fail 'C1 full signed source size/cutoff guard failed'
+fi
 grep -Fxq "FI C1 CLEAN START PASS windows=1..$windows signed_parents_absent=true typed_markers_absent=true restart_requires_fresh_clone=true" "$log" ||
-  fail 'C1 full clean signed destination guard absent'
-grep '^FI C1 FULL GROUPED RELATIONAL PROOF PASS ' "$log" > "$out/$name/C1_FULL_PROOF.txt" ||
-  fail 'C1 full clone relational verification proof absent'
-grep -Fq "windows=$((windows+1)) signed_batches=$signed_batches records=$((seeded+rows)) bytes=" "$out/$name/C1_FULL_PROOF.txt" &&
-grep -Fq 'authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$out/$name/C1_FULL_PROOF.txt" ||
-  fail 'C1 full clone proof totals/identity mismatched'
-grep '^FI REAL BACKLOG PRIVATE COMPLETE ' "$log" > "$out/$name/C1_COMPLETE.txt" ||
-  fail 'C1 full private-generation completion missing'
-grep -Fq "windows=$((windows+1)) records=$((seeded+rows)) " "$out/$name/C1_COMPLETE.txt" ||
-  fail 'C1 full receipt not complete'
+  fail 'C1 signed destination was not clean before replay'
+if [ "$prefix8" = 1 ];then
+  grep '^FI C1 PRIVATE 8G PREFIX PROOF PASS ' "$log" > "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 private 8GiB prefix-only SQL/marker proof missing'
+  grep -Fq "groups=2 windows=3 source_records=$((seeded+rows)) new_records=$rows source_bytes=$bytes signed_batches=$signed_batches full_generation=false authoritative=0 accepted=0" "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 prefix relational proof differs from signed target'
+  ! grep -q '^FI C1 FULL GROUPED RELATIONAL PROOF PASS ' "$log" ||
+    fail 'C1 incomplete prefix falsely declared full-generation proof'
+  ! grep -q '^FI REAL BACKLOG PRIVATE COMPLETE ' "$log" ||
+    fail 'C1 prefix falsely declared complete signed generation'
+  printf 'FI C1 PRIVATE PREFIX ONLY groups=2 full_generation=false\n' > "$out/$name/C1_COMPLETE.txt"
+else
+  grep '^FI C1 FULL GROUPED RELATIONAL PROOF PASS ' "$log" > "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 full clone relational verification proof absent'
+  grep -Fq "windows=$((windows+1)) signed_batches=$signed_batches records=$((seeded+rows)) bytes=" "$out/$name/C1_FULL_PROOF.txt" &&
+  grep -Fq 'authoritative=0 accepted=0 artifact_source_markers=seed_only proof=private_clone_only' "$out/$name/C1_FULL_PROOF.txt" ||
+    fail 'C1 full clone proof totals/identity mismatched'
+  grep '^FI REAL BACKLOG PRIVATE COMPLETE ' "$log" > "$out/$name/C1_COMPLETE.txt" ||
+    fail 'C1 full private-generation completion missing'
+  grep -Fq "windows=$((windows+1)) records=$((seeded+rows)) " "$out/$name/C1_COMPLETE.txt" ||
+    fail 'C1 full receipt not complete'
+fi
 grep '^FI C1 P6 DIRECT READ ' "$log" > "$out/$name/C1_READ.txt" ||
   fail 'C1 full signed batch read receipts missing'
 awk -v expected="$rows" -v expected_bytes="$bytes" -v groups="$windows" '
@@ -800,7 +830,7 @@ grep -Fxq "FI C1 ASYNC VERIFY COMPLETE groups=$windows independent_read_only=tru
 grep '^FI C1 P5 CONTINUOUS SIGNED STREAM PASS ' "$log" > "$out/$name/C1_STREAM.txt" ||
   fail 'C1 did not verify one continuous P5 preparation stream'
 [ "$(wc -l < "$out/$name/C1_STREAM.txt" | tr -d '[:space:]')" = 1 ] &&
-grep -Fq "batches=8194 sessions=1 records=$rows verified_sha256=8194 per_batch_manifest=true exact_ordinals=true buffers=bounded" "$out/$name/C1_STREAM.txt" ||
+grep -Fq "batches=$((signed_batches-205)) sessions=1 records=$rows verified_sha256=$((signed_batches-205)) per_batch_manifest=true exact_ordinals=true buffers=bounded" "$out/$name/C1_STREAM.txt" ||
   fail 'C1 continuous P5 signed-batch integrity or one-session proof missing'
 grep '^FI C1 P5 PREP COMPLETE ' "$log" > "$out/$name/C1_PREP.txt" ||
   fail 'C1 original P5 family preparation pool completion missing'
@@ -863,7 +893,7 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf "FI C220 C1 FULL BACKLOG DEV PASS groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none authoritative=0 accepted=0\n" "$elapsed" |
+printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none authoritative=0 accepted=0\n" "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
