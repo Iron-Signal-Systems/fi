@@ -14,12 +14,6 @@ import (
     "fmt"
 )
 
-// A continuously advancing signed-batch watermark gives low-volume families
-// bounded SQL-commit latency without a 4GiB group flush or full SQL barrier.
-// This threshold is deliberately in ORIGINAL SIGNED BATCHES, not W512 groups.
-// Security and File continue their original capacity/byte-limit policy.
-const privateC1SparseMaxBatchLag = 64
-
 type privateP6WindowContextKey struct{}
 func privateP6BuffersFromContext(ctx context.Context)*privateP6Buffers{
     if ctx==nil{return nil}
@@ -154,13 +148,6 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
         b.failed=errors.New("FI P6: invalid signed identity, bytes or original record order")
         return b.failed
     }
-    // P6's original capacity flushes do not commit small final tails in
-    // Coverage, USN or Other until the true end of all signed input. That
-    // prevents even Group 1 of a 2-group run from being independently
-    // verified while Group 2 is ingested. Age-based SMALL-lane handoffs
-    // solve that without looking at or flushing on a group boundary.
-    // The sink queues SQL; this is not WaitAll or a typed-marker barrier.
-    if err=b.flushAgedSparse(ctx,row.signedBatchIndex);err!=nil{return err}
     // Flush the shared source identity ledger before it exceeds its own
     // capacity. Source rows are inserted in true signed order, so USN's
     // established preceding-source-record-id relation still works.
@@ -182,25 +169,6 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
     b.lastBatch,b.lastOrdinal=row.signedBatchIndex,row.ordinal
     if privateP6Full(lane){
         if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
-    }
-    return nil
-}
-
-// Once a sparse lane's OLDEST pending signed batch is more than 64 signed
-// batches behind current input, submit it to SQL. Revisit on every signed
-// record so a lane with NO later rows is still committed during continued
-// input. This is an opportunistic bounded-latency handoff, NOT a drain at
-// a reporting group boundary and not a read-side verification shortcut.
-func(b *privateP6Buffers) flushAgedSparse(ctx context.Context,atBatch int)error{
-    for _,family:=range []privateP6Family{
-        privateP6Coverage,privateP6USN,privateP6Other,
-    }{
-        lane:=&b.lanes[family]
-        if len(lane.pending)==0{continue}
-        if atBatch-lane.pending[0].signedBatchIndex<privateC1SparseMaxBatchLag{
-            continue
-        }
-        if err:=b.flushFamily(ctx,family,"age");err!=nil{return err}
     }
     return nil
 }
