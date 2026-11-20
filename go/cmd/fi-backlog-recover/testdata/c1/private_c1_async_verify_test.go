@@ -71,6 +71,28 @@ func TestPrivateC1AsyncVerifierFailsClosedAndCallsBack(t *testing.T){
     }
 }
 
+// B can report a failed committed-data proof without cancelling A's
+// ingestion context. Final completion remains fail closed.
+func TestPrivateC1VerifierFailureDoesNotCancelIngestionOwner(t *testing.T){
+    ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+    defer cancel()
+    ready:=make(chan int,1)
+    notified:=make(chan error,1)
+    v,err:=newPrivateC1AsyncVerifier(ctx,1,2,ready,
+        func(context.Context,int)error{return errors.New("relational discrepancy")},
+        func(err error){notified<-err},false)
+    if err!=nil{t.Fatal(err)}
+    defer v.Stop()
+    ready<-1
+    close(ready)
+    select{
+    case <-notified:
+        if ctx.Err()!=nil{t.Fatal("independent verifier failure cancelled A")}
+    case <-ctx.Done():t.Fatal("verification callback missing")
+    }
+    if err=v.Finish(ctx);err==nil{t.Fatal("failed B proof allowed final completion")}
+}
+
 func TestPrivateC1AsyncVerifierRejectsNoOverlappingSuccess(t *testing.T){
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
