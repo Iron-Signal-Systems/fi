@@ -33,15 +33,15 @@ case "$sqlmax" in
   *) fail 'C1 SQL worker maximum must be an integer between 1 and 16' ;;
 esac
 group=4
-# Controlled PostgreSQL checkpoint A/B: ONLY max_wal_size changes.
-# Original seed is 1GB/4MB; 8GB override exists solely on this private clone.
-# Keep wal_buffers and all durability settings at the proven baseline.
+# Controlled Stage 2 PostgreSQL WAL-buffer A/B: 8GB max_wal_size FIXED.
+# Compare separately against the proven Stage 1 8GB/4MB candidate.
+# Change ONLY clone wal_buffers to 16MB; preserve all durability settings.
 pg_max_wal=8GB
-pg_wal_buffers=4MB
+pg_wal_buffers=16MB
 [ "${FI_C1_PG_MAX_WAL_SIZE:-8GB}" = "$pg_max_wal" ] ||
     fail 'this experimental runner requires exactly max_wal_size=8GB'
-[ "${FI_C1_PG_WAL_BUFFERS:-4MB}" = "$pg_wal_buffers" ] ||
-    fail 'WAL buffers must remain at the baseline 4MB for this A/B'
+[ "${FI_C1_PG_WAL_BUFFERS:-16MB}" = "$pg_wal_buffers" ] ||
+    fail 'Stage 2 WAL buffer candidate requires exactly 16MB'
 [ "${FI_C1_FULL_BACKLOG_GROUP_GIB:-4}" = 4 ] ||
   fail 'C1 full signed backlog requires 4GiB groups'
 stop=0
@@ -501,7 +501,7 @@ cp -R "$seed/$name/data" "$root/$name/data" || exit 1
 [ "$(cat "$root/$name/data/PG_VERSION")" = 18 ] || exit 1
 echo 'FI FAMILY P3 POST-BUILD PRIVATE SEED COPY PASS'
 pg_ctl -D "$root/$name/data" -l "$root/$name/postgres.log" \
-  -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700 -c max_wal_size=8GB" \
+  -o "-p $port -k $root/$name/socket -c listen_addresses= -c unix_socket_permissions=0700 -c max_wal_size=8GB -c wal_buffers=16MB" \
   -w start > "$root/$name/start.log" 2>&1 || { echo 'FI C1 CLONE STOP: PostgreSQL failed to start; inspect start.log and postgres.log in the private clone' >&2; exit 1; }
 echo 'FI C1 PRIVATE POSTGRESQL START PASS'
 # Verify the original private clone using existing owner and fi_ingest roles.
@@ -623,7 +623,7 @@ sql_workers_min=1
 sql_workers_max=$sqlmax
 pg_max_wal_size=$pg_max_wal
 pg_wal_buffers=$pg_wal_buffers
-pg_wal_experiment=checkpoint_size_only
+pg_wal_experiment=wal_buffers_only_after_8gb_wal
 sql_worker_assignment=shared_adaptive
 private_only=true
 private_signed_artifact_root=$private_root
@@ -706,7 +706,7 @@ iostatpid=
 vmstatpid=
 stats after || fail 'postrun PostgreSQL stats unavailable'
 log="$out/$name/recover.log"
-echo "FI C1 POSTGRES WAL EXPERIMENT PASS max_wal_size=$pg_max_wal wal_buffers=$pg_wal_buffers durability=on checkpoint_stats=before_after clone_only=true"
+echo "FI C1 POSTGRES WAL BUFFERS EXPERIMENT PASS max_wal_size=$pg_max_wal wal_buffers=$pg_wal_buffers durability=on checkpoint_stats=before_after clone_only=true"
 grep '^FI C1 FULL BACKLOG SIGNED PLAN ' "$log" > "$out/$name/C1_PLAN.txt" ||
   fail 'C1 full 4GiB signed receipt plan absent'
 [ "$(wc -l < "$out/$name/C1_PLAN.txt" | tr -d '[:space:]')" = 1 ] &&
