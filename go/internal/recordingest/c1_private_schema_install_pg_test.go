@@ -184,6 +184,32 @@ WHERE CASE
         (id bigint)`);err==nil{
         t.Fatal("C1 fi-sor runtime SQL role could create private schema objects")
     }
+    // A real PostgreSQL ACL regression must block signed C1 START even
+    // if SELECT and all other private grants remain valid. Restore the
+    // exact INSERT privilege after proving the runtime gate fails closed.
+    if _,err=admin.Exec(ctx,`REVOKE INSERT ON fi_recovery_projection.source_record FROM fi_ingest`);err!=nil{
+        t.Fatal(err)
+    }
+    deniedTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    deniedErr:=c1ReadOnlyWorkerPrivatePrivileges(ctx,deniedTx)
+    _=deniedTx.Rollback(context.Background())
+    if deniedErr==nil||!strings.Contains(deniedErr.Error(),"incomplete private PostgreSQL worker permissions"){
+        t.Fatalf("C1 START would accept missing SourceParent INSERT privilege: %v",deniedErr)
+    }
+    if _,err=admin.Exec(ctx,`GRANT INSERT ON fi_recovery_projection.source_record TO fi_ingest`);err!=nil{
+        t.Fatal(err)
+    }
+    recoveredTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=c1ReadOnlyWorkerPrivatePrivileges(ctx,recoveredTx);e!=nil{
+        t.Fatalf("C1 START rejected restored exact private SQL grants: %v",e)
+    }
+    if e=recoveredTx.Commit(ctx);e!=nil{t.Fatal(e)}
     var source,intake,accepted int64
     if err=admin.QueryRow(ctx,`SELECT
        (SELECT count(*) FROM fi_recovery_projection.source_record),
