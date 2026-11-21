@@ -215,6 +215,13 @@ func main() {
 	if flags.NArg() != 0 {
 		usage()
 	}
+	// C1 replaces the old FI ingest and SoR processing paths. Do not let
+	// the ordinary service silently execute its former relational engine.
+	// Fail before trust/SQL opening until the complete C1 cross-jail
+	// handoff, SoR SQL pool and parallel verifier are integrated.
+	if err := recordingest.C1ServiceAdmission(); err != nil {
+		fail(err)
+	}
 	// Reject unknown names before opening PostgreSQL or consulting trust state.
 	if _, err := fiFixedSecurityProfileContext(context.Background(), *securityProfile); err != nil {
 		fail(err)
@@ -481,7 +488,7 @@ func attemptGeneration(
 	// evidence guard below prevents rejected attempts from producing samples.
 	resourcesBefore, resourcesBeforeErr := fiCaptureProcessResources()
 	result, ingestErr :=
-		recordingest.IngestPreparedGeneration(
+		recordingest.IngestC1PreparedGeneration(
 			ctx,
 			connection.Connection(),
 			attemptID,
