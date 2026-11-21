@@ -455,6 +455,17 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if !fullRun{
         return empty,errors.New("FI C1: complete-generation proof requires full mode")
     }
+    // Validate B's structured result against the exact source generation.
+    // This is metadata matching, not another SHA/data or relational pass.
+    if verifiedByB.SourceID!=ds[0].SourceID||
+        verifiedByB.GenerationID!=ds[0].GenerationID||
+        verifiedByB.ReceiptSHA256!=g.ReceiptSHA256||
+        verifiedByB.ShadowGenerationID<=0||
+        verifiedByB.Windows!=len(ds)||
+        verifiedByB.Records!=g.Receipt.RecordCount||
+        verifiedByB.DataBytes!=g.Receipt.DataBytes{
+        return empty,errors.New("FI C1: independent B result mismatches original generation receipt")
+    }
     // Original complete-generation relational proof and its verified shadow
     // ID now come from the same independent B process, not from A's SQL.
     return verifiedByB,nil
