@@ -22,6 +22,7 @@ type C1SoRServerConfig struct {
     LocalPostgresDSN string
     SQLWorkersMax int
     SharedRAMDir string // read-only fi-sor nullfs mount
+    AllowC1Replay bool // development-only private SQL recovery opt-in
     TransportCert c1handoff.TLSFiles
     ExpectedIngestClientDNS string
 }
@@ -59,6 +60,7 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         service,e:=NewC1SoRService(cfg.LocalPostgresDSN,cfg.SQLWorkersMax)
         if e!=nil{conn.Close();return e}
         service.SharedRAMDir=cfg.SharedRAMDir
+        service.AllowC1Replay=cfg.AllowC1Replay
         endpoint:=&c1handoff.Server{
             Bootstrap:service.Bootstrap,Handler:service.Commit,
             Dispatch:service.Dispatch,IOTimeout:5*time.Minute,

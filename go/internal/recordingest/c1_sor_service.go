@@ -25,6 +25,11 @@ type C1SoRService struct {
     DSN string
     MaxSQLWorkers int
     SharedRAMDir string // fi-sor read-only nullfs mount path
+    // DEVELOPMENT ONLY: explicit opt-in to replay dirty private SQL state
+    // from original signed custody. Never set for live SoR until accepted.
+    AllowC1Replay bool
+    replayMode bool
+    replayRead *pgx.Conn
     mu sync.Mutex
     session *c1SoRCommitHandler
     pool *privateC1FiveSQL
@@ -90,6 +95,14 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     if err!=nil{
         pool.Close();s.failed=err
         return nil,fmt.Errorf("C1 fi-sor: independent parallel verifier startup: %w",err)
+    }
+    if s.replayMode{
+        read,_,e:=openC1SoRLocalSQL(ctx,s.DSN,"")
+        if e!=nil{
+            verifier.Stop();pool.Close();s.failed=e
+            return nil,fmt.Errorf("C1 fi-sor: replay read-only SQL session: %w",e)
+        }
+        s.replayRead=read
     }
     handler.minBatchIndex=frame.StartBatchIndex
     s.pool=pool
@@ -203,9 +216,29 @@ func(s *C1SoRService) validateSignedPrivateStage(ctx context.Context,frame c1han
         WHERE source_batch_id=ANY($1::bigint[])`,ids[frame.StartBatchIndex:]).
         Scan(&newParents)
     if err!=nil{return nil,err}
-    if committedPrefix!=seedRecords||newParents!=0{
-        return nil,fmt.Errorf("C1 fi-sor: private stage is not clean (seed=%d expected=%d new=%d)",
-            committedPrefix,seedRecords,newParents)
+    if committedPrefix!=seedRecords{
+        return nil,errors.New("C1 fi-sor: immutable verified seed SourceParent prefix changed")
+    }
+    if newParents>0 {
+        if !s.AllowC1Replay{
+            return nil,fmt.Errorf("C1 fi-sor: private stage has %d partially committed C1 parents; recovery opt-in and read-only reconciliation required",newParents)
+        }
+        // Separate READ-ONLY REPEATABLE READ snapshot: source order and
+        // typed roots are surveyed before any new SQL writer is created.
+        // The SQL identity of each skipped record is additionally matched
+        // against original signed custody on each recovered handoff.
+        audit,e:=AuditC1SoRPrivateRecovery(ctx,s.DSN,frame)
+        if e!=nil{return nil,fmt.Errorf("C1 fi-sor: recovery audit failed closed: %w",e)}
+        if audit.TotalExistingParents!=committedPrefix+newParents||
+            audit.SourceCompletePrefix<int(frame.StartBatchIndex)||
+            audit.RelationalCompletePrefix<int(frame.StartBatchIndex)||
+            audit.FirstUnresolvedBatch<int(frame.StartBatchIndex)||
+            audit.AutomaticReplayAuthorized{
+            return nil,errors.New("C1 fi-sor: inconsistent immutable seed or private PostgreSQL recovery evidence")
+        }
+        s.replayMode=true
+        fmt.Printf("FI C1 PRIVATE REPLAY RECONCILED read_only_audit=true signed_batches=%d existing_parents=%d first_unresolved_batch=%d original_custody_replay_required=true no_ram_journal=true canonical_unchanged=true\\n",
+            audit.SignedBatches,newParents,audit.FirstUnresolvedBatch)
     }
     if err=tx.Commit(ctx);err!=nil{return nil,err}
     return ids,nil
@@ -264,7 +297,14 @@ func(s *C1SoRService)Dispatch(ctx context.Context,f c1handoff.Frame)(<-chan erro
     if s.session==nil||s.pool==nil||s.commitReady==nil{
         return nil,errors.New("C1 fi-sor: START preflight not complete")
     }
-    future,err:=s.session.Enqueue(ctx,f)
+    var future <-chan error
+    var err error
+    if s.replayMode{
+        if s.replayRead==nil{return nil,errors.New("C1 fi-sor: replay state missing read-only session")}
+        future,err=s.session.EnqueueReplay(ctx,f,s.replayRead)
+    }else{
+        future,err=s.session.Enqueue(ctx,f)
+    }
     if err!=nil{s.failed=err;return nil,err}
     return future,nil
 }
@@ -312,4 +352,8 @@ func(s *C1SoRService)Close(){
     defer s.mu.Unlock()
     if s.verifier!=nil{s.verifier.Stop();s.verifier=nil}
     if s.pool!=nil{s.pool.Close();s.pool=nil}
+    if s.replayRead!=nil{
+        _=s.replayRead.Close(context.Background())
+        s.replayRead=nil
+    }
 }

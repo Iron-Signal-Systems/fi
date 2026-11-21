@@ -34,6 +34,7 @@ func main(){
     db:=flags.String("postgres-local","","PostgreSQL Unix-domain DSN inside fi-sor, dbname=fi user=fi_ingest")
     ram:=flags.String("shared-ram-dir","","fi-sor read-only nullfs view of C1 host tmpfs")
     max:=flags.Int("sql-workers-max",32,"bounded native C1 shared PostgreSQL workers (1..32)")
+    recoverPrivate:=flags.Bool("reconcile-private-replay",false,"DEVELOPMENT ONLY: reconcile dirty private PostgreSQL before replay from signed custody")
     cert:=flags.String("tls-cert","","fi-sor dedicated mTLS server certificate")
     key:=flags.String("tls-key","","fi-sor dedicated mTLS private key")
     ca:=flags.String("tls-ca","","pinned internal C1 CA trust PEM")
@@ -47,7 +48,7 @@ func main(){
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,true);e!=nil{fatal(e)}
     cfg:=recordingest.C1SoRServerConfig{
         Bind:*bind,LocalPostgresDSN:*db,SQLWorkersMax:*max,
-        SharedRAMDir:*ram,
+        SharedRAMDir:*ram,AllowC1Replay:*recoverPrivate,
         ExpectedIngestClientDNS:*ingest,
         TransportCert:c1handoff.TLSFiles{
             Certificate:*cert,PrivateKey:*key,TrustCA:*ca,
