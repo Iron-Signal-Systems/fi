@@ -802,6 +802,17 @@ SELECT json_build_object(
 )::text
 C1_DIP_SQL
 )
+# Prove the exact read-only wait/WAL/checkpointer/I/O sampler works before
+# admitting any record. Otherwise a full replay could finish without enough
+# evidence to investigate the observed CPU stalls.
+sql "$dip_sql" > "$out/$name/dip_preflight.jsonl" ||
+  fail 'C1 one-second PostgreSQL telemetry SQL unavailable before ingestion'
+[ -s "$out/$name/dip_preflight.jsonl" ] &&
+grep -Fq '"activity"' "$out/$name/dip_preflight.jsonl" &&
+grep -Fq '"checkpointer"' "$out/$name/dip_preflight.jsonl" &&
+grep -Fq '"io"' "$out/$name/dip_preflight.jsonl" ||
+  fail 'C1 telemetry preflight missing SQL wait/checkpointer/io keys'
+echo "FI C1 DIPS TELEMETRY PREFLIGHT PASS sampler=postgresql_activity_wal_checkpointer_io read_only=true before_ingestion=true"
 : > "$out/$name/dip_sample_errors.txt"
 (
  while :; do
@@ -1160,7 +1171,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/bgwriter_before.jsonl" "$name/bgwriter_after.jsonl" \
   "$name/iostat.txt" "$name/vmstat.txt" \
   "$name/cpu_ticks_1s.txt" "$name/processes_1s.txt" \
-  "$name/postgres_waits_1s.jsonl" "$name/dip_sample_errors.txt" \
+  "$name/postgres_waits_1s.jsonl" "$name/dip_preflight.jsonl" "$name/dip_sample_errors.txt" \
   "$name/dip_monitor.stderr" || fail 'C1 metrics bundle failed'
 bundle="$out/fi-c1-full-backlog-4g-$stamp.tar.gz"
 [ -s "$bundle" ] || fail 'C1 full-backlog 4GiB metrics bundle missing'
