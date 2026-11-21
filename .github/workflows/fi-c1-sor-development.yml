@@ -106,3 +106,37 @@ jobs:
           FI_C1_REPLAY_CI_ALLOW_ISOLATED_WRITES: '1'
           FI_C1_REPLAY_PG_DSN: 'host=127.0.0.1 port=5432 user=fi_c1_test password=isolated-only-test dbname=fi_c1_replay_integration sslmode=disable'
         run: go test -tags 'fi_c1_sor_dev fi_c1_replay_pg_integration' -count=1 -run '^TestC1RecoveredSourceParentAndTypedRootPostgres18$' -v ./internal/recordingest
+
+  c1-schema-postgres:
+    name: C1 private schema atomic rollback in disposable PostgreSQL 18
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: fi
+          POSTGRES_USER: fi_c1_schema_test
+          POSTGRES_PASSWORD: isolated-only-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fi_c1_schema_test -d fi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Full private 49-table and recovery DDL, forced rollback, canonical unchanged
+        env:
+          FI_C1_SCHEMA_CI_ALLOW_DISPOSABLE: '1'
+          FI_C1_SCHEMA_CI_ADMIN_DSN: 'host=127.0.0.1 port=5432 user=fi_c1_schema_test password=isolated-only-test dbname=fi sslmode=disable'
+        run: go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 -run '^TestC1PrivateSchemaRealPostgres18AtomicDDL$' -v ./internal/recordingest
