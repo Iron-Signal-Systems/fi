@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=e1eac1a0c7aa426d96f5521b98bfcd7ada5c6f96
-runnerpin=71e66e3b69ce4bb6ef22995ba03dcbc7ceddebb5
+sourcepin=0af581c996863b6e91ca6cc58e36fbc95e02e11c
+runnerpin=97068092331c2e86e28173aaec8243884588dd8e
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -104,8 +104,8 @@ grep -Fq 'tables_after.jsonl' "$runner" &&
 grep -Fq 'FI C1 SHARED SQL POOL' "$runner" &&
 grep -Fq 'FI C220 C1 DEV PASS prefix8=' "$runner" ||
   fail 'native P6 SQL or signed record acceptance scripts mismatched'
-sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-16}
-case "$sqlmax" in [1-9]|1[0-6]) ;; *) fail 'SQL worker maximum must be 1..16';; esac
+sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-32}
+case "$sqlmax" in [1-9]|1[0-9]|2[0-9]|3[0-2]) ;; *) fail 'SQL worker maximum must be 1..32';; esac
 group=4
 export FI_C1_FULL_BACKLOG_GROUP_GIB=4
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
@@ -116,7 +116,7 @@ export FI_W512_P5_PERSISTENT=1
 export FI_C1_DEV_ASYNC_VERIFY=1
 if [ "$mode" = prefix8 ];then export FI_C1_DEV_PREFIX8=1;else export FI_C1_DEV_PREFIX8=0;fi
 export FI_W512_P3_DYNAMIC_MIN=2
-export FI_W512_P3_DYNAMIC_MAX=16
+export FI_W512_P3_DYNAMIC_MAX=32
 unset FI_W512_P7_SQL_WRITERS FI_W512_P8_REUSE FI_W512_P9_DIRECT_STREAM
 unset FI_W512_P3_SECURITY_WORKERS FI_W512_P3_GENERAL_WORKERS
 sh "$runner" preflight "$2" ||
