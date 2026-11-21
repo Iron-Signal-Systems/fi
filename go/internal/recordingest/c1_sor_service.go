@@ -27,6 +27,9 @@ type C1SoRService struct {
     mu sync.Mutex
     session *c1SoRCommitHandler
     pool *privateC1FiveSQL
+    commitReady *privateC1CommitReady
+    verifier *privateC1AsyncVerifier
+    independentlyVerified bool
     failed error
 }
 
@@ -59,8 +62,15 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         pool.Close();s.failed=err
         return nil,err
     }
+    tracker,verifier,err:=startC1SoRParallelB(ctx,s.DSN,frame,ids,pool)
+    if err!=nil{
+        pool.Close();s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: independent parallel verifier startup: %w",err)
+    }
     s.pool=pool
     s.session=handler
+    s.commitReady=tracker
+    s.verifier=verifier
     return append([]int64(nil),ids...),nil
 }
 
@@ -147,10 +157,36 @@ func(s *C1SoRService) Commit(ctx context.Context,f c1handoff.Frame)error{
     s.mu.Lock()
     defer s.mu.Unlock()
     if s.failed!=nil{return s.failed}
-    if s.session==nil{return errors.New("C1 fi-sor: signed Start not accepted")}
+    if s.session==nil||s.commitReady==nil||s.verifier==nil{
+        return errors.New("C1 fi-sor: signed Start and independent B not accepted")
+    }
+    if err:=f.Validate();err!=nil{return err}
+    if f.SourceID!=s.session.sourceID||f.GenerationID!=s.session.generationID||
+        f.ReceiptSHA256!=s.session.receipt {
+        return errors.New("C1 fi-sor: signed generation changed after B initialization")
+    }
+    if f.Kind==c1handoff.Seal{
+        // Signed reader seal never invokes an SQL family flush.
+        if err:=s.commitReady.Seal(int(f.SealedGroup));err!=nil{
+            s.failed=err
+            return err
+        }
+        return nil
+    }
     if err:=s.session.Commit(ctx,f);err!=nil{
         s.failed=err
         return err
+    }
+    if f.Kind==c1handoff.Drain{
+        // A's final SQL drain is complete. B has been verifying committed
+        // groups in parallel; only final publication waits for its proof.
+        if err:=s.commitReady.FinishCommitted();err!=nil{
+            s.failed=err;return err
+        }
+        if err:=s.verifier.Finish(ctx);err!=nil{
+            s.failed=err;return fmt.Errorf("C1 fi-sor: independent B proof: %w",err)
+        }
+        s.independentlyVerified=true
     }
     return nil
 }
@@ -158,5 +194,6 @@ func(s *C1SoRService)Close(){
     if s==nil{return}
     s.mu.Lock()
     defer s.mu.Unlock()
+    if s.verifier!=nil{s.verifier.Stop();s.verifier=nil}
     if s.pool!=nil{s.pool.Close();s.pool=nil}
 }
