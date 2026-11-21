@@ -134,8 +134,8 @@ func TestC1PipelineRejectsFailedSQLCommit(t *testing.T){
         if err==nil{t.Fatal("fi-sor failed SQL commit acknowledged")}
     case <-time.After(3*time.Second):t.Fatal("failed SQL commit ACK not delivered")
     }
-    err=pipeline.WaitAll(context.Background())
-    if err==nil||!strings.Contains(err.Error(),"rejected"){
-        t.Fatalf("C1 accepted failed SQL buffer as committed: %v",err)
+    outcome:=pipeline.WaitAll(context.Background())
+    if outcome==nil||!strings.Contains(outcome.Error(),"rejected"){
+        t.Fatalf("C1 accepted failed SQL buffer as committed: %v",outcome)
     }
 }
