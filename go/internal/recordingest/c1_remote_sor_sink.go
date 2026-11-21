@@ -48,7 +48,7 @@ func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records
         }
         family,err:=privateP6KindFamily(r.prepared.Record.RecordKind)
         if err!=nil{return err}
-        if kind!=c1handoff.Source && kind!=c1handoff.Kind(family+1){
+        if kind!=c1handoff.Source && kind!=c1handoff.Kind(family+2){
             return fmt.Errorf("C1 remote SoR: signed kind %q crossed incorrect SQL lane",r.prepared.Record.RecordKind)
         }
         frame.Rows=append(frame.Rows,c1handoff.Row{
