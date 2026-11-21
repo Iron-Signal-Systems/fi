@@ -15,6 +15,12 @@ on:
       - '.github/workflows/fi-c1-sor-development.yml'
   workflow_dispatch:
 
+# Only the newest C1 development commit needs a compile gate.
+# Cancel obsolete branch runs so they do not saturate our FreeBSD CI queue.
+concurrency:
+  group: fi-c1-sor-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
