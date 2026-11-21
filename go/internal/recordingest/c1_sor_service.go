@@ -152,6 +152,21 @@ func(s *C1SoRService) validateSignedPrivateStage(ctx context.Context,frame c1han
     return ids,nil
 }
 
+// Dispatch accepts signed C1 SQL work in original transport order and
+// returns the exact future for THIS PostgreSQL transaction. A's reader
+// must not wait for unrelated family commits; B observes committed groups.
+func(s *C1SoRService)Dispatch(ctx context.Context,f c1handoff.Frame)(<-chan error,error){
+    if s==nil||ctx==nil{return nil,errors.New("C1 fi-sor: unavailable SQL dispatcher")}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.failed!=nil{return nil,s.failed}
+    if s.session==nil||s.pool==nil||s.commitReady==nil{
+        return nil,errors.New("C1 fi-sor: START preflight not complete")
+    }
+    future,err:=s.session.Enqueue(ctx,f)
+    if err!=nil{s.failed=err;return nil,err}
+    return future,nil
+}
 func(s *C1SoRService) Commit(ctx context.Context,f c1handoff.Frame)error{
     if s==nil{return errors.New("C1 fi-sor: no service")}
     s.mu.Lock()

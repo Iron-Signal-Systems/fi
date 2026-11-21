@@ -58,7 +58,8 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         service,e:=NewC1SoRService(cfg.LocalPostgresDSN,cfg.SQLWorkersMax)
         if e!=nil{conn.Close();return e}
         endpoint:=&c1handoff.Server{
-            Bootstrap:service.Bootstrap,Handler:service.Commit,IOTimeout:5*time.Minute,
+            Bootstrap:service.Bootstrap,Handler:service.Commit,
+            Dispatch:service.Dispatch,IOTimeout:5*time.Minute,
         }
         e=endpoint.ServeConn(ctx,conn)
         service.Close()
