@@ -172,3 +172,50 @@ func InspectC1SoRPreviouslyCommittedRows(ctx context.Context,dsn string,
     if err=tx.Commit(ctx);err!=nil{return nil,err}
     return state,nil
 }
+
+// c1PartitionRecoveredHandoff constructs a fail-closed replay admission
+// plan; it does NOT execute SQL or mark any record committed. For Source,
+// a proven persisted parent can be skipped; for one of the five typed
+// families, only the proven typed root can be skipped. Every skipped row
+// must already have passed c1VerifyPersistedSourceIdentity against the
+// original signed record and will later need a durable C1 readiness credit.
+type c1RecoveredHandoffPlan struct {
+    AlreadyCommitted []privateP6Record
+    MustWrite []privateP6Record
+}
+func c1PartitionRecoveredHandoff(kind c1handoff.Kind,
+    rows []privateP6Record,states []C1RecoveryRowState)(
+    c1RecoveredHandoffPlan,error,
+){
+    var out c1RecoveredHandoffPlan
+    if kind<c1handoff.Source||kind>c1handoff.Other||
+        len(rows)==0||len(rows)!=len(states)||len(rows)>c1handoff.MaxRows{
+        return out,errors.New("C1 recovery: invalid bounded SourceParent/typed family replay")
+    }
+    seen:=make(map[[2]int64]bool,len(rows))
+    for i,row:=range rows{
+        if !row.valid(){return c1RecoveredHandoffPlan{},errors.New("C1 recovery: invalid signed input row")}
+        key:=[2]int64{row.sourceBatchID,row.ordinal}
+        if seen[key]{return c1RecoveredHandoffPlan{},errors.New("C1 recovery: repeated signed row in replay handoff")}
+        seen[key]=true
+        family,err:=privateP6KindFamily(row.prepared.Record.RecordKind)
+        if err!=nil{return c1RecoveredHandoffPlan{},err}
+        if kind!=c1handoff.Source&&kind!=c1handoff.Kind(family+2){
+            return c1RecoveredHandoffPlan{},errors.New("C1 recovery: wrong original typed family")
+        }
+        state:=states[i]
+        if state.TypedRootCommitted&&!state.ParentCommitted||
+            state.ParentCommitted&&state.SourceRecordID<=0||
+            !state.ParentCommitted&&state.SourceRecordID!=0{
+            return c1RecoveredHandoffPlan{},errors.New("C1 recovery: impossible durable parent/typed evidence")
+        }
+        committed:=state.ParentCommitted
+        if kind!=c1handoff.Source{committed=state.TypedRootCommitted}
+        if committed {
+            out.AlreadyCommitted=append(out.AlreadyCommitted,row)
+        }else{
+            out.MustWrite=append(out.MustWrite,row)
+        }
+    }
+    return out,nil
+}

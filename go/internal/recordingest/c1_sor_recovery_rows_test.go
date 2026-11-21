@@ -6,6 +6,8 @@ import (
     "bytes"
     "testing"
     "time"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
 )
 
 func TestC1CommittedReplaySourceIdentityCompare(t *testing.T){
@@ -59,5 +61,51 @@ func TestC1CommittedReplayRejectsConflictingSourceIdentity(t *testing.T){
                 t.Fatal("unsafe replay of conflicting previously committed source accepted")
             }
         })
+    }
+}
+
+func TestC1RecoveredSourceAndTypedHandoffSelection(t *testing.T){
+    frame:=c1SQLTestFrame(c1handoff.Source,1)
+    source,err:=PrepareSourceRecord(frame.Rows[0].RawRecord)
+    if err!=nil{t.Fatal(err)}
+    rows:=[]privateP6Record{
+        {signedBatchIndex:0,sourceBatchID:55,ordinal:1,prepared:source},
+        {signedBatchIndex:0,sourceBatchID:55,ordinal:2,prepared:source},
+        {signedBatchIndex:0,sourceBatchID:55,ordinal:3,prepared:source},
+    }
+    states:=[]C1RecoveryRowState{
+        {SourceRecordID:91,ParentCommitted:true,TypedRootCommitted:true},
+        {SourceRecordID:92,ParentCommitted:true,TypedRootCommitted:false},
+        {},
+    }
+    parents,err:=c1PartitionRecoveredHandoff(c1handoff.Source,rows,states)
+    if err!=nil{t.Fatal(err)}
+    if len(parents.AlreadyCommitted)!=2||len(parents.MustWrite)!=1||
+        parents.MustWrite[0].ordinal!=3{
+        t.Fatal("SourceParent replay failed to preserve original signed identity/order")
+    }
+    typed,err:=c1PartitionRecoveredHandoff(c1handoff.Other,rows,states)
+    if err!=nil{t.Fatal(err)}
+    if len(typed.AlreadyCommitted)!=1||len(typed.MustWrite)!=2||
+        typed.MustWrite[0].ordinal!=2||typed.MustWrite[1].ordinal!=3{
+        t.Fatal("typed SQL replay must write only incomplete original typed roots")
+    }
+    states[1]=C1RecoveryRowState{TypedRootCommitted:true}
+    if _,err=c1PartitionRecoveredHandoff(c1handoff.Other,rows,states);err==nil{
+        t.Fatal("typed family accepted impossible committed root without parent")
+    }
+}
+func TestC1RecoveredHandoffRejectsWrongFamilyAndDuplicate(t *testing.T){
+    frame:=c1SQLTestFrame(c1handoff.Source,1)
+    source,err:=PrepareSourceRecord(frame.Rows[0].RawRecord)
+    if err!=nil{t.Fatal(err)}
+    row:=privateP6Record{signedBatchIndex:0,sourceBatchID:55,ordinal:1,prepared:source}
+    if _,err=c1PartitionRecoveredHandoff(c1handoff.Security,
+        []privateP6Record{row},[]C1RecoveryRowState{{}});err==nil{
+        t.Fatal("wrong typed projector selected after restart")
+    }
+    if _,err=c1PartitionRecoveredHandoff(c1handoff.Source,
+        []privateP6Record{row,row},[]C1RecoveryRowState{{},{}});err==nil{
+        t.Fatal("duplicate original signed source row accepted")
     }
 }
