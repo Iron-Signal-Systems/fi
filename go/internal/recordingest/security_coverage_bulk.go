@@ -67,16 +67,26 @@ func (state *securityCoverageBulkState) add(
 
 	started := time.Now()
 	var value records.WindowsSecurityCoverageObservation
-	if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {
-		return projectionDecodeError(prepared.Record.RecordKind, err)
-	}
-	if err := records.ValidateWindowsSecurityCoverageObservation(value); err != nil {
-		return projectionValidationError(prepared.Record.RecordKind, err)
-	}
-	observedAt, err := parseRFC3339(value.ObservedAt, "windows_security_coverage.observed_at")
-	if err != nil {
-		return err
-	}
+    var observedAt time.Time
+    if prepared.PrivateFamilyP3Coverage!=nil{
+        // P5 already decoded/validated the original signed coverage record.
+        // Never re-parse it after crossing shared RAM into fi-sor.
+        value=prepared.PrivateFamilyP3Coverage.value
+        observedAt=prepared.PrivateFamilyP3Coverage.observedAt
+        if observedAt.IsZero()||value.ObservedAt==""{
+            return errors.New("FI Security coverage: incomplete P5 provenance")
+        }
+    }else{
+	    if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {
+		    return projectionDecodeError(prepared.Record.RecordKind, err)
+	    }
+	    if err := records.ValidateWindowsSecurityCoverageObservation(value); err != nil {
+		    return projectionValidationError(prepared.Record.RecordKind, err)
+	    }
+	    var err error
+	    observedAt, err = parseRFC3339(value.ObservedAt, "windows_security_coverage.observed_at")
+	    if err != nil {return err}
+    }
 	elapsed := time.Since(started)
 	state.profile.CoverageBulk.Prepare += elapsed
 	state.profile.Projection += elapsed

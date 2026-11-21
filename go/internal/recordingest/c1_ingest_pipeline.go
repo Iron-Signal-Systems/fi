@@ -138,7 +138,7 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     result.SignedBatches=len(signed)
     var totals privateC1PrepTotals
     groups,bytes,err:=privateC1ConsumeContinuousSigned(ctx,pool,signed,
-        buffers,&totals,window+1,privateHeaderFirstPrepare,
+        buffers,&totals,window+1,privateFamilyP3Prepare,
         func(group int)error {
             // B's independent read-only proof will subscribe to committed
             // group receipts, not this uncommitted reader-seal notification.

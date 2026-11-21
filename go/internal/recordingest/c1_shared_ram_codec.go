@@ -37,6 +37,11 @@ type c1RAMRow struct {
     BatchID int64
     Ordinal int64
     Source c1RAMSource
+    FileSelected bool
+    FileValue fileObservationPayload
+    CoverageSelected bool
+    CoverageValue records.WindowsSecurityCoverageObservation
+    CoverageObservedAt time.Time
     SecuritySelected bool
     SecurityValue records.WindowsSecurityEventObservation
     SecurityObservedAt time.Time
@@ -55,9 +60,7 @@ func encodeC1PreparedRAMRows(rows []privateP6Record)([]byte,error){
     }
     out:=c1RAMEnvelope{Version:1,Rows:make([]c1RAMRow,0,len(rows))}
     for i,r:=range rows{
-        if !r.valid() || r.signedBatchIndex>65535 ||
-            r.prepared.PrivateFamilyP3File!=nil ||
-            r.prepared.PrivateFamilyP3Coverage!=nil{
+        if !r.valid() || r.signedBatchIndex>65535{
             return nil,fmt.Errorf("C1 RAM: invalid or unsupported prepared provenance at %d",i)
         }
         if sha256.Sum256(r.prepared.RawRecordBytes)!=r.prepared.RecordDigest {
@@ -68,7 +71,22 @@ func encodeC1PreparedRAMRows(rows []privateP6Record)([]byte,error){
             Source:c1RAMSource{Record:r.prepared.Record,
                 Raw:r.prepared.RawRecordBytes,Digest:r.prepared.RecordDigest,
                 WrittenAt:r.prepared.WrittenAtUTC}}
-        if r.prepared.Record.RecordKind=="WindowsSecurityEvent"{
+        switch r.prepared.Record.RecordKind {
+        case "FileObservation":
+            if r.prepared.PrivateFamilyP3File==nil{
+                return nil,errors.New("C1 RAM: File missing original validated P5 preparation")
+            }
+            record.FileSelected=true
+            record.FileValue=*r.prepared.PrivateFamilyP3File
+        case "WindowsSecurityCoverage":
+            if r.prepared.PrivateFamilyP3Coverage==nil||
+                r.prepared.PrivateFamilyP3Coverage.observedAt.IsZero(){
+                return nil,errors.New("C1 RAM: Coverage missing original validated P5 preparation")
+            }
+            record.CoverageSelected=true
+            record.CoverageValue=r.prepared.PrivateFamilyP3Coverage.value
+            record.CoverageObservedAt=r.prepared.PrivateFamilyP3Coverage.observedAt
+        case "WindowsSecurityEvent":
             if !r.selectedSinglePass ||
                 r.singlePassSecurity.prepared.RecordDigest!=r.prepared.RecordDigest ||
                 !r.singlePassSecurity.eventRecordID.Valid ||
@@ -81,8 +99,17 @@ func encodeC1PreparedRAMRows(rows []privateP6Record)([]byte,error){
             record.SecurityTimeCreated=r.singlePassSecurity.timeCreated
             record.SecurityEventID=r.singlePassSecurity.eventID
             record.SecurityEventRecordID=r.singlePassSecurity.eventRecordID.Int.String()
-        }else if r.selectedSinglePass{
+        default:
+            if r.prepared.PrivateFamilyP3File!=nil||r.prepared.PrivateFamilyP3Coverage!=nil{
+                return nil,errors.New("C1 RAM: wrong P5 family provenance attached to other source")
+            }
+        }
+        if r.prepared.Record.RecordKind!="WindowsSecurityEvent" && r.selectedSinglePass{
             return nil,errors.New("C1 RAM: non-Security record claims Security single pass")
+        }
+        if (r.prepared.Record.RecordKind!="FileObservation"&&r.prepared.PrivateFamilyP3File!=nil)||
+           (r.prepared.Record.RecordKind!="WindowsSecurityCoverage"&&r.prepared.PrivateFamilyP3Coverage!=nil){
+            return nil,errors.New("C1 RAM: crossed prepared File/Coverage family provenance")
         }
         out.Rows=append(out.Rows,record)
     }
@@ -130,6 +157,27 @@ func decodeC1PreparedRAMRows(data []byte)([]privateP6Record,error){
             WrittenAtUTC:w.Source.WrittenAt}
         record:=privateP6Record{signedBatchIndex:int(w.BatchIndex),
             sourceBatchID:w.BatchID,ordinal:w.Ordinal,prepared:prepared}
+        if w.FileSelected{
+            if prepared.Record.RecordKind!="FileObservation"||w.SecuritySelected||w.CoverageSelected{
+                return nil,errors.New("C1 RAM: original validated File P5 family mismatches spool kind")
+            }
+            prepared.PrivateFamilyP3File=&w.FileValue
+            record.prepared=prepared
+        }
+        if w.CoverageSelected{
+            if prepared.Record.RecordKind!="WindowsSecurityCoverage"||
+                w.SecuritySelected||w.FileSelected||w.CoverageObservedAt.IsZero(){
+                return nil,errors.New("C1 RAM: original validated Coverage P5 family mismatches spool kind")
+            }
+            prepared.PrivateFamilyP3Coverage=&privateFamilyP3CoverageValue{
+                value:w.CoverageValue,observedAt:w.CoverageObservedAt,
+            }
+            record.prepared=prepared
+        }
+        if (prepared.Record.RecordKind=="FileObservation"&&!w.FileSelected)||
+           (prepared.Record.RecordKind=="WindowsSecurityCoverage"&&!w.CoverageSelected){
+            return nil,errors.New("C1 RAM: validated File/Coverage provenance absent")
+        }
         if w.Source.Record.RecordKind=="WindowsSecurityEvent"{
             n,ok:=new(big.Int).SetString(w.SecurityEventRecordID,10)
             if !w.SecuritySelected||!ok||n.Sign()<0||
