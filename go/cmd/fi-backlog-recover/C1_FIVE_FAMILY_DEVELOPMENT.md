@@ -280,3 +280,47 @@ to a discrepancy. This private implementation returns error diagnostics and
 withholds completion; it **does not perform automatic targeted in-place
 reprocessing** or modify the canonical SoR. A dedicated production B service,
 read-only login and failure recovery policy require separate acceptance.
+
+
+### B-owned final generation proof — two-stage completion (November 21)
+
+The current two-process development branch changes the C1 completion handshake
+without altering P5/P6 preparation, shared SQL workers, capacities or source
+custody. The same independent B OS process now owns **both** per-group
+relational SQL verification and FI's original final whole-generation proof.
+
+1. A sends the existing ordered `READY <window>` notifications only when each
+   custody-bound signed group has all ordered source + five-family SQL commits
+   acknowledged. B verifies source row/byte counts and typed relationships in
+   read-only `REPEATABLE READ` snapshots, independently of A.
+2. A signals `DRAIN` on its normal final P6 drain and `GROUPS` after all
+   required commits. B returns `FI C1 B GROUPS PROOF PASS` to A. B never
+   forces a flush merely to reach this point.
+3. Only after that acknowledgement may A write the **private** typed marker
+   transaction. A then signals `FINAL` to the still-running B process.
+4. B runs the existing original 8 GiB prefix SQL proof (for the controlled
+   two-group test) or the original complete grouped relational SQL proof (for
+   the whole signed generation). B returns its structured completion result
+   to A. Only successful process exit and final proof allow A to finish.
+   A no longer reruns these final SQL verification functions.
+5. Missing, duplicate, out-of-order or corrupt protocol commands, B failures,
+   unsuccessful final proof and missing final receipts all fail closed.
+   Callback reporting does not cancel or throttle ongoing A SQL operations.
+   A failed clone must be discarded; this code does not claim automatic
+   in-place remediation or authoritative publication.
+
+The A→B protocol carries **only existing custody identities**, the original
+manifest record/byte counts and descriptor chain, and committed-group notices;
+it carries no raw source records and recalculates **no whole-batch SHA-256**.
+The B→A acknowledgement contains only proof status and final result. The
+existing 8 GiB prefix and full-generation SQL queries are reused in B, not
+duplicated with another SQL verification pass in A.
+
+**Acceptance remains pending:** newly pinned Go/race and two-process C220
+integration checks must pass before any revised performance figures or full
+backlog results are claimed. In particular, verify the unchanged receiver
+custody, five-family SQL totals, separate PIDs, single B process, read-only
+PostgreSQL backend, no Accepted/authoritative writes and matched final
+generation proof. Verification may finish after A drains because sparse
+families retain their own capacity/dependency thresholds; this must not be
+"fixed" by coupling A's flushing to B.
