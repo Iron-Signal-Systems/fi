@@ -84,10 +84,10 @@ be presented as a demonstrated improvement from these new changes.
 ### Acceptance still required for new async USN modification
 
 The source, clone-only runner, controller, and regression tests are staged
-on \`dev/c1-two-process-20261120\`. Tests cover ordered USN SQL, all
+on `dev/c1-two-process-20261120`. Tests cover ordered USN SQL, all
 preceding File COMMIT fences, independent Security admission, 64-slot
 backpressure, and fail-closed File/USN errors. The runner additionally
-demands \`C1_USN_ASYNC_START.txt\`, \`C1_USN_ASYNC_COMPLETE.txt\` and exact
+demands `C1_USN_ASYNC_START.txt`, `C1_USN_ASYNC_COMPLETE.txt` and exact
 USN commit-count reconciliation.
 
 **Do not claim an async-USN performance PASS** before C220 Go/race
@@ -100,7 +100,7 @@ before/after comparison.
 
 ## Earlier C1 invariants and historical notes (superseded where inconsistent)
 
-## Current engineering state and explicit limitation
+## Historical engineering state and explicit limitation
 
 The C1 development path is implemented under `testdata/c1`, and a
 C220-only disposable-clone controller runs it against the authenticated
