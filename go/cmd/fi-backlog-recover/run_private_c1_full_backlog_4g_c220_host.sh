@@ -48,6 +48,15 @@ pg_wal_buffers=16MB
   fail 'C1 full signed backlog requires 4GiB groups'
 prefix8=${FI_C1_DEV_PREFIX8:-0}
 case "$prefix8" in 0|1) ;; *) fail 'FI_C1_DEV_PREFIX8 must be 0 or 1' ;; esac
+# The three Security changes are one explicit 8GiB-only experimental mode.
+# Do not leak it into generic Go/race unit tests: individual unit tests opt
+# into the candidate themselves through scoped t.Setenv.
+security8=${FI_C1_SECURITY_8G_EXPERIMENT:-0}
+case "$security8" in 0|1) ;; *) fail 'FI_C1_SECURITY_8G_EXPERIMENT must be exactly 0 or 1' ;; esac
+if [ "$security8" = 1 ] && [ "$mode" = family ] && [ "$prefix8" != 1 ];then
+  fail 'larger Security buffers/COPY and reusable rows are ONLY permitted in the 8GiB two-group clone experiment'
+fi
+unset FI_C1_SECURITY_8G_EXPERIMENT
 stop=0
 if [ "$prefix8" = 1 ];then stop=2;fi
 
@@ -78,7 +87,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=4595b6c024ac29b2261be089b035bf05cd5ad481
+sourcecommit=91c83d41124b9cd1164affd2afa7b9c23abd359b
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -852,6 +861,9 @@ actual_verifier_sha=$(sha256 -q "$verifier_host") || fail 'C1 B executable unrea
 export FI_C1_DEV_VERIFIER_BIN="$verifier_host"
 echo "FI C1 B HOST EXECUTABLE PREFLIGHT PASS host_path=$verifier_host sha256=$actual_verifier_sha"
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
+# Restore candidate mode only for the actual private ingestion executable.
+# All Go/race compile tests ran with the ordinary control defaults.
+export FI_C1_SECURITY_8G_EXPERIMENT="$security8"
 if [ "$prefix8" = 1 ];then
   export FI_W512_C1_STOP_WINDOWS=2
   export FI_W512_C1_GROUP_GIB=4
@@ -1141,6 +1153,19 @@ usn_async_commits=$(awk '{
   fail 'C1 asynchronous USN commit count differs from real Family Processing SQL handoffs'
 echo "FI C1 ASYNC USN COMMIT ACCOUNTING PASS handoffs=$usn_async_commits ordered=true file_fences=true bounded=true"
 
+grep '^FI C1 SECURITY 8G PROFILE ' "$log" > "$out/$name/C1_SECURITY_8G_PROFILE.txt" ||
+  fail 'C1 8GiB Security COPY profile selection was not reported'
+[ "$(wc -l < "$out/$name/C1_SECURITY_8G_PROFILE.txt" | tr -d '[:space:]')" = 1 ] ||
+  fail 'C1 Security 8GiB profile must have exactly one report'
+if [ "$security8" = 1 ];then
+  [ "$prefix8" = 1 ] &&
+  grep -Fq 'mode=candidate security_rows=8192 security_bytes=33554432 sql_profile=P4 field_rows=65536 field_bytes=16777216 reusable_event=true reusable_scope=true separate_field_partitions=false full_backlog=false clone_only=true' "$out/$name/C1_SECURITY_8G_PROFILE.txt" ||
+    fail 'C1 Security candidate did not select all three bounded 8GiB-only optimizations'
+else
+  grep -Fq 'mode=control security_rows=4096 security_bytes=16777216 sql_profile=P3 field_rows=32768 field_bytes=8388608 reusable_event=false reusable_scope=false separate_field_partitions=false' "$out/$name/C1_SECURITY_8G_PROFILE.txt" ||
+    fail 'C1 Security control profile unexpectedly changed'
+fi
+echo "FI C1 SECURITY 8G SELECTION PASS mode=$( [ "$security8" = 1 ] && echo candidate || echo control ) same_relational_schema=true signed_source_unchanged=true verification_required=true"
 grep '^FI C1 SOURCE PARENT STAGES ' "$log" > "$out/$name/C1_SOURCE_PARENT_STAGES.txt" ||
   fail 'C1 serial SourceParent COPY/commit breakdown was not recorded'
 [ "$(wc -l < "$out/$name/C1_SOURCE_PARENT_STAGES.txt" | tr -d '[:space:]')" = 1 ] &&
@@ -1209,7 +1234,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SETUP.txt" "$name/C1_INGEST_START.txt" \
   "$name/C1_IDLE_TIMER.txt" "$name/C1_IDLE_FLUSH.txt" \
-  "$name/C1_SQL_PROFILE.txt" "$name/C1_SOURCE_PARENT_STAGES.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
+  "$name/C1_SQL_PROFILE.txt" "$name/C1_SOURCE_PARENT_STAGES.txt" "$name/C1_SECURITY_8G_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/C1_USN_ASYNC_START.txt" "$name/C1_USN_ASYNC_COMPLETE.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
