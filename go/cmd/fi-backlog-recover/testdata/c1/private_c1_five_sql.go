@@ -463,7 +463,12 @@ func(w *privateC1FiveSQL) Source(ctx context.Context,rows []privateP6Record)erro
         started:=time.Now()
         w.sourceBackpressureWaits++
         err:=w.waitNextSource(ctx)
-        w.sourceBackpressureWall+=time.Since(started)
+        waited:=time.Since(started)
+        w.sourceBackpressureWall+=waited
+        if waited>=300*time.Millisecond{
+            fmt.Printf("FI C1 STALL EVENT utc=%s stage=SQL_SOURCE_PARENT_BACKPRESSURE wait=%s outstanding=%d error=%t\n",
+                time.Now().UTC().Format(time.RFC3339Nano),waited,len(w.sourceOutstanding),err!=nil)
+        }
         if err!=nil{return err}
     }
     ack:=&privateC1SourceAck{done:make(chan struct{})}
@@ -510,7 +515,13 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
         started:=time.Now()
         lane.backpressureWaits++
         err:=w.waitNextFamily(ctx,f)
-        lane.backpressureWaitWall+=time.Since(started)
+        waited:=time.Since(started)
+        lane.backpressureWaitWall+=waited
+        if waited>=300*time.Millisecond{
+            fmt.Printf("FI C1 STALL EVENT utc=%s stage=SQL_FAMILY_ACK_BACKPRESSURE family=%s wait=%s outstanding=%d error=%t\n",
+                time.Now().UTC().Format(time.RFC3339Nano),
+                privateP6FamilyNames[f],waited,len(lane.outstanding),err!=nil)
+        }
         if err!=nil{return err}
     }
     if w.sourceLast==nil{return errors.New("FI C1: family has no ordered source-parent fence")}
