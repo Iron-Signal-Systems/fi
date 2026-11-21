@@ -172,6 +172,14 @@ WHERE CASE
             t.Fatalf("private schema SQL read unexpectedly nonempty in disposable fixture: %s",relation)
         }
     }
+    readOnly,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=c1ReadOnlyWorkerPrivatePrivileges(ctx,readOnly);e!=nil{
+        t.Fatalf("C1 fi-sor startup SQL role preflight rejected valid schema: %v",e)
+    }
+    if e=readOnly.Commit(ctx);e!=nil{t.Fatal(e)}
     if _,err=worker.Exec(ctx,`CREATE TABLE fi_recovery_projection.fi_c1_forbidden_worker_ddl
         (id bigint)`);err==nil{
         t.Fatal("C1 fi-sor runtime SQL role could create private schema objects")

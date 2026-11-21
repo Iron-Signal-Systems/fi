@@ -59,6 +59,12 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     if s.pool!=nil||s.session!=nil||s.failed!=nil {
         return nil,errors.New("C1 fi-sor: generation already started or prior attempt failed; no automatic replay")
     }
+    // Reject incomplete private-schema GRANTs before any signed source
+    // record is read or handed to a SQL worker. This is read-only.
+    if err:=c1PreflightLocalSQLPrivileges(ctx,s.DSN);err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: local private worker SQL access: %w",err)
+    }
     if frame.StartBatchIndex==0{
         if err:=StageC1SignedPrivateMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
             s.failed=err
