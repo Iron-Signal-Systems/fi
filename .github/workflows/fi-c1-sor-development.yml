@@ -13,6 +13,8 @@ on:
       - 'go/cmd/fi-c1-sor-worker/**'
       - 'go/cmd/fi-c1-ingest-worker/**'
       - 'go/cmd/fi-c1-host-preflight/**'
+      - 'go/cmd/fi-c1-private-schema/**'
+      - 'go/internal/freebsd/backendinstall/c1_private_projection_migration_sources.go'
       - 'go/internal/freebsd/backendinstall/c1_development_binary_install.go'
       - 'go/internal/freebsd/backendinstall/c1_development_binary_install_test.go'
       - 'go/internal/freebsd/backendinstall/c1_sor_identity_install.go'
@@ -58,6 +60,10 @@ jobs:
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-worker ./cmd/fi-c1-sor-worker
       - name: Test C1 FreeBSD development installer plan (no host mutation)
         run: go test ./internal/freebsd/backendinstall -run '^TestC1(DevelopmentBinary|SoRServiceIdentity|DevelopmentRuntime)' -count=1
+      - name: Prove immutable private schema DDL plan and transaction gates
+        run: go test -tags fi_c1_sor_dev ./internal/recordingest -run '^TestC1PrivateSchema' -count=1
+      - name: Cross-compile C1 offline private-schema admin tool for FreeBSD
+        run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-private-schema ./cmd/fi-c1-private-schema
       - name: Cross-compile host tmpfs and jail nullfs read-only preflight for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-host-preflight ./cmd/fi-c1-host-preflight
       - name: Cross-compile FreeBSD backend installer with explicit C1 staging commands
