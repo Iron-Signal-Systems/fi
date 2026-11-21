@@ -402,11 +402,18 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // All source and family commits have ACKed. The independent verifier
     // must prove every signed group before any typed marker is written.
     // The old synchronous relational scans are intentionally removed.
-    if err=verifier.Finish(ctx);err!=nil{
-        return empty,fmt.Errorf("FI C1: independent relational verification: %w",err)
+    // B acknowledges the independently committed group proofs before A
+    // writes private typed markers; it remains the SAME OS process while
+    // A commits those markers and then performs its final read-only proof.
+    if err=verifier.WaitGroups(ctx);err!=nil{
+        return empty,fmt.Errorf("FI C1: independent committed-group proof: %w",err)
     }
     if err=privateC1MarkTyped(ctx,writer,g,ds,startWindow,end);err!=nil{
         return empty,fmt.Errorf("FI C1: final signed relational marker: %w",err)
+    }
+    verifiedByB,e:=verifier.Finish(ctx)
+    if e!=nil{
+        return empty,fmt.Errorf("FI C1: independent final generation proof: %w",e)
     }
     pool.Close()
     fmt.Printf("FI C1 P5 PREP COMPLETE batches=%d records=%d family_lanes=5 worker_min=2 worker_max=16 reader_time=%s parallel_worker_time_sum=%s consumer_wait=%s\n",
@@ -438,17 +445,17 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if end<len(ds){
         // Explicit two-group development prefix: fail closed on any incomplete
         // SQL/relational proof and NEVER report full generation verification.
-        if os.Getenv("FI_C1_DEV_PREFIX8")=="1"{
-            if err=privateC1VerifyEightGiBPrefix(ctx,reader,g,ds,end);err!=nil{
-                return empty,fmt.Errorf("FI C1: 8GiB signed prefix: %w",err)
-            }
+        if os.Getenv("FI_C1_DEV_PREFIX8")!="1"{
+            return empty,errors.New("FI C1: unexpected partial generation without explicit prefix mode")
         }
+        // B already ran the exact original 8GiB prefix proof on its own
+        // read-only connection after A's private typed marker transaction.
         return empty,context.Canceled
     }
-    if fullRun {
-        return privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)
+    if !fullRun{
+        return empty,errors.New("FI C1: complete-generation proof requires full mode")
     }
-    verified,err:=VerifyCompleteBacklogTypedGeneration(ctx,reader,g,limits)
-    if err!=nil{return empty,err}
-    return verified,nil
+    // Original complete-generation relational proof and its verified shadow
+    // ID now come from the same independent B process, not from A's SQL.
+    return verifiedByB,nil
 }
