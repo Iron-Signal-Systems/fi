@@ -72,6 +72,16 @@ func TestC1HandoffRejectsForgedAndCorruptInput(t *testing.T){
         f:=sampleFrame();f.Kind=Ack;f.Rows=nil
         if err:=f.Validate();err==nil{t.Fatal("uncommitted acknowledgment accepted")}
     })
+    t.Run("reordered-signed-batches",func(t *testing.T){
+        f:=sampleFrame()
+        f.Kind=Start
+        f.Rows=nil
+        f.BatchIDs=[]string{"batch-0002","batch-0001"}
+        f.ExpectedRecords=2
+        if err:=f.Validate();err==nil{
+            t.Fatal("reordered signed batch manifest list accepted")
+        }
+    })
     t.Run("out-of-order",func(t *testing.T){
         f:=sampleFrame();f.Rows=append(f.Rows,f.Rows[0])
         if err:=f.Validate();err==nil{t.Fatal("duplicate signed row admitted")}

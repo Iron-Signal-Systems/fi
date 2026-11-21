@@ -34,7 +34,7 @@ func TestC1PipelineKeepsTwoSQLCommitFuturesInFlight(t *testing.T){
             return []int64{55},nil
         },
         Handler:func(_ context.Context,f Frame)error{
-            if f.Kind!=Drain{return errors.New("unexpected synchronous SQL")}
+            if f.Kind!=Drain && f.Kind!=Seal{return errors.New("unexpected synchronous SQL")}
             return nil
         },
         Dispatch:func(ctx context.Context,f Frame)(<-chan error,error){
@@ -69,14 +69,24 @@ func TestC1PipelineKeepsTwoSQLCommitFuturesInFlight(t *testing.T){
     first.Sequence=2
     ackFirst,err:=pipeline.Submit(context.Background(),first)
     if err!=nil{t.Fatal(err)}
+    // A reporting group seal is a pure notification, not a flush of
+    // the outstanding SourceParent or five-family SQL buffers.
+    seal:=Frame{Kind:Seal,SourceID:sample.SourceID,
+        GenerationID:sample.GenerationID,ReceiptSHA256:sample.ReceiptSHA256,
+        Sequence:3,SealedGroup:1}
+    if err:=pipeline.Send(context.Background(),seal);err!=nil{t.Fatal(err)}
+    select{
+    case <-ackFirst:t.Fatal("group seal illegally committed/flushed the first SQL job")
+    default:
+    }
     second:=sampleFrame()
-    second.Sequence=3
+    second.Sequence=4
     second.Rows[0].Ordinal=2
     ackSecond,err:=pipeline.Submit(context.Background(),second)
     if err!=nil{t.Fatal(err)}
     // If the server serialized COMMIT, it would never dispatch sequence 3
     // until sequence 2 completed; this proves C1's shared-pool behavior.
-    for _,want:=range []uint64{2,3}{
+    for _,want:=range []uint64{2,4}{
         select{
         case got:=<-observed:
             if got!=want{t.Fatalf("source admission order %d expected %d",got,want)}
@@ -97,7 +107,7 @@ func TestC1PipelineKeepsTwoSQLCommitFuturesInFlight(t *testing.T){
     if err=<-ackFirst;err!=nil{t.Fatal(err)}
     if err=pipeline.WaitAll(context.Background());err!=nil{t.Fatal(err)}
     drain:=Frame{Kind:Drain,SourceID:sample.SourceID,GenerationID:sample.GenerationID,
-        ReceiptSHA256:sample.ReceiptSHA256,Sequence:4}
+        ReceiptSHA256:sample.ReceiptSHA256,Sequence:5}
     if err=pipeline.Send(context.Background(),drain);err!=nil{t.Fatal(err)}
     if err=<-serverDone;err!=nil{t.Fatal(err)}
 }

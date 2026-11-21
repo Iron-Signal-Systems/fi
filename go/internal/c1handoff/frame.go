@@ -93,11 +93,16 @@ func (f Frame) Validate() error {
             return errors.New("C1 handoff: invalid original signed Start plan")
         }
         seen:=make(map[string]bool,len(f.BatchIDs))
+        previousBatch:=""
         for _,id:=range f.BatchIDs{
             if id==""||len(id)>maxText||seen[id] {
                 return errors.New("C1 handoff: duplicate or invalid original signed batch ID")
             }
+            if previousBatch!="" && id<=previousBatch {
+                return errors.New("C1 handoff: signed batch order was changed")
+            }
             seen[id]=true
+            previousBatch=id
         }
         return nil
     }
