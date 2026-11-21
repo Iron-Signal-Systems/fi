@@ -334,11 +334,6 @@ func newPrivateFamilyP3PreparedStream(
     return s,nil
 }
 
-type privateFamilyP3CoverageValue struct {
-    value records.WindowsSecurityCoverageObservation
-    observedAt time.Time
-}
-
 // This function is used only in the C220 clone. File and Coverage payload
 // validation and decoding run on their independent lane workers rather than
 // consuming the serial SQL writer. The existing SQL projection validates

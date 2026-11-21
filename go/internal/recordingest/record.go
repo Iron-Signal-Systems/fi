@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 const IngestVersion = "fi-postgresql-relational-ingest/0.2"
@@ -39,7 +40,14 @@ var supportedRecordKinds = map[string]struct{}{
 // SourceRecord is the validated common envelope and exact byte identity of one
 // source JSONL record. PostgreSQL stores the byte count and SHA-256 lineage, not
 // a second copy of these JSON bytes.
+type privateFamilyP3CoverageValue struct {
+    value records.WindowsSecurityCoverageObservation
+    observedAt time.Time
+}
+
 type SourceRecord struct {
+    PrivateFamilyP3File *fileObservationPayload
+    PrivateFamilyP3Coverage *privateFamilyP3CoverageValue
 	Record         spool.Record
 	RawRecordBytes []byte
 	RecordBytes    int

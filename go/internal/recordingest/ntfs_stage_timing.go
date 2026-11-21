@@ -13,6 +13,9 @@ type ntfsNestedStageContextKey struct{}
 type ntfsStageTimingContextKey struct{}
 
 type ntfsStageTimingCounters struct {
+    // C1's source-validation reuse proof; non-C1 paths leave these zero.
+    FileSourceValidated int64
+    FileBulkValidationReused int64
 	Observations int64
 	Total        time.Duration
 	Identity     time.Duration

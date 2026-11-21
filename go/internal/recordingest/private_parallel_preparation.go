@@ -84,6 +84,8 @@ func privateParallelAPrepare(raw []byte) (SourceRecord, securityBulkRecord, bool
 }
 
 type privateParallelLine struct {
+    headerKind string
+    headerFamily spoolDispatchFamily
     ordinal int64
     raw []byte
     readErr error
@@ -96,6 +98,10 @@ type privateParallelLine struct {
 }
 
 type privateParallelPreparedStream struct {
+    privateFamilyBudget *privateFamilyP3Budget
+    privateFamilyP3Telemetry *privateFamilyP3Telemetry
+    privateSweepComplete bool
+    privateP5Session *privateP5Session
     cancel context.CancelFunc
     done chan struct{}
     results <-chan privateParallelLine
@@ -227,11 +233,12 @@ func (s *privateParallelPreparedStream) Next() (privateParallelLine, bool) {
                     readErr: fmt.Errorf("FI candidate A: source preparation gap at ordinal %d", s.nextOrdinal),
                 }, true
             }
+            s.privateSweepComplete = true
             return privateParallelLine{}, false
         }
         if line.ordinal != s.nextOrdinal {
             // The admission-credit budget bounds the reorder map by 3.
-            if line.ordinal < s.nextOrdinal || line.ordinal > s.nextOrdinal+privateParallelAMaxInFlight-1 {
+            if line.ordinal < s.nextOrdinal || line.ordinal > s.nextOrdinal+int64(cap(s.credits))-1 {
                 return privateParallelLine{
                     ordinal: s.nextOrdinal,
                     readErr: fmt.Errorf("FI candidate A: invalid preparation ordinal %d expected %d", line.ordinal, s.nextOrdinal),
@@ -259,7 +266,8 @@ func (s *privateParallelPreparedStream) Next() (privateParallelLine, bool) {
 
 func (s *privateParallelPreparedStream) record(line privateParallelLine) {
     s.rows++
-    s.readerTime += line.readTime
+    if s.privateFamilyBudget != nil { s.privateFamilyBudget.release(int64(len(line.raw))) }
+    if s.privateFamilyBudget == nil { s.readerTime += line.readTime }
     s.workerTime += line.prepareTime
 }
 
@@ -272,4 +280,6 @@ func (s *privateParallelPreparedStream) Close() {
     }
     s.cancel()
     <-s.done
+    if s.privateP5Session != nil { s.privateP5Session.afterClose() }
+    if s.privateFamilyP3Telemetry != nil { s.privateFamilyP3Telemetry.print(s.privateSweepComplete) }
 }
