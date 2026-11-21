@@ -16,6 +16,31 @@ import (
     "time"
 )
 
+func TestPrivateC1SecurityCOPYCallLatencyAggregatesAcrossConcurrentWorkers(t *testing.T){
+    var first,second,combined copyCallLatency
+    first.observe(250*time.Millisecond)
+    first.observe(1500*time.Millisecond)
+    second.observe(125*time.Millisecond)
+    second.observe(6*time.Second)
+    privateC1MergeCopyCallLatency(&combined,first)
+    privateC1MergeCopyCallLatency(&combined,copyCallLatency{})
+    privateC1MergeCopyCallLatency(&combined,second)
+    if combined.Calls!=4 ||
+       combined.Min!=125*time.Millisecond ||
+       combined.Max!=6*time.Second ||
+       combined.Total!=7875*time.Millisecond ||
+       combined.AtLeastOneSecond!=2 ||
+       combined.AtLeastFiveSeconds!=1 {
+        t.Fatalf("Security field COPY call distribution lost worker measurements: %+v",combined)
+    }
+    // No calls must retain the empty baseline without fabricated min/max.
+    var empty copyCallLatency
+    privateC1MergeCopyCallLatency(&empty,copyCallLatency{})
+    if empty.Calls!=0||empty.Min!=0||empty.Max!=0{
+        t.Fatalf("Security COPY empty latency was mutated: %+v",empty)
+    }
+}
+
 func privateC1BackpressureFixture()(*privateC1FiveSQL,*privateC1SQLLane,[privateC1MaxFamilyHandoffsInFlight]chan error){
     parent:=&privateC1SourceAck{done:make(chan struct{})}
     close(parent.done) // original ordered source SQL commit is complete
