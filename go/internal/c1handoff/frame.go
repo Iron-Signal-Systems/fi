@@ -21,8 +21,10 @@ import (
 
 const (
     MaxRows = 8192
-    MaxSingleRecordBytes = 256 << 20
-    MaxPayloadBytes = (256 << 20) + (16 << 20)
+    // Every original signed JSONL batch is capped at 64 MiB. One
+    // individual signed record cannot legally exceed its own batch.
+    MaxSingleRecordBytes = 64 << 20
+    MaxPayloadBytes = (64 << 20) + (8 << 20)
     maxText = 1024
     maxError = 4096
 )
