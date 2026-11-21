@@ -259,6 +259,7 @@ func privateC1RecoverDirect(ctx context.Context,reader,writer *pgx.Conn,
     var empty BacklogGenerationVerification
     if !privateC1Enabled()||ctx==nil||g==nil||reader==nil||writer==nil||
         len(ds)<2||reader==writer{return empty,errors.New("FI C1: original P6 direct clone not selected")}
+    setupStarted:=time.Now()
     // C1 4GiB full-backlog is clone-only, preserving the original seed
     // descriptor. Bounded P5/P6/SQL workers persist across all groups.
     // Partial 8GiB experiments remain on their existing strict stop path.
@@ -307,7 +308,8 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if err=privateC1RequireCleanDestination(ctx,reader,g,ds,startWindow,end);err!=nil{
         return empty,err
     }
-    setupStarted:=time.Now()
+    planningGuardElapsed:=time.Since(setupStarted)
+    pipelineStarted:=time.Now()
     // Keep the original P6 cross-batch USN and File identity semantics.
     // No reset or forced buffer flush at a W512 reporting boundary.
     usn:=newUSNCaptureState(ds[0].SourceID,ds[0].GenerationID)
@@ -336,7 +338,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     defer pool.Close()
     var prepTotals privateC1PrepTotals
     fmt.Printf("FI C1 P5 PREP POOL START lanes=5 min=2 max=32 persistent_across_signed_batches=true persistent_across_W512=true\n")
-    pipelineInitializeElapsed:=time.Since(setupStarted)
+    pipelineInitializeElapsed:=time.Since(pipelineStarted)
     manifestStarted:=time.Now()
     // Resolve the original signed manifest and exact shadow source identity
     // for every batch before opening the single continuous P5 session.
@@ -368,8 +370,8 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if e!=nil{return empty,fmt.Errorf("FI C1: async relational verifier startup: %w",e)}
     defer verifier.Stop()
     verifierElapsed:=time.Since(verifierStarted)
-    fmt.Printf("FI C1 PRE-INGEST SETUP elapsed=%s pipeline_initialize=%s signed_manifest_lookup=%s verifier_spawn=%s signed_batches=%d excluded_from_ingest_rate=true\n",
-        time.Since(setupStarted),pipelineInitializeElapsed,manifestElapsed,verifierElapsed,len(signed))
+    fmt.Printf("FI C1 PRE-INGEST SETUP elapsed=%s signed_group_planning_clean_guard=%s pipeline_initialize=%s signed_manifest_lookup=%s verifier_spawn=%s signed_batches=%d excluded_from_ingest_rate=true\n",
+        time.Since(setupStarted),planningGuardElapsed,pipelineInitializeElapsed,manifestElapsed,verifierElapsed,len(signed))
     // P5 preparation no longer drains and recreates one stream per signed
     // batch. The signed reader still finishes and validates every original
     // batch's original manifest identity, byte count, record count and LF
