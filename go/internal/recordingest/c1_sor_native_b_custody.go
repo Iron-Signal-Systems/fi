@@ -31,6 +31,11 @@ import (
 )
 
 const c1NativeBMaxAuditRows=2048
+// C1NativeBCustodyConfig is used only by the explicitly authorized
+// development fi-sor offline publication command. It carries paths and
+// byte ceilings, never raw original custody or a PostgreSQL DSN.
+type C1NativeBCustodyConfig = c1NativeBCustodyConfig
+
 type c1NativeBCustodyConfig struct {
     CustodyRoot string
     RecordedRoot string
