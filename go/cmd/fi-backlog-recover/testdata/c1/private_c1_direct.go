@@ -334,7 +334,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if err!=nil{return empty,fmt.Errorf("FI C1: P5 persistent preparation pool: %w",err)}
     defer pool.Close()
     var prepTotals privateC1PrepTotals
-    fmt.Printf("FI C1 P5 PREP POOL START lanes=5 min=2 max=16 persistent_across_signed_batches=true persistent_across_W512=true\n")
+    fmt.Printf("FI C1 P5 PREP POOL START lanes=5 min=2 max=32 persistent_across_signed_batches=true persistent_across_W512=true\n")
     started:=time.Now()
     // Resolve the original signed manifest and exact shadow source identity
     // for every batch before opening the single continuous P5 session.
@@ -416,7 +416,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
         return empty,fmt.Errorf("FI C1: independent final generation proof: %w",e)
     }
     pool.Close()
-    fmt.Printf("FI C1 P5 PREP COMPLETE batches=%d records=%d family_lanes=5 worker_min=2 worker_max=16 reader_time=%s parallel_worker_time_sum=%s consumer_wait=%s\n",
+    fmt.Printf("FI C1 P5 PREP COMPLETE batches=%d records=%d family_lanes=5 worker_min=2 worker_max=32 reader_time=%s parallel_worker_time_sum=%s consumer_wait=%s\n",
         prepTotals.batches,prepTotals.records,prepTotals.readerTime,
         prepTotals.workerTime,prepTotals.writerWait)
     elapsed:=time.Since(started)
