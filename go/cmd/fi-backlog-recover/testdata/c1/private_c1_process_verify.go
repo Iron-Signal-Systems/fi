@@ -318,35 +318,61 @@ func(v *privateC1ProcessVerifier)Stop(){
     <-v.done
 }
 
-// The child protocol uses a single bounded input stream. No B-to-A command
-// exists. B is read-only even if the database login has broader permissions.
+// The independent child accepts only original custody metadata and ordered
+// durable SQL-ready events. It returns a small GROUPS proof receipt, then
+// waits for A's private marker COMMIT before the final read-only proof.
 func privateC1VerifyProcessCommands(ctx context.Context,scanner *bufio.Scanner,
-    p *privateC1VerifyProcessPlan, check func(context.Context,int)error)error{
-    if ctx==nil||scanner==nil||check==nil{return errors.New("FI C1 B: invalid verifier protocol")}
+    p *privateC1VerifyProcessPlan,check func(context.Context,int)error,
+    final func(context.Context)(BacklogGenerationVerification,error))error{
+    if ctx==nil||scanner==nil||check==nil||final==nil{
+        return errors.New("FI C1 B: invalid verifier protocol")
+    }
     if err:=privateC1ValidateVerifyProcessPlan(p);err!=nil{return err}
     expected:=p.Start
     drained:=false
     during:=0
+    groupsAck:=false
     for scanner.Scan(){
         line:=scanner.Text()
         if line=="DRAIN"{
-            if drained{return errors.New("FI C1 B: duplicate end-of-ingest signal")}
+            if drained||groupsAck{
+                return errors.New("FI C1 B: duplicate or late end-of-ingest signal")
+            }
             drained=true
             continue
         }
-        if line=="FINISH"{
-            if expected!=p.End{
-                return fmt.Errorf("FI C1 B: missing committed group %d",expected)
+        if line=="GROUPS"{
+            if groupsAck||expected!=p.End{
+                return fmt.Errorf("FI C1 B: incomplete or duplicate group proof expected=%d end=%d",expected,p.End)
             }
-            if scanner.Scan(){return errors.New("FI C1 B: commands after final proof")}
-            if err:=scanner.Err();err!=nil{return err}
+            groupsAck=true
             fmt.Printf("FI C1 ASYNC VERIFY COMPLETE groups=%d during_ingest=%d after_drain=%d independent_read_only=true committed_ready=true original_relational_rescans=removed final_marker_gate=preserved separate_os_process=true\n",
                 p.End-p.Start,during,p.End-p.Start-during)
+            fmt.Printf("FI C1 B GROUPS PROOF PASS groups=%d read_only=true no_p6_flush=true awaiting_final_marker=true\n",
+                p.End-p.Start)
+            continue
+        }
+        if line=="FINAL"{
+            if !groupsAck{
+                return errors.New("FI C1 B: final generation proof before committed group acknowledgement")
+            }
+            began:=time.Now()
+            result,err:=final(ctx)
+            if err!=nil{return fmt.Errorf("FI C1 B: final generation proof: %w",err)}
+            mode:="prefix"
+            if p.End==len(p.Descriptors){mode="generation"}
+            fmt.Printf("FI C1 B FINAL GENERATION VERIFY PASS mode=%s groups=%d duration=%s read_only=true separate_os_process=true\n",
+                mode,p.End-p.Start,time.Since(began))
+            encoded,err:=json.Marshal(result)
+            if err!=nil{return fmt.Errorf("FI C1 B: final receipt encode: %w",err)}
+            fmt.Printf("FI C1 B FINAL RESULT %s\n",encoded)
+            if scanner.Scan(){return errors.New("FI C1 B: commands after final proof")}
+            if err:=scanner.Err();err!=nil{return err}
             return nil
         }
         fields:=strings.Fields(line)
-        if len(fields)!=2||fields[0]!="READY"{
-            return errors.New("FI C1 B: unrecognized verifier command")
+        if len(fields)!=2||fields[0]!="READY"||groupsAck{
+            return errors.New("FI C1 B: unexpected verifier command or readiness after group seal")
         }
         wi,e:=strconv.Atoi(fields[1])
         if e!=nil||wi!=expected{
@@ -363,7 +389,7 @@ func privateC1VerifyProcessCommands(ctx context.Context,scanner *bufio.Scanner,
         expected++
     }
     if err:=scanner.Err();err!=nil{return err}
-    return errors.New("FI C1 B: input closed before final committed-data proof")
+    return errors.New("FI C1 B: input closed before final independent generation proof")
 }
 
 // RunPrivateC1VerifyChild is exported only so the PRIVATE, separately built
