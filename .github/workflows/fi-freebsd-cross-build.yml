@@ -336,9 +336,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=6efe294ac85da8817bd6dc4ad36fcac3575c6e19' in controller
-          assert 'runnerpin=bb9386c3367f146b3971206e427e11599e646945' in controller
-          assert 'sourcecommit=6efe294ac85da8817bd6dc4ad36fcac3575c6e19' in runner
+          assert 'sourcepin=050c3e288fd2dfef45b9da733aa4313064dfb467' in controller
+          assert 'runnerpin=91b4e7bc0086f2b1ede5b0caa927617650e286db' in controller
+          assert 'sourcecommit=050c3e288fd2dfef45b9da733aa4313064dfb467' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -436,6 +436,20 @@ jobs:
           assert 'TestC1Security8GiBProfileSeparatesCopyFromFieldPartitioning' in security_tests
           assert 'TestC1Security8GiBFieldCopyChunkBoundedAt65536Rows' in security_tests
           assert 'TestC1Security8GiBFieldCopyByteBoundAndOversizeRecord' in security_tests
+          # Regression: C220 clones a historical source before installing P6.
+          # The preceding failed build staged only the P6 SQL module and
+          # omitted the new security profile helper, causing undefined symbols.
+          # These exact private overlay contracts are mandatory.
+          assert 'for item in security_bulk_profiles.go security_field_profile_dual.go security_field_profile_dual_test.go;do' in runner
+          assert 'go/internal/recordingest/$item' in runner
+          assert 'if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {' in runner
+          assert 'if privateP6SourceAlreadyInserted(ctx)' in runner
+          assert 'ids := privateC1KnownSourceIDs(ctx)' in runner
+          assert 'FI C1 PRIVATE SECURITY COPY OVERLAY PASS' in runner
+          assert 'TestC1Security8GiB)' in runner
+          assert 'security_bulk="$src/go/internal/recordingest/security_bulk.go"' in runner
+          assert 'assets=49 clone_only=true' in runner
+          assert 'securityScopeCopyRows(candidate,' not in security_tests
           assert 'field_max_rows=%d field_max_bytes=%d' in sql
           assert 'field_max_rows=65536 field_max_bytes=16777216' in runner
           assert 'field_max_rows=32768 field_max_bytes=8388608' in runner
