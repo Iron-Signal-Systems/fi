@@ -90,8 +90,12 @@ func c1ValidateNativeBPlan(p c1NativeBPlan)error{
 // block one of the five P6 SQL lanes: the commit-ready channel has capacity
 // for every original reporting group. Failure blocks ONLY final acceptance.
 func startC1SoRNativeB(ctx context.Context,dsn string,p c1NativeBPlan,
-    ready <-chan int)(*c1SoRNativeB,error){
-    if ctx==nil||dsn==""||ready==nil{return nil,errors.New("C1 B: missing process inputs")}
+    ready <-chan int,custody c1NativeBCustodyConfig)(*c1SoRNativeB,error){
+    if ctx==nil||dsn==""||ready==nil||custody.CustodyRoot==""||
+        custody.RecordedRoot==""||custody.MaxCanonicalBytes==0||
+        custody.MaxEncodedBytes==0||custody.MaxManifestBytes==0{
+        return nil,errors.New("C1 B: missing signed custody verifier process inputs")
+    }
     if err:=c1ValidateNativeBPlan(p);err!=nil{return nil,err}
     data,err:=json.Marshal(p)
     if err!=nil||len(data)==0||len(data)>c1NativeBPlanLimit{
@@ -101,7 +105,15 @@ func startC1SoRNativeB(ctx context.Context,dsn string,p c1NativeBPlan,
     if err!=nil{return nil,err}
     own,cancel:=context.WithCancel(ctx)
     cmd:=exec.CommandContext(own,exe,"--c1-b-child")
-    cmd.Env=append(os.Environ(),"FI_C1_B_CHILD=1","FI_C1_B_DSN="+dsn)
+    cmd.Env=append(os.Environ(),
+        "FI_C1_B_CHILD=1","FI_C1_B_DSN="+dsn,
+        "FI_C1_B_CUSTODY_ROOT="+custody.CustodyRoot,
+        "FI_C1_B_RECORDED_ROOT="+custody.RecordedRoot,
+        "FI_C1_B_SOURCE_NAMESPACES="+strconv.FormatBool(custody.SourceNamespaces),
+        "FI_C1_B_MAX_CANONICAL="+strconv.FormatUint(custody.MaxCanonicalBytes,10),
+        "FI_C1_B_MAX_ENCODED="+strconv.FormatUint(custody.MaxEncodedBytes,10),
+        "FI_C1_B_MAX_MANIFEST="+strconv.FormatUint(custody.MaxManifestBytes,10),
+    )
     cmd.Stderr=os.Stderr
     stdin,err:=cmd.StdinPipe()
     if err!=nil{cancel();return nil,err}
@@ -196,6 +208,20 @@ func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)e
     var p c1NativeBPlan
     if err:=json.Unmarshal(scan.Bytes(),&p);err!=nil{return err}
     if err:=c1ValidateNativeBPlan(p);err!=nil{return err}
+    namespaces,err:=strconv.ParseBool(os.Getenv("FI_C1_B_SOURCE_NAMESPACES"))
+    if err!=nil{return fmt.Errorf("C1 B: invalid original signed source namespaces: %w",err)}
+    canonical,e:=strconv.ParseUint(os.Getenv("FI_C1_B_MAX_CANONICAL"),10,64)
+    if e!=nil{return e}
+    encoded,e:=strconv.ParseUint(os.Getenv("FI_C1_B_MAX_ENCODED"),10,64)
+    if e!=nil{return e}
+    manifest,e:=strconv.ParseUint(os.Getenv("FI_C1_B_MAX_MANIFEST"),10,64)
+    if e!=nil{return e}
+    custody:=c1NativeBCustodyConfig{
+        CustodyRoot:os.Getenv("FI_C1_B_CUSTODY_ROOT"),
+        RecordedRoot:os.Getenv("FI_C1_B_RECORDED_ROOT"),
+        SourceNamespaces:namespaces,MaxCanonicalBytes:canonical,
+        MaxEncodedBytes:encoded,MaxManifestBytes:manifest,
+    }
     conn,pid,err:=openC1SoRLocalSQL(ctx,dsn,"")
     if err!=nil{return err}
     defer conn.Close(context.Background())
@@ -212,6 +238,9 @@ func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)e
         if line=="FINAL"{
             if len(seen)!=len(p.Descriptors)-1{return errors.New("C1 B: unverified groups at final gate")}
             if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{return err}
+            if err:=c1NativeBVerifySignedCustody(ctx,conn,p,custody);err!=nil{
+                return fmt.Errorf("C1 B: independent original signed custody and SQL readback: %w",err)
+            }
             if _,err:=fmt.Fprintln(output,"FINAL PASS");err!=nil{return err}
             if scan.Scan(){return errors.New("C1 B: commands after final proof")}
             return scan.Err()

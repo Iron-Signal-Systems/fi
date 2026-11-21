@@ -23,6 +23,12 @@ type C1SoRServerConfig struct {
     SQLWorkersMax int
     SharedRAMDir string // read-only fi-sor nullfs mount
     AllowC1Replay bool // development-only private SQL recovery opt-in
+    CustodyRoot string // original signed receiver custody, read-only
+    RecordedRoot string // immutable signed recorded receipts, read-only
+    CustodySourceNamespaces bool
+    MaxCanonicalBytes uint64
+    MaxEncodedBytes uint64
+    MaxManifestBytes uint64
     TransportCert c1handoff.TLSFiles
     ExpectedIngestClientDNS string
 }
@@ -61,6 +67,13 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         if e!=nil{conn.Close();return e}
         service.SharedRAMDir=cfg.SharedRAMDir
         service.AllowC1Replay=cfg.AllowC1Replay
+        service.NativeBCustody=c1NativeBCustodyConfig{
+            CustodyRoot:cfg.CustodyRoot,RecordedRoot:cfg.RecordedRoot,
+            SourceNamespaces:cfg.CustodySourceNamespaces,
+            MaxCanonicalBytes:cfg.MaxCanonicalBytes,
+            MaxEncodedBytes:cfg.MaxEncodedBytes,
+            MaxManifestBytes:cfg.MaxManifestBytes,
+        }
         endpoint:=&c1handoff.Server{
             Bootstrap:service.Bootstrap,Handler:service.Commit,
             Dispatch:service.Dispatch,IOTimeout:5*time.Minute,

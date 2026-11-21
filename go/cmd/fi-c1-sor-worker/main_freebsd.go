@@ -33,6 +33,12 @@ func main(){
     bind:=flags.String("bind","","private fi-sor workload address for mTLS handoff")
     db:=flags.String("postgres-local","","PostgreSQL Unix-domain DSN inside fi-sor, dbname=fi user=fi_ingest")
     ram:=flags.String("shared-ram-dir","","fi-sor read-only nullfs view of C1 host tmpfs")
+    custodyRoot:=flags.String("custody-root","","fi-sor read-only view of original signed receiver generation custody")
+    recordedRoot:=flags.String("recorded-root","","fi-sor read-only original recorded-receipt custody")
+    namespaces:=flags.Bool("source-namespaces",false,"original per-source recorded custody layout")
+    canonicalMax:=flags.Uint64("max-canonical-bytes",75161927680,"original signed canonical byte ceiling")
+    encodedMax:=flags.Uint64("max-encoded-bytes",68719476736,"original signed encoded byte ceiling")
+    manifestMax:=flags.Uint64("max-manifest-bytes",1048576,"original signed manifest byte ceiling")
     max:=flags.Int("sql-workers-max",32,"bounded native C1 shared PostgreSQL workers (1..32)")
     recoverPrivate:=flags.Bool("reconcile-private-replay",false,"DEVELOPMENT ONLY: reconcile dirty private PostgreSQL before replay from signed custody")
     cert:=flags.String("tls-cert","","fi-sor dedicated mTLS server certificate")
@@ -42,13 +48,19 @@ func main(){
     if err:=flags.Parse(os.Args[1:]);err!=nil{fatal(err)}
     if flags.NArg()!=0 {fatal(errors.New("FI C1 SoR: no positional arguments allowed"))}
     if os.Geteuid()==0 {fatal(errors.New("FI C1 SoR: refuse root execution; dedicate an unprivileged fi-sor service account"))}
-    if *ram==""{fatal(errors.New("FI C1 SoR: shared RAM mount required for two-jail C1 service"))}
+    if *ram==""||*custodyRoot==""||*recordedRoot==""{
+        fatal(errors.New("FI C1 SoR: shared RAM and both read-only original signed custody roots required"))
+    }
     ramMount,e:=c1handoff.NewRAMStore(*ram)
     if e!=nil{fatal(e)}
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,true);e!=nil{fatal(e)}
     cfg:=recordingest.C1SoRServerConfig{
         Bind:*bind,LocalPostgresDSN:*db,SQLWorkersMax:*max,
         SharedRAMDir:*ram,AllowC1Replay:*recoverPrivate,
+        CustodyRoot:*custodyRoot,RecordedRoot:*recordedRoot,
+        CustodySourceNamespaces:*namespaces,
+        MaxCanonicalBytes:*canonicalMax,MaxEncodedBytes:*encodedMax,
+        MaxManifestBytes:*manifestMax,
         ExpectedIngestClientDNS:*ingest,
         TransportCert:c1handoff.TLSFiles{
             Certificate:*cert,PrivateKey:*key,TrustCA:*ca,

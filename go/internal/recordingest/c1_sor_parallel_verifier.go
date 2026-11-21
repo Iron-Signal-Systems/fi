@@ -71,6 +71,7 @@ func c1SoRCommitTracker(groups []c1SoRGroup)(*privateC1CommitReady,error){
 
 func startC1SoRParallelB(ctx context.Context,dsn string,
     frame c1handoff.Frame,ids []int64,pool *privateC1FiveSQL,
+    custody c1NativeBCustodyConfig,
 )(*privateC1CommitReady,*c1SoRNativeB,error){
     if ctx==nil||pool==nil||len(ids)==0||frame.Kind!=c1handoff.Start{
         return nil,nil,errors.New("C1 verifier: uninitialized signed source")
@@ -163,7 +164,7 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     if err=conn.Close(context.Background());err!=nil{return nil,nil,err}
     plan:=c1NativeBPlan{Start:frame,SQLIDs:append([]int64(nil),ids...),
         Batches:batches,Descriptors:ds,Transfer:g.Receipt.TransferSHA256}
-    v,err:=startC1SoRNativeB(ctx,dsn,plan,tracker.notifications)
+    v,err:=startC1SoRNativeB(ctx,dsn,plan,tracker.notifications,custody)
     if err!=nil{return nil,nil,err}
     pool.commitReady=tracker
     fmt.Printf("FI C1 SOR PARALLEL VERIFIER START metadata_pg_pid=%d groups=%d B=independent_OS_process read_only=true trigger=durable_SQL_commit no_group_flush=true\n",pid,len(groups))

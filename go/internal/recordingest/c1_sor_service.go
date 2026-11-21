@@ -27,6 +27,7 @@ type C1SoRService struct {
     SharedRAMDir string // fi-sor read-only nullfs mount path
     // DEVELOPMENT ONLY: explicit opt-in to replay dirty private SQL state
     // from original signed custody. Never set for live SoR until accepted.
+    NativeBCustody c1NativeBCustodyConfig
     AllowC1Replay bool
     replayMode bool
     replayRead *pgx.Conn
@@ -91,7 +92,8 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         if e!=nil{pool.Close();s.failed=e;return nil,e}
         handler.sharedRAM=reader
     }
-    tracker,verifier,err:=startC1SoRParallelB(ctx,s.DSN,frame,ids,pool)
+    tracker,verifier,err:=startC1SoRParallelB(ctx,s.DSN,frame,ids,pool,
+        s.NativeBCustody)
     if err!=nil{
         pool.Close();s.failed=err
         return nil,fmt.Errorf("C1 fi-sor: independent parallel verifier startup: %w",err)

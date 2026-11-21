@@ -22,7 +22,6 @@ import (
     "io"
     "os"
     "path/filepath"
-    "strings"
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
@@ -239,4 +238,3 @@ func c1NativeBVerifySignedCustody(ctx context.Context,conn *pgx.Conn,
     return nil
 }
 
-var _=strings.Builder{}
