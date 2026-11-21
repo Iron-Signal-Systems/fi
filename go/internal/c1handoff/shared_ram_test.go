@@ -7,7 +7,9 @@ import (
     "testing"
 )
 func TestC1SharedRAMRoundTripAndAuthenticatedReference(t *testing.T){
-    s,e:=NewRAMStore(t.TempDir());if e!=nil{t.Fatal(e)}
+    dir:=t.TempDir()
+    if e:=os.Chmod(dir,0700);e!=nil{t.Fatal(e)}
+    s,e:=NewRAMStore(dir);if e!=nil{t.Fatal(e)}
     payload:=[]byte("preprocessed C1 material; not a durable journal")
     ref,e:=s.Put(payload,2);if e!=nil{t.Fatal(e)}
     got,e:=s.Get(ref);if e!=nil||!bytes.Equal(got,payload){t.Fatalf("RAM roundtrip %v",e)}
@@ -24,7 +26,9 @@ func TestC1SharedRAMRoundTripAndAuthenticatedReference(t *testing.T){
     if e=s.Remove(ref);e!=nil{t.Fatal(e)}
 }
 func TestC1SharedRAMRejectsPathTraversalAndControlFrame(t *testing.T){
-    s,e:=NewRAMStore(t.TempDir());if e!=nil{t.Fatal(e)}
+    dir:=t.TempDir()
+    if e:=os.Chmod(dir,0700);e!=nil{t.Fatal(e)}
+    s,e:=NewRAMStore(dir);if e!=nil{t.Fatal(e)}
     ref,e:=s.Put([]byte("hello"),1);if e!=nil{t.Fatal(e)}
     bad:=ref;bad.Name="../sneak"
     if _,e=s.Get(bad);e==nil{t.Fatal("traversal accepted")}
