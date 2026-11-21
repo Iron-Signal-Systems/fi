@@ -20,19 +20,19 @@ esac
 [ "${FI_C1_DEV_ASYNC_VERIFY:-}" = 1 ] ||
     fail 'C1 independent read-only verifier must be explicitly enabled for this clone experiment'
 [ "${FI_W512_P3_DYNAMIC_MIN:-}" = 2 ] &&
-[ "${FI_W512_P3_DYNAMIC_MAX:-}" = 16 ] ||
-    fail 'P4 priority-fill requires min=2 max=16'
+[ "${FI_W512_P3_DYNAMIC_MAX:-}" = 32 ] ||
+    fail 'C1 persistent P5 priority-fill requires min=2 max=32'
 [ -z "${FI_W512_P3_SECURITY_WORKERS:-}" ] &&
 [ -z "${FI_W512_P3_GENERAL_WORKERS:-}" ] ||
     fail 'P4 dynamic mode cannot mix with fixed worker controls'
 security_workers=16
 general_workers=64
 general_each=16
-family_workers=80  # reporting slots; 2..16 actual goroutines per lane
-sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-16}
+family_workers=80  # historical P3/P4 report fixture slots; C1 P5 capacity is 5x32
+sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-32}
 case "$sqlmax" in
-  [1-9]|1[0-6]) ;;
-  *) fail 'C1 SQL worker maximum must be an integer between 1 and 16' ;;
+  [1-9]|1[0-9]|2[0-9]|3[0-2]) ;;
+  *) fail 'C1 SQL worker maximum must be an integer between 1 and 32' ;;
 esac
 group=4
 # Controlled Stage 2 PostgreSQL WAL-buffer A/B: 8GB max_wal_size FIXED.
@@ -225,7 +225,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=46 clone_only=true min=2 max=16 sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=46 clone_only=true p5_min=2 p5_max=32 sql_workers_max=$sqlmax sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -654,6 +654,14 @@ state=$(sql "SELECT count(*)::text||'|'||sum(committed_records)::text||'|'||
 [ "$(sql 'SHOW max_wal_size')" = "$pg_max_wal" ] &&
 [ "$(sql 'SHOW wal_buffers')" = "$pg_wal_buffers" ] ||
     fail 'private PostgreSQL WAL experiment settings changed'
+# Only the disposable clone may open up to 32 adaptive family SQL sessions
+# alongside the ordered parent, B read-only session and normal control queries.
+pg_connections=$(sql 'SHOW max_connections') ||
+    fail 'private PostgreSQL connection limit unavailable'
+case "$pg_connections" in ''|*[!0-9]*) fail 'invalid PostgreSQL max_connections' ;; esac
+[ "$pg_connections" -ge 40 ] ||
+    fail 'private PostgreSQL max_connections is insufficient for 32 adaptive SQL workers plus parent/B'
+echo "FI C1 32 SQL CONNECTION PREFLIGHT PASS max_connections=$pg_connections sql_workers_max=$sqlmax ordered_parent=1 verifier_B=1"
 for f in fsync synchronous_commit full_page_writes; do
     [ "$(sql "SHOW $f")" = on ] || fail "PostgreSQL durability $f disabled"
 done
@@ -743,7 +751,7 @@ iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
 vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
-printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gib=$group prep_lanes=5 prep_workers=2..16 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
+printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gib=$group prep_lanes=5 prep_workers=2..32 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
 export FI_C1_DEV_ASYNC_VERIFY=1
 export FI_C1_DEV_PROCESS_VERIFY=1
@@ -974,7 +982,7 @@ grep -Fq "batches=$((signed_batches-205)) sessions=1 records=$rows sealed_batche
   fail 'C1 continuous P5 custody-bound batch counts or one-session proof missing'
 grep '^FI C1 P5 PREP COMPLETE ' "$log" > "$out/$name/C1_PREP.txt" ||
   fail 'C1 original P5 family preparation pool completion missing'
-grep -Fq "records=$rows family_lanes=5 worker_min=2 worker_max=16 " "$out/$name/C1_PREP.txt" ||
+grep -Fq "records=$rows family_lanes=5 worker_min=2 worker_max=32 " "$out/$name/C1_PREP.txt" ||
   fail 'C1 P5 dynamic family preparation counts incorrect'
 grep '^FI P5 PERSISTENT WINDOW FAMILY ' "$log" > "$out/$name/C1_P5_LANES.txt" ||
   fail 'C1 original P5 family worker summary absent'
@@ -1033,7 +1041,7 @@ grep '^FI REAL BACKLOG DURABLE ' "$log" > "$out/$name/WINDOWS.txt" ||
   fail 'C1 durable per-window reports absent'
 elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$out/$name/RESULT.txt")
 [ -n "$elapsed" ] || fail 'C1 benchmark elapsed time missing'
-printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_16 source_stage=none commit_ready=true original_relational_rescans=removed authoritative=0 accepted=0\n" "$elapsed" |
+printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records=$rows source_bytes=$bytes last_batch=$lastbatch signed_batches=$signed_batches elapsed=%s writer=adaptive_shared sql_workers_max=$sqlmax P5_prep=5x2_to_32 source_stage=none commit_ready=true original_relational_rescans=removed authoritative=0 accepted=0\n" "$elapsed" |
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
