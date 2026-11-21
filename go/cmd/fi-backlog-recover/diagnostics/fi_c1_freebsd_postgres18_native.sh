@@ -43,8 +43,10 @@ case "$version" in
 18????) : ;;
 *) fail "unexpected PostgreSQL version $version; PostgreSQL 18 required" ;;
 esac
-psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' ||
-  fail "create strictly isolated C1 fixture identities"
+# Every statement is sent through the normal PostgreSQL protocol.
+# Keep the HERE-DOC terminator on its own line; a shell "|| fail" must
+# never be interpreted as SQL fixture input.
+psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE fi_c1_test WITH LOGIN;
 CREATE DATABASE fi_c1_replay_integration OWNER fi_c1_test;
 CREATE ROLE fi_c1_schema_test WITH LOGIN;
