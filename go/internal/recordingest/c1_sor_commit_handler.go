@@ -26,6 +26,7 @@ type c1SoRSQLWriter interface {
 }
 type c1SoRCommitHandler struct {
     sink c1SoRSQLWriter
+    sharedRAM *c1handoff.RAMStore // read-only fi-sor nullfs mount; never used for SQL state
     sourceID,generationID,receipt string
     // These IDs are looked up from FI's verified original signed source
     // batches by fi-sor; NEVER accept an arbitrary identity from fi-ingest.
@@ -134,6 +135,28 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
     if f.Kind<c1handoff.Source||f.Kind>c1handoff.Other{
         return nil,errors.New("C1 fi-sor: expected original signed SQL handoff")
     }
+    // Shared tmpfs carries the original prepared C1 values (including
+    // validated single-pass Security) rather than requiring fi-sor to
+    // parse every signed JSONL envelope for a second time.
+    var transported []privateP6Record
+    if f.Shared.Name!=""{
+        if s.sharedRAM==nil{return nil,errors.New("C1 fi-sor: RAM handoff not configured")}
+        payload,err:=s.sharedRAM.Get(f.Shared)
+        if err!=nil{return nil,fmt.Errorf("C1 fi-sor: RAM buffer could not be authenticated: %w",err)}
+        transported,err=decodeC1PreparedRAMRows(payload)
+        if err!=nil{return nil,err}
+        if len(transported)!=int(f.Shared.Rows){
+            return nil,errors.New("C1 fi-sor: RAM row count differs from authenticated mTLS reference")
+        }
+        f.Rows=make([]c1handoff.Row,len(transported))
+        for i,r:=range transported {
+            f.Rows[i]=c1handoff.Row{SignedBatchIndex:uint32(r.signedBatchIndex),
+                SourceBatchID:r.sourceBatchID,Ordinal:r.ordinal,
+                RawRecord:r.prepared.RawRecordBytes,Digest:r.prepared.RecordDigest}
+        }
+        f.Shared=c1handoff.SharedRAMRef{} // validate decoded original row order/digests
+        if err:=f.Validate();err!=nil{return nil,fmt.Errorf("C1 fi-sor: RAM original source identity: %w",err)}
+    }
     rows:=make([]privateP6Record,0,len(f.Rows))
     // Detect intra-handoff duplicate ordinals before SQL admission, and
     // prevent all cross-handoff/cross-family duplicate typed coverage.
@@ -160,8 +183,19 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
                 return nil,errors.New("C1 fi-sor: duplicate typed signed ordinal across SQL handoffs")
             }
         }
-        prepared,err:=PrepareSourceRecord(row.RawRecord)
-        if err!=nil{return nil,fmt.Errorf("C1 fi-sor: signed source decode %d: %w",i,err)}
+        var prepared SourceRecord
+        if transported!=nil{
+            prepared=transported[i].prepared
+            if transported[i].sourceBatchID!=row.SourceBatchID||
+                transported[i].ordinal!=row.Ordinal||
+                transported[i].signedBatchIndex!=index{
+                return nil,errors.New("C1 fi-sor: RAM record differs from original signed identity")
+            }
+        }else{
+            var err error
+            prepared,err=PrepareSourceRecord(row.RawRecord)
+            if err!=nil{return nil,fmt.Errorf("C1 fi-sor: signed source decode %d: %w",i,err)}
+        }
         if prepared.RecordDigest!=row.Digest {
             return nil,errors.New("C1 fi-sor: prepared record differs from signed source digest")
         }
@@ -195,10 +229,14 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
                     index,row.Ordinal,expectedOrdinal,s.batchRecordCounts[index])
             }
         }
-        rows=append(rows,privateP6Record{
-            signedBatchIndex:index,sourceBatchID:row.SourceBatchID,
-            ordinal:row.Ordinal,prepared:prepared,
-        })
+        if transported!=nil{
+            rows=append(rows,transported[i])
+        }else{
+            rows=append(rows,privateP6Record{
+                signedBatchIndex:index,sourceBatchID:row.SourceBatchID,
+                ordinal:row.Ordinal,prepared:prepared,
+            })
+        }
     }
     if int64(len(rows))>s.expectedRecords-s.parentRows && f.Kind==c1handoff.Source{
         return nil,errors.New("C1 fi-sor: source-parent committed rows would exceed original signed receipt")

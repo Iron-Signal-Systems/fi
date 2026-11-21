@@ -24,6 +24,7 @@ import (
 type C1SoRService struct {
     DSN string
     MaxSQLWorkers int
+    SharedRAMDir string // fi-sor read-only nullfs mount path
     mu sync.Mutex
     session *c1SoRCommitHandler
     pool *privateC1FiveSQL
@@ -63,6 +64,11 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     if err!=nil{
         pool.Close();s.failed=err
         return nil,err
+    }
+    if s.SharedRAMDir!=""{
+        reader,e:=c1handoff.NewRAMStore(s.SharedRAMDir)
+        if e!=nil{pool.Close();s.failed=e;return nil,e}
+        handler.sharedRAM=reader
     }
     tracker,verifier,err:=startC1SoRParallelB(ctx,s.DSN,frame,ids,pool)
     if err!=nil{
