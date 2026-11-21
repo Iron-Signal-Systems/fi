@@ -56,7 +56,13 @@ case "$security8" in 0|1) ;; *) fail 'FI_C1_SECURITY_8G_EXPERIMENT must be exact
 if [ "$security8" = 1 ] && [ "$mode" = family ] && [ "$prefix8" != 1 ];then
   fail 'larger Security buffers/COPY and reusable rows are ONLY permitted in the 8GiB two-group clone experiment'
 fi
-unset FI_C1_SECURITY_8G_EXPERIMENT
+sourceprof=${FI_C1_SOURCE_PROFILE_8G:-0}
+case "$sourceprof" in 0|1) ;; *) fail 'FI_C1_SOURCE_PROFILE_8G must be exactly 0 or 1';; esac
+if [ "$sourceprof" = 1 ] && { [ "$prefix8" != 1 ] || [ "$security8" != 1 ]; };then
+  fail 'SourceParent profiling requires the optimized 8GiB private clone'
+fi
+# Ordinary Go/race tests run with profiling switches disabled.
+unset FI_C1_SECURITY_8G_EXPERIMENT FI_C1_SOURCE_PROFILE_8G
 stop=0
 if [ "$prefix8" = 1 ];then stop=2;fi
 
@@ -87,7 +93,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=050c3e288fd2dfef45b9da733aa4313064dfb467
+sourcecommit=729b8f0e7288aa7aa2f0c6d91d30311802c2ea10
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -211,6 +217,8 @@ for asset in \
   go/cmd/fi-backlog-recover/patchers/family_p3_c220/main.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_family_buffers.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_five_sql.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_source_profile.go \
+  go/cmd/fi-backlog-recover/testdata/c1/private_c1_source_profile_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_direct.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_direct_test.go \
   go/cmd/fi-backlog-recover/testdata/c1/private_c1_continuous_signed_stream.go \
@@ -237,7 +245,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=49 clone_only=true p5_min=2 p5_max=32 sql_workers_max=$sqlmax sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=51 clone_only=true p5_min=2 p5_max=32 sql_workers_max=$sqlmax sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
@@ -490,7 +498,7 @@ echo 'FI C1 PRIVATE SECURITY COPY OVERLAY PASS source_parent_bypass=preserved si
 
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
-for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_process_verify.go private_c1_process_verify_test.go private_c1_commit_ready.go private_c1_commit_ready_test.go private_c1_sparse_age_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
+for item in private_c1_five_sql.go private_c1_source_profile.go private_c1_source_profile_test.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_process_verify.go private_c1_process_verify_test.go private_c1_commit_ready.go private_c1_commit_ready_test.go private_c1_sparse_age_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
   [ ! -e "$src/go/internal/recordingest/$item" ] || exit 1
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
@@ -837,6 +845,14 @@ vmstatpid=$!
 dip_sql=$(cat <<'C1_DIP_SQL'
 SELECT json_build_object(
  'utc',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+ 'source_parent',(SELECT row_to_json(p) FROM (
+   SELECT pid,state,wait_event_type,wait_event,backend_xid::text AS backend_xid,
+          backend_xmin::text AS backend_xmin,query_start,state_change
+   FROM pg_stat_activity
+   WHERE datname=current_database() AND backend_type='client backend'
+     AND application_name='fi-c1-sourceparent-8g'
+   ORDER BY pid LIMIT 1
+ ) p),
  'activity',coalesce((SELECT json_agg(row_to_json(a)) FROM (
    SELECT backend_type,state,wait_event_type,wait_event,count(*) AS backends
    FROM pg_stat_activity
@@ -858,6 +874,7 @@ sql "$dip_sql" > "$out/$name/dip_preflight.jsonl" ||
 [ -s "$out/$name/dip_preflight.jsonl" ] &&
 grep -Fq '"activity"' "$out/$name/dip_preflight.jsonl" &&
 grep -Fq '"checkpointer"' "$out/$name/dip_preflight.jsonl" &&
+grep -Fq '"source_parent"' "$out/$name/dip_preflight.jsonl" &&
 grep -Fq '"io"' "$out/$name/dip_preflight.jsonl" ||
   fail 'C1 telemetry preflight missing SQL wait/checkpointer/io keys'
 echo "FI C1 DIPS TELEMETRY PREFLIGHT PASS sampler=postgresql_activity_wal_checkpointer_io read_only=true before_ingestion=true"
@@ -903,6 +920,7 @@ export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 # Restore candidate mode only for the actual private ingestion executable.
 # All Go/race compile tests ran with the ordinary control defaults.
 export FI_C1_SECURITY_8G_EXPERIMENT="$security8"
+export FI_C1_SOURCE_PROFILE_8G="$sourceprof"
 if [ "$prefix8" = 1 ];then
   export FI_W512_C1_STOP_WINDOWS=2
   export FI_W512_C1_GROUP_GIB=4
@@ -1207,6 +1225,21 @@ fi
 echo "FI C1 SECURITY 8G SELECTION PASS mode=$( [ "$security8" = 1 ] && echo candidate || echo control ) same_relational_schema=true signed_source_unchanged=true verification_required=true"
 grep '^FI C1 SOURCE PARENT STAGES ' "$log" > "$out/$name/C1_SOURCE_PARENT_STAGES.txt" ||
   fail 'C1 serial SourceParent COPY/commit breakdown was not recorded'
+if [ "$sourceprof" = 1 ];then
+  grep '^FI C1 SOURCE PARENT BACKEND ' "$log" > "$out/$name/C1_SOURCE_PARENT_BACKEND.txt" ||
+    fail 'C1 SourceParent backend PID identity missing'
+  grep '^FI C1 SOURCE PARENT COPY DETAIL ' "$log" > "$out/$name/C1_SOURCE_PARENT_COPY_DETAIL.txt" ||
+    fail 'C1 SourceParent cursor/COPY diagnostic missing'
+  [ "$(wc -l < "$out/$name/C1_SOURCE_PARENT_BACKEND.txt" | tr -d '[:space:]')" = 1 ] &&
+  [ "$(wc -l < "$out/$name/C1_SOURCE_PARENT_COPY_DETAIL.txt" | tr -d '[:space:]')" = 1 ] &&
+  grep -Fq 'phase_remainder_includes_pgx_encode_io_server=true one_parent_connection=true clone_only=true' "$out/$name/C1_SOURCE_PARENT_COPY_DETAIL.txt" ||
+    fail 'C1 SourceParent diagnostic inconsistent or incomplete'
+  grep -Fq '"source_parent"' "$out/$name/postgres_waits_1s.jsonl" ||
+    fail 'C1 SourceParent wait samples missing'
+else
+  echo 'FI C1 SOURCE PARENT BACKEND profiler=off' > "$out/$name/C1_SOURCE_PARENT_BACKEND.txt"
+  echo 'FI C1 SOURCE PARENT COPY DETAIL profiler=off' > "$out/$name/C1_SOURCE_PARENT_COPY_DETAIL.txt"
+fi
 [ "$(wc -l < "$out/$name/C1_SOURCE_PARENT_STAGES.txt" | tr -d '[:space:]')" = 1 ] &&
 grep -Fq 'single_connection=true no_schema_change=true' "$out/$name/C1_SOURCE_PARENT_STAGES.txt" &&
 grep -Eq 'copy=[0-9]' "$out/$name/C1_SOURCE_PARENT_STAGES.txt" &&
@@ -1280,7 +1313,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SETUP.txt" "$name/C1_INGEST_START.txt" \
   "$name/C1_IDLE_TIMER.txt" "$name/C1_IDLE_FLUSH.txt" \
-  "$name/C1_SQL_PROFILE.txt" "$name/C1_SOURCE_PARENT_STAGES.txt" "$name/C1_SECURITY_8G_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
+  "$name/C1_SQL_PROFILE.txt" "$name/C1_SOURCE_PARENT_STAGES.txt" "$name/C1_SOURCE_PARENT_BACKEND.txt" "$name/C1_SOURCE_PARENT_COPY_DETAIL.txt" "$name/C1_SECURITY_8G_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/C1_USN_ASYNC_START.txt" "$name/C1_USN_ASYNC_COMPLETE.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
