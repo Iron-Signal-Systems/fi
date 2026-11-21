@@ -49,7 +49,7 @@ esac
 psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE fi_c1_test WITH LOGIN;
 CREATE DATABASE fi_c1_replay_integration OWNER fi_c1_test;
-CREATE ROLE fi_c1_schema_test WITH LOGIN;
+-- Disposable VM only: this role must match the PostgreSQL Docker\n-- POSTGRES_USER fixture's administrative capabilities for offline DDL.\nCREATE ROLE fi_c1_schema_test WITH LOGIN SUPERUSER;
 CREATE DATABASE fi OWNER fi_c1_schema_test;
 SQL
 
