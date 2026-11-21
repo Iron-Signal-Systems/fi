@@ -257,7 +257,6 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     lane.handoffs++
     switch reason{
     case "capacity":lane.capacityHandoffs++
-    case "age":lane.ageHandoffs++ // no new age handoffs; retained for receipt schema
     case "idle":lane.idleHandoffs++
     case "dependency":lane.dependencyHandoffs++
     case "end-of-input":lane.finalHandoffs++
