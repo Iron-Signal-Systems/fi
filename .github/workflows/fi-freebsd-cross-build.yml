@@ -445,7 +445,7 @@ jobs:
           assert 'FI C1 SECURITY 8G SELECTION PASS' in runner
           assert 'FI C1 SECURITY 8G A/B RESULT' in controller
           assert 'if [ "$security8" = 1 ]' in runner
-          assert 'fail \'Security 8192/32MiB, 65536/16MiB, and reusable COPY rows are permitted only in C1 prefix8 mode\'' in controller
+          assert "fail 'full-backlog Security candidate requires explicit opt-in'" in controller
           security_module=(root/'testdata/family-p6/private_p6_sql_security.go').read_text()
           assert 'profile="P4"' in security_module
           assert 'withC1SecurityCOPYExperiment(ctx)' in security_module
