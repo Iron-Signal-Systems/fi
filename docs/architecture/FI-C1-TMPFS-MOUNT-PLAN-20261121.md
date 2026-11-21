@@ -63,3 +63,20 @@ directory owned by those numbers, has `noexec,nosuid`, and has a real
 capacity between 2 GiB and 4 GiB. It also checks both jail nullfs
 mounts and original signed custody read-only mappings. This is a
 **read-only** preflight, not a mount installer or activation command.
+
+## FreeBSD boot ordering: mandatory before mount activation
+
+The host tmpfs fstab entry remains `noauto` so an ordinary `mount -a`
+never silently starts it. The C1-specific host service `fi_c1_ram`
+(`# REQUIRE: FILESYSTEMS`, `# BEFORE: jail`) is installed **disabled**
+through the explicit `apply-c1-ram-host-runtime` command and checked with
+`verify-c1-ram-host-runtime`. Its startup creates the volatile host
+mountpoint, refuses an already mounted target, then mounts ONLY the
+fstab-defined tmpfs. It does not unmount it during jail shutdown.
+
+**Before enabling that host service**, independently review/install the
+exact host and jail fstab entries, then verify the FreeBSD rcorder and
+root/UID/GID mount behavior on a disposable test or maintenance window.
+Never enable either fi-ingest or fi-sor C1 service until the host startup
+ordering and all original signed custody RO mappings are proven. On C220,
+keep the current ingress path and populated SoR unmodified until acceptance.
