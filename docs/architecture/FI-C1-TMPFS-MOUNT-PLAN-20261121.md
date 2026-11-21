@@ -40,3 +40,16 @@ The output contains the three exact candidate fstab entries and the
 configured existing jail fstab locations. It does not mount, edit,
 write, install, or activate anything. The mount files and jail roots
 must be reconciled with actual host configuration before application.
+
+## Read-only existing-fstab verification
+
+```sh
+fi-backend-install audit-c1-ram-mounts /path/to/fi-backend.conf
+```
+
+The inspection reads the host `/etc/fstab` and the two jail fstab
+paths from the validated FI configuration. It reports EXACT or ABSENT;
+unknown, duplicated, symlinked or conflicting destination entries fail
+closed. Missing entries return a distinct nonzero status. **This audit
+never modifies a file or mounts a filesystem**, and does not replace the
+independent live `fi-c1-host-preflight` validation.

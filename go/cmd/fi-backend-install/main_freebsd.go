@@ -150,7 +150,7 @@ func parseInvocation(
 			configPath:             args[1],
 		}, nil
 
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-c1-sor-identity", "verify-c1-sor-identity", "apply-c1-runtime", "verify-c1-runtime", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime", "plan-c1-ram-mounts":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-c1-sor-identity", "verify-c1-sor-identity", "apply-c1-runtime", "verify-c1-runtime", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime", "plan-c1-ram-mounts", "audit-c1-ram-mounts":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -515,7 +515,29 @@ func main() {
 			"FI FreeBSD lifecycle verification complete.",
 		)
 
-	case "plan-c1-ram-mounts":
+	case "audit-c1-ram-mounts":
+        // READ ONLY: require exact existing host/jail fstab entries and
+        // distinguish a missing mount from a foreign/writable collision.
+        plan,err:=backendinstall.RenderC1RAMMountPlan(config)
+        if err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 RAM FSTAB AUDIT BLOCKED: %v\n",err)
+            os.Exit(1)
+        }
+        state,err:=backendinstall.InspectC1RAMFSTABPlan(plan)
+        if err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 RAM FSTAB AUDIT BLOCKED: %v\n",err)
+            os.Exit(1)
+        }
+        fmt.Fprintf(os.Stdout,"FI C1 RAM FSTAB host=%s ingest=%s sor=%s\n",state.Host,state.Ingest,state.SoR)
+        if state.Host!=backendinstall.C1FSTABExact||
+            state.Ingest!=backendinstall.C1FSTABExact||
+            state.SoR!=backendinstall.C1FSTABExact{
+            fmt.Fprintln(os.Stderr,"FI C1 RAM FSTAB AUDIT INCOMPLETE: one or more exact mount entries missing; no host changes")
+            os.Exit(2)
+        }
+        fmt.Fprintln(os.Stdout,"FI C1 RAM FSTAB AUDIT PASS (entries only; live mounts still require host preflight)")
+
+    case "plan-c1-ram-mounts":
         // READ ONLY: the host must verify actual jail roots and install
         // exact entries separately. This command cannot mount tmpfs,
         // mutate fstab, enable services, or contact PostgreSQL.
