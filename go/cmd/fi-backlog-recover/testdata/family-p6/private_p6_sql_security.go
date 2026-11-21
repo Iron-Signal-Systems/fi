@@ -16,8 +16,13 @@ import (
 func(w *privateP6SQLCoordinator) security(ctx context.Context,
     rows []privateP6Record,ids []int64)error{
     if len(rows)!=len(ids){return errors.New("FI P6 Security: source IDs mismatch")}
-    ctx,err:=withFixedSecurityBulkProfile(ctx,"P3")
+    tune,e:=privateC1Security8GiBExperiment()
+    if e!=nil{return e}
+    profile:="P3"
+    if tune{profile="P4"}
+    ctx,err:=withFixedSecurityBulkProfile(ctx,profile)
     if err!=nil{return err}
+    if tune{ctx=withC1SecurityCOPYExperiment(ctx)}
     ctx=context.WithValue(ctx,privateP6SourceAlreadyInsertedKey{},true)
     pending:=make([]securityBulkRecord,len(rows))
     for i,r:=range rows{
