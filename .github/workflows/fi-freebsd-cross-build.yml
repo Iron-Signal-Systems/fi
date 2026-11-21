@@ -325,9 +325,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=9bb74afc4194d920c679f25fa7027d59f881eb48' in controller
-          assert 'runnerpin=c23c1d91d8e4baf12ed9ea84a069869f9c6381c6' in controller
-          assert 'sourcecommit=9bb74afc4194d920c679f25fa7027d59f881eb48' in runner
+          assert 'sourcepin=e1eac1a0c7aa426d96f5521b98bfcd7ada5c6f96' in controller
+          assert 'runnerpin=71e66e3b69ce4bb6ef22995ba03dcbc7ceddebb5' in controller
+          assert 'sourcecommit=e1eac1a0c7aa426d96f5521b98bfcd7ada5c6f96' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -363,6 +363,7 @@ jobs:
           assert 'privateC1VerifyEightGiBPrefix(ctx,conn,g,p.Descriptors,p.End)' in process
           assert 'verifier.WaitGroups(ctx)' in source
           assert 'verifiedByB,e:=verifier.Finish(ctx)' in source
+          assert 'independent B result mismatches original generation receipt' in source
           assert 'FI C1 B GROUPS PROOF PASS ' in process
           assert 'FI C1 B FINAL GENERATION VERIFY PASS ' in process
           assert 'C1_B_GROUPS.txt' in runner and 'C1_B_FINAL.txt' in runner
