@@ -414,7 +414,7 @@ jobs:
 
           c1source=(root/'testdata/c1/private_c1_direct.go').read_text()
           assert 'signed_group_planning_clean_guard=%s pipeline_initialize=%s signed_manifest_lookup=%s verifier_spawn=%s' in c1source
-          assert 'stage=P5_stream_entry' in c1source
+          assert 'stage=Preparation_entry' in c1source
           assert 'started:=time.Now()' in c1source
           assert c1source.index('verifierElapsed:=time.Since') < c1source.index('started:=time.Now()')
           assert 'FI C1 P6 SQL DRAIN elapsed=' in c1source
