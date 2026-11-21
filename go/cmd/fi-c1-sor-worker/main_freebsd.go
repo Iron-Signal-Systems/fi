@@ -22,6 +22,13 @@ import (
 )
 
 func main(){
+    if len(os.Args)==2 && os.Args[1]=="--c1-b-child" {
+        if os.Geteuid()==0{fatal(errors.New("FI C1 B: refuse root execution"))}
+        ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
+        defer stop()
+        if err:=recordingest.RunC1SoRNativeBChild(ctx,os.Stdin,os.Stdout);err!=nil{fatal(err)}
+        return
+    }
     flags:=flag.NewFlagSet("fi-c1-sor-worker",flag.ExitOnError)
     bind:=flags.String("bind","","private fi-sor workload address for mTLS handoff")
     db:=flags.String("postgres-local","","PostgreSQL Unix-domain DSN inside fi-sor, dbname=fi user=fi_ingest")

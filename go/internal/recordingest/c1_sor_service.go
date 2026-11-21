@@ -28,7 +28,7 @@ type C1SoRService struct {
     session *c1SoRCommitHandler
     pool *privateC1FiveSQL
     commitReady *privateC1CommitReady
-    verifier *privateC1AsyncVerifier
+    verifier *c1SoRNativeB
     independentlyVerified bool
     failed error
 }

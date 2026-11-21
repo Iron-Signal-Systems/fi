@@ -71,7 +71,7 @@ func c1SoRCommitTracker(groups []c1SoRGroup)(*privateC1CommitReady,error){
 
 func startC1SoRParallelB(ctx context.Context,dsn string,
     frame c1handoff.Frame,ids []int64,pool *privateC1FiveSQL,
-)(*privateC1CommitReady,*privateC1AsyncVerifier,error){
+)(*privateC1CommitReady,*c1SoRNativeB,error){
     if ctx==nil||pool==nil||len(ids)==0||frame.Kind!=c1handoff.Start{
         return nil,nil,errors.New("C1 verifier: uninitialized signed source")
     }
@@ -79,7 +79,7 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     // worker pool. Independent READ ONLY transactions cannot modify SoR.
     conn,pid,err:=openC1SoRLocalSQL(ctx,dsn,"")
     if err!=nil{return nil,nil,err}
-    closeOnError:=func(e error)(*privateC1CommitReady,*privateC1AsyncVerifier,error){
+    closeOnError:=func(e error)(*privateC1CommitReady,*c1SoRNativeB,error){
         _=conn.Close(context.Background())
         return nil,nil,e
     }
@@ -150,16 +150,14 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
             EndRecord:uint64(group.count),DataBytes:uint64(group.bytes),
         }
     }
-    v,err:=newPrivateC1AsyncVerifier(ctx,1,len(ds),tracker.notifications,
-        func(c context.Context,wi int)error{
-            return privateC1AsyncVerifyGroup(c,conn,g,ds,wi)
-        },
-        func(e error){fmt.Printf("FI C1 INDEPENDENT VERIFIER FAILURE error=%v acceptance=withheld sql_ingestion_cancelled=false\n",e)},
-        len(groups)>1)
-    if err!=nil{return closeOnError(err)}
+    // The planner only reads signed metadata; B independently verifies
+    // it from its own connection in a different fi-sor OS process.
+    if err=conn.Close(context.Background());err!=nil{return nil,nil,err}
+    plan:=c1NativeBPlan{Start:frame,SQLIDs:append([]int64(nil),ids...),
+        Batches:batches,Descriptors:ds,Transfer:g.Receipt.TransferSHA256}
+    v,err:=startC1SoRNativeB(ctx,dsn,plan,tracker.notifications)
+    if err!=nil{return nil,nil,err}
     pool.commitReady=tracker
-    go func(){<-v.done;_ =conn.Close(context.Background())}()
-    fmt.Printf("FI C1 SOR PARALLEL VERIFIER START pid=%d groups=%d role=read_only independent_backend=true trigger=post_commit readiness_no_flush=true\n",
-        pid,len(groups))
+    fmt.Printf("FI C1 SOR PARALLEL VERIFIER START metadata_pg_pid=%d groups=%d B=independent_OS_process read_only=true trigger=durable_SQL_commit no_group_flush=true\n",pid,len(groups))
     return tracker,v,nil
 }
