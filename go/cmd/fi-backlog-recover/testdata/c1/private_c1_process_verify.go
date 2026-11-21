@@ -231,6 +231,15 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
                 drain=nil
             case wi,ok:=<-ready:
                 if !ok{
+                    // Drain notification must precede the final group seal
+                    // even when the ready queue wins the select repeatedly.
+                    if drain!=nil{
+                        if _,e:=io.WriteString(stdin,"DRAIN\n");e!=nil{
+                            writerDone<-e
+                            return
+                        }
+                        drain=nil
+                    }
                     if _,e:=io.WriteString(stdin,"GROUPS\n");e!=nil{
                         writerDone<-e
                         return
@@ -342,7 +351,7 @@ func privateC1VerifyProcessCommands(ctx context.Context,scanner *bufio.Scanner,
             continue
         }
         if line=="GROUPS"{
-            if groupsAck||expected!=p.End{
+            if !drained||groupsAck||expected!=p.End{
                 return fmt.Errorf("FI C1 B: incomplete or duplicate group proof expected=%d end=%d",expected,p.End)
             }
             groupsAck=true
