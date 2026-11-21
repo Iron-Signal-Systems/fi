@@ -8,11 +8,15 @@ fail(){ printf 'FI C1 REAL SOR PREFLIGHT STOP: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -un)" = root ] || fail 'run as root on c220'
 [ "$(hostname -s)" = c220 ] || fail 'unexpected host; requires c220'
-jls -j fi-sor-db >/dev/null 2>&1 || fail 'fi-sor-db jail not running'
+jls -j fi-sor >/dev/null 2>&1 || fail 'fi-sor jail not running'
 command -v jexec >/dev/null 2>&1 || fail 'missing jexec'
+# C220 PostgreSQL 18 uses a dedicated Unix-domain socket directory.
+pgsocket=/var/db/fi/sor/run
+jexec -U postgres fi-sor pg_isready -h "$pgsocket" -p 5432 >/dev/null 2>&1 ||
+  fail 'fi-sor jail running but PostgreSQL not ready on the configured socket'
 
 echo '===== FI C1 REAL DEVELOPMENT SOR: READ-ONLY POSTGRESQL INVENTORY ====='
-jexec -U postgres fi-sor-db psql -X -v ON_ERROR_STOP=1 -A -F '|' -d fi <<'SQL'
+jexec -U postgres fi-sor psql -X -w -h "$pgsocket" -p 5432 -v ON_ERROR_STOP=1 -A -F '|' -d fi <<'SQL'
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='180s';
 
