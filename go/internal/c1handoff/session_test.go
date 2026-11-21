@@ -105,15 +105,32 @@ func TestC1ServerRejectsWrongClientIdentity(t *testing.T){
     serverFiles,clientFiles:=issueTestIdentity(t)
     config,e:=ServerTLSConfig(serverFiles,"not-the-ingest-jail.local");if e!=nil{t.Fatal(e)}
     client,e:=ClientTLSConfig(clientFiles,"fi-sor.local");if e!=nil{t.Fatal(e)}
-    a,b:=net.Pipe()
-    defer a.Close();defer b.Close()
+    // A TCP socket has OS buffering for the TLS alert. net.Pipe has no
+    // buffering: a server that rejects the client cert can deadlock writing
+    // the alert after the client stops reading its handshake.
+    listener,err:=net.Listen("tcp4","127.0.0.1:0")
+    if err!=nil{t.Fatal(err)}
+    defer listener.Close()
     serverErr:=make(chan error,1)
-    go func(){serverErr<-ensureAuthenticated(tls.Server(a,config))}()
-    // Client's handshake may finish before server detects the forbidden SAN.
-    _=tls.Client(b,client).Handshake()
-    err:=<-serverErr
-    if err==nil||!strings.Contains(err.Error(),"unexpected fi-ingest identity"){
-        t.Fatalf("unapproved client SAN was not rejected: %v",err)
+    go func(){
+        raw,e:=listener.Accept()
+        if e!=nil{serverErr<-e;return}
+        defer raw.Close()
+        _=raw.SetDeadline(time.Now().Add(3*time.Second))
+        serverErr<-ensureAuthenticated(tls.Server(raw,config))
+    }()
+    conn,clientErr:=tls.DialWithDialer(&net.Dialer{Timeout:3*time.Second},
+        "tcp4",listener.Addr().String(),client)
+    if conn!=nil{_ =conn.Close()}
+    select{
+    case err:=<-serverErr:
+        if err==nil||!strings.Contains(err.Error(),"unexpected fi-ingest identity"){
+            t.Fatalf("unapproved client SAN was not rejected: %v",err)
+        }
+        // The client also cannot complete an authorized C1 session.
+        if clientErr==nil{t.Fatal("client authenticated against rejecting server")}
+    case <-time.After(4*time.Second):
+        t.Fatal("C1 rejected-client TLS handshake deadlocked")
     }
 }
 func TestC1ServerRejectsPlaintext(t *testing.T){
