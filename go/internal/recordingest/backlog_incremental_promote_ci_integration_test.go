@@ -697,5 +697,83 @@ LEFT JOIN fi.usn_read_boundary b ON b.source_record_id=u.usn_read_boundary_sourc
 LEFT JOIN fi.ntfs_object n ON n.ntfs_object_id=u.ntfs_object_id
 WHERE b.source_record_id IS NULL OR n.ntfs_object_id IS NULL`).Scan(&orphanedUSN);e!=nil{t.Fatal(e)}
  if orphanedUSN!=0{t.Fatalf("source-bound USN FK remap produced %d orphans",orphanedUSN)}
+ // FIFTH generation: C1's native split has the real relational rows
+ // but no old fi_recovery staged-source marker chain. Use a strict test-only
+ // independent read-only relational proof callback to exercise exactly the
+ // SAME canonical table locks and atomic SQL remap with all legacy markers
+ // absent. The real C1 callback separately adds receiver-signature/raw
+ // custody and every row digest validation under those same locks.
+ _=reader.Close(ctx);_=writer.Close(ctx)
+ resetPrivate()
+ reader,writer=openIngester()
+ fifth:=ciPromoteFileFixture(t,sourceID,false)
+ fifth.Receipt.Descriptor.GenerationID="20261103T150004.000000000Z-file-c1-native"
+ fifth.Receipt.TransferSHA256=strings.Repeat("1",64)
+ fifth.ReceiptSHA256=strings.Repeat("2",64)
+ stage(fifth)
+ if _,e=admin.Exec(ctx,`TRUNCATE
+    fi_recovery.projected_source_record,
+    fi_recovery.typed_window,
+    fi_recovery.source_window,
+    fi_recovery.pending_source_record,
+    fi_recovery.verified_artifact_window`);e!=nil{
+    t.Fatalf("isolated-only removal of old marker rows: %v",e)
+ }
+ var oldMarkers int64
+ if e=reader.QueryRow(ctx,`SELECT
+   (SELECT count(*) FROM fi_recovery.verified_artifact_window)+
+   (SELECT count(*) FROM fi_recovery.source_window)+
+   (SELECT count(*) FROM fi_recovery.typed_window)`).Scan(&oldMarkers);e!=nil{t.Fatal(e)}
+ if oldMarkers!=0{t.Fatal("test-only C1-native private stage still contains old window markers")}
+ c1TestNativeProof:=func(own context.Context,conn *pgx.Conn,original *PreparedGeneration,
+     _ BacklogWindowLimits)(BacklogGenerationVerification,error){
+   var proof BacklogGenerationVerification
+   tx,e:=conn.BeginTx(own,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
+   if e!=nil{return proof,e}
+   defer tx.Rollback(context.Background())
+   shadow:=privateProjectionTx{Tx:tx}
+   id,found,e:=lookupRecordedGeneration(own,shadow,
+     original.Receipt.Descriptor.SourceID,
+     original.Receipt.Descriptor.GenerationID,
+     original.Receipt.TransferSHA256,original.ReceiptSHA256)
+   if e!=nil||!found{return proof,fmt.Errorf("C1 test private original SQL stage: %v found=%t",e,found)}
+   if e=verifyGenerationProjectionCoverage(own,shadow,id);e!=nil{return proof,e}
+   if e=verifyBacklogUSNCapturesComplete(own,shadow,id);e!=nil{return proof,e}
+   if e=tx.Commit(own);e!=nil{return proof,e}
+   return BacklogGenerationVerification{
+      SourceID:original.Receipt.Descriptor.SourceID,
+      GenerationID:original.Receipt.Descriptor.GenerationID,
+      ReceiptSHA256:original.ReceiptSHA256,ShadowGenerationID:id,
+      Records:original.Receipt.RecordCount,DataBytes:original.Receipt.DataBytes,
+   },nil
+ }
+ if _,e=admin.Exec(ctx,`ALTER TABLE fi.content_prefix_observation
+ ADD CONSTRAINT fi_c1_native_late_fail CHECK(false) NOT VALID`);e!=nil{t.Fatal(e)}
+ if _,e=promoteVerifiedBacklogToPopulatedSoRWithProof(
+    ctx,reader,admin,fifth,limits,"fi-c1-native-fail",c1TestNativeProof);e==nil{
+    t.Fatal("C1-native marker-free promotion ignored injected late canonical SQL failure")
+ }
+ var unchanged int64
+ if e=reader.QueryRow(ctx,`SELECT count(*) FROM fi.source_record`).Scan(&unchanged);e!=nil{t.Fatal(e)}
+ if unchanged!=24{
+    t.Fatalf("failed C1-native publication changed populated canonical source rows: %d",unchanged)
+ }
+ if _,e=admin.Exec(ctx,`ALTER TABLE fi.content_prefix_observation
+ DROP CONSTRAINT fi_c1_native_late_fail`);e!=nil{t.Fatal(e)}
+ acceptedFifth,e:=promoteVerifiedBacklogToPopulatedSoRWithProof(
+    ctx,reader,admin,fifth,limits,"fi-c1-native-accepted",c1TestNativeProof)
+ if e!=nil||acceptedFifth.Outcome!="Accepted"||acceptedFifth.RecordsCommitted!=6{
+    t.Fatalf("C1 native marker-free atomic canonical promotion failed: %+v %v",acceptedFifth,e)
+ }
+ var finalCanonical,finalAccepted int64
+ if e=reader.QueryRow(ctx,`SELECT
+   (SELECT count(*) FROM fi.source_record),
+   (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')`).
+   Scan(&finalCanonical,&finalAccepted);e!=nil{t.Fatal(e)}
+ if finalCanonical!=30||finalAccepted!=5{
+   t.Fatalf("C1-native marker-free promotion dropped or doubled canonical records=%d accepted=%d",
+      finalCanonical,finalAccepted)
+ }
+ t.Log("PASS: C1-native marker-free full relational proof callback reuses populated SoR atomic promotion and late rollback")
  t.Log("PASS: populated SoR 4 generations, signed lineage, shared NTFS, legacy+M6.1 USN references, fields/scopes, late rollback, retry and atomic Accepted")
 }
