@@ -197,6 +197,12 @@ root-owned rc service, and group-readable runtime config. Both
 missing source/custody/TLS/PostgreSQL settings fail closed. The existing
 `fi_ingest_worker` service is unchanged.
 
+The SoR runner uses a local Unix-domain PostgreSQL DSN and optionally
+sets `PGPASSFILE` to a real, readable, non-symlinked `0600` file owned
+by the jailed fi-sor identity. It does not create or expose database
+passwords; the actual FreeBSD cluster's local authentication must be
+verified independently. No network PostgreSQL socket is used.
+
 These steps **do not mount tmpfs, add custody RO nullfs mappings, change
 PostgreSQL authentication or start any service**. They are not a substitute
 for a real FreeBSD isolated two-jail acceptance run.
