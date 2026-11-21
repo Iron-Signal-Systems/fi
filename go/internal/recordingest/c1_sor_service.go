@@ -67,6 +67,7 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         pool.Close();s.failed=err
         return nil,fmt.Errorf("C1 fi-sor: independent parallel verifier startup: %w",err)
     }
+    handler.minBatchIndex=frame.StartBatchIndex
     s.pool=pool
     s.session=handler
     s.commitReady=tracker

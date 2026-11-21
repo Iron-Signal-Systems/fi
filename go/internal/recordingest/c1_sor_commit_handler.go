@@ -30,6 +30,7 @@ type c1SoRCommitHandler struct {
     // These IDs are looked up from FI's verified original signed source
     // batches by fi-sor; NEVER accept an arbitrary identity from fi-ingest.
     sourceBatches []int64
+    minBatchIndex uint32 // immutable signed prefix cannot be reprojected
     expectedRecords int64
     parentRows int64
     typedRows int64
@@ -105,7 +106,7 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
     rows:=make([]privateP6Record,0,len(f.Rows))
     for i,row:=range f.Rows {
         index:=int(row.SignedBatchIndex)
-        if index<0||index>=len(s.sourceBatches)||
+        if index<int(s.minBatchIndex)||index>=len(s.sourceBatches)||
             row.SourceBatchID!=s.sourceBatches[index] {
             return nil,fmt.Errorf("C1 fi-sor: row %d is not mapped to verified signed batch",i)
         }

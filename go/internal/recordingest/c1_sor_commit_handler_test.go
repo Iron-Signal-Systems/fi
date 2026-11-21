@@ -93,6 +93,18 @@ func TestC1SoRNativeProcessorFailsClosed(t *testing.T){
             t.Fatal("typed SQL accepted before parent handoff")
         }
     })
+    t.Run("seed-prefix-not-replayed",func(t *testing.T){
+        sink:=&c1SQLHandoffTestSink{}
+        h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
+            strings.Repeat("b",64),[]int64{55,56},1)
+        if err!=nil{t.Fatal(err)}
+        h.minBatchIndex=1
+        old:=c1SQLTestFrame(c1handoff.Source,2)
+        if err=h.Commit(context.Background(),old);err==nil{
+            t.Fatal("a signed row from immutable verified seed was re-admitted")
+        }
+        if sink.parent!=0{t.Fatal("seed prefix replay reached PostgreSQL")}
+    })
     t.Run("premature-drain",func(t *testing.T){
         sink:=&c1SQLHandoffTestSink{}
         h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
