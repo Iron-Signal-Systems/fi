@@ -70,45 +70,8 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
         s.drained=true
         return nil
     }
-    rows:=make([]privateP6Record,0,len(f.Rows))
-    for i,row:=range f.Rows {
-        index:=int(row.SignedBatchIndex)
-        if index<0||index>=len(s.sourceBatches)||
-            row.SourceBatchID!=s.sourceBatches[index] {
-            return fmt.Errorf("C1 fi-sor: row %d is not mapped to verified signed batch",i)
-        }
-        prepared,err:=PrepareSourceRecord(row.RawRecord)
-        if err!=nil{return fmt.Errorf("C1 fi-sor: signed source decode %d: %w",i,err)}
-        if prepared.RecordDigest!=row.Digest {
-            return errors.New("C1 fi-sor: prepared record differs from signed source digest")
-        }
-        family,err:=privateP6KindFamily(prepared.Record.RecordKind)
-        if err!=nil{return err}
-        if f.Kind!=c1handoff.Source && f.Kind!=c1handoff.Kind(family+2){
-            return errors.New("C1 fi-sor: wrong native SQL projector for signed record kind")
-        }
-        if f.Kind==c1handoff.Source &&
-            s.parentRows>0 && i==0 &&
-            (row.SignedBatchIndex<s.lastParentBatch ||
-                (row.SignedBatchIndex==s.lastParentBatch&&row.Ordinal<=s.lastParentOrdinal)){
-            return errors.New("C1 fi-sor: ordered source-parent handoff regressed")
-        }
-        rows=append(rows,privateP6Record{
-            signedBatchIndex:index,sourceBatchID:row.SourceBatchID,
-            ordinal:row.Ordinal,prepared:prepared,
-        })
-    }
-    if int64(len(rows))>s.expectedRecords-s.parentRows && f.Kind==c1handoff.Source{
-        return errors.New("C1 fi-sor: source-parent committed rows would exceed original signed receipt")
-    }
-    // No family may outrun the durable SourceParent ledger. The SQL
-    // foreign-key proof below remains authoritative for exact identity.
-    if f.Kind!=c1handoff.Source && int64(len(rows))>s.parentRows-s.typedRows {
-        return errors.New("C1 fi-sor: typed family outran committed source parents")
-    }
-    if int64(len(rows))>s.expectedRecords-s.typedRows && f.Kind!=c1handoff.Source{
-        return errors.New("C1 fi-sor: family committed rows would exceed original signed receipt")
-    }
+    rows,err:=s.prepareRows(f)
+    if err!=nil{return err}
     if f.Kind==c1handoff.Source{
         if err:=s.sink.Source(ctx,rows);err!=nil{return err}
         // C1's ordered PostgreSQL source writer commits inside fi-sor.
@@ -123,6 +86,62 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
     if err:=s.sink.WaitFamily(ctx,family);err!=nil{return err}
     s.typedRows+=int64(len(rows))
     return nil
+}
+// prepareRows maps every signed original batch/ordinal to its exact
+// validated C1 projector family. It performs NO PostgreSQL write, and is
+// reused identically by synchronous tests and the native async SQL path.
+func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,error){
+    if s==nil||s.sink==nil||s.drained{
+        return nil,errors.New("C1 fi-sor: inactive or already drained session")
+    }
+    if err:=f.Validate();err!=nil{return nil,err}
+    if f.SourceID!=s.sourceID||f.GenerationID!=s.generationID||
+        f.ReceiptSHA256!=s.receipt{
+        return nil,errors.New("C1 fi-sor: mismatched signed generation")
+    }
+    if f.Kind<c1handoff.Source||f.Kind>c1handoff.Other{
+        return nil,errors.New("C1 fi-sor: expected original signed SQL handoff")
+    }
+    rows:=make([]privateP6Record,0,len(f.Rows))
+    for i,row:=range f.Rows {
+        index:=int(row.SignedBatchIndex)
+        if index<0||index>=len(s.sourceBatches)||
+            row.SourceBatchID!=s.sourceBatches[index] {
+            return nil,fmt.Errorf("C1 fi-sor: row %d is not mapped to verified signed batch",i)
+        }
+        prepared,err:=PrepareSourceRecord(row.RawRecord)
+        if err!=nil{return nil,fmt.Errorf("C1 fi-sor: signed source decode %d: %w",i,err)}
+        if prepared.RecordDigest!=row.Digest {
+            return nil,errors.New("C1 fi-sor: prepared record differs from signed source digest")
+        }
+        family,err:=privateP6KindFamily(prepared.Record.RecordKind)
+        if err!=nil{return nil,err}
+        if f.Kind!=c1handoff.Source && f.Kind!=c1handoff.Kind(family+2){
+            return nil,errors.New("C1 fi-sor: wrong native SQL projector for signed record kind")
+        }
+        if f.Kind==c1handoff.Source &&
+            s.parentRows>0 && i==0 &&
+            (row.SignedBatchIndex<s.lastParentBatch ||
+                (row.SignedBatchIndex==s.lastParentBatch&&row.Ordinal<=s.lastParentOrdinal)){
+            return nil,errors.New("C1 fi-sor: ordered source-parent handoff regressed")
+        }
+        rows=append(rows,privateP6Record{
+            signedBatchIndex:index,sourceBatchID:row.SourceBatchID,
+            ordinal:row.Ordinal,prepared:prepared,
+        })
+    }
+    if int64(len(rows))>s.expectedRecords-s.parentRows && f.Kind==c1handoff.Source{
+        return nil,errors.New("C1 fi-sor: source-parent committed rows would exceed original signed receipt")
+    }
+    // No family may outrun the durable SourceParent ledger. The SQL
+    // foreign-key proof below remains authoritative for exact identity.
+    if f.Kind!=c1handoff.Source && int64(len(rows))>s.parentRows-s.typedRows {
+        return nil,errors.New("C1 fi-sor: typed family outran committed source parents")
+    }
+    if int64(len(rows))>s.expectedRecords-s.typedRows && f.Kind!=c1handoff.Source{
+        return nil,errors.New("C1 fi-sor: family committed rows would exceed original signed receipt")
+    }
+    return rows,nil
 }
 // Keep signed-batch indexes as the exact original metadata, not PostgreSQL
 // sequence position. No synthetic per-family ordinal is ever introduced.
