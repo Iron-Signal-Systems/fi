@@ -1106,6 +1106,29 @@ grep '^FI C1 P6 CONTINUOUS FAMILY ' "$log" > "$out/$name/C1_CONTINUOUS_FAMILIES.
 grep -Fq "family=Security max_outstanding=$( [ "$sqlmax" -gt 4 ] && echo "$sqlmax" || echo 4) " "$out/$name/C1_CONTINUOUS_FAMILIES.txt" &&
 grep -Fq "family=NTFSFile max_outstanding=$( [ "$sqlmax" -gt 4 ] && echo "$sqlmax" || echo 4) " "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
   fail 'C1 continuous P6 family backpressure/report mismatch'
+# The original source and File/NTFS relationships remain durable before
+# USN SQL, but the main Preparation reader is no longer serialized behind
+# every USN SQL ACK. Both queues are bounded and use the SAME SQL workers.
+grep '^FI C1 ASYNC USN DISPATCH START ' "$log" > "$out/$name/C1_USN_ASYNC_START.txt" ||
+  fail 'C1 asynchronous ordered USN dispatcher was not started'
+grep '^FI C1 ASYNC USN DISPATCH COMPLETE ' "$log" > "$out/$name/C1_USN_ASYNC_COMPLETE.txt" ||
+  fail 'C1 asynchronous ordered USN dispatcher did not complete'
+[ "$(wc -l < "$out/$name/C1_USN_ASYNC_START.txt" | tr -d '[:space:]')" = 1 ] &&
+[ "$(wc -l < "$out/$name/C1_USN_ASYNC_COMPLETE.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq 'queue_max=64 ordered_SQL_commits=true file_dependencies=commit_fences shared_sql_workers=true extra_pg_connections=0' "$out/$name/C1_USN_ASYNC_START.txt" &&
+grep -Fq 'queue_max=64 ' "$out/$name/C1_USN_ASYNC_COMPLETE.txt" &&
+grep -Fq 'ordered_commit=true shared_sql=true' "$out/$name/C1_USN_ASYNC_COMPLETE.txt" &&
+grep -Fq 'family=USNDependency max_outstanding=64 ' "$out/$name/C1_CONTINUOUS_FAMILIES.txt" ||
+  fail 'C1 USN queue/ordering/family limits do not match async design'
+awk '
+  {
+    delete x
+    for(i=1;i<=NF;i++){n=split($i,p,"=");if(n==2)x[p[1]]=p[2]}
+    if(x["peak_outstanding"]<1||x["peak_outstanding"]>64||
+       x["committed_handoffs"]<1)exit 1
+  }
+' "$out/$name/C1_USN_ASYNC_COMPLETE.txt" ||
+  fail 'C1 USN dispatcher did not commit or violated bounded backlog'
 grep '^FI C1 SQL PROFILE ' "$log" > "$out/$name/C1_SQL_PROFILE.txt" ||
   fail 'C1 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/C1_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
@@ -1162,6 +1185,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/C1_IDLE_TIMER.txt" "$name/C1_IDLE_FLUSH.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
+  "$name/C1_USN_ASYNC_START.txt" "$name/C1_USN_ASYNC_COMPLETE.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
   "$name/wal_before.jsonl" "$name/wal_after.jsonl" \
   "$name/checkpointer_before.jsonl" "$name/checkpointer_after.jsonl" \
