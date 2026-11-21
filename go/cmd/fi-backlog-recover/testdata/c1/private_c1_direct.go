@@ -354,11 +354,12 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
             })
         }
     }
-    // Independent read-only verifier begins before record processing. It
-    // has no access to the P6 shared SQL ACK queues and never writes markers.
-    verifier,e:=privateC1StartAsyncVerify(ctx,dsn,pgdata,g,ds,startWindow,end,
+    // Process B starts before A's P5/P6 loop, with an independent PID and
+    // PostgreSQL session. Only bounded original group metadata and COMMIT-ready
+    // receipts cross the one-way pipe; B never controls any P6 buffer.
+    verifier,e:=privateC1StartProcessVerify(ctx,dsn,pgdata,g,ds,startWindow,end,
         commitReady.notifications,func(err error){
-            fmt.Printf("FI C1 VERIFIER CALLBACK error=%v action=report_and_withhold_marker ingestion_cancelled=false\n",err)
+            fmt.Printf("FI C1 VERIFIER CALLBACK error=%v action=report_and_withhold_marker ingestion_cancelled=false verifier_process=separate\n",err)
         })
     if e!=nil{return empty,fmt.Errorf("FI C1: async relational verifier startup: %w",e)}
     defer verifier.Stop()
@@ -383,10 +384,8 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     }
     // W512 is only a reporting boundary. The P6 buffers were never
     // drained or re-created inside the loop above.
-    // Treat entry into the one final P6 drain as the cutoff for proving
-    // verification DURING the continuous signed-input processing period.
-    // Merely completing a read-only query during final flush cannot pass
-    // the 8GiB concurrency architecture gate.
+    // Notify B that A entered its final drain, without waiting for B or
+    // injecting SQL handoffs at the reporting group boundary.
     verifier.MarkDrained()
     fmt.Printf("FI C1 P6 FINAL DRAIN START records_admitted=%d marker_unwritten=true\n",totalRows)
     if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 shared-pool five-family drain: %w",err)}
