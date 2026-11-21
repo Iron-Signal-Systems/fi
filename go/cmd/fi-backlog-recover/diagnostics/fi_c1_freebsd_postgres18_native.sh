@@ -58,8 +58,8 @@ SQL
 # downloading Go modules; role creation mistakes fail within seconds.
 for role in fi_c1_test fi_c1_schema_test;do
   [ "$(psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d postgres -At \
-      -v ON_ERROR_STOP=1 -v rolename="$role" \
-      -c "SELECT count(*) FROM pg_roles WHERE rolname=:'rolename'")" = 1 ] ||
+      -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM pg_roles WHERE rolname='$role'")" = 1 ] ||
       fail "disposable PostgreSQL missing fixture role $role"
 done
 [ "$(psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d postgres -At \
@@ -68,8 +68,8 @@ done
     fail "isolated private-schema admin is not a PostgreSQL SUPERUSER"
 for db in fi fi_c1_replay_integration;do
   [ "$(psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d postgres -At \
-      -v ON_ERROR_STOP=1 -v databasename="$db" \
-      -c "SELECT count(*) FROM pg_database WHERE datname=:'databasename'")" = 1 ] ||
+      -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM pg_database WHERE datname='$db'")" = 1 ] ||
       fail "disposable PostgreSQL missing fixture database $db"
 done
 
