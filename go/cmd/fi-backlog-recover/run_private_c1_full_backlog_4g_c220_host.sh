@@ -48,21 +48,31 @@ pg_wal_buffers=16MB
   fail 'C1 full signed backlog requires 4GiB groups'
 prefix8=${FI_C1_DEV_PREFIX8:-0}
 case "$prefix8" in 0|1) ;; *) fail 'FI_C1_DEV_PREFIX8 must be 0 or 1' ;; esac
-# The three Security changes are one explicit 8GiB-only experimental mode.
-# Do not leak it into generic Go/race unit tests: individual unit tests opt
-# into the candidate themselves through scoped t.Setenv.
+# Same three Security changes as the measured 8GiB candidate.
+# Full-backlog selection requires a separate opt-in and a complete clone.
 security8=${FI_C1_SECURITY_8G_EXPERIMENT:-0}
-case "$security8" in 0|1) ;; *) fail 'FI_C1_SECURITY_8G_EXPERIMENT must be exactly 0 or 1' ;; esac
-if [ "$security8" = 1 ] && [ "$mode" = family ] && [ "$prefix8" != 1 ];then
-  fail 'larger Security buffers/COPY and reusable rows are ONLY permitted in the 8GiB two-group clone experiment'
+fullcandidate=${FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE:-0}
+case "$security8" in 0|1) ;; *) fail 'FI_C1_SECURITY_8G_EXPERIMENT must be 0 or 1';; esac
+case "$fullcandidate" in 0|1) ;; *) fail 'FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE must be 0 or 1';; esac
+if [ "$security8" = 1 ];then
+  if [ "$prefix8" = 1 ];then
+    [ "$fullcandidate" = 0 ] ||
+      fail 'full-backlog candidate flag is forbidden in prefix8 mode'
+  else
+    [ "$fullcandidate" = 1 ] ||
+      fail 'full-backlog Security candidate requires explicit opt-in'
+  fi
+else
+  [ "$fullcandidate" = 0 ] ||
+    fail 'full-backlog candidate opt-in without Security candidate'
 fi
 sourceprof=${FI_C1_SOURCE_PROFILE_8G:-0}
-case "$sourceprof" in 0|1) ;; *) fail 'FI_C1_SOURCE_PROFILE_8G must be exactly 0 or 1';; esac
+case "$sourceprof" in 0|1) ;; *) fail 'FI_C1_SOURCE_PROFILE_8G must be 0 or 1';; esac
 if [ "$sourceprof" = 1 ] && { [ "$prefix8" != 1 ] || [ "$security8" != 1 ]; };then
-  fail 'SourceParent profiling requires the optimized 8GiB private clone'
+  fail 'SourceParent profiling is limited to the optimized 8GiB private clone'
 fi
-# Ordinary Go/race tests run with profiling switches disabled.
-unset FI_C1_SECURITY_8G_EXPERIMENT FI_C1_SOURCE_PROFILE_8G
+# Do not leak performance switches into generic compile/race tests.
+unset FI_C1_SECURITY_8G_EXPERIMENT FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE FI_C1_SOURCE_PROFILE_8G
 stop=0
 if [ "$prefix8" = 1 ];then stop=2;fi
 
@@ -93,7 +103,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=729b8f0e7288aa7aa2f0c6d91d30311802c2ea10
+sourcecommit=35bf436452aa8c009648ada40e3d2dbf47ca4542
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -920,6 +930,7 @@ export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 # Restore candidate mode only for the actual private ingestion executable.
 # All Go/race compile tests ran with the ordinary control defaults.
 export FI_C1_SECURITY_8G_EXPERIMENT="$security8"
+export FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE="$fullcandidate"
 export FI_C1_SOURCE_PROFILE_8G="$sourceprof"
 if [ "$prefix8" = 1 ];then
   export FI_W512_C1_STOP_WINDOWS=2
@@ -1215,14 +1226,21 @@ grep '^FI C1 SECURITY 8G PROFILE ' "$log" > "$out/$name/C1_SECURITY_8G_PROFILE.t
 [ "$(wc -l < "$out/$name/C1_SECURITY_8G_PROFILE.txt" | tr -d '[:space:]')" = 1 ] ||
   fail 'C1 Security 8GiB profile must have exactly one report'
 if [ "$security8" = 1 ];then
-  [ "$prefix8" = 1 ] &&
-  grep -Fq 'mode=candidate security_rows=8192 security_bytes=33554432 sql_profile=P4 field_rows=65536 field_bytes=16777216 reusable_event=true reusable_scope=true separate_field_partitions=false full_backlog=false clone_only=true' "$out/$name/C1_SECURITY_8G_PROFILE.txt" ||
-    fail 'C1 Security candidate did not select all three bounded 8GiB-only optimizations'
+  expect_full=false
+  if [ "$prefix8" = 0 ];then
+    [ "$fullcandidate" = 1 ] || fail 'missing full-backlog Security candidate selection'
+    expect_full=true
+  fi
+  grep -Fq "mode=candidate security_rows=8192 security_bytes=33554432 sql_profile=P4 field_rows=65536 field_bytes=16777216 reusable_event=true reusable_scope=true separate_field_partitions=false full_backlog=$expect_full clone_only=true" "$out/$name/C1_SECURITY_8G_PROFILE.txt" ||
+    fail 'C1 candidate did not retain the exact 8192/32MiB and 65536/16MiB Security profile'
 else
   grep -Fq 'mode=control security_rows=4096 security_bytes=16777216 sql_profile=P3 field_rows=32768 field_bytes=8388608 reusable_event=false reusable_scope=false separate_field_partitions=false' "$out/$name/C1_SECURITY_8G_PROFILE.txt" ||
     fail 'C1 Security control profile unexpectedly changed'
 fi
 echo "FI C1 SECURITY 8G SELECTION PASS mode=$( [ "$security8" = 1 ] && echo candidate || echo control ) same_relational_schema=true signed_source_unchanged=true verification_required=true"
+if [ "$security8" = 1 ] && [ "$prefix8" = 0 ];then
+  echo 'FI C1 SECURITY FULL BACKLOG CANDIDATE PASS profile=8192_32MiB_65536_16MiB_reusable_row sourceparent=ordered verifier=B clone_only=true'
+fi
 grep '^FI C1 SOURCE PARENT STAGES ' "$log" > "$out/$name/C1_SOURCE_PARENT_STAGES.txt" ||
   fail 'C1 serial SourceParent COPY/commit breakdown was not recorded'
 if [ "$sourceprof" = 1 ];then
