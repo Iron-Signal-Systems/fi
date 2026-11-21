@@ -69,6 +69,27 @@ so they should not be described as guaranteed unswappable physical RAM;
 protect or disable swap as appropriate for local custody confidentiality.
 This option is not equivalent to a durable recovery journal.
 
+### Host read-only validation command
+
+Compile `go/cmd/fi-c1-host-preflight` with
+`GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev`.
+On the FreeBSD host, supply the **actual** installed C220 jail-root paths
+to the command. For example:
+
+```sh
+fi-c1-host-preflight \\
+  --host-tmpfs /var/run/fi-c1-handoff \\
+  --ingest-root /ACTUAL/fi-ingest-jail-root \\
+  --sor-root /ACTUAL/fi-sor-db-jail-root \\
+  --jail-ram-path /var/run/fi-c1-handoff
+```
+
+This is a **read-only check**, not an installer. It proves the actual host
+mount is `tmpfs`, both jail paths are distinct exact `nullfs` mountpoints
+with the same source, fi-ingest is RW and fi-sor is RO. Do not substitute
+example jail-root placeholders or skip the real host check. A separate
+mount-installation and runtime wiring acceptance gate remains.
+
 ## Interruption semantics
 
 On power loss, both jails discard incomplete prepared work and reconstruct
