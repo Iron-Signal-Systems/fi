@@ -83,12 +83,17 @@ func run()error{
     ingest:=flags.String("ingest-root","","actual fi-ingest jail root")
     sor:=flags.String("sor-root","","actual fi-sor-db jail root")
     at:=flags.String("jail-ram-path","/var/run/fi-c1-handoff","same in-jail mount path for both services")
+    uid:=flags.Uint("runtime-uid",0,"FI installer's exact runtime numeric UID for host tmpfs root")
+    gid:=flags.Uint("runtime-gid",0,"FI installer's exact shared numeric GID for host tmpfs root")
     originalHost:=flags.String("host-custody-root","","real host original signed receiver custody root")
     receiptHost:=flags.String("host-recorded-root","","real host original signed recorded receipt root")
     originalJail:=flags.String("sor-custody-path","","read-only original signed custody path visible inside fi-sor jail")
     receiptJail:=flags.String("sor-recorded-path","","read-only recorded receipt path visible inside fi-sor jail")
     if err:=flags.Parse(os.Args[1:]);err!=nil{return err}
     if flags.NArg()!=0{return errors.New("C1 host: unexpected positional arguments")}
+    if *uid<1000||*uid>32000||*gid<1000||*gid>32000{
+        return errors.New("C1 host: original FI runtime UID/GID 1000..32000 required")
+    }
     if *host==""||*ingest==""||*sor==""||
         *originalHost==""||*receiptHost==""||
         *originalJail==""||*receiptJail==""{
@@ -110,6 +115,14 @@ func run()error{
     if err=syscall.Statfs(hostPath,&ramStat);err!=nil{return err}
     if err=backendinstall.ValidateC1RAMFilesystemSize(ramStat.Blocks,ramStat.Bsize);err!=nil{
         return fmt.Errorf("C1 host: unsafe tmpfs byte ceiling: %w",err)
+    }
+    hostInfo,e:=os.Lstat(hostPath)
+    if e!=nil{return e}
+    inode,ok:=hostInfo.Sys().(*syscall.Stat_t)
+    if !ok{return errors.New("C1 host: no native FreeBSD stat identity for tmpfs")}
+    if err=backendinstall.ValidateC1RAMMountSecurity(ramStat.Flags,
+        hostInfo.Mode(),inode.Uid,inode.Gid,uint32(*uid),uint32(*gid));err!=nil{
+        return fmt.Errorf("C1 host: tmpfs ownership/mount options: %w",err)
     }
     if err=verifyMount(ingestPath,"nullfs",hostPath,false);err!=nil{return err}
     if err=verifyMount(sorPath,"nullfs",hostPath,true);err!=nil{return err}

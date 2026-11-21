@@ -53,3 +53,13 @@ unknown, duplicated, symlinked or conflicting destination entries fail
 closed. Missing entries return a distinct nonzero status. **This audit
 never modifies a file or mounts a filesystem**, and does not replace the
 independent live `fi-c1-host-preflight` validation.
+
+## Mandatory live host tmpfs proof
+
+The FreeBSD `fi-c1-host-preflight` now requires the **actual numeric**
+`--runtime-uid` and `--runtime-gid` from the installed FI configuration.
+It checks that the mounted host tmpfs root is an exactly mode `0770`
+directory owned by those numbers, has `noexec,nosuid`, and has a real
+capacity between 2 GiB and 4 GiB. It also checks both jail nullfs
+mounts and original signed custody read-only mappings. This is a
+**read-only** preflight, not a mount installer or activation command.
