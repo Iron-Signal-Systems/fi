@@ -178,6 +178,22 @@ does **not** mount tmpfs, activate C1, or imply deployment acceptance.
 Subsequent mount wiring, rc service installation, restart replay and
 isolated true two-jail acceptance remain required.
 
+## FreeBSD C1 service account and disabled rc scripts
+
+The FreeBSD host installer now has four explicit *development staging* commands:
+`apply-c1-sor-identity`, `verify-c1-sor-identity`,
+`apply-c1-runtime` and `verify-c1-runtime`. The dedicated `fi-sor`
+identity is a non-root jail-local user; no SQL credentials or host user are
+created. Each separate jail receives its own root-owned runner,
+root-owned rc service, and group-readable runtime config. Both
+`fi_c1_ingest_enable` and `fi_c1_sor_enable` default to `NO` and
+missing source/custody/TLS/PostgreSQL settings fail closed. The existing
+`fi_ingest_worker` service is unchanged.
+
+These steps **do not mount tmpfs, add custody RO nullfs mappings, change
+PostgreSQL authentication or start any service**. They are not a substitute
+for a real FreeBSD isolated two-jail acceptance run.
+
 ## Validation before any live C220 activation
 
 - Go race, C1 handoff, prepared-family tests and cross-built FreeBSD

@@ -150,7 +150,7 @@ func parseInvocation(
 			configPath:             args[1],
 		}, nil
 
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-c1-sor-identity", "verify-c1-sor-identity", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-c1-sor-identity", "verify-c1-sor-identity", "apply-c1-runtime", "verify-c1-runtime", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -530,6 +530,20 @@ func main() {
         fmt.Fprintln(os.Stdout,"FI C1 development worker binary verification complete.")
 
     
+    case "apply-c1-runtime":
+        if err:=backendinstall.ApplyC1DevelopmentRuntime(config);err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 RUNTIME APPLY BLOCKED: %v\n",err)
+            os.Exit(1)
+        }
+        fmt.Fprintln(os.Stdout,"FI C1 jail rc scripts staged; both services disabled.")
+
+    case "verify-c1-runtime":
+        if err:=backendinstall.VerifyC1DevelopmentRuntime(config);err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 RUNTIME VERIFY BLOCKED: %v\n",err)
+            os.Exit(1)
+        }
+        fmt.Fprintln(os.Stdout,"FI C1 jail service runtime verification complete.")
+
     case "apply-c1-sor-identity":
         if err:=backendinstall.ApplyC1SoRIdentity(config);err!=nil{
             fmt.Fprintf(os.Stderr,"FI C1 SOR IDENTITY APPLY BLOCKED: %v\n",err)
