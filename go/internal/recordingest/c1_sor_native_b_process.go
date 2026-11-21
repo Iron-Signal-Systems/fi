@@ -326,6 +326,9 @@ func c1NativeBCompleteRelational(ctx context.Context,conn *pgx.Conn,
         return errors.New("C1 B: complete private relational source totals differ from signed manifests")
     }
     if err=verifyGenerationProjectionCoverage(ctx,shadow,id);err!=nil{return err}
+    if err=verifyBacklogUSNCapturesComplete(ctx,shadow,id);err!=nil{
+        return fmt.Errorf("C1 B: original signed USN capture dependency proof: %w",err)
+    }
     var authoritative bool
     if err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2)",
         p.Start.SourceID,p.Start.GenerationID).Scan(&authoritative);err!=nil{return err}

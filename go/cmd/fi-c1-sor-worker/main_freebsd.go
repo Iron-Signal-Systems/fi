@@ -54,6 +54,8 @@ func main(){
     ramMount,e:=c1handoff.NewRAMStore(*ram)
     if e!=nil{fatal(e)}
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,true);e!=nil{fatal(e)}
+    if e=c1handoff.RequireFreeBSDReadOnlyCustody(*custodyRoot);e!=nil{fatal(e)}
+    if e=c1handoff.RequireFreeBSDReadOnlyCustody(*recordedRoot);e!=nil{fatal(e)}
     cfg:=recordingest.C1SoRServerConfig{
         Bind:*bind,LocalPostgresDSN:*db,SQLWorkersMax:*max,
         SharedRAMDir:*ram,AllowC1Replay:*recoverPrivate,

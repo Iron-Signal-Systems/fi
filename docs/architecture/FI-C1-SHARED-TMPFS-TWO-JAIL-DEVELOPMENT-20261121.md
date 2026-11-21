@@ -126,6 +126,27 @@ A prefix of fully committed batches followed by empty batches is **not**
 itself a dirty tail; only a partial SourceParent batch or an incomplete typed
 root inside the committed source prefix is reported as dirty.
 
+## Independent B original custody readback
+
+Verifier B now has a separate signed custody verification path. The
+fi-sor jail needs **read-only** nullfs access to the existing immutable
+receiver custody and recorded receipt roots, plus the installed trusted
+root, batch issuer, CRL and source registry. The host installs these
+read-only views; neither fi-sor nor fi-ingest may modify the originals.
+
+B streams the original signed transport, verifies cryptographic receiver
+authorization and recorded receipt, checks each signed manifest/data
+SHA-256 and rechecks each original record's exact SourceParent digest
+and typed root with a distinct read-only SQL session. Unlike the old
+disposable recovery pipeline, this path does **not** duplicate the entire
+generation on disk. C1 cannot report independent full proof if these
+read-only custody mounts are unavailable.
+
+The fi-sor worker now requires `--custody-root` and `--recorded-root`
+and refuses a writable custody filesystem. Correct host mount roots,
+certificate trust availability and real source permissions still require
+FreeBSD acceptance testing.
+
 ## Interruption semantics
 
 On power loss, both jails discard incomplete prepared work and reconstruct

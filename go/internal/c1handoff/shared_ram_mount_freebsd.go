@@ -11,6 +11,8 @@ package c1handoff
 import (
     "errors"
     "fmt"
+    "os"
+    "path/filepath"
     "syscall"
 )
 
@@ -42,5 +44,26 @@ func RequireFreeBSDRAMMount(store *RAMStore,reader bool)error{
     }
     // The host remains responsible for proving nullfs's actual backing
     // mount is tmpfs (and for jail mount/group admission).
+    return nil
+}
+
+// RequireFreeBSDReadOnlyCustody refuses a receiver source/recorded root
+// accidentally exposed as a writable nullfs or ZFS filesystem in fi-sor.
+// This does not mount, chmod or rewrite any original signed custody file.
+func RequireFreeBSDReadOnlyCustody(path string)error{
+    if !filepath.IsAbs(path)||filepath.Clean(path)=="/"{
+        return errors.New("C1 B: absolute non-root read-only custody path required")
+    }
+    st,err:=os.Lstat(path)
+    if err!=nil{return err}
+    if !st.IsDir()||st.Mode()&os.ModeSymlink!=0{
+        return errors.New("C1 B: signed custody must be a real directory")
+    }
+    var fs syscall.Statfs_t
+    if err=syscall.Statfs(path,&fs);err!=nil{return err}
+    const freeBSDMntReadOnly uint64=0x00000001
+    if fs.Flags&freeBSDMntReadOnly==0{
+        return errors.New("C1 B: signed receiver custody/receipt mount must be read-only in fi-sor")
+    }
     return nil
 }
