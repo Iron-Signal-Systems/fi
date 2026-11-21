@@ -97,7 +97,7 @@ func TestPrivateC1ContinuousSignedReaderRejectsMalformedBatchBeforeNext(t *testi
 func TestPrivateC1ContinuousP5FeedsP6InOriginalBatchOrdinalOrder(t *testing.T){
     t.Setenv("FI_W512_P5_PERSISTENT","1")
     t.Setenv("FI_W512_P3_DYNAMIC_MIN","2")
-    t.Setenv("FI_W512_P3_DYNAMIC_MAX","16")
+    t.Setenv("FI_W512_P3_DYNAMIC_MAX","32")
     t.Setenv("FI_W512_P3_SECURITY_WORKERS","")
     t.Setenv("FI_W512_P3_GENERAL_WORKERS","")
     ctx:=context.Background()
