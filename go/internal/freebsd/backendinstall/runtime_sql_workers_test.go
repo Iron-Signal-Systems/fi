@@ -12,7 +12,7 @@ import (
 func TestManagedIngestAdaptiveSQLWorkersBound(t *testing.T) {
     requiredRunner := []string{
         `fi_ingest_worker_sql_workers_max="${fi_ingest_worker_sql_workers_max:-5}"`,
-        `[1-9]|1[0-6])`,
+        `[1-9]|[12][0-9]|3[0-2])`,
         `-sql-workers-max "$fi_ingest_worker_sql_workers_max"`,
     }
     for _, value := range requiredRunner {
