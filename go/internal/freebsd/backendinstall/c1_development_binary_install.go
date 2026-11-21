@@ -37,18 +37,24 @@ func buildC1DevelopmentBinaryPlan(config Config,releaseDirectory string)(
     if e!=nil{return applicationBinaryPlan{},fmt.Errorf("C1 ingest development executable: %w",e)}
     sorContent,e:=loadApplicationBinarySource(filepath.Join(directory,"fi-c1-sor-worker"))
     if e!=nil{return applicationBinaryPlan{},fmt.Errorf("C1 SoR development executable: %w",e)}
+    hostContent,e:=loadApplicationBinarySource(filepath.Join(directory,"fi-c1-host-preflight"))
+    if e!=nil{return applicationBinaryPlan{},fmt.Errorf("C1 native host RAM preflight executable: %w",e)}
     ingestParent:=filepath.Join(ingestRoot,"usr/local/sbin")
     sorParent:=filepath.Join(sorRoot,"usr/local/sbin")
+    hostParent:="/usr/local/sbin"
     return applicationBinaryPlan{
         Parents:[]lifecycleParentSpec{
             {Path:ingestParent,Mode:0755,UID:0,GID:0,Role:"c1-ingest-local-sbin"},
             {Path:sorParent,Mode:0755,UID:0,GID:0,Role:"c1-sor-local-sbin"},
+            {Path:hostParent,Mode:0755,UID:0,GID:0,Role:"c1-host-local-sbin"},
         },
         Files:[]applicationBinaryFileSpec{
             {Target:filepath.Join(ingestParent,"fi-c1-ingest-worker"),
                 Content:ingestContent,Mode:0555,UID:0,GID:0,Role:"c1-ingest-development"},
             {Target:filepath.Join(sorParent,"fi-c1-sor-worker"),
                 Content:sorContent,Mode:0555,UID:0,GID:0,Role:"c1-sor-development"},
+            {Target:filepath.Join(hostParent,"fi-c1-host-preflight"),
+                Content:hostContent,Mode:0555,UID:0,GID:0,Role:"c1-native-host-read-only-preflight"},
         },
     },nil
 }

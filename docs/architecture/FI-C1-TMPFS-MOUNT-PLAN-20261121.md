@@ -98,3 +98,21 @@ cross-file database transaction. Verify the exact entries with
 `audit-c1-ram-mounts`, then run the actual host `fi-c1-host-preflight`
 after deliberate, separately authorized mounts. Keep C220 live fi
 ingestion disabled until end-to-end acceptance.
+
+## FreeBSD C1 binary staging includes host-side acceptance
+
+The exact development binary bundle for
+`fi-backend-install apply-c1-binaries` must contain all three distinct
+FreeBSD executables:
+
+- `fi-c1-ingest-worker` (installed inside fi-ingest)
+- `fi-c1-sor-worker` (installed inside fi-sor-db)
+- `fi-c1-host-preflight` (installed on the FreeBSD host, NOT in a jail)
+
+All are root-owned, mode `0555`, and installed without enabling a
+service. Missing host-preflight binary rejects the entire staged plan
+before changing any file. The **host** must run it after deliberate
+tmpfs/nullfs mounts using the actual installer's jail roots, numeric
+UID/GID and read-only original receiver custody checks. Neither
+fi-ingest nor fi-sor may declare itself ready merely because its binary
+exists.
