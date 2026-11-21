@@ -332,7 +332,7 @@ jobs:
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
           assert 'sourcepin=a21b4f4e1583bf48f0aa74a3403d098fe4a2a806' in controller
-          assert 'runnerpin=47ede50dc6d4012f0367ab63277351053bdd9adf' in controller
+          assert 'runnerpin=c6488eb12e43f38044c88dc34d18001b037bc56c' in controller
           assert 'sourcecommit=a21b4f4e1583bf48f0aa74a3403d098fe4a2a806' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
@@ -398,6 +398,8 @@ jobs:
           assert 'TestPrivateC1USNFilePrerequisitesDeferredOffPreparation' in (root/'testdata/c1/private_c1_direct_test.go').read_text()
           assert 'queue_max=64 ordered_SQL_commits=true file_dependencies=commit_fences' in runner
           assert 'C1_USN_ASYNC_START.txt' in runner and 'C1_USN_ASYNC_COMPLETE.txt' in runner
+          assert 'FI C1 ASYNC USN COMMIT ACCOUNTING PASS' in runner
+          assert 'FI C1 ASYNC USN COMMIT ACCOUNTING PASS' in controller
           assert 'C1_USN_ASYNC_START.txt' in controller and 'C1_USN_ASYNC_COMPLETE.txt' in controller
           p5=(root/'testdata/family-p3/private_family_persistent_p5.go').read_text()
           p5tests=(root/'testdata/family-p3/private_family_persistent_p5_test.go').read_text()
