@@ -22,6 +22,20 @@ type securityBulkLimits struct {
 
 type securityBulkProfileContextKey struct{}
 
+// A separate, explicit private C1 Security benchmark switch. It does NOT
+// select detached Security-field partitions, alter signed source evidence,
+// or change ordinary P1/P3 ingest behavior. Only the private C1 SQL module
+// can install this context on a 2-group disposable clone.
+type securityC1COPYExperimentKey struct{}
+
+func withC1SecurityCOPYExperiment(ctx context.Context) context.Context {
+    if ctx==nil{return nil}
+    return context.WithValue(ctx,securityC1COPYExperimentKey{},true)
+}
+func securityC1COPYExperimentEnabled(ctx context.Context) bool {
+    return ctx!=nil&&ctx.Value(securityC1COPYExperimentKey{})==true
+}
+
 // securityBulkFixedProfile rejects unknown names instead of silently choosing
 // a resource-intensive profile. No mutable process-wide tuning state exists.
 func securityBulkFixedProfile(name string) (securityBulkLimits, error) {
