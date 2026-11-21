@@ -87,7 +87,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=6efe294ac85da8817bd6dc4ad36fcac3575c6e19
+sourcecommit=050c3e288fd2dfef45b9da733aa4313064dfb467
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -449,6 +449,42 @@ git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/patchers/family
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 run \
    ./cmd/fi-backlog-recover/patchers/family_p3_c220 "$src"
 ) || exit 1
+# C1 Security 8GiB COPY overlay: the P3/P6 patcher has ALREADY installed
+# the ordered source-parent bypass and exact signed (batch,ordinal) FK reuse.
+# Never overwrite security_bulk.go with a repository copy here: doing so
+# would remove both audited P6 transformations.
+#
+# Replace only the three profile/field budget/test files in this private
+# source tree, then widen EXACTLY the three existing private selection seams
+# in the already-patched security_bulk.go. The ordinary source path remains
+# identical because its new context switch is absent.
+for item in security_bulk_profiles.go security_field_profile_dual.go security_field_profile_dual_test.go;do
+  target="$src/go/internal/recordingest/$item"
+  [ -f "$target" ] && [ ! -L "$target" ] || {
+    echo "FI C1 STOP: source profile overlay target missing or unsafe $item" >&2
+    exit 1
+  }
+  git -C "$expected" show "$sourcecommit:go/internal/recordingest/$item" \
+    > "$target.c1" || exit 1
+  [ -s "$target.c1" ] || exit 1
+  mv "$target.c1" "$target" || exit 1
+done
+security_bulk="$src/go/internal/recordingest/security_bulk.go"
+[ -f "$security_bulk" ] && [ ! -L "$security_bulk" ] &&
+grep -Fq 'if privateP6SourceAlreadyInserted(ctx)' "$security_bulk" &&
+grep -Fq 'ids := privateC1KnownSourceIDs(ctx)' "$security_bulk" ||
+  { echo 'FI C1 STOP: existing P6 parent/FK Security optimizations not present' >&2; exit 1; }
+[ "$(grep -Fc 'if usePrivateSinglePassSecurity(ctx) {' "$security_bulk")" = 3 ] ||
+  { echo 'FI C1 STOP: expected exactly three original Security COPY selection seams' >&2; exit 1; }
+sed 's/if usePrivateSinglePassSecurity(ctx) {/if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {/' \
+  "$security_bulk" > "$security_bulk.c1" || exit 1
+[ "$(grep -Fc 'if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {' "$security_bulk.c1")" = 3 ] &&
+grep -Fq 'if privateP6SourceAlreadyInserted(ctx)' "$security_bulk.c1" &&
+grep -Fq 'ids := privateC1KnownSourceIDs(ctx)' "$security_bulk.c1" ||
+  { echo 'FI C1 STOP: Security COPY overlay changed P6 relational dependency behavior' >&2; exit 1; }
+mv "$security_bulk.c1" "$security_bulk" || exit 1
+echo 'FI C1 PRIVATE SECURITY COPY OVERLAY PASS source_parent_bypass=preserved signed_fk_reuse=preserved private_switches=3 context_isolated=true clone_only=true'
+
 # Extend the accepted P6 coordinator directly. P6 buffers were already
 # installed before the original P6 patcher's required asset audit.
 for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.go private_c1_continuous_signed_stream.go private_c1_continuous_signed_stream_test.go private_c1_async_verify.go private_c1_async_verify_test.go private_c1_process_verify.go private_c1_process_verify_test.go private_c1_commit_ready.go private_c1_commit_ready_test.go private_c1_sparse_age_test.go private_c1_prefix8_proof.go private_c1_prefix8_proof_test.go private_c1_correctness_test.go private_c1_backpressure_test.go private_c1_modules.go private_c1_eight_gib_group.go private_c1_eight_gib_group_test.go private_c1_full_backlog.go private_c1_full_backlog_test.go; do
@@ -572,7 +608,7 @@ mv "$trustfile.c220" "$trustfile" || exit 1
 (cd "$src/go" &&
  FI_W512_P6_FAMILY_SQL= FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test \
-   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateC1)' -count=1 &&
+   ./internal/recordingest -run '^(TestBacklogWindowsW512TwoGiB|TestPrivateParallelA|TestH16Combined|TestCanonicalDispatch|TestPrivateHeaderFirstP2|TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateC1|TestC1Security8GiB)' -count=1 &&
  FI_W512_P6_FAMILY_SQL= FI_W512_P5_PERSISTENT= FI_W512_P3_DYNAMIC_MIN= FI_W512_P3_DYNAMIC_MAX= \
    GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 test -race \
    ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateC1)' -count=1 &&
