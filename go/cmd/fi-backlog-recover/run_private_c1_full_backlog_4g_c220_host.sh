@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=b5e42c3c7697cef972a35f0b09239d96be358bbb
+sourcecommit=e0bd9a6c174b19eddf8993e6256a551740713060
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -734,9 +734,18 @@ printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gi
 export FI_W512_C1_P6_DIRECT=1
 export FI_C1_DEV_ASYNC_VERIFY=1
 export FI_C1_DEV_PROCESS_VERIFY=1
-export FI_C1_DEV_VERIFIER_BIN="$root/fi-c1-verifier"
-[ "$(sha256 -q "$FI_C1_DEV_VERIFIER_BIN")" = "$(cat "$root/verifier.sha256")" ] ||
+# A executes on the host. B was compiled inside fi-dev; use the existing
+# jailroot mapping already verified by this runner, never the jail path alone.
+verifier_host="$jailroot$root/fi-c1-verifier"
+verifier_digest="$jailroot$root/verifier.sha256"
+[ -x "$verifier_host" ] && [ -s "$verifier_digest" ] ||
+  fail 'C1 B host-visible executable or digest absent'
+expected_verifier_sha=$(cat "$verifier_digest") || fail 'C1 B digest unreadable'
+actual_verifier_sha=$(sha256 -q "$verifier_host") || fail 'C1 B executable unreadable'
+[ -n "$expected_verifier_sha" ] && [ "$actual_verifier_sha" = "$expected_verifier_sha" ] ||
   fail 'C1 independent B executable digest changed'
+export FI_C1_DEV_VERIFIER_BIN="$verifier_host"
+echo "FI C1 B HOST EXECUTABLE PREFLIGHT PASS host_path=$verifier_host sha256=$actual_verifier_sha"
 export FI_W512_C1_SQL_WORKERS_MAX="$sqlmax"
 if [ "$prefix8" = 1 ];then
   export FI_W512_C1_STOP_WINDOWS=2
