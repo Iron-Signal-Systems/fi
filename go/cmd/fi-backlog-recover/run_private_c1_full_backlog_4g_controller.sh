@@ -94,6 +94,7 @@ grep -Fq 'C1_IDLE_TIMER.txt' "$runner" &&
 grep -Fq 'C1_USN_ASYNC_START.txt' "$runner" &&
 grep -Fq 'C1_USN_ASYNC_COMPLETE.txt' "$runner" &&
 grep -Fq 'C1_SECURITY_COPY_CALLS.txt' "$runner" &&
+grep -Fq 'C1_SOURCE_PARENT_STAGES.txt' "$runner" &&
 grep -Fq 'FI C1 ASYNC USN COMMIT ACCOUNTING PASS' "$runner" &&
 grep -Fq 'queue_max=64 ordered_SQL_commits=true file_dependencies=commit_fences' "$runner" &&
 grep -Fq 'FI C1 DIPS TELEMETRY PREFLIGHT PASS' "$runner" &&
@@ -217,7 +218,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 DEV PASS prefix8=$FI_C1_DEV_PREFIX8 groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_USN_ASYNC_START.txt C1_USN_ASYNC_COMPLETE.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_SECURITY_COPY_CALLS.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_USN_ASYNC_START.txt C1_USN_ASYNC_COMPLETE.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SOURCE_PARENT_STAGES.txt C1_SECURITY_COPY.txt C1_SECURITY_COPY_CALLS.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -241,6 +242,7 @@ cat "$runroot/C1_SQL_DRAIN.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
 cat "$runroot/C1_SQL_PROFILE.txt"
+cat "$runroot/C1_SOURCE_PARENT_STAGES.txt"
 cat "$runroot/C1_SECURITY_COPY.txt"
 cat "$runroot/C1_SECURITY_COPY_CALLS.txt"
 wall_duration=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
