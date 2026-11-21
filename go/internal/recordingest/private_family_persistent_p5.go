@@ -260,6 +260,16 @@ func newPrivateP5Pool(ctx context.Context,windowIndex int)(*privateP5Pool,error)
         os.Getenv("FI_W512_P3_GENERAL_WORKERS")!="" {
         return nil,errors.New("FI P5 private window: invalid explicit 2..32 scaling gate")
     }
+    return newC1P5RuntimePool(ctx,windowIndex)
+}
+
+// The real fi-ingest C1 runtime uses the same five-lane P5 scheduler with
+// fixed 2..32 worker bounds, without requiring disposable-clone env flags.
+// The benchmark constructor above still enforces its original selection.
+func newC1P5RuntimePool(ctx context.Context,windowIndex int)(*privateP5Pool,error){
+    if ctx==nil||windowIndex<1{
+        return nil,errors.New("FI C1: valid runtime preparation context required")
+    }
     // Keep the pool alive long enough to DRAIN canceled batch tasks before
     // the typed-window's deferred Close. If we inherited ctx cancellation,
     // a lane could exit with queued session tasks and strand session.Close().
