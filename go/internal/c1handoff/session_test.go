@@ -127,8 +127,10 @@ func TestC1ServerRejectsWrongClientIdentity(t *testing.T){
         if err==nil||!strings.Contains(err.Error(),"unexpected fi-ingest identity"){
             t.Fatalf("unapproved client SAN was not rejected: %v",err)
         }
-        // The client also cannot complete an authorized C1 session.
-        if clientErr==nil{t.Fatal("client authenticated against rejecting server")}
+        // TLS 1.3 may let the client finish its local handshake before
+        // receiving the server's rejection alert. The server's verified
+        // client-SAN decision, not tls.Dial's early return, is authoritative.
+        _=clientErr
     case <-time.After(4*time.Second):
         t.Fatal("C1 rejected-client TLS handshake deadlocked")
     }
