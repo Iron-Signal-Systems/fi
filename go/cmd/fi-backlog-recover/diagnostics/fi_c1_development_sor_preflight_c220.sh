@@ -25,6 +25,25 @@ SELECT 'CLUSTER_IDENTITY' AS section,current_database() AS db,
  pg_postmaster_start_time()::text AS postmaster_started,
  current_setting('data_directory',true) AS pgdata;
 
+
+SELECT 'C1_PRIVATE_WORKER_ROLE' AS section,
+ CASE WHEN EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN 'PRESENT' ELSE 'MISSING' END AS fi_sor_sql_worker_role,
+ CASE WHEN to_regnamespace('fi_recovery_projection') IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN has_schema_privilege('fi_ingest','fi_recovery_projection','USAGE')::text
+      ELSE 'NOT_INSTALLED' END AS private_schema_usage,
+ CASE WHEN to_regclass('fi_recovery_projection.source_batch') IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN (has_table_privilege('fi_ingest','fi_recovery_projection.source_batch','SELECT')
+       AND has_table_privilege('fi_ingest','fi_recovery_projection.source_batch','INSERT'))::text
+      ELSE 'NOT_INSTALLED' END AS private_batch_sql_access,
+ CASE WHEN to_regclass('fi_recovery.typed_window') IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN (has_table_privilege('fi_ingest','fi_recovery.typed_window','SELECT')
+       AND has_table_privilege('fi_ingest','fi_recovery.typed_window','INSERT'))::text
+      ELSE 'NOT_INSTALLED' END AS private_marker_sql_access;
+
 SELECT 'RELATION_PRESENCE' AS section,
  to_regclass('fi.recorded_generation')::text AS canonical_generation,
  to_regclass('fi.source_record')::text AS canonical_source,

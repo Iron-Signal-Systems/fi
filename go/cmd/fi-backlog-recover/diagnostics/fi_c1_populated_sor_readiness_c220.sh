@@ -31,6 +31,25 @@ SELECT 'TARGET_JOURNAL_HISTORY' AS section,outcome,
     AND generation_id='20261030T000032.061323100Z-3e38b2210771462c'
   GROUP BY outcome ORDER BY outcome;
 
+
+SELECT 'C1_PRIVATE_WORKER_ROLE' AS section,
+ CASE WHEN EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN 'PRESENT' ELSE 'MISSING' END AS fi_sor_sql_worker_role,
+ CASE WHEN to_regnamespace('fi_recovery_projection') IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN has_schema_privilege('fi_ingest','fi_recovery_projection','USAGE')::text
+      ELSE 'NOT_INSTALLED' END AS private_schema_usage,
+ CASE WHEN to_regclass('fi_recovery_projection.source_batch') IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN (has_table_privilege('fi_ingest','fi_recovery_projection.source_batch','SELECT')
+       AND has_table_privilege('fi_ingest','fi_recovery_projection.source_batch','INSERT'))::text
+      ELSE 'NOT_INSTALLED' END AS private_batch_sql_access,
+ CASE WHEN to_regclass('fi_recovery.typed_window') IS NOT NULL
+      AND EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')
+      THEN (has_table_privilege('fi_ingest','fi_recovery.typed_window','SELECT')
+       AND has_table_privilege('fi_ingest','fi_recovery.typed_window','INSERT'))::text
+      ELSE 'NOT_INSTALLED' END AS private_marker_sql_access;
+
 SELECT 'TARGET_PRIVATE_GENERATION' AS section,count(*)::text AS generations,
   coalesce(sum(record_count),0)::text AS receipt_records
   FROM fi_recovery_projection.recorded_generation
