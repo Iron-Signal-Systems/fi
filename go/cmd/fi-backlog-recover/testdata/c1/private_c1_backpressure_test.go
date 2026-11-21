@@ -215,24 +215,38 @@ func TestPrivateC1SharedSQLQueueAcceptsAnyFamily(t *testing.T){
     parent:=&privateC1SourceAck{done:make(chan struct{})}
     close(parent.done)
     w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
-        maxWorkers:5,workerCount:5,jobs:make(chan privateC1SQLJob,5)}
+        maxWorkers:5,workerCount:5,jobs:make(chan privateC1SQLJob,5),
+        usnPending:make(chan privateC1SQLJob,privateC1MaxPendingUSNHandoffs)}
     for f:=privateP6Family(0);f<privateP6FamilyCount;f++{
         w.lanes[f]=&privateC1SQLLane{family:f}
+    }
+    for f:=privateP6Family(0);f<privateP6FamilyCount;f++{
         if e:=w.Family(context.Background(),f,
             []privateP6Record{privateP6Fixture(int(f)+1,1,privateC1TestKind(f))});e!=nil{
             t.Fatal(e)
         }
     }
-    if len(w.jobs)!=5{t.Fatal("one shared SQL queue did not receive all five families")}
+    // USN is the only family with an intermediate ORDERED admission queue.
+    // Its eventual SQL executor is still one of the 1..32 shared workers.
+    if len(w.jobs)!=4||len(w.usnPending)!=1{
+        t.Fatalf("shared queue=%d, async USN queue=%d; expected 4 and 1",
+            len(w.jobs),len(w.usnPending))
+    }
     seen:=make(map[privateP6Family]bool)
-    for i:=0;i<5;i++{
+    for i:=0;i<4;i++{
         job:=<-w.jobs
         if job.source!=parent||seen[job.family]||job.done!=w.lanes[job.family].outstanding[0]{
             t.Fatal("shared SQL worker job lost family/identity or duplicate ACK")
         }
         seen[job.family]=true
     }
-    if len(seen)!=5{t.Fatal("a family was pinned to its own SQL queue")}
+    job:=<-w.usnPending
+    if job.family!=privateP6USN||job.source!=parent||
+       job.done!=w.lanes[privateP6USN].outstanding[0]||job.committed==nil{
+        t.Fatal("USN was not admitted through the bounded ordered queue")
+    }
+    seen[job.family]=true
+    if len(seen)!=5{t.Fatal("not all five families were admitted")}
 }
 func privateC1TestKind(f privateP6Family)string{
     switch f{
@@ -253,91 +267,155 @@ func TestPrivateC1SharedSQLFamilyBoundFollowsMax(t *testing.T){
 }
 
  
-// The original P6 projector guarantees ordered USN source-bound captures.
-// C1 must not let a later USN SQL transaction race a still-uncommitted
-// preceding capture transaction on a different shared SQL worker.
-func TestPrivateC1USNRequiresPreviousCommittedSQLACK(t *testing.T){
+// The original USN relational projector requires a preceding committed
+// capture boundary and the associated NTFS/File identities. These tests
+// exercise the asynchronous scheduler, not synthetic unordered USN SQL.
+func privateC1AsyncUSNFixture(t *testing.T)(*privateC1FiveSQL,context.Context,func()){
+    t.Helper()
+    ctx,cancel:=context.WithCancel(context.Background())
     parent:=&privateC1SourceAck{done:make(chan struct{})}
     close(parent.done)
-    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
-        maxWorkers:32,workerCount:32,jobs:make(chan privateC1SQLJob,8)}
-    w.lanes[privateP6USN]=&privateC1SQLLane{family:privateP6USN}
-    w.lanes[privateP6Security]=&privateC1SQLLane{family:privateP6Security}
-    if got:=w.familyHandoffLimit(privateP6USN);got!=1 {
-        t.Fatalf("C1 USN SQL limit=%d, must be one committed handoff",got)
+    w:=&privateC1FiveSQL{ctx:ctx,sourceLast:parent,
+        maxWorkers:32,workerCount:32,jobs:make(chan privateC1SQLJob,16),
+        usnPending:make(chan privateC1SQLJob,privateC1MaxPendingUSNHandoffs)}
+    for f:=privateP6Family(0);f<privateP6FamilyCount;f++{
+        w.lanes[f]=&privateC1SQLLane{family:f}
     }
-    if got:=w.familyHandoffLimit(privateP6Security);got!=32 {
-        t.Fatalf("C1 must not throttle unrelated Security SQL: %d",got)
+    w.usnWG.Add(1)
+    go w.runUSNDispatcher()
+    cleanup:=func(){cancel();close(w.usnPending);w.usnWG.Wait()}
+    return w,ctx,cleanup
+}
+func privateC1FinishMockSQLJob(j privateC1SQLJob,err error){
+    j.committed.err=err
+    close(j.committed.done)
+    j.done<-err
+    close(j.done)
+}
+func TestPrivateC1AsyncUSNDoesNotBlockOtherFamiliesAndPreservesSQLOrder(t *testing.T){
+    w,ctx,cleanup:=privateC1AsyncUSNFixture(t)
+    defer cleanup()
+    if w.familyHandoffLimit(privateP6USN)!=privateC1MaxPendingUSNHandoffs{
+        t.Fatal("USN still has its previous single-handoff admission limit")
     }
-    first:=privateP6Fixture(1,1,"USNReadBoundary")
-    next:=privateP6Fixture(2,1,"USNObjectObservation")
-    if err:=w.Family(context.Background(),privateP6USN,[]privateP6Record{first});err!=nil{
-        t.Fatal(err)
+    // The preceding File job has been enqueued but has NOT committed.
+    fileAck:=&privateC1SourceAck{done:make(chan struct{})}
+    w.lanes[privateP6File].fileReceipts=[]*privateC1SourceAck{fileAck}
+    for i:=1;i<=2;i++{
+        if err:=w.Family(ctx,privateP6USN,[]privateP6Record{
+            privateP6Fixture(i,1,"USNReadBoundary"),
+        });err!=nil{t.Fatalf("USN admission %d blocked: %v",i,err)}
     }
-    firstJob:=<-w.jobs
-    if firstJob.family!=privateP6USN||firstJob.rows[0].signedBatchIndex!=1 {
-        t.Fatal("C1 lost signed USN boundary handoff")
-    }
-    ctx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
-    defer cancel()
-    result:=make(chan error,1)
-    go func(){result<-w.Family(ctx,privateP6USN,[]privateP6Record{next})}()
-    select{
-    case err:=<-result:
-        t.Fatalf("C1 admitted later USN before boundary commit: %v",err)
-    case <-time.After(30*time.Millisecond):
-        // The second signed USN handoff must wait for first SQL commit.
-    }
-    if len(w.jobs)!=0{
-        t.Fatal("C1 queued out-of-order USN transaction")
-    }
-    // Other families still use the full shared queue and do not require
-    // the USN transaction's ACK.
+    // Unrelated Security SQL must reach the worker queue now.
     if err:=w.Family(ctx,privateP6Security,[]privateP6Record{
-        privateP6Fixture(2,2,"WindowsSecurityEvent"),
-    });err!=nil{
-        t.Fatalf("C1 USN dependency stalled unrelated SQL family: %v",err)
-    }
-    if job:=<-w.jobs;job.family!=privateP6Security{
-        t.Fatal("C1 blocked unrelated Security SQL by USN dependency")
-    }
-    firstJob.done<-nil // the first USN transaction has committed
-    select{
-    case err:=<-result:
-        if err!=nil{t.Fatalf("C1 failed to admit next USN after ACK: %v",err)}
-    case <-ctx.Done():
-        t.Fatal("C1 deadlocked after USN SQL commit")
+        privateP6Fixture(3,1,"WindowsSecurityEvent"),
+    });err!=nil{t.Fatal(err)}
+    job:=<-w.jobs
+    if job.family!=privateP6Security{
+        t.Fatal("USN File dependency blocked independent Security family")
     }
     select{
-    case secondJob:=<-w.jobs:
-        if secondJob.family!=privateP6USN||
-            secondJob.rows[0].signedBatchIndex!=2||
-            w.lanes[privateP6USN].backpressureWaits!=1 {
-            t.Fatal("C1 second USN handoff lost signed order or ACK barrier")
+    case job:=<-w.jobs:
+        t.Fatalf("USN SQL began before File prerequisite committed: %v",job.family)
+    case <-time.After(20*time.Millisecond):
+    }
+    close(fileAck.done)
+    var first privateC1SQLJob
+    select{
+    case first=<-w.jobs:
+        if first.family!=privateP6USN||first.rows[0].signedBatchIndex!=1 {
+            t.Fatal("first USN job did not preserve source order")
         }
-    default:
-        t.Fatal("C1 never dispatched second USN after first commit")
+    case <-time.After(time.Second):
+        t.Fatal("File ACK failed to release first USN job")
+    }
+    select{
+    case j:=<-w.jobs:
+        t.Fatalf("next USN SQL started before earlier COMMIT: %v",j.family)
+    case <-time.After(20*time.Millisecond):
+    }
+    privateC1FinishMockSQLJob(first,nil)
+    var second privateC1SQLJob
+    select{
+    case second=<-w.jobs:
+        if second.family!=privateP6USN||second.rows[0].signedBatchIndex!=2{
+            t.Fatal("USN SQL execution reordered after first commit")
+        }
+    case <-time.After(time.Second):
+        t.Fatal("USN dispatcher failed to release following committed job")
+    }
+    privateC1FinishMockSQLJob(second,nil)
+    if err:=w.WaitFamily(ctx,privateP6USN);err!=nil{t.Fatal(err)}
+    if w.lanes[privateP6USN].backpressureWaits!=0{
+        t.Fatal("asynchronous USN admission incorrectly waited on each SQL ACK")
     }
 }
-
-func TestPrivateC1USNPrecedingSQLFailureStopsLaterHandoff(t *testing.T){
-    parent:=&privateC1SourceAck{done:make(chan struct{})}
-    close(parent.done)
-    w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
-        maxWorkers:16,workerCount:16,jobs:make(chan privateC1SQLJob,8)}
-    w.lanes[privateP6USN]=&privateC1SQLLane{family:privateP6USN}
-    if e:=w.Family(context.Background(),privateP6USN,[]privateP6Record{
+func TestPrivateC1AsyncUSNQueueIsBounded(t *testing.T){
+    w,ctx,cleanup:=privateC1AsyncUSNFixture(t)
+    defer cleanup()
+    for i:=0;i<privateC1MaxPendingUSNHandoffs;i++{
+        if err:=w.Family(ctx,privateP6USN,[]privateP6Record{
+            privateP6Fixture(i+1,1,"USNReadBoundary"),
+        });err!=nil{t.Fatal(err)}
+    }
+    first:=<-w.jobs
+    if first.family!=privateP6USN{t.Fatal("USN queue lost first signed job")}
+    result:=make(chan error,1)
+    go func(){
+        result<-w.Family(ctx,privateP6USN,[]privateP6Record{
+            privateP6Fixture(999,1,"USNObjectObservation"),
+        })
+    }()
+    select{
+    case e:=<-result:
+        t.Fatalf("USN admitted beyond bounded queue without ACK: %v",e)
+    case <-time.After(25*time.Millisecond):
+    }
+    privateC1FinishMockSQLJob(first,nil)
+    select{
+    case err:=<-result:
+        if err!=nil{t.Fatal(err)}
+    case <-time.After(time.Second):
+        t.Fatal("USN failed to resume bounded admission after first SQL ACK")
+    }
+    if w.usnPeakOutstanding>privateC1MaxPendingUSNHandoffs{
+        t.Fatal("USN exceeded bounded backlog")
+    }
+    // The fixture's cancellation prevents stranded mock worker jobs in cleanup.
+}
+func TestPrivateC1AsyncUSNFileFailureFailsClosed(t *testing.T){
+    w,ctx,cleanup:=privateC1AsyncUSNFixture(t)
+    defer cleanup()
+    fileAck:=&privateC1SourceAck{done:make(chan struct{})}
+    w.lanes[privateP6File].fileReceipts=[]*privateC1SourceAck{fileAck}
+    if err:=w.Family(ctx,privateP6USN,[]privateP6Record{
         privateP6Fixture(1,1,"USNReadBoundary"),
-    });e!=nil{t.Fatal(e)}
-    original:=<-w.jobs
-    original.done<-errors.New("injected USN capture transaction rolled back")
-    e:=w.Family(context.Background(),privateP6USN,[]privateP6Record{
-        privateP6Fixture(2,1,"USNObjectObservation"),
-    })
-    if e==nil||!strings.Contains(e.Error(),"rolled back"){
-        t.Fatalf("C1 allowed object after failed capture: %v",e)
+    });err!=nil{t.Fatal(err)}
+    fileAck.err=errors.New("injected File transaction failed")
+    close(fileAck.done)
+    if err:=w.WaitFamily(ctx,privateP6USN);err==nil||
+       !strings.Contains(err.Error(),"injected File transaction failed"){
+        t.Fatalf("C1 allowed USN without its committed File prerequisites: %v",err)
     }
-    if len(w.jobs)!=0||len(w.lanes[privateP6USN].outstanding)!=0{
-        t.Fatal("C1 leaked subsequent USN SQL after capture failure")
+    if len(w.jobs)!=0||w.failed==nil{
+        t.Fatal("failed File commit allowed USN SQL or successful generation")
     }
+}
+func TestPrivateC1AsyncUSNPreviousSQLFailureFailsClosed(t *testing.T){
+    w,ctx,cleanup:=privateC1AsyncUSNFixture(t)
+    defer cleanup()
+    for i:=1;i<=2;i++{
+        if err:=w.Family(ctx,privateP6USN,[]privateP6Record{
+            privateP6Fixture(i,1,"USNReadBoundary"),
+        });err!=nil{t.Fatal(err)}
+    }
+    first:=<-w.jobs
+    failure:=errors.New("injected USN capture transaction rolled back")
+    privateC1FinishMockSQLJob(first,failure)
+    if err:=w.WaitFamily(ctx,privateP6USN);err==nil||
+       !strings.Contains(err.Error(),"rolled back"){
+        t.Fatalf("C1 failed to stop on USN SQL commit error: %v",err)
+    }
+    // After cancellation/dispatcher failure, no later USN SQL is submitted.
+    if len(w.jobs)!=0{t.Fatal("later USN escaped after failed SQL commit")}
 }
