@@ -312,6 +312,10 @@ jobs:
           sh -n ./cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_controller.sh
           sh -n ./cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_direct.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/family-p3/private_family_persistent_p5_test.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_five_sql.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_backpressure_test.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_process_verify.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_process_verify_test.go >/dev/null
           gofmt -e ./cmd/fi-c1-verifier/main.go >/dev/null
@@ -325,9 +329,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=e1eac1a0c7aa426d96f5521b98bfcd7ada5c6f96' in controller
-          assert 'runnerpin=71e66e3b69ce4bb6ef22995ba03dcbc7ceddebb5' in controller
-          assert 'sourcecommit=e1eac1a0c7aa426d96f5521b98bfcd7ada5c6f96' in runner
+          assert 'sourcepin=0af581c996863b6e91ca6cc58e36fbc95e02e11c' in controller
+          assert 'runnerpin=97068092331c2e86e28173aaec8243884588dd8e' in controller
+          assert 'sourcecommit=0af581c996863b6e91ca6cc58e36fbc95e02e11c' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -376,6 +380,22 @@ jobs:
           assert 'len(lane.outstanding)>=w.familyHandoffLimit(f)' in sql
           assert 'TestPrivateC1USNRequiresPreviousCommittedSQLACK' in race
           assert 'TestPrivateC1USNPrecedingSQLFailureStopsLaterHandoff' in race
+          p5=(root/'testdata/family-p3/private_family_persistent_p5.go').read_text()
+          p5tests=(root/'testdata/family-p3/private_family_persistent_p5_test.go').read_text()
+          p4=(root/'testdata/family-p3/private_family_dynamic_p4.go').read_text()
+          assert 'const privateP5MaxWorkers = 32' in p5
+          assert 'max_worker_slots=160' in p5
+          assert 'worker_max=32' in p5
+          assert 'TestPrivateP5AdaptiveSecurityScalesToThirtyTwo' in p5tests
+          assert 'privateDynamicMaxWorkers = 16' in p4
+          assert 'privateC1HardSQLWorkersMax = 32' in sql
+          assert 'FI_W512_P3_DYNAMIC_MAX=32' in controller
+          assert 'FI_W512_C1_SQL_WORKERS_MAX:-32' in controller
+          assert 'sqlmax=${FI_W512_C1_SQL_WORKERS_MAX:-32}' in runner
+          assert 'FI C1 FULL ADAPTIVE CAPACITY PREFLIGHT PASS' in runner
+          assert 'FI C1 32 SQL CONNECTION PREFLIGHT PASS' in runner
+          assert 'sh "$runner" "$runner_mode" "$2"' in controller
+          assert 'case "$1" in preflight|compile|c1|prefix8' in controller
           assert 'go127 test -race' in runner
           assert '-c max_wal_size=8GB' in runner
           assert "pg_max_wal=8GB" in runner
