@@ -150,7 +150,7 @@ func parseInvocation(
 			configPath:             args[1],
 		}, nil
 
-	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-c1-sor-identity", "verify-c1-sor-identity", "apply-c1-runtime", "verify-c1-runtime", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime", "plan-c1-ram-mounts", "audit-c1-ram-mounts", "apply-c1-ram-host-runtime", "verify-c1-ram-host-runtime":
+	case "apply-devfs", "apply-directories", "apply-host-files", "apply-identities", "apply-jail-roots", "apply-jail-substrate", "apply-sor-package", "apply-sor-postgresql", "initialize-sor-postgresql", "initialize-sor-database", "upgrade-sor-database", "upgrade-legacy-sor-database", "upgrade-m61-usn", "apply-zfs-hierarchy", "apply-zfs-root", "check-host-update", "inspect-host-update", "preflight", "validate", "verify-devfs", "verify-host-files", "verify-sor-postgresql", "verify-sor-database", "apply-network", "verify-network", "apply-pf", "verify-pf", "apply-c1-sor-identity", "verify-c1-sor-identity", "apply-c1-runtime", "verify-c1-runtime", "apply-lifecycle", "verify-lifecycle", "apply-runtime", "verify-runtime", "plan-c1-ram-mounts", "audit-c1-ram-mounts", "apply-c1-ram-fstab", "apply-c1-ram-host-runtime", "verify-c1-ram-host-runtime":
 		path, err := configPath(
 			args[1:],
 			input,
@@ -528,6 +528,13 @@ func main() {
             os.Exit(1)
         }
         fmt.Fprintln(os.Stdout,"FI C1 RAM host startup service verified OFF.")
+
+    case "apply-c1-ram-fstab":
+        if err:=backendinstall.ApplyC1RAMFSTABPlan(config);err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 RAM FSTAB APPLY BLOCKED: %v\n",err)
+            os.Exit(1)
+        }
+        fmt.Fprintln(os.Stdout,"FI C1 RAM fstab entries installed and verified; host tmpfs and C1 jail services remain OFF.")
 
     case "audit-c1-ram-mounts":
         // READ ONLY: require exact existing host/jail fstab entries and

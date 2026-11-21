@@ -80,3 +80,21 @@ root/UID/GID mount behavior on a disposable test or maintenance window.
 Never enable either fi-ingest or fi-sor C1 service until the host startup
 ordering and all original signed custody RO mappings are proven. On C220,
 keep the current ingress path and populated SoR unmodified until acceptance.
+
+## Explicit offline fstab installation (does not mount or enable)
+
+After inspecting the exact read-only `plan-c1-ram-mounts` output, the
+FreeBSD host installer provides `apply-c1-ram-fstab`, guarded by
+`FI_C1_RAM_FSTAB_APPROVED=EXACT_C1_MOUNT_PLAN_REVIEWED`. It preflights all
+three existing fstab files, refuses symlinks and foreign/duplicate/changed
+mountpoints, stages each change under its destination directory, and
+atomically appends only the exact missing entry while preserving unrelated
+lines and ownership/mode. **Never mount or start C1 automatically.**
+
+If any rename fails, service enablement remains prohibited. Inspect and
+re-run the idempotent operation only after resolving the conflict. The
+host and jail fstab changes are individually atomic, **not** one
+cross-file database transaction. Verify the exact entries with
+`audit-c1-ram-mounts`, then run the actual host `fi-c1-host-preflight`
+after deliberate, separately authorized mounts. Keep C220 live fi
+ingestion disabled until end-to-end acceptance.

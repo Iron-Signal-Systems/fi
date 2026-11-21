@@ -25,6 +25,8 @@ on:
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_fstab_audit_test.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_host_runtime_install.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_host_runtime_install_test.go'
+      - 'go/internal/freebsd/backendinstall/c1_ram_fstab_install.go'
+      - 'go/internal/freebsd/backendinstall/c1_ram_fstab_install_test.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_plan.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_plan_test.go'
       - 'go/internal/freebsd/backendinstall/c1_development_binary_install.go'
@@ -79,6 +81,8 @@ jobs:
         run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMFilesystemStatfsLimit' -count=1
       - name: Test C1 host tmpfs startup ordered before FreeBSD jails and disabled
         run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMHostRuntime' -count=1
+      - name: Test C1 atomic C220 RAM fstab apply (temp files only)
+        run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMFSTAB(Atomic|Preflight|Rejects)' -count=1
       - name: Test C1 mount fstab collision rejection (no mutations)
         run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMFSTAB' -count=1
       - name: Test C1 volatile host tmpfs and RO fi-sor nullfs mount plan
