@@ -101,6 +101,11 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
     if int64(len(rows))>s.expectedRecords-s.parentRows && f.Kind==c1handoff.Source{
         return errors.New("C1 fi-sor: source-parent committed rows would exceed original signed receipt")
     }
+    // No family may outrun the durable SourceParent ledger. The SQL
+    // foreign-key proof below remains authoritative for exact identity.
+    if f.Kind!=c1handoff.Source && int64(len(rows))>s.parentRows-s.typedRows {
+        return errors.New("C1 fi-sor: typed family outran committed source parents")
+    }
     if int64(len(rows))>s.expectedRecords-s.typedRows && f.Kind!=c1handoff.Source{
         return errors.New("C1 fi-sor: family committed rows would exceed original signed receipt")
     }
