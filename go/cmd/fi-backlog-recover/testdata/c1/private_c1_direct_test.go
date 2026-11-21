@@ -68,6 +68,31 @@ func TestPrivateC1FileDependencyWaitsWithoutFlushingOtherFamilies(t *testing.T){
     }
     if err=b.Finish(ctx);err!=nil{t.Fatal(err)}
 }
+type privateC1DeferredUSNBufferSink struct{
+    privateP6TestSink
+    synchronousFileWaits int
+}
+func (s *privateC1DeferredUSNBufferSink) AsyncUSNDependencies() bool{return true}
+func (s *privateC1DeferredUSNBufferSink) WaitFamily(ctx context.Context,f privateP6Family)error{
+    s.synchronousFileWaits++
+    return errors.New("C1 async USN must not synchronously wait on File")
+}
+func TestPrivateC1USNFilePrerequisitesDeferredOffPreparation(t *testing.T){
+    sink:=&privateC1DeferredUSNBufferSink{}
+    buf,err:=newPrivateP6Buffers(1,sink)
+    if err!=nil{t.Fatal(err)}
+    buf.lanes[privateP6USN].limit.rows=1
+    ctx:=context.Background()
+    if err:=buf.Add(ctx,privateP6Fixture(1,1,"FileObservation"));err!=nil{t.Fatal(err)}
+    if err:=buf.Add(ctx,privateP6Fixture(1,2,"USNReadBoundary"));err!=nil{t.Fatal(err)}
+    if sink.synchronousFileWaits!=0 {
+        t.Fatal("C1 Preparation still blocked on File/NTFS commit")
+    }
+    if len(sink.typedRows[privateP6File])!=1||len(sink.typedRows[privateP6USN])!=1{
+        t.Fatal("File and USN handoffs were not submitted together")
+    }
+    if err:=buf.Finish(ctx);err!=nil{t.Fatal(err)}
+}
 func TestPrivateC1NeverSelectsWithoutP6AndPrivateClone(t *testing.T){
     t.Setenv("FI_W512_P6_FAMILY_SQL","1")
     t.Setenv("FI_W512_C1_P6_DIRECT","1")
