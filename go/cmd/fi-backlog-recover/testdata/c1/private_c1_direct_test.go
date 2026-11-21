@@ -5,6 +5,53 @@ package recordingest
 
 import ("bufio";"bytes";"context";"crypto/sha256";"errors";"fmt";"io";"testing";"github.com/Iron-Signal-Systems/fi/go/internal/spool")
 
+func TestPrivateC1Security8GiBBufferProfileFailClosedAndBounded(t *testing.T){
+    t.Setenv("FI_C1_SECURITY_8G_EXPERIMENT","0")
+    t.Setenv("FI_C1_DEV_PREFIX8","1")
+    t.Setenv("FI_W512_C1_P6_DIRECT","1")
+    t.Setenv("FI_W512_C1_FULL_BACKLOG","0")
+    control,err:=newPrivateP6Buffers(1,&privateP6TestSink{})
+    if err!=nil{t.Fatal(err)}
+    if control.lanes[privateP6Security].limit!=(privateP6Limits{rows:4096,bytes:16<<20}){
+        t.Fatal("established C1 Security buffer was modified without candidate opt-in")
+    }
+    t.Setenv("FI_C1_SECURITY_8G_EXPERIMENT","1")
+    candidate,err:=newPrivateP6Buffers(1,&privateP6TestSink{})
+    if err!=nil{t.Fatal(err)}
+    if candidate.lanes[privateP6Security].limit!=(privateP6Limits{rows:8192,bytes:32<<20}){
+        t.Fatal("C1 8GiB Security candidate did not select exact 8192/32MiB limits")
+    }
+    for f:=privateP6Family(0);f<privateP6FamilyCount;f++{
+        if f!=privateP6Security&&candidate.lanes[f].limit!=control.lanes[f].limit{
+            t.Fatalf("C1 Security candidate changed unrelated family %s capacity",privateP6FamilyNames[f])
+        }
+    }
+    rowBound:=candidate.lanes[privateP6Security]
+    rowBound.pending=make([]privateP6Record,8191)
+    if privateP6ShouldFlush(&rowBound,1){t.Fatal("Security candidate flushed before 8192-row bound")}
+    rowBound.pending=append(rowBound.pending,privateP6Record{})
+    if !privateP6ShouldFlush(&rowBound,1){t.Fatal("Security candidate exceeded 8192-row bound")}
+    bytesBound:=candidate.lanes[privateP6Security]
+    bytesBound.pending=make([]privateP6Record,1)
+    bytesBound.bytes=32<<20-1
+    if privateP6ShouldFlush(&bytesBound,1){t.Fatal("Security candidate flushed at exact byte bound")}
+    if !privateP6ShouldFlush(&bytesBound,2){t.Fatal("Security candidate exceeded 32MiB bound")}
+    t.Setenv("FI_W512_C1_FULL_BACKLOG","1")
+    if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
+        t.Fatal("C1 experimental Security profile selected in full 8399-batch run")
+    }
+    t.Setenv("FI_W512_C1_FULL_BACKLOG","0")
+    t.Setenv("FI_C1_DEV_PREFIX8","0")
+    if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
+        t.Fatal("C1 experimental Security profile selected without two-group 8GiB mode")
+    }
+    t.Setenv("FI_C1_DEV_PREFIX8","1")
+    t.Setenv("FI_C1_SECURITY_8G_EXPERIMENT","unexpected")
+    if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
+        t.Fatal("C1 experimental Security profile accepted invalid flag")
+    }
+}
+
 func TestPrivateC1P6OriginalBuffersContinueAcrossW512(t *testing.T){
     ctx:=context.Background()
     mock:=&privateP6TestSink{}
