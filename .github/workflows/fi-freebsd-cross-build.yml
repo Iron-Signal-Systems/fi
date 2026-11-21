@@ -329,9 +329,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=e2839176f11413c1f9dcd31186756a60e48f9563' in controller
-          assert 'runnerpin=39ea99725fe92eb92f1509ebad90955dcc398f2d' in controller
-          assert 'sourcecommit=e2839176f11413c1f9dcd31186756a60e48f9563' in runner
+          assert 'sourcepin=aa2e6c41edd89714de7e05d30c336b5c56fcb26b' in controller
+          assert 'runnerpin=549da60e656c5608c209d47fa727471213656bf7' in controller
+          assert 'sourcecommit=aa2e6c41edd89714de7e05d30c336b5c56fcb26b' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -392,6 +392,13 @@ jobs:
           assert 'n<2||n>32' in c1p5test
           assert 'FIRST GO TEST/RACE/BUILD FAILURES' in runner
           assert 'FI C1 P5 TEST CONTRACT PASS' in runner
+          assert 'C1_SETUP.txt' in runner
+          assert 'C1_INGEST_START.txt' in runner
+          assert 'C1_SETUP.txt' in controller
+          assert 'C1_INGEST_START.txt' in controller
+          assert 'FI C1 VERIFICATION TIMER phase=B_groups' in controller
+          assert 'FI C1 OPERATIONAL WALL TIMER' in controller
+          assert 'P6 SQL DRAIN elapsed=' in controller
           c1streamtest=(root/'testdata/c1/private_c1_continuous_signed_stream_test.go').read_text()
           assert 't.Setenv("FI_W512_P3_DYNAMIC_MAX","32")' in c1streamtest
           assert 'privateDynamicMaxWorkers = 16' in p4
