@@ -21,12 +21,8 @@ func(w *privateP6SQLCoordinator) security(ctx context.Context,
     // The native fi-sor SQL process uses the already-approved, frozen P4
     // Security candidate. The old disposable-clone experiment guard stays
     // unchanged for every existing benchmark/replay call.
-    tune:=ctx!=nil && ctx.Value(c1NativeFrozenSecurityContextKey{})==true
-    if !tune {
-        selected,e:=privateC1Security8GiBExperiment()
-        if e!=nil{return e}
-        tune=selected
-    }
+    tune,e:=privateC1FrozenSecuritySelected(ctx)
+    if e!=nil{return e}
     profile:="P3"
     if tune{profile="P4"}
     ctx,err:=withFixedSecurityBulkProfile(ctx,profile)
@@ -63,3 +59,12 @@ func(w *privateP6SQLCoordinator) security(ctx context.Context,
     return nil
 }
 var _ pgx.Tx = privateProjectionTx{}
+
+// The frozen native-SoR path is a different trust/selection boundary from
+// the old opt-in clone experiment. Both use identical P4/COPY parameters.
+func privateC1FrozenSecuritySelected(ctx context.Context)(bool,error){
+    if ctx!=nil && ctx.Value(c1NativeFrozenSecurityContextKey{})==true{
+        return true,nil
+    }
+    return privateC1Security8GiBExperiment()
+}
