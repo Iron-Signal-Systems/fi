@@ -56,10 +56,7 @@ func (s *c1SoRCommitHandler) Enqueue(ctx context.Context,
         if ack==nil{return nil,errors.New("FI C1 SoR: SourceParent accepted without durable fence")}
         // This count is ADMISSION only. privateC1CommitReady and the
         // original SQL CommitSource enforce durable group completion.
-        s.parentRows+=int64(len(rows))
-        last:=rows[len(rows)-1]
-        s.lastParentBatch=uint32(last.signedBatchIndex)
-        s.lastParentOrdinal=last.ordinal
+        s.accountSource(rows)
         return c1SourceCommitted(ctx,ack),nil
     }
     family:=privateP6Family(f.Kind-2)

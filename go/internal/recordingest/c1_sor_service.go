@@ -54,10 +54,12 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     }
     ids,err:=s.validateSignedPrivateStage(ctx,frame)
     if err!=nil{s.failed=err;return nil,err}
+    counts,err:=s.loadSignedBatchRecordCounts(ctx,ids)
+    if err!=nil{s.failed=err;return nil,err}
     pool,err:=newC1SoRSQLPool(ctx,s.DSN,frame.SourceID,s.MaxSQLWorkers)
     if err!=nil{s.failed=err;return nil,err}
     handler,err:=newC1SoRCommitHandler(pool,frame.SourceID,frame.GenerationID,
-        frame.ReceiptSHA256,ids,frame.ExpectedRecords)
+        frame.ReceiptSHA256,ids,counts,frame.ExpectedRecords)
     if err!=nil{
         pool.Close();s.failed=err
         return nil,err
@@ -185,6 +187,48 @@ func(s *C1SoRService) validateSignedPrivateStage(ctx context.Context,frame c1han
     }
     if err=tx.Commit(ctx);err!=nil{return nil,err}
     return ids,nil
+}
+
+// loadSignedBatchRecordCounts uses the fi-sor LOCAL read-only database
+// to bind each network row ordinal to the immutable original signed
+// source_batch manifest. No client-supplied count can enlarge a batch.
+func(s *C1SoRService)loadSignedBatchRecordCounts(ctx context.Context,ids []int64)([]int64,error){
+    if ctx==nil||len(ids)==0{return nil,errors.New("C1 fi-sor: signed source batch IDs required")}
+    conn,_,err:=openC1SoRLocalSQL(ctx,s.DSN,"")
+    if err!=nil{return nil,err}
+    defer conn.Close(context.Background())
+    tx,err:=conn.BeginTx(ctx,pgx.TxOptions{AccessMode:pgx.ReadOnly})
+    if err!=nil{return nil,err}
+    defer tx.Rollback(context.Background())
+    records:=make([]int64,len(ids))
+    index:=make(map[int64]int,len(ids))
+    for i,id:=range ids{
+        if id<=0{return nil,errors.New("C1 fi-sor: nonpositive signed SQL batch identity")}
+        if _,exists:=index[id];exists{return nil,errors.New("C1 fi-sor: duplicate signed SQL batch identity")}
+        index[id]=i
+    }
+    rows,err:=tx.Query(ctx,`SELECT source_batch_id,record_count
+        FROM fi_recovery_projection.source_batch
+        WHERE source_batch_id=ANY($1::bigint[])`,ids)
+    if err!=nil{return nil,err}
+    found:=0
+    for rows.Next(){
+        var id,count int64
+        if err=rows.Scan(&id,&count);err!=nil{break}
+        i,ok:=index[id]
+        if !ok||count<=0||records[i]!=0{
+            err=errors.New("C1 fi-sor: invalid original signed per-batch record count")
+            break
+        }
+        records[i]=count
+        found++
+    }
+    if err==nil{err=rows.Err()}
+    rows.Close()
+    if err!=nil{return nil,err}
+    if found!=len(ids){return nil,errors.New("C1 fi-sor: missing source_batch rows for original signed identity")}
+    if err=tx.Commit(ctx);err!=nil{return nil,err}
+    return records,nil
 }
 
 // Dispatch accepts signed C1 SQL work in original transport order and

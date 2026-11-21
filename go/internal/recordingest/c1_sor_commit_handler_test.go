@@ -47,7 +47,7 @@ func c1SQLTestFrame(kind c1handoff.Kind,sequence uint64)c1handoff.Frame{
 func TestC1SoRNativeProcessorRequiresCommitBeforeAcknowledgment(t *testing.T){
     sink:=&c1SQLHandoffTestSink{}
     h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
-        strings.Repeat("b",64),[]int64{55},1)
+        strings.Repeat("b",64),[]int64{55},[]int64{1},1)
     if err!=nil{t.Fatal(err)}
     ctx:=context.Background()
     if err=h.Commit(ctx,c1SQLTestFrame(c1handoff.Source,1));err!=nil{t.Fatal(err)}
@@ -70,7 +70,7 @@ func TestC1SoRNativeProcessorFailsClosed(t *testing.T){
         t.Run(name,func(t *testing.T){
             sink:=&c1SQLHandoffTestSink{}
             h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
-                strings.Repeat("b",64),[]int64{55},1);if err!=nil{t.Fatal(err)}
+                strings.Repeat("b",64),[]int64{55},[]int64{1},1);if err!=nil{t.Fatal(err)}
             f:=c1SQLTestFrame(c1handoff.Source,1);change(&f)
             if err=h.Commit(context.Background(),f);err==nil{t.Fatal("unauthorized cross-jail handoff accepted")}
             if sink.parent!=0{t.Fatal("invalid signed row reached PostgreSQL")}
@@ -79,7 +79,7 @@ func TestC1SoRNativeProcessorFailsClosed(t *testing.T){
     t.Run("SQL-COMMIT-error",func(t *testing.T){
         sink:=&c1SQLHandoffTestSink{failSource:true}
         h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
-            strings.Repeat("b",64),[]int64{55},1);if err!=nil{t.Fatal(err)}
+            strings.Repeat("b",64),[]int64{55},[]int64{1},1);if err!=nil{t.Fatal(err)}
         if err=h.Commit(context.Background(),c1SQLTestFrame(c1handoff.Source,1));err==nil{
             t.Fatal("SQL commit failure was incorrectly acknowledged")
         }
@@ -88,7 +88,7 @@ func TestC1SoRNativeProcessorFailsClosed(t *testing.T){
     t.Run("no-parent",func(t *testing.T){
         sink:=&c1SQLHandoffTestSink{}
         h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
-            strings.Repeat("b",64),[]int64{55},1);if err!=nil{t.Fatal(err)}
+            strings.Repeat("b",64),[]int64{55},[]int64{1},1);if err!=nil{t.Fatal(err)}
         if err=h.Commit(context.Background(),c1SQLTestFrame(c1handoff.Other,1));err==nil{
             t.Fatal("typed SQL accepted before parent handoff")
         }
@@ -96,7 +96,7 @@ func TestC1SoRNativeProcessorFailsClosed(t *testing.T){
     t.Run("seed-prefix-not-replayed",func(t *testing.T){
         sink:=&c1SQLHandoffTestSink{}
         h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
-            strings.Repeat("b",64),[]int64{55,56},1)
+            strings.Repeat("b",64),[]int64{55,56},[]int64{1,1},1)
         if err!=nil{t.Fatal(err)}
         h.minBatchIndex=1
         old:=c1SQLTestFrame(c1handoff.Source,2)
@@ -108,10 +108,56 @@ func TestC1SoRNativeProcessorFailsClosed(t *testing.T){
     t.Run("premature-drain",func(t *testing.T){
         sink:=&c1SQLHandoffTestSink{}
         h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local","generation-test",
-            strings.Repeat("b",64),[]int64{55},1);if err!=nil{t.Fatal(err)}
+            strings.Repeat("b",64),[]int64{55},[]int64{1},1);if err!=nil{t.Fatal(err)}
         d:=c1SQLTestFrame(c1handoff.Drain,1);d.Rows=nil
         if err=h.Commit(context.Background(),d);err==nil{
             t.Fatal("C1 prematurely accepted partially committed generation")
+        }
+    })
+}
+
+func TestC1SoRSignedBatchOrdinalBoundaries(t *testing.T){
+    ctx:=context.Background()
+    for name,alter:=range map[string]func(*c1handoff.Frame){
+        "skip-first-ordinal":func(f *c1handoff.Frame){f.Rows[0].Ordinal=2},
+        "outside-manifest":func(f *c1handoff.Frame){f.Rows[0].Ordinal=3},
+        "skip-first-batch":func(f *c1handoff.Frame){
+            f.Rows[0].SignedBatchIndex=1
+            f.Rows[0].SourceBatchID=56
+        },
+    }{
+        t.Run(name,func(t *testing.T){
+            sink:=&c1SQLHandoffTestSink{}
+            h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local",
+                "generation-test",strings.Repeat("b",64),[]int64{55,56},
+                []int64{2,1},3)
+            if err!=nil{t.Fatal(err)}
+            f:=c1SQLTestFrame(c1handoff.Source,1)
+            alter(&f)
+            if err:=h.Commit(ctx,f);err==nil{
+                t.Fatal("fi-sor admitted skipped or out-of-range signed source ordinal")
+            }
+            if sink.parent!=0{t.Fatal("invalid source ordinal reached PostgreSQL")}
+        })
+    }
+    t.Run("incomplete-batch-at-drain",func(t *testing.T){
+        sink:=&c1SQLHandoffTestSink{}
+        h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local",
+            "generation-test",strings.Repeat("b",64),[]int64{55,56},
+            []int64{2,1},3)
+        if err!=nil{t.Fatal(err)}
+        if err:=h.Commit(ctx,c1SQLTestFrame(c1handoff.Source,1));err!=nil{t.Fatal(err)}
+        drain:=c1SQLTestFrame(c1handoff.Drain,2)
+        drain.Rows=nil
+        if err:=h.Commit(ctx,drain);err==nil{
+            t.Fatal("fi-sor accepted drain before original per-batch counts completed")
+        }
+    })
+    t.Run("signed-batch-count-guard",func(t *testing.T){
+        sink:=&c1SQLHandoffTestSink{}
+        if _,err:=newC1SoRCommitHandler(sink,"src","gen",
+            strings.Repeat("b",64),[]int64{55,56},[]int64{1},1);err==nil{
+            t.Fatal("fi-sor accepted missing immutable manifest batch counts")
         }
     })
 }

@@ -30,6 +30,8 @@ type c1SoRCommitHandler struct {
     // These IDs are looked up from FI's verified original signed source
     // batches by fi-sor; NEVER accept an arbitrary identity from fi-ingest.
     sourceBatches []int64
+    batchRecordCounts []int64 // immutable original signed per-batch manifest counts
+    parentBatchCounts []int64 // source rows admitted/committed for each non-seed batch
     minBatchIndex uint32 // immutable signed prefix cannot be reprojected
     expectedRecords int64
     parentRows int64
@@ -40,16 +42,23 @@ type c1SoRCommitHandler struct {
 }
 func newC1SoRCommitHandler(
     sink c1SoRSQLWriter, sourceID,generationID,receipt string,
-    sourceBatches []int64,expectedRecords int64,
+    sourceBatches,batchRecordCounts []int64,expectedRecords int64,
 )(*c1SoRCommitHandler,error){
     if sink==nil||sourceID==""||generationID==""||len(receipt)!=64||
-        len(sourceBatches)==0||expectedRecords<=0 {
+        len(sourceBatches)==0||len(batchRecordCounts)!=len(sourceBatches)||
+        expectedRecords<=0 {
         return nil,errors.New("C1 fi-sor: original signed generation plan or SQL processor missing")
     }
-    for _,id:=range sourceBatches{if id<=0{return nil,errors.New("C1 fi-sor: invalid canonical source-batch SQL identity")}}
+    for i,id:=range sourceBatches{
+        if id<=0||batchRecordCounts[i]<=0{
+            return nil,errors.New("C1 fi-sor: missing original signed source-batch identity or record count")
+        }
+    }
     return &c1SoRCommitHandler{sink:sink,sourceID:sourceID,
         generationID:generationID,receipt:strings.ToLower(receipt),
         sourceBatches:append([]int64(nil),sourceBatches...),
+        batchRecordCounts:append([]int64(nil),batchRecordCounts...),
+        parentBatchCounts:make([]int64,len(sourceBatches)),
         expectedRecords:expectedRecords},nil
 }
 func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
@@ -68,6 +77,12 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
             return fmt.Errorf("C1 fi-sor: refused incomplete drain parents=%d typed=%d signed=%d",
                 s.parentRows,s.typedRows,s.expectedRecords)
         }
+        for i:=int(s.minBatchIndex);i<len(s.batchRecordCounts);i++{
+            if s.parentBatchCounts[i]!=s.batchRecordCounts[i]{
+                return fmt.Errorf("C1 fi-sor: signed source batch %d incomplete parents=%d expected=%d",
+                    i,s.parentBatchCounts[i],s.batchRecordCounts[i])
+            }
+        }
         s.drained=true
         return nil
     }
@@ -77,9 +92,7 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
         if err:=s.sink.Source(ctx,rows);err!=nil{return err}
         // C1's ordered PostgreSQL source writer commits inside fi-sor.
         if err:=s.sink.WaitSource(ctx);err!=nil{return err}
-        s.parentRows+=int64(len(rows))
-        s.lastParentBatch=rows[len(rows)-1].signedBatchIndexAsUint()
-        s.lastParentOrdinal=rows[len(rows)-1].ordinal
+        s.accountSource(rows)
         return nil
     }
     family:=privateP6Family(f.Kind-2)
@@ -120,11 +133,30 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
         if f.Kind!=c1handoff.Source && f.Kind!=c1handoff.Kind(family+2){
             return nil,errors.New("C1 fi-sor: wrong native SQL projector for signed record kind")
         }
-        if f.Kind==c1handoff.Source &&
-            s.parentRows>0 && i==0 &&
-            (row.SignedBatchIndex<s.lastParentBatch ||
-                (row.SignedBatchIndex==s.lastParentBatch&&row.Ordinal<=s.lastParentOrdinal)){
-            return nil,errors.New("C1 fi-sor: ordered source-parent handoff regressed")
+        if f.Kind==c1handoff.Source{
+            // A signed batch starts at ordinal 1 and every subsequent
+            // SourceParent is contiguous. Counts come from fi-sor's own
+            // previously validated source_batch rows, never the client.
+            expectedOrdinal:=int64(1)
+            precedingBatch:=int(s.minBatchIndex)-1
+            if s.parentRows>0{
+                precedingBatch=int(s.lastParentBatch)
+                if i==0 && index==precedingBatch{
+                    expectedOrdinal=s.lastParentOrdinal+1
+                }
+            }
+            if i>0{
+                precedingBatch=int(f.Rows[i-1].SignedBatchIndex)
+                if index==precedingBatch{
+                    expectedOrdinal=f.Rows[i-1].Ordinal+1
+                }
+            }
+            if index<precedingBatch||index>precedingBatch+1||
+                row.Ordinal!=expectedOrdinal||
+                row.Ordinal>s.batchRecordCounts[index]{
+                return nil,fmt.Errorf("C1 fi-sor: signed source batch %d ordinal %d violates original contiguous range (next=%d max=%d)",
+                    index,row.Ordinal,expectedOrdinal,s.batchRecordCounts[index])
+            }
         }
         rows=append(rows,privateP6Record{
             signedBatchIndex:index,sourceBatchID:row.SourceBatchID,
@@ -144,6 +176,17 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
     }
     return rows,nil
 }
+// Only advance source admission after the SQL sink has accepted the
+// handoff. In async mode this is provisional until WaitAll proves all
+// PostgreSQL COMMIT fences; in sync mode it follows WaitSource.
+func(s *c1SoRCommitHandler)accountSource(rows []privateP6Record){
+    s.parentRows+=int64(len(rows))
+    for _,r:=range rows{s.parentBatchCounts[r.signedBatchIndex]++}
+    last:=rows[len(rows)-1]
+    s.lastParentBatch=uint32(last.signedBatchIndex)
+    s.lastParentOrdinal=last.ordinal
+}
+
 // Keep signed-batch indexes as the exact original metadata, not PostgreSQL
 // sequence position. No synthetic per-family ordinal is ever introduced.
 func(r privateP6Record)signedBatchIndexAsUint()uint32{return uint32(r.signedBatchIndex)}
