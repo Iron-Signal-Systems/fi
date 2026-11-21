@@ -136,7 +136,7 @@ func TestPrivateC1OriginalP5WorkersFeedPersistentP6Buffers(t *testing.T){
     // in signed order, without an artificial W512 flush or a second SHA.
     t.Setenv("FI_W512_P5_PERSISTENT","1")
     t.Setenv("FI_W512_P3_DYNAMIC_MIN","2")
-    t.Setenv("FI_W512_P3_DYNAMIC_MAX","16")
+    t.Setenv("FI_W512_P3_DYNAMIC_MAX","32")
     t.Setenv("FI_W512_P3_SECURITY_WORKERS","")
     t.Setenv("FI_W512_P3_GENERAL_WORKERS","")
     ctx:=context.Background()
@@ -194,7 +194,7 @@ func TestPrivateC1OriginalP5WorkersFeedPersistentP6Buffers(t *testing.T){
         t.Fatalf("C1 pool preparation incomplete %+v",totals)
     }
     for f,lane:=range pool.lanes{
-        if n:=lane.spawned();n<2||n>16{
+        if n:=lane.spawned();n<2||n>32{
             t.Fatalf("C1 family %d has %d P5 workers",f,n)
         }
     }
