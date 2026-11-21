@@ -8,7 +8,7 @@ import (
 
 func TestC1DevelopmentBinariesUseExactSeparateJailRoots(t *testing.T){
     release:=t.TempDir()
-    for _,name:=range []string{"fi-c1-ingest-worker","fi-c1-sor-worker","fi-c1-host-preflight"}{
+    for _,name:=range []string{"fi-c1-ingest-worker","fi-c1-sor-worker","fi-c1-private-schema","fi-c1-host-preflight"}{
         if err:=os.WriteFile(filepath.Join(release,name),[]byte(name+"-development"),0755);err!=nil{t.Fatal(err)}
     }
     ingest:=t.TempDir()
@@ -16,12 +16,13 @@ func TestC1DevelopmentBinariesUseExactSeparateJailRoots(t *testing.T){
     cfg:=Config{values:map[string]string{"FI_INGEST_ROOT":ingest,"FI_SOR_DB_ROOT":sor}}
     plan,err:=buildC1DevelopmentBinaryPlan(cfg,release)
     if err!=nil{t.Fatal(err)}
-    if len(plan.Files)!=3||len(plan.Parents)!=3{
+    if len(plan.Files)!=4||len(plan.Parents)!=3{
         t.Fatal("missing distinct C1 development services")
     }
     if plan.Files[0].Target!=filepath.Join(ingest,"usr/local/sbin/fi-c1-ingest-worker")||
         plan.Files[1].Target!=filepath.Join(sor,"usr/local/sbin/fi-c1-sor-worker")||
-        plan.Files[2].Target!="/usr/local/sbin/fi-c1-host-preflight"{
+        plan.Files[2].Target!=filepath.Join(sor,"usr/local/sbin/fi-c1-private-schema")||
+        plan.Files[3].Target!="/usr/local/sbin/fi-c1-host-preflight"{
         t.Fatal("C1 binaries escaped their designated jail roots")
     }
     for _,file:=range plan.Files{
@@ -30,7 +31,7 @@ func TestC1DevelopmentBinariesUseExactSeparateJailRoots(t *testing.T){
         }
     }
     if len(plan.Files[0].Content)==0||len(plan.Files[1].Content)==0||
-        len(plan.Files[2].Content)==0{
+        len(plan.Files[2].Content)==0||len(plan.Files[3].Content)==0{
         t.Fatal("missing actual FreeBSD service executables")
     }
 }
@@ -44,6 +45,10 @@ func TestC1DevelopmentBinaryInstallerRejectsIncompleteOrCollidingPlan(t *testing
         t.Fatal("incomplete release binaries accepted")
     }
     if err:=os.WriteFile(filepath.Join(release,"fi-c1-sor-worker"),[]byte("sor"),0755);err!=nil{t.Fatal(err)}
+    if _,err:=buildC1DevelopmentBinaryPlan(cfg,release);err==nil{
+        t.Fatal("missing exact offline private-schema and host preflight executables accepted")
+    }
+    if err:=os.WriteFile(filepath.Join(release,"fi-c1-private-schema"),[]byte("admin-offline"),0755);err!=nil{t.Fatal(err)}
     if _,err:=buildC1DevelopmentBinaryPlan(cfg,release);err==nil{
         t.Fatal("missing exact native FreeBSD host preflight executable accepted")
     }

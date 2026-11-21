@@ -116,3 +116,11 @@ tmpfs/nullfs mounts using the actual installer's jail roots, numeric
 UID/GID and read-only original receiver custody checks. Neither
 fi-ingest nor fi-sor may declare itself ready merely because its binary
 exists.
+
+The same `apply-c1-binaries` bundle also requires the
+`fi-c1-private-schema` standalone **offline** PostgreSQL 18 admin tool
+inside fi-sor-db. The installer only copies it as root-owned mode
+`0555`; it **never executes DDL**. Its separate command requires the
+`FI_C1_SCHEMA_INSTALL_APPROVED=OFFLINE_PRIVATE_STAGE_ONLY` guard, a
+local administrative Unix-domain PostgreSQL connection, and an exact
+absent-private-schema preflight before creating any private relations.
