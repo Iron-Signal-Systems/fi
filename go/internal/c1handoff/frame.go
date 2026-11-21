@@ -60,6 +60,7 @@ type Frame struct {
     BatchIDs []string
     BatchSQLIDs []int64 // Only the fi-sor START acknowledgment carries these.
     ExpectedRecords int64
+    StartBatchIndex uint32 // first signed batch not already in verified seed
     // Acknowledgments are emitted only after durable SQL COMMIT.
     Committed bool
     Error string
@@ -83,7 +84,8 @@ func (f Frame) Validate() error {
     if f.Kind==Start {
         if len(f.Rows)!=0||f.Committed||f.Error!=""||
             len(f.BatchIDs)==0||len(f.BatchIDs)>65535||
-            len(f.BatchSQLIDs)!=0||f.ExpectedRecords<=0{
+            len(f.BatchSQLIDs)!=0||f.ExpectedRecords<=0||
+            int(f.StartBatchIndex)>=len(f.BatchIDs){
             return errors.New("C1 handoff: invalid original signed Start plan")
         }
         seen:=make(map[string]bool,len(f.BatchIDs))
@@ -96,11 +98,12 @@ func (f Frame) Validate() error {
         return nil
     }
     if f.Kind!=Ack && (len(f.BatchIDs)!=0||len(f.BatchSQLIDs)!=0||
-        f.ExpectedRecords!=0) {
+        f.ExpectedRecords!=0||f.StartBatchIndex!=0) {
         return errors.New("C1 handoff: unexpected batch-map metadata outside Start")
     }
     if f.Kind==Ack{
-        if len(f.BatchIDs)!=0||f.ExpectedRecords!=0||len(f.BatchSQLIDs)>65535 {
+        if len(f.BatchIDs)!=0||f.ExpectedRecords!=0||f.StartBatchIndex!=0||
+            len(f.BatchSQLIDs)>65535 {
             return errors.New("C1 handoff: invalid SQL acknowledgment map")
         }
         for _,id:=range f.BatchSQLIDs {if id<=0 {
@@ -187,6 +190,7 @@ func WriteFrame(w io.Writer,f Frame)error{
     if err:=binary.Write(&body,binary.BigEndian,uint16(len(f.BatchSQLIDs)));err!=nil{return err}
     for _,id:=range f.BatchSQLIDs{if err:=binary.Write(&body,binary.BigEndian,id);err!=nil{return err}}
     if err:=binary.Write(&body,binary.BigEndian,f.ExpectedRecords);err!=nil{return err}
+    if err:=binary.Write(&body,binary.BigEndian,f.StartBatchIndex);err!=nil{return err}
     if body.Len()>MaxPayloadBytes{return errors.New("C1 handoff: payload exceeds ceiling")}
     sum:=sha256.Sum256(body.Bytes())
     var hdr [44]byte
@@ -270,6 +274,7 @@ func ReadFrame(r io.Reader)(Frame,error){
         f.BatchSQLIDs=append(f.BatchSQLIDs,id)
     }
     if err=binary.Read(rd,binary.BigEndian,&f.ExpectedRecords);err!=nil{return empty,err}
+    if err=binary.Read(rd,binary.BigEndian,&f.StartBatchIndex);err!=nil{return empty,err}
     if rd.Len()!=0{return empty,errors.New("C1 handoff: trailing unrecognized bytes")}
     if err=f.Validate();err!=nil{return empty,err}
     return f,nil
