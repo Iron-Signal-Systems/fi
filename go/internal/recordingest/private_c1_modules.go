@@ -19,12 +19,17 @@ import (
 )
 
 type privateC1KnownSourceIDsKey struct{}
+// Native fi-sor only: preserve the measured C1 Security projector profile
+// without invoking the disposable-clone selection environment.
+type c1NativeFrozenSecurityContextKey struct{}
 
 // Existing P6 security bulk COPY historically performs its own FK lookup.
 // C1's family module already proved the exact source batch/ordinal mapping;
 // reuse it for the second COPY stage, never query the same IDs twice.
 func privateC1KnownSourceIDs(ctx context.Context) []int64 {
-    if ctx==nil||!privateC1Enabled(){return nil}
+    if ctx==nil || (!privateC1Enabled() && !securityC1COPYExperimentEnabled(ctx)){
+        return nil
+    }
     ids,_:=ctx.Value(privateC1KnownSourceIDsKey{}).([]int64)
     return ids
 }

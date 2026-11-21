@@ -18,8 +18,15 @@ import (
 func(w *privateP6SQLCoordinator) security(ctx context.Context,
     rows []privateP6Record,ids []int64)error{
     if len(rows)!=len(ids){return errors.New("FI P6 Security: source IDs mismatch")}
-    tune,e:=privateC1Security8GiBExperiment()
-    if e!=nil{return e}
+    // The native fi-sor SQL process uses the already-approved, frozen P4
+    // Security candidate. The old disposable-clone experiment guard stays
+    // unchanged for every existing benchmark/replay call.
+    tune:=ctx!=nil && ctx.Value(c1NativeFrozenSecurityContextKey{})==true
+    if !tune {
+        selected,e:=privateC1Security8GiBExperiment()
+        if e!=nil{return e}
+        tune=selected
+    }
     profile:="P3"
     if tune{profile="P4"}
     ctx,err:=withFixedSecurityBulkProfile(ctx,profile)

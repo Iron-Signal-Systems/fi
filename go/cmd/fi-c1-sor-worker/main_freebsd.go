@@ -25,7 +25,7 @@ func main(){
     flags:=flag.NewFlagSet("fi-c1-sor-worker",flag.ExitOnError)
     bind:=flags.String("bind","","private fi-sor workload address for mTLS handoff")
     db:=flags.String("postgres-local","","PostgreSQL Unix-domain DSN inside fi-sor, dbname=fi user=fi_ingest")
-    max:=flags.Int("sql-workers-max",5,"bounded native C1 shared PostgreSQL workers (1..32)")
+    max:=flags.Int("sql-workers-max",32,"bounded native C1 shared PostgreSQL workers (1..32)")
     cert:=flags.String("tls-cert","","fi-sor dedicated mTLS server certificate")
     key:=flags.String("tls-key","","fi-sor dedicated mTLS private key")
     ca:=flags.String("tls-ca","","pinned internal C1 CA trust PEM")

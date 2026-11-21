@@ -110,7 +110,7 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     pool,err:=newC1P5RuntimePool(ctx,1)
     if err!=nil{return result,err}
     defer pool.Close()
-    buffers,err:=newPrivateP6Buffers(1,remote)
+    buffers,err:=newC1NativeP6Buffers(1,remote)
     if err!=nil{return result,err}
 
     signed:=make([]privateC1StreamBatch,0,len(g.Batches)-cfg.StartBatch)
@@ -158,4 +158,14 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     result.IndependentlyVerified=false
     result.Published=false
     return result,nil
+}
+
+// newC1NativeP6Buffers preserves the Security COPY profile proved in
+// the frozen full-backlog C1 run. The clone experiment's environment gate
+// remains unmodified; no reporting window resets these native buffers.
+func newC1NativeP6Buffers(window int,sink privateP6SQLHandoff)(*privateP6Buffers,error){
+    buffers,err:=newPrivateP6Buffers(window,sink)
+    if err!=nil{return nil,err}
+    buffers.lanes[privateP6Security].limit=privateP6Limits{rows:8192,bytes:32<<20}
+    return buffers,nil
 }

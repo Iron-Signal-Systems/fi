@@ -498,6 +498,12 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
         w.sourceID,profile)
     if err!=nil{return err}
     writeCtx,hashCopy,aceCopy,usnCopy:=privateC1BoundedProjectorContext(ctx)
+    if !w.cloneOnly{
+        // The constructor that sets cloneOnly=false is confined to the
+        // authenticated local-socket fi-sor runtime. Retain the exact
+        // frozen 65,536-row/16 MiB Security field COPY profile.
+        writeCtx=context.WithValue(writeCtx,c1NativeFrozenSecurityContextKey{},true)
+    }
     // Each lane owns its family-specific P6 projection module. The common
     // coordinator is used only for the exact signed (batch,ordinal) FK lookup.
     // The original central five-family SQL switch is not on this path.
