@@ -114,7 +114,7 @@ func TestPrivateC1BProcessProtocolFailsClosed(t *testing.T){
     p:=privateC1ProcessPlanFixture(t)
     ctx:=context.Background()
     err:=privateC1VerifyProcessCommands(ctx,bufio.NewScanner(
-        strings.NewReader("READY 1\nREADY 2\nGROUPS\nFINAL\n")),&p,
+        strings.NewReader("READY 1\nREADY 2\nDRAIN\nGROUPS\nFINAL\n")),&p,
         func(_ context.Context,wi int)error{
             if wi==2{return fmt.Errorf("typed relation missing")}
             return nil
@@ -130,7 +130,7 @@ func TestPrivateC1BProcessProtocolFailsClosed(t *testing.T){
     p=privateC1ProcessPlanFixture(t)
     called:=0
     err=privateC1VerifyProcessCommands(ctx,bufio.NewScanner(
-        strings.NewReader("READY 1\nREADY 2\nGROUPS\nFINAL\n")),&p,
+        strings.NewReader("READY 1\nREADY 2\nDRAIN\nGROUPS\nFINAL\n")),&p,
         func(context.Context,int)error{return nil},
         func(context.Context)(BacklogGenerationVerification,error){
             called++
