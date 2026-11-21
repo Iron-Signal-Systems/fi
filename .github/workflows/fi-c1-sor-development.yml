@@ -62,3 +62,37 @@ jobs:
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-ingest-worker-c1 ./cmd/fi-ingest-worker
       - name: Cross-compile fi-ingest-worker for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fi-ingest-worker ./cmd/fi-ingest-worker
+
+  c1-replay-postgres:
+    name: C1 read-only power-loss reconciliation in disposable PostgreSQL 18
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: fi_c1_replay_integration
+          POSTGRES_USER: fi_c1_test
+          POSTGRES_PASSWORD: isolated-only-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fi_c1_test -d fi_c1_replay_integration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Test crash after SourceParent and typed commits with actual read-only reconciliation
+        env:
+          FI_C1_REPLAY_CI_ALLOW_ISOLATED_WRITES: '1'
+          FI_C1_REPLAY_PG_DSN: 'host=127.0.0.1 port=5432 user=fi_c1_test password=isolated-only-test dbname=fi_c1_replay_integration sslmode=disable'
+        run: go test -tags 'fi_c1_sor_dev fi_c1_replay_pg_integration' -count=1 -run '^TestC1RecoveredSourceParentAndTypedRootPostgres18$' -v ./internal/recordingest
