@@ -38,6 +38,7 @@ const (
     Other Kind = 6
     Drain Kind = 7
     Ack Kind = 8
+    Start Kind = 9
 )
 
 type Row struct {
@@ -54,6 +55,11 @@ type Frame struct {
     ReceiptSHA256 string
     Sequence uint64
     Rows []Row
+    // Start exchanges immutable signed batch names for validated SQL IDs.
+    // It never moves PostgreSQL connections or SQL work into fi-ingest.
+    BatchIDs []string
+    BatchSQLIDs []int64 // Only the fi-sor START acknowledgment carries these.
+    ExpectedRecords int64
     // Acknowledgments are emitted only after durable SQL COMMIT.
     Committed bool
     Error string
@@ -70,10 +76,40 @@ func (f Frame) Validate() error {
     if err!=nil || len(digest)!=32 || strings.ToLower(f.ReceiptSHA256)!=f.ReceiptSHA256 {
         return errors.New("C1 handoff: invalid canonical signed receipt SHA-256")
     }
-    if !isSQLKind(f.Kind) && f.Kind!=Drain && f.Kind!=Ack {
+    if !isSQLKind(f.Kind) && f.Kind!=Drain && f.Kind!=Ack && f.Kind!=Start {
         return errors.New("C1 handoff: unknown phase")
     }
     if len(f.Error)>maxError { return errors.New("C1 handoff: oversized error") }
+    if f.Kind==Start {
+        if len(f.Rows)!=0||f.Committed||f.Error!=""||
+            len(f.BatchIDs)==0||len(f.BatchIDs)>65535||
+            len(f.BatchSQLIDs)!=0||f.ExpectedRecords<=0{
+            return errors.New("C1 handoff: invalid original signed Start plan")
+        }
+        seen:=make(map[string]bool,len(f.BatchIDs))
+        for _,id:=range f.BatchIDs{
+            if id==""||len(id)>maxText||seen[id] {
+                return errors.New("C1 handoff: duplicate or invalid original signed batch ID")
+            }
+            seen[id]=true
+        }
+        return nil
+    }
+    if f.Kind!=Ack && (len(f.BatchIDs)!=0||len(f.BatchSQLIDs)!=0||
+        f.ExpectedRecords!=0) {
+        return errors.New("C1 handoff: unexpected batch-map metadata outside Start")
+    }
+    if f.Kind==Ack{
+        if len(f.BatchIDs)!=0||f.ExpectedRecords!=0||len(f.BatchSQLIDs)>65535 {
+            return errors.New("C1 handoff: invalid SQL acknowledgment map")
+        }
+        for _,id:=range f.BatchSQLIDs {if id<=0 {
+            return errors.New("C1 handoff: invalid fi-sor assigned source-batch ID")
+        }}
+        if len(f.BatchSQLIDs)>0 && !f.Committed {
+            return errors.New("C1 handoff: rejected SQL handoff cannot supply batch IDs")
+        }
+    }
     if !isSQLKind(f.Kind) {
         if len(f.Rows)!=0 { return errors.New("C1 handoff: control frame carries data") }
         if f.Kind!=Ack && (f.Committed || f.Error!="") {
@@ -146,6 +182,11 @@ func WriteFrame(w io.Writer,f Frame)error{
         if _,err:=body.Write(row.RawRecord);err!=nil{return err}
         if body.Len()>MaxPayloadBytes {return errors.New("C1 handoff: SQL handoff exceeds bounded payload")}
     }
+    if err:=binary.Write(&body,binary.BigEndian,uint16(len(f.BatchIDs)));err!=nil{return err}
+    for _,id:=range f.BatchIDs{if err:=putText(&body,id);err!=nil{return err}}
+    if err:=binary.Write(&body,binary.BigEndian,uint16(len(f.BatchSQLIDs)));err!=nil{return err}
+    for _,id:=range f.BatchSQLIDs{if err:=binary.Write(&body,binary.BigEndian,id);err!=nil{return err}}
+    if err:=binary.Write(&body,binary.BigEndian,f.ExpectedRecords);err!=nil{return err}
     if body.Len()>MaxPayloadBytes{return errors.New("C1 handoff: payload exceeds ceiling")}
     sum:=sha256.Sum256(body.Bytes())
     var hdr [44]byte
@@ -212,6 +253,23 @@ func ReadFrame(r io.Reader)(Frame,error){
         if _,err=io.ReadFull(rd,row.RawRecord);err!=nil{return empty,err}
         f.Rows=append(f.Rows,row)
     }
+    var batches uint16
+    if err=binary.Read(rd,binary.BigEndian,&batches);err!=nil{return empty,err}
+    f.BatchIDs=make([]string,0,int(batches))
+    for i:=0;i<int(batches);i++{
+        id,e:=takeText(rd,maxText);if e!=nil{return empty,e}
+        f.BatchIDs=append(f.BatchIDs,id)
+    }
+    var sqlBatches uint16
+    if err=binary.Read(rd,binary.BigEndian,&sqlBatches);err!=nil{return empty,err}
+    if int(sqlBatches)*8>rd.Len(){return empty,errors.New("C1 handoff: truncated SQL batch map")}
+    f.BatchSQLIDs=make([]int64,0,int(sqlBatches))
+    for i:=0;i<int(sqlBatches);i++{
+        var id int64
+        if err=binary.Read(rd,binary.BigEndian,&id);err!=nil{return empty,err}
+        f.BatchSQLIDs=append(f.BatchSQLIDs,id)
+    }
+    if err=binary.Read(rd,binary.BigEndian,&f.ExpectedRecords);err!=nil{return empty,err}
     if rd.Len()!=0{return empty,errors.New("C1 handoff: trailing unrecognized bytes")}
     if err=f.Validate();err!=nil{return empty,err}
     return f,nil
