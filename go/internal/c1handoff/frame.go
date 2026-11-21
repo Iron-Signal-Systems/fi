@@ -58,6 +58,10 @@ type Frame struct {
     ReceiptSHA256 string
     Sequence uint64
     Rows []Row
+    // SQL work may instead reference an immutable prepared buffer in
+    // host tmpfs, nullfs-mounted read-only into fi-sor. The mTLS frame
+    // authenticates its exact name, byte length, row count and SHA-256.
+    Shared SharedRAMRef
     // Start exchanges immutable signed batch names for validated SQL IDs.
     // It never moves PostgreSQL connections or SQL work into fi-ingest.
     BatchIDs []string
@@ -85,6 +89,11 @@ func (f Frame) Validate() error {
         return errors.New("C1 handoff: unknown phase")
     }
     if len(f.Error)>maxError { return errors.New("C1 handoff: oversized error") }
+    if f.Shared != (SharedRAMRef{}) {
+        if !isSQLKind(f.Kind) { return errors.New("C1 handoff: control frame cannot reference RAM") }
+        if err:=f.Shared.Validate();err!=nil{return err}
+        if len(f.Rows)!=0 { return errors.New("C1 handoff: RAM reference cannot carry inline rows") }
+    }
     if f.Kind==Start {
         if len(f.Rows)!=0||f.Committed||f.Error!=""||
             len(f.BatchIDs)==0||len(f.BatchIDs)>65535||
@@ -134,7 +143,8 @@ func (f Frame) Validate() error {
         }
         return nil
     }
-    if len(f.Rows)==0 || len(f.Rows)>MaxRows || f.Committed || f.Error!="" {
+    if (len(f.Rows)==0 && f.Shared == (SharedRAMRef{})) ||
+        len(f.Rows)>MaxRows || f.Committed || f.Error!="" {
         return errors.New("C1 handoff: invalid SQL batch size or forged ACK")
     }
     var previous Row
@@ -203,6 +213,10 @@ func WriteFrame(w io.Writer,f Frame)error{
     if err:=binary.Write(&body,binary.BigEndian,f.ExpectedRecords);err!=nil{return err}
     if err:=binary.Write(&body,binary.BigEndian,f.StartBatchIndex);err!=nil{return err}
     if err:=binary.Write(&body,binary.BigEndian,f.SealedGroup);err!=nil{return err}
+    if err:=putText(&body,f.Shared.Name);err!=nil{return err}
+    if err:=binary.Write(&body,binary.BigEndian,f.Shared.Bytes);err!=nil{return err}
+    if err:=binary.Write(&body,binary.BigEndian,f.Shared.Rows);err!=nil{return err}
+    if _,err:=body.Write(f.Shared.SHA256[:]);err!=nil{return err}
     if body.Len()>MaxPayloadBytes{return errors.New("C1 handoff: payload exceeds ceiling")}
     sum:=sha256.Sum256(body.Bytes())
     var hdr [44]byte
@@ -288,6 +302,10 @@ func ReadFrame(r io.Reader)(Frame,error){
     if err=binary.Read(rd,binary.BigEndian,&f.ExpectedRecords);err!=nil{return empty,err}
     if err=binary.Read(rd,binary.BigEndian,&f.StartBatchIndex);err!=nil{return empty,err}
     if err=binary.Read(rd,binary.BigEndian,&f.SealedGroup);err!=nil{return empty,err}
+    if f.Shared.Name,err=takeText(rd,64);err!=nil{return empty,err}
+    if err=binary.Read(rd,binary.BigEndian,&f.Shared.Bytes);err!=nil{return empty,err}
+    if err=binary.Read(rd,binary.BigEndian,&f.Shared.Rows);err!=nil{return empty,err}
+    if _,err=io.ReadFull(rd,f.Shared.SHA256[:]);err!=nil{return empty,err}
     if rd.Len()!=0{return empty,errors.New("C1 handoff: trailing unrecognized bytes")}
     if err=f.Validate();err!=nil{return empty,err}
     return f,nil
