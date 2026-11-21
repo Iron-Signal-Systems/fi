@@ -233,3 +233,50 @@ system process. This branch corrects scheduling/cancellation coupling but
 does not yet implement the diagram's strict two-OS-process deployment. Do
 not describe this as a fully implemented A/B process split, or deploy it to
 the authoritative FI SoR.
+
+
+## Two-OS-process A/B implementation (development; 2026-11-20)
+
+Source branch: `dev/c1-two-process-20261120`. This supersedes the prior
+goroutine-only C1 A/B experiment **for this private-clone test**.
+
+- **A process:** the original long-running FI recovery executable, persistent
+  five-family P5 preparers, five independent P6 family buffers, one ordered
+  source-parent writer and adaptive 1..16 shared family SQL workers. A does not
+  restart or flush at signed batches or 4GiB reporting boundaries and does not
+  rehash the receiver-verified whole-batch payload. Original per-record digests
+  and authenticated-custody receipts remain.
+- **B process:** a distinct executable `fi-c1-verifier` built from the same
+  pinned, clone-only source. B independently connects to the same validated
+  *disposable* PostgreSQL clone, sets its connection to read-only, and runs each
+  original existing source-row-count/byte and typed-relational-coverage proof
+  in a `REPEATABLE READ, READ ONLY` transaction. B cannot issue P6 work.
+- **A to B boundary:** one bounded anonymous stdin pipe. A sends a single
+  JSON metadata plan with receipt/generation identities and original batch IDs,
+  followed by `READY <window>` only after the reader has sealed the original
+  batch boundaries **and** all source/family SQL transactions for the group have
+  returned successful COMMIT receipts. A sends `DRAIN` and `FINISH` after
+  the normal final P6 drain. B rejects skipped, repeated, absent or unordered
+  group proofs. There are no source record copies or new source hashes.
+- **Failure behavior:** a B failure reports a distinct nonzero process exit and
+  a callback, without cancelling or throttling A. It does **withhold the final
+  typed completion marker**. A failure or interrupted process cannot be
+  resumed against a partially committed clone: discard and recreate the
+  disposable clone. Publication/Accepted remain disabled.
+- **Proof of split:** the C220 runner checks different A and B operating-system
+  PIDs and a separately verified read-only PostgreSQL session. The runner
+  still must demonstrate actual compilation, Go/race tests, original 8GiB
+  prefix integrity and the full 15-group replay before any acceptance claim.
+
+The B OS process starts before continuous ingestion. However, a complete
+group cannot be proved until all its existing P6 family transactions commit.
+Sparse families can therefore cause B's first *group-complete* proof to finish
+after A's final drain. That is not grounds to change A's buffer policy merely
+to meet a timing assertion. Do **not** infer query overlap solely from two
+running process IDs; timing evidence is collected independently.
+
+The diagram's targeted remediation box describes the operational response
+to a discrepancy. This private implementation returns error diagnostics and
+withholds completion; it **does not perform automatic targeted in-place
+reprocessing** or modify the canonical SoR. A dedicated production B service,
+read-only login and failure recovery policy require separate acceptance.
