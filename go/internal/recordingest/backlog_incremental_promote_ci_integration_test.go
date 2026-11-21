@@ -774,6 +774,35 @@ WHERE b.source_record_id IS NULL OR n.ntfs_object_id IS NULL`).Scan(&orphanedUSN
    t.Fatalf("C1-native marker-free promotion dropped or doubled canonical records=%d accepted=%d",
       finalCanonical,finalAccepted)
  }
+ // SIXTH isolated case: prove real C1 fi-sor native ledger bootstrap.
+ // No synthetic source_record/typed rows may exist until C1 SQL handoffs.
+ _=reader.Close(ctx);_=writer.Close(ctx)
+ resetPrivate()
+ reader,writer=openIngester()
+ sixth:=ciPromoteFileFixture(t,sourceID,false)
+ sixth.Receipt.Descriptor.GenerationID="20261103T150005.000000000Z-c1-ledger"
+ sixth.Receipt.TransferSHA256=strings.Repeat("3",64)
+ sixth.ReceiptSHA256=strings.Repeat("4",64)
+ owner,e:=writer.Begin(ctx)
+ if e!=nil{t.Fatal(e)}
+ ids,e:=c1StageOriginalPrivateLedgerTx(ctx,owner,sixth)
+ if e!=nil{_ =owner.Rollback(context.Background());t.Fatalf("C1 native bootstrap: %v",e)}
+ if e=owner.Commit(ctx);e!=nil{t.Fatal(e)}
+ if len(ids)!=2||ids[0]<=0||ids[1]<=0||ids[0]==ids[1]{
+    t.Fatalf("C1 private source-batch identity mapping invalid: %v",ids)
+ }
+ var metadataGenerations,metadataBatches,metadataRecords,canonicalUnchanged int64
+ if e=reader.QueryRow(ctx,`SELECT
+   (SELECT count(*) FROM fi_recovery_projection.recorded_generation),
+   (SELECT count(*) FROM fi_recovery_projection.source_batch),
+   (SELECT count(*) FROM fi_recovery_projection.source_record),
+   (SELECT count(*) FROM fi.source_record)`).
+   Scan(&metadataGenerations,&metadataBatches,&metadataRecords,&canonicalUnchanged);e!=nil{t.Fatal(e)}
+ if metadataGenerations!=1||metadataBatches!=2||metadataRecords!=0||canonicalUnchanged!=30{
+    t.Fatalf("C1 private-only metadata initialization damaged canonical/typed state generation=%d batches=%d records=%d canonical=%d",
+        metadataGenerations,metadataBatches,metadataRecords,canonicalUnchanged)
+ }
+ t.Log("PASS: C1 fi-sor exact private signed generation and source-batch bootstrap; zero SourceParent yet, populated canonical 30 rows unchanged")
  t.Log("PASS: C1-native marker-free full relational proof callback reuses populated SoR atomic promotion and late rollback")
  t.Log("PASS: populated SoR 4 generations, signed lineage, shared NTFS, legacy+M6.1 USN references, fields/scopes, late rollback, retry and atomic Accepted")
 }
