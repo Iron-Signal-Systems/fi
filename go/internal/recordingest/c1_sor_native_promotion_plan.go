@@ -159,3 +159,31 @@ func LoadC1NativePromotionPlan(ctx context.Context,conn *pgx.Conn,
     return c1BuildFullNativePromotionPlan(source,generation,
         hex.EncodeToString(receiptSHA[:]),hex.EncodeToString(transfer),ids,batches)
 }
+
+// PublishC1VerifiedPrivateGeneration is a distinct, OFFLINE fi-sor command
+// invoked AFTER the development ingestion session and independent verifier
+// B have closed. The recorded receipt reconstructs the FULL source plan;
+// the atomic promoter repeats original custody/typed proof under SQL locks.
+// No tmpfs transport, fi-ingest PostgreSQL access, or second SQL ingestion
+// algorithm is involved.
+func PublishC1VerifiedPrivateGeneration(ctx context.Context,dsn string,
+    custody c1NativeBCustodyConfig,source,generation,attemptID string)(
+    IngestResult,error){
+    var empty IngestResult
+    if ctx==nil||source==""||generation==""||attemptID==""{
+        return empty,errors.New("C1 publication: source, generation, attempt and context required")
+    }
+    verifier,_,err:=openC1SoRLocalSQL(ctx,dsn,"")
+    if err!=nil{return empty,fmt.Errorf("C1 publication: read-only verifier local SQL: %w",err)}
+    defer verifier.Close(context.Background())
+    publisher,_,err:=openC1SoRLocalSQL(ctx,dsn,"")
+    if err!=nil{return empty,fmt.Errorf("C1 publication: canonical publisher local SQL: %w",err)}
+    defer publisher.Close(context.Background())
+    if verifier.PgConn().PID()==publisher.PgConn().PID(){
+        return empty,errors.New("C1 publication: independent PostgreSQL sessions required")
+    }
+    plan,err:=LoadC1NativePromotionPlan(ctx,verifier,source,generation,custody)
+    if err!=nil{return empty,err}
+    return PromoteC1VerifiedToPopulatedSoR(ctx,verifier,publisher,
+        plan,custody,attemptID)
+}

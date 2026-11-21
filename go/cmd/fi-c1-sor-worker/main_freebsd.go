@@ -39,6 +39,10 @@ func main(){
     canonicalMax:=flags.Uint64("max-canonical-bytes",75161927680,"original signed canonical byte ceiling")
     encodedMax:=flags.Uint64("max-encoded-bytes",68719476736,"original signed encoded byte ceiling")
     manifestMax:=flags.Uint64("max-manifest-bytes",1048576,"original signed manifest byte ceiling")
+    publish:=flags.Bool("publish-verified-private",false,"OFFLINE DEVELOPMENT ONLY: atomic canonical promotion after complete signed private verification")
+    publishSource:=flags.String("publish-source-id","","original signed source for explicit offline canonical publication")
+    publishGeneration:=flags.String("publish-generation-id","","original signed generation for explicit offline canonical publication")
+    attempt:=flags.String("publish-attempt-id","","new distinct canonical Accepted journal attempt identity")
     max:=flags.Int("sql-workers-max",32,"bounded native C1 shared PostgreSQL workers (1..32)")
     recoverPrivate:=flags.Bool("reconcile-private-replay",false,"DEVELOPMENT ONLY: reconcile dirty private PostgreSQL before replay from signed custody")
     cert:=flags.String("tls-cert","","fi-sor dedicated mTLS server certificate")
@@ -48,14 +52,41 @@ func main(){
     if err:=flags.Parse(os.Args[1:]);err!=nil{fatal(err)}
     if flags.NArg()!=0 {fatal(errors.New("FI C1 SoR: no positional arguments allowed"))}
     if os.Geteuid()==0 {fatal(errors.New("FI C1 SoR: refuse root execution; dedicate an unprivileged fi-sor service account"))}
-    if *ram==""||*custodyRoot==""||*recordedRoot==""{
-        fatal(errors.New("FI C1 SoR: shared RAM and both read-only original signed custody roots required"))
+    if *custodyRoot==""||*recordedRoot==""{
+        fatal(errors.New("FI C1 SoR: both independent original signed custody roots required"))
     }
+    if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*custodyRoot);e!=nil{fatal(e)}
+    if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*recordedRoot);e!=nil{fatal(e)}
+    custodyCfg:=recordingest.C1NativeBCustodyConfig{
+        CustodyRoot:*custodyRoot,RecordedRoot:*recordedRoot,
+        SourceNamespaces:*namespaces,MaxCanonicalBytes:*canonicalMax,
+        MaxEncodedBytes:*encodedMax,MaxManifestBytes:*manifestMax,
+    }
+    if *publish{
+        if os.Getenv("FI_C1_CANONICAL_PUBLISH_APPROVED")!="I_HAVE_VERIFIED_ISOLATED_CLONE"{
+            fatal(errors.New("FI C1 publication: explicit isolated clone acceptance authorization absent"))
+        }
+        if *publishSource==""||*publishGeneration==""||*attempt==""||
+            *bind!=""||*recoverPrivate{
+            fatal(errors.New("FI C1 publication: explicit signed source/generation/unique attempt required; no active handoff server"))
+        }
+        ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
+        defer stop()
+        result,err:=recordingest.PublishC1VerifiedPrivateGeneration(ctx,*db,
+            custodyCfg,*publishSource,*publishGeneration,*attempt)
+        if err!=nil{fatal(err)}
+        fmt.Printf("FI C1 CANONICAL PROMOTION outcome=%s source=%s generation=%s committed=%d attempt=%s\\n",
+            result.Outcome,result.SourceID,result.GenerationID,
+            result.RecordsCommitted,result.AttemptID)
+        return
+    }
+    if *publishSource!=""||*publishGeneration!=""||*attempt!=""{
+        fatal(errors.New("FI C1: canonical publication flags forbidden in active two-jail service"))
+    }
+    if *ram==""{fatal(errors.New("FI C1 SoR: shared RAM mount required"))}
     ramMount,e:=c1handoff.NewRAMStore(*ram)
     if e!=nil{fatal(e)}
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,true);e!=nil{fatal(e)}
-    if e=c1handoff.RequireFreeBSDReadOnlyCustody(*custodyRoot);e!=nil{fatal(e)}
-    if e=c1handoff.RequireFreeBSDReadOnlyCustody(*recordedRoot);e!=nil{fatal(e)}
     cfg:=recordingest.C1SoRServerConfig{
         Bind:*bind,LocalPostgresDSN:*db,SQLWorkersMax:*max,
         SharedRAMDir:*ram,AllowC1Replay:*recoverPrivate,

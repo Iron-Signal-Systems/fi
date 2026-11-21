@@ -194,6 +194,28 @@ These steps **do not mount tmpfs, add custody RO nullfs mappings, change
 PostgreSQL authentication or start any service**. They are not a substitute
 for a real FreeBSD isolated two-jail acceptance run.
 
+## Explicit offline C1 atomic publication candidate (NOT LIVE ACCEPTED)
+
+The development fi-sor executable contains a separate,
+explicitly authorized **offline** publication mode. It does not run
+during fi-ingest P5/P6 processing or over the bounded mTLS handoff.
+The publisher reconstructs the complete original signed batch plan
+from immutable recorded receipt plus read-only local PostgreSQL
+source_batch metadata, then reuses the existing populated-SoR
+foreign-key remap, table lock, Accepted journal and atomic transaction.
+Inside those locks a **fresh** independent original receiver-signed
+custody/typed row/USN verification is mandatory; the earlier B process
+alone is not sufficient.
+
+This candidate requires `--publish-verified-private`, an explicitly
+selected source, generation and unique attempt ID, both read-only
+custody roots, and an approval environment guard set to
+`FI_C1_CANONICAL_PUBLISH_APPROVED=I_HAVE_VERIFIED_ISOLATED_CLONE`.
+There is **no default rc publication switch**. Its actual full signed
+generation remap and late-failure rollback are **not yet accepted on
+the C220 isolated populated SoR clone**. Do NOT run this against
+the live populated canonical fi database yet.
+
 ## Validation before any live C220 activation
 
 - Go race, C1 handoff, prepared-family tests and cross-built FreeBSD
