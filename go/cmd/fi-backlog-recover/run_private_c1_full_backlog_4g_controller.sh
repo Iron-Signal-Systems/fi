@@ -265,6 +265,28 @@ fi
 # and operating-system cleanup belong to separate, non-throughput clocks.
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported invalid throughput'
+# Independent verifier wall time is reported but NEVER enters rec/sec.
+group_verify_seconds=$(awk '
+function sec(t,a,n,h,m) {
+  h=0;m=0
+  if(index(t,"h")){n=split(t,a,"h");h=a[1]+0;t=a[2]}
+  if(index(t,"m")){n=split(t,a,"m");m=a[1]+0;t=a[2]}
+  sub(/s$/,"",t)
+  return h*3600+m*60+t+0
+}
+{
+  for(i=1;i<=NF;i++) if($i~/^duration=/){
+    split($i,d,"=");sum+=sec(d[2]);count++
+  }
+}
+END{if(count==0)exit 1;printf "%.3f",sum}
+' "$runroot/C1_ASYNC_VERIFY.txt") ||
+  fail 'missing independent B group verification duration'
+final_verify_duration=$(sed -n 's/.* duration=\\([^ ]*\\).*/\\1/p' "$runroot/C1_B_FINAL.txt")
+[ -n "$final_verify_duration" ] || fail 'missing B final proof duration'
+printf 'FI C1 VERIFICATION TIMER phase=B_groups groups=%s seconds=%s excluded_from_ingest_rate=true\\n' "$groups" "$group_verify_seconds"
+printf 'FI C1 VERIFICATION TIMER phase=B_final duration=%s excluded_from_ingest_rate=true\\n' "$final_verify_duration"
+printf 'FI C1 OPERATIONAL WALL TIMER duration=%s excluded_from_ingest_rate=true\\n' "$wall_duration"
 if [ "$mode" = prefix8 ];then
   printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 ingest_seconds=%s records_per_second=%s verification_excluded=true full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
   printf 'FI C1 COMMIT-READY 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s receiver_custody_sha=true one_shot_relational_proofs=true verifier_timing_independent=true original_relational_rescans=removed all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
