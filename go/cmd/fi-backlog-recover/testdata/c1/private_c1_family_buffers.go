@@ -80,17 +80,11 @@ type privateP6Limits struct{
     rows int
     bytes int64
 }
-// A pending family has a bounded age independently of signed batch and
-// reporting-group boundaries. Busy families normally flush by capacity;
-// sparse families need a latency cap to make committed rows visible to B.
-// This is a FAMILY PROCESSING rule, not a verifier request or barrier.
-const privateC1FamilyAgePollRecords int64 = 256
-var privateC1FamilyMaxAge=[privateP6FamilyCount]time.Duration{
-    12*time.Second,12*time.Second,2*time.Second,2*time.Second,2*time.Second,
-}
-var privateC1FamilyMaxAdmittedAge=[privateP6FamilyCount]int64{
-    262144,262144,65536,65536,65536,
-}
+// A per-family inactivity timer flushes pending records after 30 seconds
+// without a new record for THAT family. Capacity/dependency flushes remain
+// immediate, and no signed-batch/group/verifier event triggers a flush.
+const privateC1FamilyIdleTimeout = 30*time.Second
+const privateC1FamilyIdlePollInterval = time.Second
 type privateP6Lane struct{
     limit privateP6Limits
     pending []privateP6Record
@@ -98,13 +92,13 @@ type privateP6Lane struct{
     handoffs int64
     records int64
     capacityHandoffs int64
-    ageHandoffs int64
+    ageHandoffs int64 // reserved historical field; no age-driven flushes
+    idleHandoffs int64
     dependencyHandoffs int64
     finalHandoffs int64
     peakRows int
     peakBytes int64
-    firstPendingAt time.Time
-    firstPendingOrdinal int64 // global admitted ordinal, not batch/group index
+    lastReceivedAt time.Time
 }
 type privateP6Buffers struct{
     sink privateP6SQLHandoff
@@ -115,13 +109,15 @@ type privateP6Buffers struct{
     lanes [privateP6FamilyCount]privateP6Lane
     total int64
     inserted int64
+    idleTimeout time.Duration
     finished bool
     failed error
 }
 
 func newPrivateP6Buffers(window int,sink privateP6SQLHandoff)(*privateP6Buffers,error){
     if window<1 || sink==nil{return nil,errors.New("FI P6: private window and SQL transaction sink required")}
-    b:=&privateP6Buffers{window:window,sink:sink,lastBatch:-1}
+    b:=&privateP6Buffers{window:window,sink:sink,lastBatch:-1,
+        idleTimeout:privateC1FamilyIdleTimeout}
     // Exact profile bounds; no unbounded per-family memory. A source record
     // larger than one lane byte ceiling goes as ONE admitted item (bounded
     // by existing P5 global 256 MiB raw-record admission and source caps).
@@ -142,11 +138,9 @@ func privateP6ShouldFlush(l *privateP6Lane,incoming int64)bool{
 func privateP6Full(l *privateP6Lane)bool{
     return len(l.pending)>=l.limit.rows || l.bytes>=l.limit.bytes
 }
-func privateP6Enqueue(l *privateP6Lane,row privateP6Record,admittedOrdinal int64){
-    if len(l.pending)==0{
-        l.firstPendingAt=time.Now()
-        l.firstPendingOrdinal=admittedOrdinal
-    }
+func privateP6Enqueue(l *privateP6Lane,row privateP6Record){
+    // Reset ONLY this family's inactivity clock upon actual reception.
+    l.lastReceivedAt=time.Now()
     l.pending=append(l.pending,row)
     l.bytes+=int64(row.prepared.RecordBytes)
     if len(l.pending)>l.peakRows{l.peakRows=len(l.pending)}
@@ -173,7 +167,7 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
     if privateP6ShouldFlush(src,int64(row.prepared.RecordBytes)){
         if err=b.flushSource(ctx);err!=nil{return err}
     }
-    privateP6Enqueue(src,row,b.total)
+    privateP6Enqueue(src,row)
     b.inserted++ // admitted, not yet SQL-committed
     if privateP6Full(src){
         if err=b.flushSource(ctx);err!=nil{return err}
@@ -182,41 +176,36 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
     if privateP6ShouldFlush(lane,int64(row.prepared.RecordBytes)){
         if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
     }
-    privateP6Enqueue(lane,row,b.total)
+    privateP6Enqueue(lane,row)
     b.total++
     b.lastBatch,b.lastOrdinal=row.signedBatchIndex,row.ordinal
     if privateP6Full(lane){
         if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
     }
-    // Check aged work periodically; the active signed reader drives this
-    // without goroutines or locks mutating the single-owner family buffers.
-    // Flush at most ONE aged family on a poll to avoid synchronized spikes.
-    // No signed batch, group, or verifier-timer condition enters this decision.
-    if b.total%privateC1FamilyAgePollRecords==0{
-        if err=b.flushOneAgedFamily(ctx);err!=nil{return err}
-    }
     return nil
 }
 
-func(b *privateP6Buffers) flushOneAgedFamily(ctx context.Context)error{
-    now:=time.Now()
-    // File before USN preserves the real relational dependency; the rest
-    // remain independently buffered until their own need is reached.
+// flushIdleFamilies runs only on the SAME consumer goroutine that owns Add.
+// The independent one-second ticker in the continuous Preparation consumer
+// invokes it even when no records arrive. No shared buffer locks or timer
+// callbacks can race the ordered source/SQL handoff path.
+func(b *privateP6Buffers) flushIdleFamilies(ctx context.Context,now time.Time)error{
+    if b==nil||ctx==nil||b.finished||b.failed!=nil{
+        return errors.New("FI C1 Family Processing: idle flush on inactive buffer")
+    }
+    if err:=ctx.Err();err!=nil{return err}
     for _,f:=range []privateP6Family{
         privateP6File,privateP6USN,privateP6Coverage,privateP6Other,privateP6Security,
     }{
         lane:=&b.lanes[f]
-        if len(lane.pending)==0{continue}
-        elapsed:=now.Sub(lane.firstPendingAt)
-        ageRecords:=b.total-lane.firstPendingOrdinal
-        if elapsed<privateC1FamilyMaxAge[f] &&
-           ageRecords<privateC1FamilyMaxAdmittedAge[f]{
-            continue
-        }
-        fmt.Printf("FI C1 FAMILY PROCESSING NEED FLUSH utc=%s family=%s trigger=age elapsed=%s admitted_age=%d buffered_rows=%d buffered_bytes=%d batch_boundary=false group_boundary=false verifier_trigger=false\n",
-            now.UTC().Format(time.RFC3339Nano),privateP6FamilyNames[f],
-            elapsed,ageRecords,len(lane.pending),lane.bytes)
-        return b.flushFamily(ctx,f,"age")
+        if len(lane.pending)==0||lane.lastReceivedAt.IsZero(){continue}
+        idle:=now.Sub(lane.lastReceivedAt)
+        if idle<b.idleTimeout{continue}
+        rows,bytes:=len(lane.pending),lane.bytes
+        if err:=b.flushFamily(ctx,f,"idle");err!=nil{return err}
+        fmt.Printf("FI C1 FAMILY PROCESSING IDLE FLUSH utc=%s family=%s idle=%s timeout=%s buffered_rows=%d buffered_bytes=%d trigger=inactivity no_batch_flush=true no_group_flush=true verifier_independent=true\n",
+            now.UTC().Format(time.RFC3339Nano),privateP6FamilyNames[f],idle,
+            b.idleTimeout,rows,bytes)
     }
     return nil
 }
@@ -232,8 +221,7 @@ func(b *privateP6Buffers) flushSource(ctx context.Context)error{
     l.handoffs++
     l.pending=nil
     l.bytes=0
-    l.firstPendingAt=time.Time{}
-    l.firstPendingOrdinal=0
+    l.lastReceivedAt=time.Time{}
     return nil
 }
 
@@ -269,15 +257,15 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     lane.handoffs++
     switch reason{
     case "capacity":lane.capacityHandoffs++
-    case "age":lane.ageHandoffs++
+    case "age":lane.ageHandoffs++ // no new age handoffs; retained for receipt schema
+    case "idle":lane.idleHandoffs++
     case "dependency":lane.dependencyHandoffs++
     case "end-of-input":lane.finalHandoffs++
     default:panic("FI P6: unsupported flush reason")
     }
     lane.pending=nil
     lane.bytes=0
-    lane.firstPendingAt=time.Time{}
-    lane.firstPendingOrdinal=0
+    lane.lastReceivedAt=time.Time{}
     return nil
 }
 
@@ -320,9 +308,9 @@ func(b *privateP6Buffers) Finish(ctx context.Context)error{
         b.window,b.source.records,b.source.handoffs,b.source.limit.bytes)
     for family:=privateP6Family(0);family<privateP6FamilyCount;family++{
         lane:=&b.lanes[family]
-        fmt.Printf("FI P6 FAMILY window=%d family=%s rows=%d handoffs=%d capacity=%d age=%d dependency=%d final=%d peak_rows=%d peak_bytes=%d complete=true\n",
+        fmt.Printf("FI P6 FAMILY window=%d family=%s rows=%d handoffs=%d capacity=%d age=%d idle=%d dependency=%d final=%d peak_rows=%d peak_bytes=%d complete=true\n",
             b.window,privateP6FamilyNames[family],lane.records,lane.handoffs,
-            lane.capacityHandoffs,lane.ageHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
+            lane.capacityHandoffs,lane.ageHandoffs,lane.idleHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
             lane.peakRows,lane.peakBytes)
     }
     fmt.Printf("FI C1 FINAL SOURCE AND FAMILY DRAIN window=%d source=%d typed=%d families=5 sql_writers=adaptive_shared clone_only=true completion=all_families\n",
