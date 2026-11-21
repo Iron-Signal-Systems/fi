@@ -163,23 +163,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		scopeCount += len(p.value.MatchedScopes)
 		fieldCount += len(p.value.Fields)
 	}
-	var scopeRows pgx.CopyFromSource
-	if scopeCount > 0 {
-		if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {
-			// Private W128/P3 reuses a four-column row rather than retaining
-			// all matched scopes in an additional [][]any matrix.
-			scopeRows = newSecurityScopeCopySource(pending)
-		} else {
-			// Preserve the established P1 and ordinary P3 COPY behavior.
-			scopes := make([][]any, 0, scopeCount)
-			for _, p := range pending {
-				for i, scope := range p.value.MatchedScopes {
-					scopes = append(scopes, []any{p.sourceRecordID, i + 1, scope.ScopeID, scope.GovernedRoot})
-				}
-			}
-			scopeRows = pgx.CopyFromSlice(len(scopes), func(i int) ([]any, error) { return scopes[i], nil })
-		}
-	}
+	// Scope rows follow the same isolated C1 switch as event rows.
+	// Ordinary SQL scopes preserve the original materialized path.
+	scopeRows := securityScopeCopyRows(ctx, pending, scopeCount)
 	profile.SecurityBulk.ChildPrepare += time.Since(childPrepareStarted)
 	if scopeCount > 0 {
 		scopeCopyStarted := time.Now()
@@ -248,6 +234,22 @@ func securityEventCopyRows(ctx context.Context, pending []securityBulkRecord) pg
 			nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
 		}, nil
 	})
+}
+
+// securityScopeCopyRows selects only the tested private reusable scope
+// iterator. Ordinary P1/P3 continues to construct identical [][]any rows.
+func securityScopeCopyRows(ctx context.Context, pending []securityBulkRecord, scopeCount int) pgx.CopyFromSource {
+    if scopeCount==0{return nil}
+    if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {
+        return newSecurityScopeCopySource(pending)
+    }
+    scopes:=make([][]any,0,scopeCount)
+    for _,p:=range pending{
+        for i,scope:=range p.value.MatchedScopes{
+            scopes=append(scopes,[]any{p.sourceRecordID,i+1,scope.ScopeID,scope.GovernedRoot})
+        }
+    }
+    return pgx.CopyFromSlice(len(scopes),func(i int)([]any,error){return scopes[i],nil})
 }
 
 // securitySourceRecordCopyRows isolates the reusable-row selection from the transaction
