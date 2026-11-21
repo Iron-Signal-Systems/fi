@@ -74,6 +74,14 @@ type privateC1SQLLane struct {
 }
 type privateC1FiveSQL struct {
     parent *pgx.Conn
+    sourceProfile bool // explicit 8GiB-only profiling, never a production setting
+    parentBackendPID int64
+    parentPreCopyWall time.Duration
+    parentCursorNextWall time.Duration
+    parentCursorValuesWall time.Duration
+    parentCOPYRemainderWall time.Duration
+    parentProfiledCopyCalls int64
+    parentProfiledValues int64
     commitReady *privateC1CommitReady // immutable attachment before any source/family job
     sourceJobs chan privateC1SourceJob
     sourceOutstanding []*privateC1SourceAck // signed reader only
@@ -188,10 +196,12 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     }
     max,e:=privateC1SQLWorkersMax()
     if e!=nil{return nil,e}
+    sourceProfile,e:=privateC1SourceProfileMode()
+    if e!=nil{return nil,e}
     owner,cancel:=context.WithCancel(ctx)
     w:=&privateC1FiveSQL{
         ctx:owner,cancel:cancel,sourceID:sourceID,dsn:dsn,pgdata:pgdata,
-        maxWorkers:max,sourceJobs:make(chan privateC1SourceJob,2),
+        maxWorkers:max,sourceProfile:sourceProfile,sourceJobs:make(chan privateC1SourceJob,2),
         jobs:make(chan privateC1SQLJob,max*2),
         usnPending:make(chan privateC1SQLJob,privateC1MaxPendingUSNHandoffs),
         pids:make(map[int64]bool),
@@ -199,6 +209,17 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     parent,pid,e:=privateC1CloneConnection(ctx,dsn,pgdata)
     if e!=nil{cancel();return nil,e}
     w.parent=parent
+    w.parentBackendPID=pid
+    if w.sourceProfile {
+        // Label only the existing ordered writer. The 1-second read-only
+        // PostgreSQL sampler uses this label to retrieve exact PID/waits.
+        if _,e=parent.Exec(ctx,"SET application_name = 'fi-c1-sourceparent-8g'");e!=nil{
+            cancel()
+            _=parent.Close(context.Background())
+            return nil,fmt.Errorf("FI C1: label ordered parent backend: %w",e)
+        }
+        fmt.Printf("FI C1 SOURCE PARENT BACKEND pid=%d application_name=fi-c1-sourceparent-8g single_connection=true clone_only=true\n",pid)
+    }
     w.pids[pid]=true
     for i:=range w.lanes{
         w.lanes[i]=&privateC1SQLLane{
@@ -539,9 +560,26 @@ func(w *privateC1FiveSQL) writeSource(ctx context.Context,rows []privateP6Record
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
     profile:=&ingestStageProfile{}
-    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx},
+    var sourceCopyTiming privateC1SourceCopyTiming
+    var sourceTx pgx.Tx=tx
+    if w.sourceProfile {
+        sourceTx=&privateC1TimedSourceTx{Tx:tx,timing:&sourceCopyTiming}
+    }
+    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:sourceTx},
         w.sourceID,profile)
+    sourceStarted:=time.Now()
     if err==nil{err=coordinator.Source(ctx,rows)}
+    sourceWall:=time.Since(sourceStarted)
+    if w.sourceProfile && err==nil {
+        preCopy:=sourceWall-sourceCopyTiming.CopyWall
+        if preCopy<0{preCopy=0}
+        w.parentPreCopyWall+=preCopy
+        w.parentCursorNextWall+=sourceCopyTiming.NextWall
+        w.parentCursorValuesWall+=sourceCopyTiming.ValuesWall
+        w.parentCOPYRemainderWall+=sourceCopyTiming.Remainder()
+        w.parentProfiledCopyCalls+=sourceCopyTiming.Calls
+        w.parentProfiledValues+=sourceCopyTiming.ValuesCalls
+    }
     commitStarted:=time.Now()
     if err==nil{err=tx.Commit(ctx)}
     commitWall:=time.Since(commitStarted)
@@ -755,6 +793,13 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
         w.parentRows,w.parentHandoffs,w.parentSQLWall,w.parentBeginWall,
         w.parentCopyWall,w.parentCommitWall,w.parentReadinessWall,parentOther)
 
+    if w.sourceProfile {
+        fmt.Printf("FI C1 SOURCE PARENT COPY DETAIL backend_pid=%d rows=%d handoffs=%d copy_calls=%d values_calls=%d pre_copy=%s cursor_next=%s cursor_values=%s copy_remainder=%s copy_total=%s commit=%s commit_readiness=%s phase_remainder_includes_pgx_encode_io_server=true one_parent_connection=true clone_only=true\n",
+            w.parentBackendPID,w.parentRows,w.parentHandoffs,
+            w.parentProfiledCopyCalls,w.parentProfiledValues,
+            w.parentPreCopyWall,w.parentCursorNextWall,w.parentCursorValuesWall,
+            w.parentCOPYRemainderWall,w.parentCopyWall,w.parentCommitWall,w.parentReadinessWall)
+    }
     fmt.Printf("FI C1 ORDERED SOURCE BACKPRESSURE max_outstanding=%d waits=%d wall=%s remaining_ack=%d\n",
         privateC1MaxFamilyHandoffsInFlight,w.sourceBackpressureWaits,
         w.sourceBackpressureWall,len(w.sourceOutstanding))
