@@ -108,6 +108,10 @@ type privateC1FiveSQL struct {
     parentRows int64
     parentHandoffs int64
     parentSQLWall time.Duration
+    parentBeginWall time.Duration
+    parentCopyWall time.Duration
+    parentCommitWall time.Duration
+    parentReadinessWall time.Duration
     closed bool
     failed error // signed reader only
 }
@@ -531,21 +535,31 @@ func privateC1PostCommitFailpoint(f privateP6Family) bool {
 func(w *privateC1FiveSQL) writeSource(ctx context.Context,rows []privateP6Record)error{
     startedSource:=time.Now()
     tx,err:=w.parent.Begin(ctx)
+    beginWall:=time.Since(startedSource)
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
+    profile:=&ingestStageProfile{}
     coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx},
-        w.sourceID,&ingestStageProfile{})
+        w.sourceID,profile)
     if err==nil{err=coordinator.Source(ctx,rows)}
+    commitStarted:=time.Now()
     if err==nil{err=tx.Commit(ctx)}
+    commitWall:=time.Since(commitStarted)
     if err!=nil{return fmt.Errorf("FI C1: ordered P6 source parent failed: %w",err)}
+    readinessStarted:=time.Now()
     if w.commitReady!=nil{
         if err:=w.commitReady.CommitSource(rows);err!=nil{
             return fmt.Errorf("FI C1: committed source readiness: %w",err)
         }
     }
+    readinessWall:=time.Since(readinessStarted)
     w.parentRows+=int64(len(rows))
     w.parentHandoffs++
     w.parentSQLWall+=time.Since(startedSource)
+    w.parentBeginWall+=beginWall
+    w.parentCopyWall+=profile.SourceSQL
+    w.parentCommitWall+=commitWall
+    w.parentReadinessWall+=readinessWall
     return nil
 }
 
@@ -734,6 +748,13 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
     var total int64
     fmt.Printf("FI C1 SQL PROFILE family=SourceParent rows=%d handoffs=%d sql_wall=%s\n",
         w.parentRows,w.parentHandoffs,w.parentSQLWall)
+    parentOther:=w.parentSQLWall-w.parentBeginWall-w.parentCopyWall-
+        w.parentCommitWall-w.parentReadinessWall
+    if parentOther<0{parentOther=0}
+    fmt.Printf("FI C1 SOURCE PARENT STAGES rows=%d handoffs=%d total=%s begin=%s copy=%s commit=%s commit_readiness=%s other=%s single_connection=true no_schema_change=true\n",
+        w.parentRows,w.parentHandoffs,w.parentSQLWall,w.parentBeginWall,
+        w.parentCopyWall,w.parentCommitWall,w.parentReadinessWall,parentOther)
+
     fmt.Printf("FI C1 ORDERED SOURCE BACKPRESSURE max_outstanding=%d waits=%d wall=%s remaining_ack=%d\n",
         privateC1MaxFamilyHandoffsInFlight,w.sourceBackpressureWaits,
         w.sourceBackpressureWall,len(w.sourceOutstanding))
