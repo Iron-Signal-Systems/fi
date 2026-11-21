@@ -148,6 +148,34 @@ WHERE CASE
     if missingSequences!=0{
         t.Fatalf("C1 private identity sequences unavailable to SQL worker: %d",missingSequences)
     }
+    // Don't rely only on pg_catalog ACL reporting: open an actual second
+    // PostgreSQL session using the exact C1 fi-sor writer DATABASE role.
+    // PostgreSQL must allow SELECT on both private schemas but reject
+    // CREATE, proving new DDL is still restricted to the offline admin.
+    workerCfg,err:=pgx.ParseConfig(dsn)
+    if err!=nil{t.Fatal(err)}
+    workerCfg.User="fi_ingest"
+    workerCfg.Password="isolated-only-test"
+    worker,err:=pgx.ConnectConfig(ctx,workerCfg)
+    if err!=nil{t.Fatalf("C1 fi-sor private SQL role unable to connect: %v",err)}
+    defer worker.Close(context.Background())
+    for _,relation:=range []string{
+        "fi_recovery_projection.source_record",
+        "fi_recovery_projection.source_batch",
+        "fi_recovery.typed_window",
+    }{
+        var observed int64
+        if err=worker.QueryRow(ctx,"SELECT count(*) FROM "+relation).Scan(&observed);err!=nil{
+            t.Fatalf("C1 fi-sor SQL role cannot read private %s: %v",relation,err)
+        }
+        if observed!=0{
+            t.Fatalf("private schema SQL read unexpectedly nonempty in disposable fixture: %s",relation)
+        }
+    }
+    if _,err=worker.Exec(ctx,`CREATE TABLE fi_recovery_projection.fi_c1_forbidden_worker_ddl
+        (id bigint)`);err==nil{
+        t.Fatal("C1 fi-sor runtime SQL role could create private schema objects")
+    }
     var source,intake,accepted int64
     if err=admin.QueryRow(ctx,`SELECT
        (SELECT count(*) FROM fi_recovery_projection.source_record),
