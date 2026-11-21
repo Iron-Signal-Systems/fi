@@ -95,6 +95,63 @@ func TestPrivateP5ReuseAllFiveLanesAcrossSignedBatches(t *testing.T){
     }
 }
 
+// The five P5 lanes remain independently adaptive. A blocked Security
+// preparation burst must be able to occupy all 32 configured slots while
+// idle families remain at their two-worker floor.
+func TestPrivateP5AdaptiveSecurityScalesToThirtyTwo(t *testing.T){
+    privateP5TestMode(t)
+    pool,err:=newPrivateP5Pool(context.Background(),1)
+    if err!=nil{t.Fatal(err)}
+    defer pool.Close()
+    for i,lane:=range pool.lanes{
+        if len(lane.jobs)!=32||len(lane.busy)!=32||cap(lane.done)!=32{
+            t.Fatalf("family %d was not allocated 32 independent adaptive slots",i)
+        }
+        if got:=lane.spawned();got!=2{
+            t.Fatalf("family %d floor workers=%d, expected 2",i,got)
+        }
+    }
+    gate:=make(chan struct{})
+    released:=false
+    defer func(){if !released{close(gate)}}()
+    ctx:=context.WithValue(context.Background(),privateP5PoolContextKey{},pool)
+    data:=bytes.Repeat(canonicalDispatchFixture("WindowsSecurityEvent","{}"),48)
+    prep:=func(raw []byte,kind string,f spoolDispatchFamily)(
+        SourceRecord,securityBulkRecord,bool,error,
+    ){
+        <-gate
+        return privateP5TestPrepare(raw,kind,f)
+    }
+    stream,err:=newPrivateFamilyP3PreparedStream(ctx,
+        bufio.NewReader(bytes.NewReader(data)),prep)
+    if err!=nil{t.Fatal(err)}
+    deadline:=time.After(10*time.Second)
+    for pool.lanes[spoolDispatchSecurity].spawned()<32{
+        select{
+        case <-deadline:
+            t.Fatal("P5 Security failed to scale adaptively to 32 busy preparation workers")
+        case <-time.After(5*time.Millisecond):
+        }
+    }
+    close(gate)
+    released=true
+    for i:=0;i<48;i++{
+        row,ok:=stream.Next()
+        if !ok||row.readErr!=nil||row.prepareErr!=nil||row.ordinal!=int64(i+1){
+            t.Fatalf("P5 source order lost at record %d",i+1)
+        }
+    }
+    if _,ok:=stream.Next();ok{t.Fatal("extra prepared Security record")}
+    stream.Close()
+    for i,lane:=range pool.lanes{
+        want:=2
+        if i==int(spoolDispatchSecurity){want=32}
+        if got:=lane.spawned();got!=want{
+            t.Fatalf("P5 family %d spawned=%d expected=%d",i,got,want)
+        }
+    }
+}
+
 func TestPrivateP5PoolPersistsWorkersWithoutRecreatingMinimum(t *testing.T){
     privateP5TestMode(t)
     pool,err:=newPrivateP5Pool(context.Background(),2)
