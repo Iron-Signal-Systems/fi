@@ -39,7 +39,11 @@ type privateP6SQLCoordinator struct{
 }
 func newPrivateP6SQLCoordinator(tx privateProjectionTx,sourceID string,
     profile *ingestStageProfile)(*privateP6SQLCoordinator,error){
-    if !privateP6Selected() || tx.Tx==nil || sourceID=="" || profile==nil {
+    if tx.Tx==nil || sourceID=="" || profile==nil {
+        // The clone path remains protected by privateC1Enabled() at pool
+        // construction. The fi-sor runtime is separately restricted to
+        // verified mTLS handoffs, signed batch IDs and local PostgreSQL.
+        // Neither path is allowed an unvalidated SQL transaction.
         return nil,errors.New("FI P6: isolated projection transaction, source and profiling required")
     }
     return &privateP6SQLCoordinator{tx:tx,sourceID:sourceID,profile:profile},nil
