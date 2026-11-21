@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=0af581c996863b6e91ca6cc58e36fbc95e02e11c
+sourcecommit=656f31929327b98eb2c35bec1d780d66e9593f95
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -558,7 +558,11 @@ mv "$trustfile.c220" "$trustfile" || exit 1
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-c1-verifier.c220" ./cmd/fi-c1-verifier
 ) > "$root/private-trust-path-build.log" 2>&1 || {
-  tail -n 60 "$root/private-trust-path-build.log" >&2
+  echo "===== FIRST GO TEST/RACE/BUILD FAILURES =====" >&2
+  grep -n -C 5 -E -- '--- FAIL:|^FAIL|panic:|fatal error:|WARNING: DATA RACE|build failed|^# ' \
+    "$root/private-trust-path-build.log" | head -n 180 >&2 || :
+  echo "===== BUILD LOG TAIL =====" >&2
+  tail -n 40 "$root/private-trust-path-build.log" >&2
   echo 'FI C220 PRIVATE TRUST PATCH STOP: tests/build failed' >&2
   exit 1
 }
