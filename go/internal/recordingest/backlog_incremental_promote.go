@@ -31,7 +31,24 @@ func PromoteVerifiedBacklogToPopulatedSoR(
  ctx context.Context, verifier,publisher *pgx.Conn,
  g *PreparedGeneration, limits BacklogWindowLimits, attemptID string,
 )(IngestResult,error){
+ return promoteVerifiedBacklogToPopulatedSoRWithProof(ctx,verifier,publisher,
+  g,limits,attemptID,VerifyCompleteBacklogTypedGeneration)
+}
+
+// The existing marker-chain verifier remains the DEFAULT, unchanged
+// contract. A separately admitted C1-native verifier can be supplied only
+// through an explicit development-only entrypoint. The same canonical
+// table locks, foreign-key remaps, transaction and rollback are reused.
+type backlogFullGenerationProof func(context.Context,*pgx.Conn,
+ *PreparedGeneration,BacklogWindowLimits)(BacklogGenerationVerification,error)
+
+func promoteVerifiedBacklogToPopulatedSoRWithProof(
+ ctx context.Context,verifier,publisher *pgx.Conn,
+ g *PreparedGeneration,limits BacklogWindowLimits,attemptID string,
+ proof backlogFullGenerationProof,
+)(IngestResult,error){
  var zero IngestResult
+ if proof==nil{return zero,errors.New("FI SoR promotion: missing full-generation proof callback")}
  if ctx==nil || verifier==nil || publisher==nil || verifier==publisher ||
    g==nil || attemptID=="" {
   return zero,errors.New("FI SoR promotion: complete signed inputs and separate connections required")
@@ -137,7 +154,7 @@ func PromoteVerifiedBacklogToPopulatedSoR(
  // No private mutations can pass the SHARE locks during independent receipt,
  // joined-source, relational, coverage, and complete-window verification.
  verifyStarted:=time.Now()
- verified,err:=VerifyCompleteBacklogTypedGeneration(ctx,verifier,g,limits)
+ verified,err:=proof(ctx,verifier,g,limits)
  if err!=nil{return zero,fmt.Errorf("FI SoR promotion: private signed generation not complete: %w",err)}
  if verified.SourceID!=d.SourceID || verified.GenerationID!=d.GenerationID ||
   verified.ReceiptSHA256!=g.ReceiptSHA256 || verified.Records!=g.Receipt.RecordCount ||
