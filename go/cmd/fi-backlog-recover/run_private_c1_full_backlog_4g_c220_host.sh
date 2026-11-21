@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=e0bd9a6c174b19eddf8993e6256a551740713060
+sourcecommit=4e77b286ccd5b91c18a3dbed3504c5a28de25bf8
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -467,14 +467,27 @@ grep -Fq 'RunPrivateC1VerifyChild' \
 grep -Fq 'privateC1AsyncVerifyGroup' \
   "$src/go/internal/recordingest/private_c1_process_verify.go" &&
 grep -Fq 'os/exec' \
+  "$src/go/internal/recordingest/private_c1_process_verify.go" &&
+grep -Fq 'verifier.WaitGroups(ctx)' \
+  "$src/go/internal/recordingest/private_c1_direct.go" &&
+grep -Fq 'verifiedByB,e:=verifier.Finish(ctx)' \
+  "$src/go/internal/recordingest/private_c1_direct.go" &&
+grep -Fq 'privateC1VerifyCompleteGroupedReplay(ctx,conn,g,p.Descriptors)' \
+  "$src/go/internal/recordingest/private_c1_process_verify.go" &&
+grep -Fq 'privateC1VerifyEightGiBPrefix(ctx,conn,g,p.Descriptors,p.End)' \
   "$src/go/internal/recordingest/private_c1_process_verify.go" ||
   { echo 'FI C1 STOP: committed source/family readiness or independent verifier boundary missing' >&2; exit 1; }
+if grep -Fq 'privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)' \
+  "$src/go/internal/recordingest/private_c1_direct.go"; then
+  echo 'FI C1 STOP: A still owns the final relational generation proof' >&2
+  exit 1
+fi
 if grep -Eq 'privateC1SparseMaxBatchLag|flushAgedSparse' \
   "$src/go/internal/recordingest/private_p6_family_buffers.go"; then
   echo 'FI C1 STOP: retired B-driven sparse-family flush still present' >&2
   exit 1
 fi
-echo 'FI C1 A/B SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked reader_seal=tracked verifier_independent=true verifier_os_process=separate sparse_age_flush=removed no_group_flush=true'
+echo 'FI C1 A/B SOURCE AUDIT PASS old_relational_scans=removed source_commit=tracked family_commit=tracked reader_seal=tracked verifier_independent=true verifier_os_process=separate final_generation_proof=B sparse_age_flush=removed no_group_flush=true'
 # Historical C220 original is the only allowed cache entrypoint source.
 cached="$src/go/internal/recordingest/backlog_verified_cache_recovery.go"
 git -C "$expected" show "b01ff0d8cb6559797de052f34b18bd84a395dc4c:go/internal/recordingest/backlog_verified_cache_recovery.go" |
@@ -937,6 +950,19 @@ grep -Fq "FI C1 ASYNC VERIFY COMPLETE groups=$windows during_ingest=" "$log" &&
 grep -Fq 'original_relational_rescans=removed final_marker_gate=preserved separate_os_process=true' "$log" &&
 ! grep -Fq 'FI C1 ASYNC VERIFY FAIL ' "$log" ||
   fail 'C1 independent verifier proof completion missing'
+grep '^FI C1 B GROUPS PROOF PASS ' "$log" > "$out/$name/C1_B_GROUPS.txt" ||
+  fail 'B never acknowledged all original committed group proofs'
+[ "$(wc -l < "$out/$name/C1_B_GROUPS.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq "groups=$windows read_only=true no_p6_flush=true awaiting_final_marker=true" "$out/$name/C1_B_GROUPS.txt" ||
+  fail 'B group proof receipt disagrees with original signed group count'
+grep '^FI C1 B FINAL GENERATION VERIFY PASS ' "$log" > "$out/$name/C1_B_FINAL.txt" ||
+  fail 'B final independent generation proof missing'
+[ "$(wc -l < "$out/$name/C1_B_FINAL.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq "mode=$( [ "$prefix8" = 1 ] && echo prefix || echo generation ) groups=$windows" "$out/$name/C1_B_FINAL.txt" &&
+grep -Fq 'read_only=true separate_os_process=true' "$out/$name/C1_B_FINAL.txt" ||
+  fail 'B final SQL proof mode or OS process identity invalid'
+[ "$(grep -c '^FI C1 B FINAL RESULT ' "$log")" = 1 ] ||
+  fail 'B final structured receipt missing or duplicated'
 grep '^FI C1 P6 SQL DRAIN ' "$log" > "$out/$name/C1_SQL_DRAIN.txt" ||
   fail 'C1 separate P6 SQL-drain performance receipt missing'
 # C1 adds the original P5 five-family parallel Go preparation pool,
@@ -1011,7 +1037,7 @@ printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records
   tee -a "$out/SUMMARY.txt"
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
-  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
+  "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
