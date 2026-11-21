@@ -87,7 +87,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=91c83d41124b9cd1164affd2afa7b9c23abd359b
+sourcecommit=6efe294ac85da8817bd6dc4ad36fcac3575c6e19
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -1184,6 +1184,13 @@ grep -Eq 'event_calls=[1-9][0-9]* ' "$out/$name/C1_SECURITY_COPY_CALLS.txt" &&
 grep -Eq 'field_calls=[1-9][0-9]* ' "$out/$name/C1_SECURITY_COPY_CALLS.txt" &&
 grep -Fq 'concurrent_time_sum=true' "$out/$name/C1_SECURITY_COPY_CALLS.txt" ||
   fail 'C1 Security field COPY call distribution incomplete'
+if [ "$security8" = 1 ];then
+  grep -Fq 'field_max_rows=65536 field_max_bytes=16777216 ' "$out/$name/C1_SECURITY_COPY_CALLS.txt" ||
+    fail 'C1 Security candidate COPY reported incorrect 65536/16MiB actual field limits'
+else
+  grep -Fq 'field_max_rows=32768 field_max_bytes=8388608 ' "$out/$name/C1_SECURITY_COPY_CALLS.txt" ||
+    fail 'C1 Security control COPY reported incorrect 32768/8MiB actual field limits'
+fi
 grep '^FI C1 SHARED SQL POOL ' "$log" > "$out/$name/C1_POOL.txt" ||
   fail 'C1 dynamic SQL worker pool metrics missing'
 [ "$(wc -l < "$out/$name/C1_POOL.txt" | tr -d '[:space:]')" = 1 ] &&
