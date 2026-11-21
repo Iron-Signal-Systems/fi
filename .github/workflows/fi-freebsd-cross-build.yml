@@ -329,9 +329,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=15f63536de10417c384e5c6f654c0d2272d29c44' in controller
-          assert 'runnerpin=628bfa6c02b72807a923ff5b0d745b2269f97b04' in controller
-          assert 'sourcecommit=15f63536de10417c384e5c6f654c0d2272d29c44' in runner
+          assert 'sourcepin=0c7f6869f145193ffa19e578da68bc7b85d5d4f3' in controller
+          assert 'runnerpin=352829b32c506c5f217ed406bc817f82616a49c6' in controller
+          assert 'sourcecommit=0c7f6869f145193ffa19e578da68bc7b85d5d4f3' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -397,7 +397,7 @@ jobs:
           assert 'C1_SETUP.txt' in controller
           assert 'C1_INGEST_START.txt' in controller
           c1source=(root/'testdata/c1/private_c1_direct.go').read_text()
-          assert 'pipeline_initialize=%s signed_manifest_lookup=%s verifier_spawn=%s' in c1source
+          assert 'signed_group_planning_clean_guard=%s pipeline_initialize=%s signed_manifest_lookup=%s verifier_spawn=%s' in c1source
           assert 'stage=P5_stream_entry' in c1source
           assert 'started:=time.Now()' in c1source
           assert c1source.index('verifierElapsed:=time.Since') < c1source.index('started:=time.Now()')
