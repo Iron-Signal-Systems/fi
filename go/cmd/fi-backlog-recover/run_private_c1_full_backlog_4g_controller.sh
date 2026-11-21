@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=24b3eba4756c02025b4dd877d678911188dc14e6
-runnerpin=467de469a14ab3ecf15d3299bf75de187be84d94
+sourcepin=abd330f1c59906585a30c7682518e8a70dbe7751
+runnerpin=42c192103a0d8ba54854860888f4f0a7fa3905c4
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -81,6 +81,7 @@ grep -Fq 'go/cmd/fi-c1-verifier/main.go' "$runner" &&
 grep -Fq 'C1 B PID must differ from ingestion A PID' "$runner" &&
 grep -Fq 'FI C1 B HOST EXECUTABLE PREFLIGHT PASS' "$runner" &&
 grep -Fq 'fi-c1-verifier.c220' "$runner" &&
+grep -Fq 'go127 build -tags fi_c1_private' "$runner" &&
 grep -Fq 'private_c1_commit_ready.go' "$runner" &&
 grep -Fq 'private_c1_commit_ready_test.go' "$runner" &&
 grep -Fq 'private_c1_sparse_age_test.go' "$runner" &&
