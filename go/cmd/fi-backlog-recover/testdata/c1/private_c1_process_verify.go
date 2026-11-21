@@ -416,13 +416,34 @@ func RunPrivateC1VerifyChild(ctx context.Context,input io.Reader)error{
     if err!=nil{return err}
     defer conn.Close(context.Background())
     if _,err=conn.Exec(ctx,"SET default_transaction_read_only = on");err!=nil{return err}
+    // B receives only existing signed-receipt metadata, not raw source data.
+    // Reconstruct the exact count/byte descriptors required by FI's existing
+    // prefix and complete-generation relational SQL proof functions.
     g:=&PreparedGeneration{ReceiptSHA256:p.ReceiptSHA256,Batches:make([]PreparedBatch,len(p.BatchIDs))}
     g.Receipt.TransferSHA256=p.TransferSHA256
-    for i,id:=range p.BatchIDs{g.Batches[i].BatchID=id}
+    g.Receipt.Descriptor.SourceID=p.SourceID
+    g.Receipt.Descriptor.GenerationID=p.GenerationID
+    g.Receipt.BatchCount=uint64(len(p.BatchIDs))
+    g.Receipt.RecordCount=p.TotalRecords
+    g.Receipt.DataBytes=p.TotalBytes
+    for i,id:=range p.BatchIDs{
+        g.Batches[i].BatchID=id
+        g.Batches[i].Manifest.RecordCount=p.BatchRecords[i]
+        g.Batches[i].Manifest.DataBytes=p.BatchBytes[i]
+    }
     fmt.Printf("FI C1 B OS PROCESS START pid=%d postgres_pid=%d groups=%d read_only=true separate_os_process=true\n",
         os.Getpid(),pid,p.End-p.Start)
     err=privateC1VerifyProcessCommands(ctx,scanner,&p,func(ctx context.Context,wi int)error{
         return privateC1AsyncVerifyGroup(ctx,conn,g,p.Descriptors,wi)
+    },func(ctx context.Context)(BacklogGenerationVerification,error){
+        if p.End<len(p.Descriptors){
+            var empty BacklogGenerationVerification
+            if err:=privateC1VerifyEightGiBPrefix(ctx,conn,g,p.Descriptors,p.End);err!=nil{
+                return empty,err
+            }
+            return empty,nil
+        }
+        return privateC1VerifyCompleteGroupedReplay(ctx,conn,g,p.Descriptors)
     })
     if err!=nil{
         fmt.Printf("FI C1 ASYNC VERIFY FAIL error=%v read_only=true fail_closed=true separate_os_process=true\n",err)
