@@ -329,9 +329,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=0c7f6869f145193ffa19e578da68bc7b85d5d4f3' in controller
-          assert 'runnerpin=352829b32c506c5f217ed406bc817f82616a49c6' in controller
-          assert 'sourcecommit=0c7f6869f145193ffa19e578da68bc7b85d5d4f3' in runner
+          assert 'sourcepin=24b3eba4756c02025b4dd877d678911188dc14e6' in controller
+          assert 'runnerpin=467de469a14ab3ecf15d3299bf75de187be84d94' in controller
+          assert 'sourcecommit=24b3eba4756c02025b4dd877d678911188dc14e6' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -396,6 +396,22 @@ jobs:
           assert 'C1_INGEST_START.txt' in runner
           assert 'C1_SETUP.txt' in controller
           assert 'C1_INGEST_START.txt' in controller
+          assert 'C1_IDLE_TIMER.txt' in runner
+          assert 'C1_IDLE_FLUSH.txt' in runner
+          assert 'C1_IDLE_TIMER.txt' in controller
+          assert 'timeout=30s poll=1s per_family=true' in runner
+          idlebuf=(root/'testdata/c1/private_c1_family_buffers.go').read_text()
+          idleloop=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
+          idletest=(root/'testdata/c1/private_c1_sparse_age_test.go').read_text()
+          assert 'const privateC1FamilyIdleTimeout = 30*time.Second' in idlebuf
+          assert 'case "idle":lane.idleHandoffs++' in idlebuf
+          assert 'func(b *privateP6Buffers) flushIdleFamilies(' in idlebuf
+          assert 'privateC1FamilyAgePollRecords' not in idlebuf
+          assert 'case <-ticker.C:' in idleloop
+          assert 'buffers.flushIdleFamilies(ctx,time.Now())' in idleloop
+          assert 'TestPrivateC1ThirtySecondIdleFlushWithoutAnotherRecord' in idletest
+          assert 'TestPrivateC1ThirtySecondIdleTimerResetsOnEachFamilyRecord' in idletest
+
           c1source=(root/'testdata/c1/private_c1_direct.go').read_text()
           assert 'signed_group_planning_clean_guard=%s pipeline_initialize=%s signed_manifest_lookup=%s verifier_spawn=%s' in c1source
           assert 'stage=P5_stream_entry' in c1source
