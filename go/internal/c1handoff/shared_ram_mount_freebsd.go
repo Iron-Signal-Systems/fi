@@ -30,7 +30,10 @@ func RequireFreeBSDRAMMount(store *RAMStore,reader bool)error{
     if string(name)!="nullfs" && string(name)!="tmpfs"{
         return fmt.Errorf("C1 RAM: mount is %q, not host tmpfs/nullfs",string(name))
     }
-    readonly:=stat.Flags&uint64(syscall.MNT_RDONLY)!=0
+    // FreeBSD sys/mount.h MNT_RDONLY is 0x00000001. Go's syscall package
+    // exposes Statfs_t.Flags but not the corresponding MNT_RDONLY constant.
+    const freeBSDMntReadOnly uint64 = 0x00000001
+    readonly:=stat.Flags&freeBSDMntReadOnly!=0
     if reader&&!readonly{
         return errors.New("C1 RAM: fi-sor shared mount MUST be read-only")
     }
