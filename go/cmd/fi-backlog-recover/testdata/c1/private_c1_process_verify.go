@@ -129,10 +129,16 @@ type privateC1ProcessVerifier struct {
     cmd *exec.Cmd
     stdin io.WriteCloser
     done chan struct{}
+    groupsDone chan struct{}
+    finish chan struct{}
     drained chan struct{}
     markDrain sync.Once
+    ackGroups sync.Once
+    markFinal sync.Once
     start,end int
-    err error // written by waiter, read only after <-done
+    result BacklogGenerationVerification // stdout scanner-owned, read after <-done
+    gotFinal bool
+    err error // waiter-owned, read after <-done
 }
 
 func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
@@ -168,20 +174,44 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
     childCtx,cancel:=context.WithCancel(ctx)
     cmd:=exec.CommandContext(childCtx,bin)
     cmd.Env=append(os.Environ(),"FI_C1_DEV_VERIFY_CHILD=1")
-    cmd.Stdout=os.Stdout
     cmd.Stderr=os.Stderr
+    stdout,err:=cmd.StdoutPipe()
+    if err!=nil{cancel();return nil,err}
     stdin,err:=cmd.StdinPipe()
     if err!=nil{cancel();return nil,err}
     if err=cmd.Start();err!=nil{cancel();_ =stdin.Close();return nil,err}
     v:=&privateC1ProcessVerifier{
         cmd:cmd,cancel:cancel,stdin:stdin,done:make(chan struct{}),
+        groupsDone:make(chan struct{}),finish:make(chan struct{}),
         drained:make(chan struct{}),start:start,end:end,
     }
     fmt.Printf("FI C1 B OS PROCESS SPAWN pid=%d parent_pid=%d groups=%d transport=bounded_stdin read_only=true controls_p6=false original_batch_sha_pass=none\n",
         cmd.Process.Pid,os.Getpid(),end-start)
+    // B's stdout is a receipt-only response channel. Its usual diagnostics
+    // are relayed unchanged to the existing C220 transcript.
+    stdoutDone:=make(chan error,1)
+    go func(){
+        scanner:=bufio.NewScanner(stdout)
+        scanner.Buffer(make([]byte,64<<10),privateC1VerifyPlanMaxBytes)
+        for scanner.Scan(){
+            line:=scanner.Text()
+            fmt.Println(line)
+            if strings.HasPrefix(line,"FI C1 B GROUPS PROOF PASS "){
+                v.ackGroups.Do(func(){close(v.groupsDone)})
+            }
+            const prefix="FI C1 B FINAL RESULT "
+            if strings.HasPrefix(line,prefix){
+                if e:=json.Unmarshal([]byte(strings.TrimPrefix(line,prefix)),&v.result);e!=nil{
+                    stdoutDone<-fmt.Errorf("FI C1 B: invalid final result: %w",e)
+                    return
+                }
+                v.gotFinal=true
+            }
+        }
+        stdoutDone<-scanner.Err()
+    }()
     writerDone:=make(chan error,1)
     go func(){
-        defer close(writerDone)
         defer stdin.Close()
         if _,e:=stdin.Write(append(payload,'\n'));e!=nil{
             writerDone<-fmt.Errorf("FI C1 B: send custody plan: %w",e)
@@ -201,8 +231,17 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
                 drain=nil
             case wi,ok:=<-ready:
                 if !ok{
-                    _,e:=io.WriteString(stdin,"FINISH\n")
-                    writerDone<-e
+                    if _,e:=io.WriteString(stdin,"GROUPS\n");e!=nil{
+                        writerDone<-e
+                        return
+                    }
+                    select{
+                    case <-childCtx.Done():
+                        writerDone<-childCtx.Err()
+                    case <-v.finish:
+                        _,e:=io.WriteString(stdin,"FINAL\n")
+                        writerDone<-e
+                    }
                     return
                 }
                 if wi<start||wi>=end{
@@ -219,10 +258,15 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
     go func(){
         sendErr:=<-writerDone
         processErr:=cmd.Wait()
+        scanErr:=<-stdoutDone
         if sendErr!=nil{
             v.err=fmt.Errorf("FI C1 B: transport: %w",sendErr)
-        } else if processErr!=nil{
+        }else if processErr!=nil{
             v.err=fmt.Errorf("FI C1 B: independent process failed: %w",processErr)
+        }else if scanErr!=nil{
+            v.err=fmt.Errorf("FI C1 B: receipt read: %w",scanErr)
+        }else if !v.gotFinal{
+            v.err=errors.New("FI C1 B: final process proof receipt missing")
         }
         if v.err!=nil&&onFailure!=nil{onFailure(v.err)}
         close(v.done)
@@ -234,14 +278,34 @@ func(v *privateC1ProcessVerifier)MarkDrained(){
     if v!=nil{v.markDrain.Do(func(){close(v.drained)})}
 }
 
-func(v *privateC1ProcessVerifier)Finish(ctx context.Context)error{
-    if v==nil||ctx==nil{return errors.New("FI C1 B: missing independent verifier")}
+// Group proofs must pass BEFORE A may write its private typed markers.
+// A's P5/P6 work has already committed; B never controls those buffers.
+func(v *privateC1ProcessVerifier)WaitGroups(ctx context.Context)error{
+    if v==nil||ctx==nil{return errors.New("FI C1 B: missing independent group verifier")}
     v.MarkDrained()
     select{
     case <-ctx.Done():return ctx.Err()
     case <-v.done:
+        if v.err!=nil{return v.err}
+        return errors.New("FI C1 B: exited without committed group proofs")
+    case <-v.groupsDone:
+        return nil
     }
-    return v.err
+}
+
+// After A writes private typed markers, the SAME B OS process completes the
+// final read-only proof. No Accepted or authoritative mutation is permitted.
+func(v *privateC1ProcessVerifier)Finish(ctx context.Context)(BacklogGenerationVerification,error){
+    var empty BacklogGenerationVerification
+    if v==nil||ctx==nil{return empty,errors.New("FI C1 B: missing final proof")}
+    v.markFinal.Do(func(){close(v.finish)})
+    select{
+    case <-ctx.Done():return empty,ctx.Err()
+    case <-v.done:
+    }
+    if v.err!=nil{return empty,v.err}
+    if !v.gotFinal{return empty,errors.New("FI C1 B: final proof receipt was absent")}
+    return v.result,nil
 }
 
 func(v *privateC1ProcessVerifier)Stop(){
