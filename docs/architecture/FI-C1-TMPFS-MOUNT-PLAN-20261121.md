@@ -27,3 +27,16 @@ mount activation operation and full two-jail acceptance. Prior to any
 service enablement, run `fi-c1-host-preflight` with actual C220 paths.
 Require that its mount sources/targets match the plan exactly. No
 code in this planner enables a jail or canonical ingestion.
+
+## Read-only installer invocation
+
+On the FreeBSD host, with the existing validated FI backend configuration:
+
+```sh
+fi-backend-install plan-c1-ram-mounts /path/to/fi-backend.conf
+```
+
+The output contains the three exact candidate fstab entries and the
+configured existing jail fstab locations. It does not mount, edit,
+write, install, or activate anything. The mount files and jail roots
+must be reconciled with actual host configuration before application.
