@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=24b3eba4756c02025b4dd877d678911188dc14e6
+sourcecommit=abd330f1c59906585a30c7682518e8a70dbe7751
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -462,6 +462,8 @@ mkdir -p "$src/go/cmd/fi-c1-verifier" || exit 1
 [ ! -e "$src/go/cmd/fi-c1-verifier/main.go" ] || exit 1
 git -C "$expected" show "$sourcecommit:go/cmd/fi-c1-verifier/main.go" \
   > "$src/go/cmd/fi-c1-verifier/main.go" || exit 1
+grep -Fxq '//go:build fi_c1_private' "$src/go/cmd/fi-c1-verifier/main.go" ||
+  { echo 'FI C1 STOP: verifier entry point is not isolated by the private build tag' >&2; exit 1; }
 # The retired synchronous relational scans MUST NOT remain on the C1
 # typed-marker path. The new verifier owns those exact checks and marker
 # insertion is gated on every committed group proof.
@@ -567,7 +569,7 @@ mv "$trustfile.c220" "$trustfile" || exit 1
    ./internal/recordingest -run '^(TestPrivateFamilyP3|TestPrivateSecuritySweep|TestPrivateDynamicP4|TestPrivateP5|TestPrivateP6|TestPrivateC1)' -count=1 &&
  GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
    -o "$root/fi-optfield-recover.c220" ./cmd/fi-backlog-recover &&
- GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build \
+ GOTOOLCHAIN=local GOFLAGS=-mod=readonly go127 build -tags fi_c1_private \
    -o "$root/fi-c1-verifier.c220" ./cmd/fi-c1-verifier
 ) > "$root/private-trust-path-build.log" 2>&1 || {
   echo "===== FIRST GO TEST/RACE/BUILD FAILURES =====" >&2
