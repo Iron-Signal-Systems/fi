@@ -329,9 +329,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=656f31929327b98eb2c35bec1d780d66e9593f95' in controller
-          assert 'runnerpin=d9606ce1d589b2785b54a772070f30281a159692' in controller
-          assert 'sourcecommit=656f31929327b98eb2c35bec1d780d66e9593f95' in runner
+          assert 'sourcepin=e2839176f11413c1f9dcd31186756a60e48f9563' in controller
+          assert 'runnerpin=39ea99725fe92eb92f1509ebad90955dcc398f2d' in controller
+          assert 'sourcecommit=e2839176f11413c1f9dcd31186756a60e48f9563' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -391,6 +391,9 @@ jobs:
           assert 't.Setenv("FI_W512_P3_DYNAMIC_MAX","32")' in c1p5test
           assert 'n<2||n>32' in c1p5test
           assert 'FIRST GO TEST/RACE/BUILD FAILURES' in runner
+          assert 'FI C1 P5 TEST CONTRACT PASS' in runner
+          c1streamtest=(root/'testdata/c1/private_c1_continuous_signed_stream_test.go').read_text()
+          assert 't.Setenv("FI_W512_P3_DYNAMIC_MAX","32")' in c1streamtest
           assert 'privateDynamicMaxWorkers = 16' in p4
           assert 'privateC1HardSQLWorkersMax = 32' in sql
           assert 'FI_W512_P3_DYNAMIC_MAX=32' in controller
