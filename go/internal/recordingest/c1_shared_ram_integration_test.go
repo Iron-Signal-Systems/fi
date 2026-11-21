@@ -111,3 +111,16 @@ func TestC1SharedRAMProducerReclaimsOnlyAfterCommitACK(t *testing.T){
     if e=sink.WaitAll(context.Background());e!=nil{t.Fatal(e)}
     if _,e=store.Get(ref);!os.IsNotExist(e){t.Fatalf("buffer not reclaimed after exact COMMIT ACK: %v",e)}
 }
+
+func TestC1SharedRAMConfiguredSoRRejectsRawInlineFallback(t *testing.T){
+    store:=c1RAMTestStore(t)
+    sink:=&c1SQLHandoffTestSink{}
+    h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local",
+        "generation-test",strings.Repeat("b",64),[]int64{55},[]int64{1},1)
+    if err!=nil{t.Fatal(err)}
+    h.sharedRAM=store
+    if err=h.Commit(context.Background(),c1SQLTestFrame(c1handoff.Source,1));err==nil{
+        t.Fatal("fi-sor accepted network raw-record fallback with RAM configured")
+    }
+    if sink.parent!=0{t.Fatal("forbidden fallback reached PostgreSQL")}
+}

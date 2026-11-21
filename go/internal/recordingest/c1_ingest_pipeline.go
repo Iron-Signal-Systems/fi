@@ -48,7 +48,8 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     cfg C1IngestTransport)(C1IngestStageResult,error){
     var result C1IngestStageResult
     if ctx==nil||g==nil||cfg.StartBatch<0||
-        cfg.StartBatch>=len(g.Batches)||cfg.SoRAddress==""{
+        cfg.StartBatch>=len(g.Batches)||cfg.SoRAddress==""||
+        cfg.SharedRAMDir==""{
         return result,errors.New("C1 fi-ingest: original signed generation or network config missing")
     }
     descriptor:=g.Receipt.Descriptor

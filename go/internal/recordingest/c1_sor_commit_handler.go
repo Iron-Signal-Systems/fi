@@ -135,6 +135,12 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
     if f.Kind<c1handoff.Source||f.Kind>c1handoff.Other{
         return nil,errors.New("C1 fi-sor: expected original signed SQL handoff")
     }
+    // In the selected two-jail FreeBSD service, the mounted shared RAM
+    // transport is mandatory. Never silently take the legacy inline JSONL
+    // fallback and re-prepare entire records in fi-sor.
+    if s.sharedRAM!=nil && f.Shared.Name=="" {
+        return nil,errors.New("C1 fi-sor: inline raw-record fallback forbidden in shared-RAM service")
+    }
     // Shared tmpfs carries the original prepared C1 values (including
     // validated single-pass Security) rather than requiring fi-sor to
     // parse every signed JSONL envelope for a second time.
