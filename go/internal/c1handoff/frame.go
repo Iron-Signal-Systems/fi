@@ -152,7 +152,12 @@ func WriteFrame(w io.Writer,f Frame)error{
     copy(hdr[:8],magic[:])
     binary.BigEndian.PutUint32(hdr[8:12],uint32(body.Len()))
     copy(hdr[12:44],sum[:])
-    if _,err:=w.Write(hdr[:]);err!=nil{return err}
+    for left:=hdr[:];len(left)>0;{
+        n,err:=w.Write(left)
+        if err!=nil{return err}
+        if n<=0{return io.ErrShortWrite}
+        left=left[n:]
+    }
     // Write is not required to consume every byte. Never acknowledge a
     // short socket write as a complete durable handoff.
     data:=body.Bytes()
