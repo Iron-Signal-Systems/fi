@@ -17,6 +17,12 @@ func TestC1RAMHostRuntimeBootOrderingAndDisabledDefault(t *testing.T){
             t.Fatalf("host boot mounting contract missing %q",required)
         }
     }
+    if strings.Index(script,"/sbin/mount -p")>
+       strings.Index(script,"/usr/bin/install -d -o")||
+       !strings.Contains(script,"/bin/ls -A")||
+       !strings.Contains(script,"host mountpoint is not empty"){
+        t.Fatal("host startup would overwrite an existing mounted filesystem or nonempty directory")
+    }
     if strings.Contains(script,"/sbin/umount")||
         strings.Contains(script,"/sbin/mount -a")||
         !strings.Contains(c1RAMHostServiceConfig,"fi_c1_ram_enable=\"NO\""){

@@ -46,13 +46,22 @@ fi_c1_ram_start()
     root="/var/run/fi-c1-handoff"
     # The mountpoint directory may be volatile at host startup.
     [ ! -L "$root" ] || { echo "C1 RAM: mountpoint symlink" >&2; return 1; }
-    /usr/bin/install -d -o %d -g %d -m 0770 "$root" || return 1
-    # Never cover another filesystem or an already active mount. Read-only
-    # preflight after the two jails start proves the final tmpfs/nullfs roles.
+    # Refuse *before* touching permissions/ownership on a previously
+    # mounted filesystem. A misconfigured path must never chmod/chown ZFS.
     if /sbin/mount -p | /usr/bin/awk -v dir="$root" '$2==dir {found=1} END{exit !found}'; then
         echo "C1 RAM: mountpoint already has a filesystem; refusing remount" >&2
         return 1
     fi
+    # Never cover existing unmounted host data with a volatile tmpfs.
+    if [ -e "$root" ] && [ ! -d "$root" ]; then
+        echo "C1 RAM: non-directory host mountpoint" >&2
+        return 1
+    fi
+    if [ -d "$root" ] && [ -n "$(/bin/ls -A "$root")" ]; then
+        echo "C1 RAM: host mountpoint is not empty" >&2
+        return 1
+    fi
+    /usr/bin/install -d -o %d -g %d -m 0770 "$root" || return 1
     /sbin/mount "$root" || return 1
     if ! /sbin/mount -p | /usr/bin/awk -v dir="$root" '$2==dir && $3=="tmpfs" {found=1} END{exit !found}'; then
         echo "C1 RAM: host mount is not tmpfs; blocking jail activation" >&2
