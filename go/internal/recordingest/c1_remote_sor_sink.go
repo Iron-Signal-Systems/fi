@@ -37,6 +37,26 @@ func newC1RemoteSoRSink(sender c1HandoffSender,sourceID,generationID,receiptSHA2
         generationID:generationID,receiptSHA256:strings.ToLower(receiptSHA256),
         next:1},nil
 }
+// emit admits work without waiting for an unrelated SQL connection's
+// COMMIT; final WaitAll and Drain require durable acknowledgments.
+func(s *c1RemoteSoRSink)emit(ctx context.Context,f c1handoff.Frame)error{
+    if pipeline,ok:=s.sender.(interface{
+        Submit(context.Context,c1handoff.Frame)(<-chan error,error)
+    });ok{
+        _,err:=pipeline.Submit(ctx,f)
+        return err
+    }
+    return s.sender.Send(ctx,f)
+}
+func (s *c1RemoteSoRSink) WaitAll(ctx context.Context)error{
+    if s==nil||s.sender==nil||ctx==nil{
+        return errors.New("C1 remote SoR: missing final source/family ACK barrier")
+    }
+    if p,ok:=s.sender.(interface{WaitAll(context.Context)error});ok{
+        return p.WaitAll(ctx)
+    }
+    return nil
+}
 func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records []privateP6Record)error{
     s.mu.Lock()
     defer s.mu.Unlock()
@@ -61,10 +81,12 @@ func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records
             RawRecord:r.prepared.RawRecordBytes,Digest:r.prepared.RecordDigest,
         })
     }
-    if err:=s.sender.Send(ctx,frame);err!=nil {
-        return fmt.Errorf("C1 remote SoR: SQL commit ACK not verified: %w",err)
+    if err:=s.emit(ctx,frame);err!=nil {
+        return fmt.Errorf("C1 remote SoR: signed SQL handoff admission failed: %w",err)
     }
-    s.next++ // Advance only when fi-sor acknowledged durable SQL COMMIT.
+    // A pooled handoff may still be committing in fi-sor. Never treat
+    // enqueue as a successful COMMIT; WaitAll/Drain own final ACK proof.
+    s.next++
     return nil
 }
 func (s *c1RemoteSoRSink) Source(ctx context.Context,rows []privateP6Record)error{
@@ -84,7 +106,7 @@ func (s *c1RemoteSoRSink) Seal(ctx context.Context,group int)error{
         SourceID:s.sourceID,GenerationID:s.generationID,
         ReceiptSHA256:s.receiptSHA256,Sequence:s.next,
         SealedGroup:uint32(group)}
-    if err:=s.sender.Send(ctx,frame);err!=nil{return err}
+    if err:=s.emit(ctx,frame);err!=nil{return err}
     s.next++
     return nil
 }
@@ -95,6 +117,7 @@ func (s *c1RemoteSoRSink) Drain(ctx context.Context)error{
     frame:=c1handoff.Frame{Kind:c1handoff.Drain,
         SourceID:s.sourceID,GenerationID:s.generationID,
         ReceiptSHA256:s.receiptSHA256,Sequence:s.next}
+    if err:=s.WaitAll(ctx);err!=nil{return err}
     if err:=s.sender.Send(ctx,frame);err!=nil{return err}
     s.next++
     s.drained=true

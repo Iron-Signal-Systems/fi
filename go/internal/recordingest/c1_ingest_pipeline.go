@@ -96,7 +96,12 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
         return result,errors.New("C1 fi-ingest: fi-sor did not provide complete original SQL batch IDs")
     }
 
-    remote,err:=newC1RemoteSoRSink(client,descriptor.SourceID,
+    // The real C1 SQL pool has multiple independently committed family
+    // handoffs. P5/P6 preparation must not serialize behind each COMMIT.
+    pipelined,err:=c1handoff.NewClientPipeline(ctx,client,64)
+    if err!=nil{return result,err}
+    defer pipelined.Close()
+    remote,err:=newC1RemoteSoRSink(pipelined,descriptor.SourceID,
         descriptor.GenerationID,g.ReceiptSHA256)
     if err!=nil{return result,err}
     // The session's first sequence was START. Every subsequent SourceParent
