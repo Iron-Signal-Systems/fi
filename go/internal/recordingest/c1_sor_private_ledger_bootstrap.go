@@ -126,27 +126,3 @@ func mustC1ReceiptDigest(sha string)[]byte{
     return decoded
 }
 
-// c1StageOriginalPrivateLedgerTx is the unchanged FI Source of Record
-// generation and batch SQL writer, restricted to PRIVATE projection by the
-// audited privateProjectionTx target map. The owner holds the transaction.
-// It never inserts source_record, typed children or an Accepted journal.
-func c1StageOriginalPrivateLedgerTx(ctx context.Context,tx pgx.Tx,
-    original *PreparedGeneration)([]int64,error){
-    if ctx==nil||tx==nil||original==nil||
-        len(original.Batches)==0||!canonicalDigest(original.ReceiptSHA256){
-        return nil,errors.New("C1 bootstrap: original signed receipt and owning SQL transaction required")
-    }
-    shadow:=privateProjectionTx{Tx:tx}
-    id,err:=insertRecordedGeneration(ctx,shadow,original)
-    if err!=nil{return nil,fmt.Errorf("C1 bootstrap: private signed generation insert: %w",err)}
-    profile:=&sourceBatchBulkProfile{}
-    ids,err:=copySourceBatches(ctx,shadow,id,original.Batches,profile)
-    if err!=nil{return nil,fmt.Errorf("C1 bootstrap: original source-batch ledger: %w",err)}
-    if len(ids)!=len(original.Batches){
-        return nil,errors.New("C1 bootstrap: SQL generated source-batch mapping incomplete")
-    }
-    for _,id:=range ids{
-        if id<=0{return nil,errors.New("C1 bootstrap: missing PostgreSQL-generated original SQL batch identity")}
-    }
-    return ids,nil
-}
