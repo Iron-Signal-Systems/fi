@@ -107,6 +107,14 @@ func(s *C1SoRService) validateSignedPrivateStage(ctx context.Context,frame c1han
     if sourceBatches!=storedBatches{
         return nil,errors.New("C1 fi-sor: incomplete or duplicate private source-batch ledger")
     }
+    // C1 SQL writer must never mix one signed replay with another
+    // relational generation. The immutable seed remains read-only.
+    var generations int64
+    if err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery_projection.recorded_generation`).
+        Scan(&generations);err!=nil{return nil,err}
+    if generations!=1 {
+        return nil,errors.New("C1 fi-sor: multiple private generations require separate isolated staging")
+    }
     original:=make([]PreparedBatch,len(frame.BatchIDs))
     for i,name:=range frame.BatchIDs{original[i].BatchID=name}
     ids,err:=lookupBacklogShadowBatchIDs(ctx,privateProjectionTx{Tx:tx},generationID,original)
@@ -132,6 +140,32 @@ func(s *C1SoRService) validateSignedPrivateStage(ctx context.Context,frame c1han
         return nil,errors.New("C1 fi-sor: signed receipt, verified seed and requested record count disagree")
     }
     if int(frame.StartBatchIndex)>=len(ids){return nil,errors.New("C1 fi-sor: invalid signed seed boundary")}
+    // Verify seed length against actual PostgreSQL source-batch
+    // manifests, not merely a claimed typed-window counter. The exact
+    // remaining source record count must also agree with the signed START.
+    var totalDeclared int64
+    if err=tx.QueryRow(ctx,`SELECT coalesce(sum(record_count),0)::bigint
+        FROM fi_recovery_projection.source_batch WHERE recorded_generation_id=$1`,
+        generationID).Scan(&totalDeclared);err!=nil{return nil,err}
+    if totalDeclared!=storedRecords{
+        return nil,errors.New("C1 fi-sor: receipt source-record total differs from private signed batch manifests")
+    }
+    if frame.StartBatchIndex>0{
+        var seededDeclared int64
+        if err=tx.QueryRow(ctx,`SELECT coalesce(sum(record_count),0)::bigint
+            FROM fi_recovery_projection.source_batch
+            WHERE source_batch_id=ANY($1::bigint[])`,
+            ids[:frame.StartBatchIndex]).Scan(&seededDeclared);err!=nil{return nil,err}
+        if seededDeclared!=seedRecords {
+            return nil,errors.New("C1 fi-sor: private seed marker does not match original signed batch manifest totals")
+        }
+    }
+    var foreignTyped int64
+    if err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery.typed_window
+        WHERE receipt_sha256<>$1`,digest).Scan(&foreignTyped);err!=nil{return nil,err}
+    if foreignTyped>0{
+        return nil,errors.New("C1 fi-sor: unrelated typed checkpoint exists in private stage")
+    }
     // Prefix parents must match the verified seed EXACTLY. New C1 batches
     // must have NO source rows. Never overwrite, truncate or clean them.
     var committedPrefix,newParents int64
