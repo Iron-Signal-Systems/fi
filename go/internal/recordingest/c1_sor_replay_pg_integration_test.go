@@ -11,12 +11,15 @@ package recordingest
 import (
     "bytes"
     "context"
+    "crypto/sha256"
+    "encoding/hex"
     "os"
     "strings"
     "testing"
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
+    "github.com/Iron-Signal-Systems/fi/go/internal/spool"
     "github.com/jackc/pgx/v5"
 )
 
@@ -101,6 +104,13 @@ CREATE TABLE fi_recovery_projection.source_record(
         states[0].SourceRecordID!=sourceID{
         t.Fatalf("interrupted after SourceParent COMMIT must request typed replay: %v %+v",err,states)
     }
+    batchSHA:=sha256.Sum256(raw)
+    signedBatch:=PreparedBatch{BatchID:"batch-original-signed",
+        Manifest:spool.Manifest{RecordCount:1,DataBytes:int64(len(raw)),
+            DataSHA256:hex.EncodeToString(batchSHA[:])}}
+    if err:=c1NativeBVerifyData(ctx,conn,bytes.NewReader(raw),0,44,signedBatch);err==nil{
+        t.Fatal("independent signed custody verifier passed before typed root committed")
+    }
     selected,err:=c1PartitionRecoveredHandoff(c1handoff.Other,
         []privateP6Record{original},states)
     if err!=nil||len(selected.AlreadyCommitted)!=0||len(selected.MustWrite)!=1{
@@ -111,6 +121,14 @@ CREATE TABLE fi_recovery_projection.source_record(
     states,err=stateOf()
     if err!=nil||!states[0].ParentCommitted||!states[0].TypedRootCommitted{
         t.Fatalf("typed COMMIT not identified after crash: %v %+v",err,states)
+    }
+    if err:=c1NativeBVerifyData(ctx,conn,bytes.NewReader(raw),0,44,signedBatch);err!=nil{
+        t.Fatalf("independent B signed source and typed SQL proof failed: %v",err)
+    }
+    alteredBatch:=signedBatch
+    alteredBatch.Manifest.DataSHA256=strings.Repeat("0",64)
+    if err:=c1NativeBVerifyData(ctx,conn,bytes.NewReader(raw),0,44,alteredBatch);err==nil{
+        t.Fatal("independent B accepted modified signed original batch hash")
     }
     selected,err=c1PartitionRecoveredHandoff(c1handoff.Other,
         []privateP6Record{original},states)
