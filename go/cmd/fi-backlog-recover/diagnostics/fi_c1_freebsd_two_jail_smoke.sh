@@ -34,7 +34,14 @@ cleanup(){
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$host"
 for root in "$ingest" "$sor";do
-  mkdir -p "$root/bin" "$root/lib" "$root/libexec"     "$root/usr/lib" "$root/var/run/fi-c1-handoff"
+  mkdir -p "$root/bin" "$root/lib" "$root/libexec" \
+    "$root/usr/lib" "$root/usr/local/sbin" "$root/var/run/fi-c1-handoff"
+done
+[ -f "${FI_C1_RAM_PROBE_BINARY:-}" ] ||
+  fail "native FreeBSD RAMStore probe binary is missing"
+for root in "$ingest" "$sor";do
+  install -m 0555 "$FI_C1_RAM_PROBE_BINARY" "$root/usr/local/sbin/fi-c1-ram-probe" ||
+    fail "cannot install isolated native Go RAMStore probe into test jail"
 done
 
 mount -t tmpfs -o size=64m,nosuid,noexec,uid=0,gid=0,mode=0770   tmpfs "$host" || fail "cannot create host volatile tmpfs"
@@ -89,4 +96,37 @@ if jexec "$sor_name" /bin/sh -c   'test -e /var/run/fi-c1-handoff/c1-test.ready'
   fail "fi-sor still sees object reclaimed by ingest jail"
 fi
 
-echo "FI C1 FREEBSD TWO-JAIL PASS native_jails=2 host_backing=tmpfs ingest_rw=true sor_ro=true producer_only_reclaim=true signed_custody_untouched=true pg_untouched=true"
+# Verify the SAME RAMStore.Put/Get/Remove code used by the actual
+# development workers, executed inside each real FreeBSD jail. The ref
+# value is the original length/rows/SHA bound to the mTLS handoff.
+ref=$(jexec "$ingest_name" /usr/bin/env \
+  GITHUB_ACTIONS=true FI_C1_RAM_PROBE_ISOLATED_VM=1 \
+  /usr/local/sbin/fi-c1-ram-probe --mode publish) ||
+    fail "native C1 RAMStore.Put failed in fi-ingest jail"
+[ -n "$ref" ] || fail "native producer returned empty reference"
+jexec "$sor_name" /usr/bin/env \
+  GITHUB_ACTIONS=true FI_C1_RAM_PROBE_ISOLATED_VM=1 \
+  /usr/local/sbin/fi-c1-ram-probe --mode read --reference "$ref" ||
+    fail "native C1 RAMStore.Get failed in fi-sor read-only jail"
+tampered="${ref%:*}:0000000000000000000000000000000000000000000000000000000000000000"
+if jexec "$sor_name" /usr/bin/env \
+  GITHUB_ACTIONS=true FI_C1_RAM_PROBE_ISOLATED_VM=1 \
+  /usr/local/sbin/fi-c1-ram-probe --mode read --reference "$tampered";then
+  fail "tampered SHA-256 reference incorrectly read original RAM object"
+fi
+if jexec "$sor_name" /usr/bin/env \
+  GITHUB_ACTIONS=true FI_C1_RAM_PROBE_ISOLATED_VM=1 \
+  /usr/local/sbin/fi-c1-ram-probe --mode reclaim --reference "$ref";then
+  fail "fi-sor read-only jail allowed native C1 RAMStore.Remove"
+fi
+jexec "$ingest_name" /usr/bin/env \
+  GITHUB_ACTIONS=true FI_C1_RAM_PROBE_ISOLATED_VM=1 \
+  /usr/local/sbin/fi-c1-ram-probe --mode reclaim --reference "$ref" ||
+    fail "native fi-ingest RAMStore.Remove failed"
+if jexec "$sor_name" /usr/bin/env \
+  GITHUB_ACTIONS=true FI_C1_RAM_PROBE_ISOLATED_VM=1 \
+  /usr/local/sbin/fi-c1-ram-probe --mode read --reference "$ref";then
+  fail "fi-sor read native object reclaimed by fi-ingest"
+fi
+
+echo "FI C1 FREEBSD TWO-JAIL PASS native_jails=2 native_Go_RAMStore=true digest_tamper_rejected=true host_backing=tmpfs ingest_rw=true sor_ro=true producer_only_reclaim=true signed_custody_untouched=true pg_untouched=true"
