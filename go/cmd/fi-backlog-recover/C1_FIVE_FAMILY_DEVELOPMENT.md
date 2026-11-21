@@ -81,6 +81,55 @@ be presented as a demonstrated improvement from these new changes.
    Preflight is also excluded. Processing stalls after Preparation starts
    are included in throughput.
 
+### C1 Security COPY 8 GiB A/B experiment — three isolated changes
+
+A complete 8,399-batch disposable-clone run sustained **20,482.34
+records/sec** using the bounded async USN dispatcher, with 15/15 group
+relational proofs. This is the **full-run control**; do not claim it as a
+measured improvement from these three subsequent Security experiments.
+
+The Security family committed **12,966,827 events**, **10,978,276 scopes**
+and **182,571,099 child-field rows**. The sum of Security field COPY durations
+was 1h21m23.551s across concurrent SQL workers; these sums are **not**
+end-to-end ingest wall clock. SourceParent remains **one ordered SQL writer**.
+
+A single explicit flag, `FI_C1_SECURITY_8G_EXPERIMENT=1`, selects all
+three changes **only** for the `prefix8` two-group disposable-clone mode:
+
+| Change | Control (`=0`) | Candidate (`=1`) |
+| --- | --- | --- |
+| Security Family Processing buffer | 4,096 rows / 16 MiB | 8,192 rows / 32 MiB |
+| P6 Security SQL bulk limits | P3: 4,096 rows / 16 MiB | P4: 8,192 rows / 32 MiB |
+| Security field COPY chunk | 32,768 rows / 8 MiB | 65,536 rows / 16 MiB |
+| Event and scope row source | Original materialized/callback path | Exact-value tested reusable 40-/4-column iterators |
+| SourceParent writers | 1 ordered | 1 ordered |
+| SQL worker cap | 32 shared | 32 shared |
+| USN processing | Bounded ordered async | Identical |
+| Security tables and field rows | All three, all rows | Identical |
+| Signed 8 GiB input | Original first two 4 GiB groups | Identical |
+| Independent Process B verification | Both groups and prefix final proof | Identical |
+
+The private context switch is **independent of the Security field-partition
+experiment and single-pass envelope decoder**. It does not enable detached
+field partitions or change raw XML, original signed bytes, field values,
+event/scope ordinals, source identities, indexes or foreign keys.
+
+Run the same exact pinned controller source and clone seed twice, starting
+with `FI_C1_SECURITY_8G_EXPERIMENT=0` (control) and then with `=1`
+(candidate). Each run must create a **new disposable private PostgreSQL clone**,
+pass Go/race build tests, both group relational proofs, all SQL ACKs and the
+independent Process B final prefix proof. Distinct `control` and
+`security123` run directories and `C1_SECURITY_8G_PROFILE.txt` receipts
+prevent accidentally comparing the wrong settings. The C1 runner verifies
+the COPY field-row caps it actually reports.
+
+**Do not promote any of these three settings to the full 8,399-batch replay
+until the matched 8 GiB A/B comparison, resource bounds and verifier
+correctness have been evaluated.** A small win does not justify unbounded
+memory or an architectural rewrite.
+
+---
+
 ### Acceptance still required for new async USN modification
 
 The source, clone-only runner, controller, and regression tests are staged
