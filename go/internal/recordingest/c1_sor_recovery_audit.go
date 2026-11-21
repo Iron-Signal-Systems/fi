@@ -225,7 +225,7 @@ ORDER BY sb.batch_id`,generationID)
         ReceiptSHA256:plan.ReceiptSHA256,SignedBatches:len(evidence),
         SourceCompletePrefix:sourcePrefix,RelationalCompletePrefix:typedPrefix,
         FirstUnresolvedBatch:typedPrefix,TotalExistingParents:parents,
-        DirtyTail:partialSource||typedPrefix<sourcePrefix||parents>0&&typedPrefix<len(evidence),
+        DirtyTail:partialSource||typedPrefix<sourcePrefix,
         AutomaticReplayAuthorized:false,
     }
     return report,nil

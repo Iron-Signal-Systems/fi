@@ -517,14 +517,14 @@ func main() {
 
 	case "apply-c1-binaries":
         if err := backendinstall.ApplyC1DevelopmentBinaries(config,request.applicationBinaryRelease);err!=nil{
-            fmt.Fprintf(os.Stderr,"FI C1 DEVELOPMENT BINARIES APPLY BLOCKED: %v\\n",err)
+            fmt.Fprintf(os.Stderr,"FI C1 DEVELOPMENT BINARIES APPLY BLOCKED: %v\n",err)
             os.Exit(1)
         }
         fmt.Fprintln(os.Stdout,"FI C1 development workers installed (NOT activated).")
 
     case "verify-c1-binaries":
         if err := backendinstall.VerifyC1DevelopmentBinaries(config,request.applicationBinaryRelease);err!=nil{
-            fmt.Fprintf(os.Stderr,"FI C1 DEVELOPMENT BINARIES VERIFY BLOCKED: %v\\n",err)
+            fmt.Fprintf(os.Stderr,"FI C1 DEVELOPMENT BINARIES VERIFY BLOCKED: %v\n",err)
             os.Exit(1)
         }
         fmt.Fprintln(os.Stdout,"FI C1 development worker binary verification complete.")

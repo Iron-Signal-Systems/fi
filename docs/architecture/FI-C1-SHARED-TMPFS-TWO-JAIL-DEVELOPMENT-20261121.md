@@ -110,6 +110,22 @@ Until a complete idempotent per-record replay and original-custody
 comparison pass acceptance, the current START deliberately stops on a
 dirty stage. This preserves all committed PostgreSQL work for diagnosis.
 
+### Per-record signed replay reconciliation evidence (read-only)
+
+`c1AuditCommittedRowStates` looks up each exact original
+`(source_batch_id, record_ordinal)` in one SQL batch read, verifies its
+persisted envelope identity and SHA-256 against the prepared original signed
+record, and reports whether the matching typed root has committed. This
+distinguishes fully committed records from durable SourceParent rows still
+awaiting a typed family. The routine does **not** admit new SQL, skip records,
+change a checkpoint, or authorize a replay yet. The next step is to bind this
+evidence to the normal C1 SQL dispatch and prove that every skipped record is
+identical to custody before accepting partial-batch resumption.
+
+A prefix of fully committed batches followed by empty batches is **not**
+itself a dirty tail; only a partial SourceParent batch or an incomplete typed
+root inside the committed source prefix is reported as dirty.
+
 ## Interruption semantics
 
 On power loss, both jails discard incomplete prepared work and reconstruct

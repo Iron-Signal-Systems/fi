@@ -61,12 +61,12 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         // This does not flush family buffers or authorize restart.
         audit,auditErr:=AuditC1SoRPrivateRecovery(ctx,s.DSN,frame)
         if auditErr==nil {
-            fmt.Printf("FI C1 RECOVERY AUDIT source=%s generation=%s complete_parent_batches=%d complete_relational_batches=%d first_unresolved_batch=%d existing_parents=%d dirty_tail=%t automatic_replay=false canonical_unchanged=true\\n",
+            fmt.Printf("FI C1 RECOVERY AUDIT source=%s generation=%s complete_parent_batches=%d complete_relational_batches=%d first_unresolved_batch=%d existing_parents=%d dirty_tail=%t automatic_replay=false canonical_unchanged=true\n",
                 audit.SourceID,audit.GenerationID,audit.SourceCompletePrefix,
                 audit.RelationalCompletePrefix,audit.FirstUnresolvedBatch,
                 audit.TotalExistingParents,audit.DirtyTail)
         }else{
-            fmt.Printf("FI C1 RECOVERY AUDIT BLOCKED read_only=true reason=%v\\n",auditErr)
+            fmt.Printf("FI C1 RECOVERY AUDIT BLOCKED read_only=true reason=%v\n",auditErr)
         }
         s.failed=err
         return nil,err
