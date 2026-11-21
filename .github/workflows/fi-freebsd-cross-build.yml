@@ -330,7 +330,7 @@ jobs:
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
           assert 'sourcepin=abd330f1c59906585a30c7682518e8a70dbe7751' in controller
-          assert 'runnerpin=42c192103a0d8ba54854860888f4f0a7fa3905c4' in controller
+          assert 'runnerpin=b0c81795b9dcdc15794fcb033610c23609514edc' in controller
           assert 'sourcecommit=abd330f1c59906585a30c7682518e8a70dbe7751' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
@@ -399,6 +399,9 @@ jobs:
           assert 'C1_SETUP.txt' in controller
           assert 'C1_INGEST_START.txt' in controller
           assert 'C1_IDLE_TIMER.txt' in runner
+          assert 'FI C1 DIPS TELEMETRY PREFLIGHT PASS' in runner
+          assert 'dip_preflight.jsonl' in runner
+          assert 'FI C1 DIPS TELEMETRY PREFLIGHT PASS' in controller
           assert 'C1_IDLE_FLUSH.txt' in runner
           assert 'C1_IDLE_TIMER.txt' in controller
           assert 'timeout=30s poll=1s per_family=true' in runner
