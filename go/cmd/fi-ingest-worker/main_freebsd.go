@@ -205,7 +205,7 @@ func main() {
 	workers := flags.Int("workers", 1, "maximum concurrent source generation ingests")
 	// Reserved FI backend setting for the C1 shared adaptive SQL pool.
 	// Does not activate C1 on the ordinary unreleased ingest code path.
-	sqlWorkersMax := flags.Int("sql-workers-max", 5, "maximum adaptive SQL workers within a generation (1..16)")
+	sqlWorkersMax := flags.Int("sql-workers-max", 5, "C1 shared SQL backend connection limit within a generation (1..32); reserved until engine integration")
 	// The flag selects a fixed profile for an entire generation. It does not
 	// activate the adaptive controller or modify the default service setting.
 	securityProfile := flags.String("security-profile", "P1", "fixed Windows Security ingest profile: P1, P2, P3, P4, or P5")
@@ -220,8 +220,8 @@ func main() {
 		fail(err)
 	}
 
-	if *sqlWorkersMax < 1 || *sqlWorkersMax > 16 {
-		fail(errors.New("sql-workers-max must be between 1 and 16"))
+	if *sqlWorkersMax < 1 || *sqlWorkersMax > 32 {
+		fail(errors.New("sql-workers-max must be between 1 and 32"))
 	}
 
 	if *pollInterval <= 0 {

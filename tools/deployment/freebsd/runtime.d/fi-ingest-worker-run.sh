@@ -52,8 +52,8 @@ fi_ingest_worker_workers="${fi_ingest_worker_workers:-1}"
 # C1 shared relational SQL workers can grow from one to this hard limit.
 fi_ingest_worker_sql_workers_max="${fi_ingest_worker_sql_workers_max:-5}"
 case "$fi_ingest_worker_sql_workers_max" in
-    [1-9]|1[0-6]) ;;
-    *) fail "fi_ingest_worker_sql_workers_max must be a decimal integer from 1 to 16" ;;
+    [1-9]|[12][0-9]|3[0-2]) ;;
+    *) fail "fi_ingest_worker_sql_workers_max must be a decimal integer from 1 to 32" ;;
 esac
 
 case "$fi_ingest_worker_workers" in
