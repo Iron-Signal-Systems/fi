@@ -336,9 +336,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=91c83d41124b9cd1164affd2afa7b9c23abd359b' in controller
-          assert 'runnerpin=4ea08a83c591226b6a6fb2376266640b14347087' in controller
-          assert 'sourcecommit=91c83d41124b9cd1164affd2afa7b9c23abd359b' in runner
+          assert 'sourcepin=6efe294ac85da8817bd6dc4ad36fcac3575c6e19' in controller
+          assert 'runnerpin=bb9386c3367f146b3971206e427e11599e646945' in controller
+          assert 'sourcecommit=6efe294ac85da8817bd6dc4ad36fcac3575c6e19' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -435,6 +435,10 @@ jobs:
           assert 'return 65536' in security_field and 'return 16 << 20' in security_field
           assert 'TestC1Security8GiBProfileSeparatesCopyFromFieldPartitioning' in security_tests
           assert 'TestC1Security8GiBFieldCopyChunkBoundedAt65536Rows' in security_tests
+          assert 'TestC1Security8GiBFieldCopyByteBoundAndOversizeRecord' in security_tests
+          assert 'field_max_rows=%d field_max_bytes=%d' in sql
+          assert 'field_max_rows=65536 field_max_bytes=16777216' in runner
+          assert 'field_max_rows=32768 field_max_bytes=8388608' in runner
           assert 'privateSecurityFieldPartitionsEnabled(ctx)' not in security_module
 
           assert 'C1_USN_ASYNC_START.txt' in controller and 'C1_USN_ASYNC_COMPLETE.txt' in controller
