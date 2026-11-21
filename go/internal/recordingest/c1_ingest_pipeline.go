@@ -107,7 +107,7 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     // The session's first sequence was START. Every subsequent SourceParent
     // and five-family handoff is assigned its own distinct durable ACK ID.
     remote.next=2
-    pool,err:=newPrivateP5Pool(ctx,1)
+    pool,err:=newC1P5RuntimePool(ctx,1)
     if err!=nil{return result,err}
     defer pool.Close()
     buffers,err:=newPrivateP6Buffers(1,remote)
