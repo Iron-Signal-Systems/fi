@@ -350,6 +350,33 @@ func TestPrivateC1AsyncUSNDoesNotBlockOtherFamiliesAndPreservesSQLOrder(t *testi
         t.Fatal("asynchronous USN admission incorrectly waited on each SQL ACK")
     }
 }
+func TestPrivateC1AsyncUSNWaitsEveryPriorFileCommit(t *testing.T){
+    w,ctx,cleanup:=privateC1AsyncUSNFixture(t)
+    defer cleanup()
+    firstFile:=&privateC1SourceAck{done:make(chan struct{})}
+    secondFile:=&privateC1SourceAck{done:make(chan struct{})}
+    w.lanes[privateP6File].fileReceipts=[]*privateC1SourceAck{
+        firstFile,secondFile,
+    }
+    if err:=w.Family(ctx,privateP6USN,[]privateP6Record{
+        privateP6Fixture(1,1,"USNReadBoundary"),
+    });err!=nil{t.Fatal(err)}
+    close(firstFile.done)
+    select{
+    case j:=<-w.jobs:
+        t.Fatalf("USN started before the second earlier File commit: %v",j.family)
+    case <-time.After(20*time.Millisecond):
+    }
+    close(secondFile.done)
+    select{
+    case j:=<-w.jobs:
+        if j.family!=privateP6USN{t.Fatal("USN dispatcher lost family")}
+        privateC1FinishMockSQLJob(j,nil)
+    case <-time.After(time.Second):
+        t.Fatal("USN remained blocked after all File commits completed")
+    }
+    if err:=w.WaitFamily(ctx,privateP6USN);err!=nil{t.Fatal(err)}
+}
 func TestPrivateC1AsyncUSNQueueIsBounded(t *testing.T){
     w,ctx,cleanup:=privateC1AsyncUSNFixture(t)
     defer cleanup()
