@@ -29,6 +29,7 @@ type ClientPipeline struct {
     permits chan struct{}
     firstError error
     readerDone chan struct{}
+    changed chan struct{} // ACK state, independent of single-use SQL futures
 }
 
 // NewClientPipeline switches an already-authenticated, START-acknowledged
@@ -44,6 +45,7 @@ func NewClientPipeline(ctx context.Context,c *Client,maxOutstanding int)(*Client
         conn:c.conn,source:c.source,generation:c.generation,receipt:c.receipt,
         next:c.next,pending:make(map[uint64]chan error,maxOutstanding),
         permits:make(chan struct{},maxOutstanding),readerDone:make(chan struct{}),
+        changed:make(chan struct{},1),
     }
     go p.read()
     go func(){
@@ -65,6 +67,7 @@ func (p *ClientPipeline) failAll(err error){
         close(ch)
         select{case <-p.permits:default:}
     }
+    select{case p.changed<-struct{}{}:default:}
     p.mu.Unlock()
     _=p.conn.Close()
 }
@@ -90,6 +93,7 @@ func(p *ClientPipeline)read(){
             ch<-outcome
             close(ch)
             select{case <-p.permits:default:}
+            select{case p.changed<-struct{}{}:default:}
         }
         p.mu.Unlock()
         if !ok{
@@ -167,17 +171,13 @@ func(p *ClientPipeline)WaitAll(ctx context.Context)error{
         case <-p.readerDone:return errors.New("C1 pipeline: no SQL ACK reader at drain")
         default:
         }
-        // Readiness is signaled by per-handoff future closure. Avoid
-        // polling and avoid an unbounded goroutine per pending result.
-        p.mu.Lock()
-        var wait <-chan error
-        for _,ch:=range p.pending {wait=ch;break}
-        p.mu.Unlock()
-        if wait==nil{continue}
+        // A SQL future has exactly one consumer (for example the tmpfs
+        // COMMIT-ACK cleanup worker). WaitAll observes the pending ledger,
+        // never steals an ACK value and accidentally leaks a RAM buffer.
         select{
-        case err:=<-wait:
-            if err!=nil{return err}
+        case <-p.changed:
         case <-ctx.Done():return ctx.Err()
+        case <-p.readerDone:return errors.New("C1 pipeline: SQL ACK reader stopped at drain")
         }
     }
 }
