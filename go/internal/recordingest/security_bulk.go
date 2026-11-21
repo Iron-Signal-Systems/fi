@@ -142,8 +142,8 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 		"share_name", "share_local_path", "relative_target_name", "old_security_descriptor", "new_security_descriptor", "subcategory_guid", "audit_policy_changes",
 		"raw_xml_bytes", "raw_xml_sha256",
 	}
-	// The experimental W128/P3 path reuses the already-tested forty-column
-	// row buffer. Production P1 and ordinary P3 retain their original writer.
+	// Private replay may reuse the exact tested 40-column row buffer.
+	// Production P1 and ordinary P3 retain their unchanged writer.
 	eventRows := securityEventCopyRows(ctx, pending)
 	eventCopyStarted := time.Now()
 	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns, eventRows)
@@ -165,7 +165,7 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	}
 	var scopeRows pgx.CopyFromSource
 	if scopeCount > 0 {
-		if usePrivateSinglePassSecurity(ctx) {
+		if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {
 			// Private W128/P3 reuses a four-column row rather than retaining
 			// all matched scopes in an additional [][]any matrix.
 			scopeRows = newSecurityScopeCopySource(pending)
@@ -229,12 +229,11 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	return nil
 }
 
-// securityEventCopyRows keeps the exact established callback for ordinary
-// ingestion. Only the isolated private-field W128/P3 path can select the
-// reusable forty-column row source, reducing per-event allocation pressure
-// without changing validations, column values, COPY order or transaction scope.
+// securityEventCopyRows retains ordinary ingestion's established callback.
+// The original W128 private path or the explicit C1 8GiB switch can select
+// the tested 40-column reusable row source without changing SQL semantics.
 func securityEventCopyRows(ctx context.Context, pending []securityBulkRecord) pgx.CopyFromSource {
-	if usePrivateSinglePassSecurity(ctx) {
+	if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {
 		return newSecurityEventCopySource(pending)
 	}
 	return pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
