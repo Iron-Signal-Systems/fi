@@ -12,6 +12,7 @@ import (
     "context"
     "errors"
     "fmt"
+    "time"
 )
 
 type privateP6WindowContextKey struct{}
@@ -79,6 +80,17 @@ type privateP6Limits struct{
     rows int
     bytes int64
 }
+// A pending family has a bounded age independently of signed batch and
+// reporting-group boundaries. Busy families normally flush by capacity;
+// sparse families need a latency cap to make committed rows visible to B.
+// This is a FAMILY PROCESSING rule, not a verifier request or barrier.
+const privateC1FamilyAgePollRecords int64 = 256
+var privateC1FamilyMaxAge=[privateP6FamilyCount]time.Duration{
+    12*time.Second,12*time.Second,2*time.Second,2*time.Second,2*time.Second,
+}
+var privateC1FamilyMaxAdmittedAge=[privateP6FamilyCount]int64{
+    262144,262144,65536,65536,65536,
+}
 type privateP6Lane struct{
     limit privateP6Limits
     pending []privateP6Record
@@ -91,6 +103,8 @@ type privateP6Lane struct{
     finalHandoffs int64
     peakRows int
     peakBytes int64
+    firstPendingAt time.Time
+    firstPendingOrdinal int64 // global admitted ordinal, not batch/group index
 }
 type privateP6Buffers struct{
     sink privateP6SQLHandoff
@@ -128,7 +142,11 @@ func privateP6ShouldFlush(l *privateP6Lane,incoming int64)bool{
 func privateP6Full(l *privateP6Lane)bool{
     return len(l.pending)>=l.limit.rows || l.bytes>=l.limit.bytes
 }
-func privateP6Enqueue(l *privateP6Lane,row privateP6Record){
+func privateP6Enqueue(l *privateP6Lane,row privateP6Record,admittedOrdinal int64){
+    if len(l.pending)==0{
+        l.firstPendingAt=time.Now()
+        l.firstPendingOrdinal=admittedOrdinal
+    }
     l.pending=append(l.pending,row)
     l.bytes+=int64(row.prepared.RecordBytes)
     if len(l.pending)>l.peakRows{l.peakRows=len(l.pending)}
@@ -155,7 +173,7 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
     if privateP6ShouldFlush(src,int64(row.prepared.RecordBytes)){
         if err=b.flushSource(ctx);err!=nil{return err}
     }
-    privateP6Enqueue(src,row)
+    privateP6Enqueue(src,row,b.total)
     b.inserted++ // admitted, not yet SQL-committed
     if privateP6Full(src){
         if err=b.flushSource(ctx);err!=nil{return err}
@@ -164,11 +182,41 @@ func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
     if privateP6ShouldFlush(lane,int64(row.prepared.RecordBytes)){
         if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
     }
-    privateP6Enqueue(lane,row)
+    privateP6Enqueue(lane,row,b.total)
     b.total++
     b.lastBatch,b.lastOrdinal=row.signedBatchIndex,row.ordinal
     if privateP6Full(lane){
         if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
+    }
+    // Check aged work periodically; the active signed reader drives this
+    // without goroutines or locks mutating the single-owner family buffers.
+    // Flush at most ONE aged family on a poll to avoid synchronized spikes.
+    // No signed batch, group, or verifier-timer condition enters this decision.
+    if b.total%privateC1FamilyAgePollRecords==0{
+        if err=b.flushOneAgedFamily(ctx);err!=nil{return err}
+    }
+    return nil
+}
+
+func(b *privateP6Buffers) flushOneAgedFamily(ctx context.Context)error{
+    now:=time.Now()
+    // File before USN preserves the real relational dependency; the rest
+    // remain independently buffered until their own need is reached.
+    for _,f:=range []privateP6Family{
+        privateP6File,privateP6USN,privateP6Coverage,privateP6Other,privateP6Security,
+    }{
+        lane:=&b.lanes[f]
+        if len(lane.pending)==0{continue}
+        elapsed:=now.Sub(lane.firstPendingAt)
+        ageRecords:=b.total-lane.firstPendingOrdinal
+        if elapsed<privateC1FamilyMaxAge[f] &&
+           ageRecords<privateC1FamilyMaxAdmittedAge[f]{
+            continue
+        }
+        fmt.Printf("FI C1 FAMILY PROCESSING NEED FLUSH utc=%s family=%s trigger=age elapsed=%s admitted_age=%d buffered_rows=%d buffered_bytes=%d batch_boundary=false group_boundary=false verifier_trigger=false\n",
+            now.UTC().Format(time.RFC3339Nano),privateP6FamilyNames[f],
+            elapsed,ageRecords,len(lane.pending),lane.bytes)
+        return b.flushFamily(ctx,f,"age")
     }
     return nil
 }
@@ -184,6 +232,8 @@ func(b *privateP6Buffers) flushSource(ctx context.Context)error{
     l.handoffs++
     l.pending=nil
     l.bytes=0
+    l.firstPendingAt=time.Time{}
+    l.firstPendingOrdinal=0
     return nil
 }
 
@@ -226,6 +276,8 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     }
     lane.pending=nil
     lane.bytes=0
+    lane.firstPendingAt=time.Time{}
+    lane.firstPendingOrdinal=0
     return nil
 }
 
