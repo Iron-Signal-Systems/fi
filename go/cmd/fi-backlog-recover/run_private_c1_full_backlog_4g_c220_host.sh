@@ -1129,6 +1129,18 @@ awk '
   }
 ' "$out/$name/C1_USN_ASYNC_COMPLETE.txt" ||
   fail 'C1 USN dispatcher did not commit or violated bounded backlog'
+# Every USN buffer SQL ACK counted in the existing Family Processing
+# receipt must also appear in the asynchronous dispatcher commit receipt.
+usn_buffer_handoffs=$(awk '/^FI P6 FAMILY / && /family=USNDependency/ {
+    for(i=1;i<=NF;i++){split($i,p,"=");if(p[1]=="handoffs"){print p[2];exit}}
+}' "$log")
+usn_async_commits=$(awk '{
+    for(i=1;i<=NF;i++){split($i,p,"=");if(p[1]=="committed_handoffs"){print p[2];exit}}
+}' "$out/$name/C1_USN_ASYNC_COMPLETE.txt")
+[ -n "$usn_buffer_handoffs" ] && [ "$usn_buffer_handoffs" = "$usn_async_commits" ] ||
+  fail 'C1 asynchronous USN commit count differs from real Family Processing SQL handoffs'
+echo "FI C1 ASYNC USN COMMIT ACCOUNTING PASS handoffs=$usn_async_commits ordered=true file_fences=true bounded=true"
+
 grep '^FI C1 SQL PROFILE ' "$log" > "$out/$name/C1_SQL_PROFILE.txt" ||
   fail 'C1 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/C1_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
