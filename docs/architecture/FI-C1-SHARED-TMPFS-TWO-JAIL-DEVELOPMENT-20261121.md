@@ -126,6 +126,21 @@ projection. Restart must fail closed rather than blindly replaying. A
 temporary RAM object from an uncertain session may be removed only after
 the SQL session is quiescent and the replay plan is reconciled.
 
+## FreeBSD C1 service-binary staging (NOT activation)
+
+The existing host installer accepts explicitly selected
+`apply-c1-binaries` and `verify-c1-binaries` operations. The release
+directory must contain **both** distinct FreeBSD executables,
+`fi-c1-ingest-worker` and `fi-c1-sor-worker`. Installation is root-owned
+mode `0555` inside the preconfigured fi-ingest and fi-sor-db jail roots.
+No existing `fi-ingest-worker` binary is replaced, no rc script is started,
+and no PostgreSQL connection or file is modified.
+
+This is only the binary-staging part of the development installer; it
+does **not** mount tmpfs, activate C1, or imply deployment acceptance.
+Subsequent mount wiring, rc service installation, restart replay and
+isolated true two-jail acceptance remain required.
+
 ## Validation before any live C220 activation
 
 - Go race, C1 handoff, prepared-family tests and cross-built FreeBSD

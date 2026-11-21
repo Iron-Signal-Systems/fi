@@ -109,7 +109,7 @@ func parseInvocation(
 			approvedPriorBinaries:    args[3],
 		}, nil
 
-	case "apply-binaries", "verify-binaries":
+	case "apply-binaries", "verify-binaries", "apply-c1-binaries", "verify-c1-binaries":
 		if len(args) != 3 {
 			return invocation{}, fmt.Errorf(
 				"usage: fi-backend-install %s <configuration-file> <release-directory>",
@@ -515,7 +515,21 @@ func main() {
 			"FI FreeBSD lifecycle verification complete.",
 		)
 
-	case "apply-binaries":
+	case "apply-c1-binaries":
+        if err := backendinstall.ApplyC1DevelopmentBinaries(config,request.applicationBinaryRelease);err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 DEVELOPMENT BINARIES APPLY BLOCKED: %v\\n",err)
+            os.Exit(1)
+        }
+        fmt.Fprintln(os.Stdout,"FI C1 development workers installed (NOT activated).")
+
+    case "verify-c1-binaries":
+        if err := backendinstall.VerifyC1DevelopmentBinaries(config,request.applicationBinaryRelease);err!=nil{
+            fmt.Fprintf(os.Stderr,"FI C1 DEVELOPMENT BINARIES VERIFY BLOCKED: %v\\n",err)
+            os.Exit(1)
+        }
+        fmt.Fprintln(os.Stdout,"FI C1 development worker binary verification complete.")
+
+    case "apply-binaries":
 		if err := backendinstall.ApplyBinaries(
 			config,
 			request.applicationBinaryRelease,

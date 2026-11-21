@@ -13,6 +13,9 @@ on:
       - 'go/cmd/fi-c1-sor-worker/**'
       - 'go/cmd/fi-c1-ingest-worker/**'
       - 'go/cmd/fi-c1-host-preflight/**'
+      - 'go/internal/freebsd/backendinstall/c1_development_binary_install.go'
+      - 'go/internal/freebsd/backendinstall/c1_development_binary_install_test.go'
+      - 'go/cmd/fi-backend-install/main_freebsd.go'
       - '.github/workflows/fi-c1-sor-development.yml'
   workflow_dispatch:
 
@@ -49,8 +52,12 @@ jobs:
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-ingest-worker ./cmd/fi-c1-ingest-worker
       - name: Cross-compile fi-sor native C1 SQL worker for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-worker ./cmd/fi-c1-sor-worker
+      - name: Test C1 FreeBSD development installer plan (no host mutation)
+        run: go test ./internal/freebsd/backendinstall -run '^TestC1DevelopmentBinary' -count=1
       - name: Cross-compile host tmpfs and jail nullfs read-only preflight for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-host-preflight ./cmd/fi-c1-host-preflight
+      - name: Cross-compile FreeBSD backend installer with explicit C1 staging commands
+        run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fi-backend-install-c1 ./cmd/fi-backend-install
       - name: Cross-compile C1 ingest worker for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-ingest-worker-c1 ./cmd/fi-ingest-worker
       - name: Cross-compile fi-ingest-worker for FreeBSD
