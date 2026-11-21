@@ -37,8 +37,12 @@ type privateC1VerifyProcessPlan struct {
     ReceiptSHA256 string
     Start int
     End int
+    TotalRecords uint64
+    TotalBytes uint64
     Descriptors []BacklogCheckpointDescriptor
     BatchIDs []string
+    BatchRecords []int
+    BatchBytes []int64
 }
 
 func privateC1BuildVerifyProcessPlan(g *PreparedGeneration, ds []BacklogCheckpointDescriptor,
@@ -54,25 +58,45 @@ func privateC1BuildVerifyProcessPlan(g *PreparedGeneration, ds []BacklogCheckpoi
         TransferSHA256:g.Receipt.TransferSHA256,
         ReceiptSHA256:g.ReceiptSHA256,
         Start:start,End:end,
-        Descriptors:append([]BacklogCheckpointDescriptor(nil),ds[:end]...),
-        BatchIDs:make([]string,ds[end-1].EndBatch),
+        TotalRecords:g.Receipt.RecordCount,TotalBytes:g.Receipt.DataBytes,
+        Descriptors:append([]BacklogCheckpointDescriptor(nil),ds...),
+        BatchIDs:make([]string,len(g.Batches)),
+        BatchRecords:make([]int,len(g.Batches)),
+        BatchBytes:make([]int64,len(g.Batches)),
     }
-    for i:=range p.BatchIDs{p.BatchIDs[i]=g.Batches[i].BatchID}
+    for i:=range p.BatchIDs{
+        p.BatchIDs[i]=g.Batches[i].BatchID
+        p.BatchRecords[i]=g.Batches[i].Manifest.RecordCount
+        p.BatchBytes[i]=g.Batches[i].Manifest.DataBytes
+    }
     if err:=privateC1ValidateVerifyProcessPlan(&p);err!=nil{return p,err}
     return p,nil
 }
 
 func privateC1ValidateVerifyProcessPlan(p *privateC1VerifyProcessPlan)error{
     if p==nil||p.Version!="C1-B-1"||p.Start<1||p.End<=p.Start||
-        p.End!=len(p.Descriptors)||p.SourceID==""||p.GenerationID==""||
+        p.End>len(p.Descriptors)||p.SourceID==""||p.GenerationID==""||
         !canonicalDigest(p.ReceiptSHA256)||!canonicalDigest(p.TransferSHA256)||
-        len(p.BatchIDs)==0||len(p.BatchIDs)!=p.Descriptors[p.End-1].EndBatch {
+        p.TotalRecords==0||p.TotalBytes==0||
+        len(p.BatchIDs)==0||len(p.BatchIDs)!=p.Descriptors[len(p.Descriptors)-1].EndBatch||
+        len(p.BatchIDs)!=len(p.BatchRecords)||len(p.BatchIDs)!=len(p.BatchBytes)||
+        p.Descriptors[len(p.Descriptors)-1].EndRecord!=p.TotalRecords {
         return errors.New("FI C1 B: invalid bounded signed verification plan")
     }
+    var totalBatchBytes uint64
+    var totalBatchRecords uint64
     for i,id:=range p.BatchIDs{
-        if id==""{return fmt.Errorf("FI C1 B: missing original batch ID %d",i)}
+        if id==""||p.BatchRecords[i]<=0||p.BatchBytes[i]<=0{
+            return fmt.Errorf("FI C1 B: missing original batch identity/size %d",i)
+        }
+        totalBatchBytes+=uint64(p.BatchBytes[i])
+        totalBatchRecords+=uint64(p.BatchRecords[i])
     }
-    for i:=0;i<p.End;i++{
+    if totalBatchBytes!=p.TotalBytes||totalBatchRecords!=p.TotalRecords{
+        return errors.New("FI C1 B: custody metadata does not sum to original signed receipt")
+    }
+    var totalDescriptorBytes uint64
+    for i:=0;i<len(p.Descriptors);i++{
         d:=p.Descriptors[i]
         if d.SourceID!=p.SourceID||d.GenerationID!=p.GenerationID||
             d.ReceiptSHA256!=p.ReceiptSHA256||d.TransferSHA256!=p.TransferSHA256||
@@ -82,6 +106,7 @@ func privateC1ValidateVerifyProcessPlan(p *privateC1VerifyProcessPlan)error{
             p.BatchIDs[d.EndBatch-1]!=d.LastBatchID {
             return fmt.Errorf("FI C1 B: changed or incomplete custody descriptor %d",i)
         }
+        totalDescriptorBytes+=d.DataBytes
         if i>0{
             prev:=p.Descriptors[i-1]
             if d.StartBatch!=prev.EndBatch||d.StartRecord!=prev.EndRecord||
@@ -89,6 +114,9 @@ func privateC1ValidateVerifyProcessPlan(p *privateC1VerifyProcessPlan)error{
                 return fmt.Errorf("FI C1 B: discontinuous descriptor chain %d",i)
             }
         }
+    }
+    if totalDescriptorBytes!=p.TotalBytes{
+        return errors.New("FI C1 B: group byte total differs from original custody receipt")
     }
     return nil
 }
