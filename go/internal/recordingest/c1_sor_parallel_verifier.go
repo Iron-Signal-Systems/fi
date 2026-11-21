@@ -15,11 +15,9 @@ import (
     "encoding/hex"
     "errors"
     "fmt"
-    "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
-    "github.com/jackc/pgx/v5"
 )
 
 type c1SoRGroup struct {
@@ -163,6 +161,5 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     go func(){<-v.done;_ =conn.Close(context.Background())}()
     fmt.Printf("FI C1 SOR PARALLEL VERIFIER START pid=%d groups=%d role=read_only independent_backend=true trigger=post_commit readiness_no_flush=true\n",
         pid,len(groups))
-    _=time.Second // keep explicit time import for future scheduler timings
     return tracker,v,nil
 }
