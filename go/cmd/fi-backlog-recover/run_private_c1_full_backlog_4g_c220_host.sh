@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=e2839176f11413c1f9dcd31186756a60e48f9563
+sourcecommit=aa2e6c41edd89714de7e05d30c336b5c56fcb26b
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -1048,6 +1048,15 @@ grep -Fq 'read_only=true separate_os_process=true' "$out/$name/C1_B_FINAL.txt" |
   fail 'B final SQL proof mode or OS process identity invalid'
 [ "$(grep -c '^FI C1 B FINAL RESULT ' "$log")" = 1 ] ||
   fail 'B final structured receipt missing or duplicated'
+grep '^FI C1 PRE-INGEST SETUP ' "$log" > "$out/$name/C1_SETUP.txt" ||
+  fail 'C1 independent pre-ingest startup timer missing'
+grep '^FI C1 INGEST CLOCK START ' "$log" > "$out/$name/C1_INGEST_START.txt" ||
+  fail 'C1 first-record P5/P6 ingest timer missing'
+[ "$(wc -l < "$out/$name/C1_SETUP.txt" | tr -d '[:space:]')" = 1 ] &&
+[ "$(wc -l < "$out/$name/C1_INGEST_START.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq 'excluded_from_ingest_rate=true' "$out/$name/C1_SETUP.txt" &&
+grep -Fq 'setup_excluded=true verifier_excluded=true' "$out/$name/C1_INGEST_START.txt" ||
+  fail 'C1 startup/ingest timer separation contract failed'
 grep '^FI C1 P6 SQL DRAIN ' "$log" > "$out/$name/C1_SQL_DRAIN.txt" ||
   fail 'C1 separate P6 SQL-drain performance receipt missing'
 # C1 adds the original P5 five-family parallel Go preparation pool,
@@ -1123,6 +1132,7 @@ printf "FI C220 C1 DEV PASS prefix8=$prefix8 groups=$windows group_gib=4 records
 tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt SUMMARY.txt relay.log \
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
   "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
+  "$name/C1_SETUP.txt" "$name/C1_INGEST_START.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
