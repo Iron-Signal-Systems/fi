@@ -53,7 +53,7 @@ func privateC1BuildVerifyProcessPlan(g *PreparedGeneration, ds []BacklogCheckpoi
         TransferSHA256:g.Receipt.TransferSHA256,
         ReceiptSHA256:g.ReceiptSHA256,
         Start:start,End:end,
-        Descriptors:append([]BacklogCheckpointDescriptor(nil),ds...),
+        Descriptors:append([]BacklogCheckpointDescriptor(nil),ds[:end]...),
         BatchIDs:make([]string,ds[end-1].EndBatch),
     }
     for i:=range p.BatchIDs{p.BatchIDs[i]=g.Batches[i].BatchID}
