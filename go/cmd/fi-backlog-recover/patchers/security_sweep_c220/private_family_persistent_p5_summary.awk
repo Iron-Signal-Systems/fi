@@ -21,7 +21,7 @@ BEGIN {
     key=window ":" id
     if((window!=1 && window!=2) || id<0 || id>4 ||
        fields["family"]!=id || fields["complete"]!="true" ||
-       fields["spawned"]<2 || fields["spawned"]>16 ||
+       fields["spawned"]<2 || fields["spawned"]>32 ||
        fields["scale_ups"]!=fields["spawned"]-2 ||
        fields["peak_busy"]<0 || fields["peak_busy"]>fields["spawned"] ||
        fields["max_queue"]<0 || fields["max_queue"]>32 ||
