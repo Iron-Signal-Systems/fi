@@ -18,6 +18,7 @@ import (
     "io"
     "os"
     "os/exec"
+    "path/filepath"
     "strconv"
     "strings"
     "sync"
@@ -117,8 +118,14 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
         return nil,errors.New("FI C1 B: independent process is permitted only on the selected private clone")
     }
     bin:=os.Getenv("FI_C1_DEV_VERIFIER_BIN")
-    if bin==""||!strings.HasPrefix(bin,"/home/jwood/fi-window-bench-w512-family-p3-"){
-        return nil,errors.New("FI C1 B: exact private verifier executable path required")
+    // A executes on the C220 host, but both Go binaries are built in fi-dev.
+    // Require B to be the host-visible executable in the exact same private
+    // run directory as the verified jail-relative PostgreSQL clone.
+    expectedInside:=filepath.Join(filepath.Dir(filepath.Dir(pgdata)),"fi-c1-verifier")
+    expectedHost:="/fast/jails/roots/fi-dev"+expectedInside
+    if bin==""||bin!=expectedHost||
+        !strings.HasPrefix(expectedInside,"/home/jwood/fi-window-bench-w512-family-p3-"){
+        return nil,errors.New("FI C1 B: verifier path must match the host-visible private clone executable")
     }
     st,err:=os.Stat(bin)
     if err!=nil||!st.Mode().IsRegular()||st.Mode()&0111==0{
