@@ -17,6 +17,9 @@ command -v go >/dev/null 2>&1 || fail "native Go compiler missing"
 id postgres >/dev/null 2>&1 || fail "PostgreSQL system account missing"
 base=$(mktemp -d /var/tmp/fi-c1-pg18-vm.XXXXXXXX) ||
   fail "cannot allocate disposable PG18 source"
+# The PostgreSQL service user needs traversal of this disposable root
+# for PGDATA and its WAL/error log; the directory stays mode 0700.
+chown postgres:postgres "$base"
 data="$base/pgdata"
 log="$base/postgresql.log"
 mkdir -m 0700 "$data"
