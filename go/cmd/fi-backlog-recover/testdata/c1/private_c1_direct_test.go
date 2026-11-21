@@ -9,6 +9,7 @@ func TestPrivateC1Security8GiBBufferProfileFailClosedAndBounded(t *testing.T){
     t.Setenv("FI_C1_SECURITY_8G_EXPERIMENT","0")
     t.Setenv("FI_C1_DEV_PREFIX8","1")
     t.Setenv("FI_W512_C1_P6_DIRECT","1")
+    t.Setenv("FI_W512_P6_FAMILY_SQL","1")
     t.Setenv("FI_W512_C1_FULL_BACKLOG","0")
     control,err:=newPrivateP6Buffers(1,&privateP6TestSink{})
     if err!=nil{t.Fatal(err)}
