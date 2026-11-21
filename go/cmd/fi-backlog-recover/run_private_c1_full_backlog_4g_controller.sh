@@ -34,8 +34,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=0c7f6869f145193ffa19e578da68bc7b85d5d4f3
-runnerpin=352829b32c506c5f217ed406bc817f82616a49c6
+sourcepin=24b3eba4756c02025b4dd877d678911188dc14e6
+runnerpin=467de469a14ab3ecf15d3299bf75de187be84d94
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -89,6 +89,9 @@ grep -Fq 'C1_COMMIT_READY.txt' "$runner" &&
 grep -Fq 'C1_SQL_DRAIN.txt' "$runner" &&
 grep -Fq 'C1_SETUP.txt' "$runner" &&
 grep -Fq 'C1_INGEST_START.txt' "$runner" &&
+grep -Fq 'C1_IDLE_TIMER.txt' "$runner" &&
+grep -Fq 'C1_IDLE_FLUSH.txt' "$runner" &&
+grep -Fq 'timeout=30s poll=1s per_family=true' "$runner" &&
 grep -Fq 'C1 read-only B proof incomplete or incorrectly reported' "$runner" &&
 grep -Fq 'C1_ASYNC_VERIFY.txt' "$runner" &&
 grep -Fq 'C1_B_GROUPS.txt' "$runner" &&
@@ -206,7 +209,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 DEV PASS prefix8=$FI_C1_DEV_PREFIX8 groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SECURITY_COPY.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -223,6 +226,7 @@ cat "$runroot/C1_COMMIT_READY.txt"
 cat "$runroot/C1_ASYNC_VERIFY.txt"
 cat "$runroot/C1_SETUP.txt"
 cat "$runroot/C1_INGEST_START.txt"
+cat "$runroot/C1_IDLE_TIMER.txt"
 cat "$runroot/C1_SQL_DRAIN.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
