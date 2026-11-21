@@ -331,6 +331,17 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     if err!=nil{return empty,err}
     buffers,err:=newPrivateP6Buffers(startWindow,sink)
     if err!=nil{return empty,err}
+    tunedSecurity,err:=privateC1Security8GiBExperiment()
+    if err!=nil{return empty,err}
+    profile,fieldMaxRows,fieldMaxBytes,mode:="P3",32768,8<<20,"control"
+    if tunedSecurity{
+        profile,fieldMaxRows,fieldMaxBytes,mode="P4",65536,16<<20,"candidate"
+    }
+    fmt.Printf("FI C1 SECURITY 8G PROFILE mode=%s security_rows=%d security_bytes=%d sql_profile=%s field_rows=%d field_bytes=%d reusable_event=%t reusable_scope=%t separate_field_partitions=false full_backlog=%t clone_only=true\n",
+        mode,buffers.lanes[privateP6Security].limit.rows,
+        buffers.lanes[privateP6Security].limit.bytes,
+        profile,fieldMaxRows,fieldMaxBytes,tunedSecurity,tunedSecurity,fullRun)
+
     // One original P5 adaptive family worker pool for the whole run.
     // Do not reset its workers, credits, or P6 SQL-ready buffers at W512.
     pool,err:=newPrivateP5Pool(ctx,startWindow)
