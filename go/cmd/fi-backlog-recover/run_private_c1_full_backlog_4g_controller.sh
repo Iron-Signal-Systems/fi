@@ -12,6 +12,10 @@ security8=${FI_C1_SECURITY_8G_EXPERIMENT:-0}
 case "$security8" in 0|1) ;; *)fail 'FI_C1_SECURITY_8G_EXPERIMENT must be exactly 0 or 1';;esac
 [ "$security8" = 0 ] || [ "$mode" = prefix8 ] ||
   fail 'Security 8192/32MiB, 65536/16MiB, and reusable COPY rows are permitted only in C1 prefix8 mode'
+sourceprof=${FI_C1_SOURCE_PROFILE_8G:-0}
+case "$sourceprof" in 0|1) ;; *) fail 'FI_C1_SOURCE_PROFILE_8G must be 0 or 1';; esac
+[ "$sourceprof" = 0 ] || { [ "$security8" = 1 ] && [ "$mode" = prefix8 ]; } ||
+  fail 'SourceParent profiling requires the optimized 8GiB prefix candidate'
 export FI_C1_SECURITY_8G_EXPERIMENT="$security8"
 # Stage 2 is only meaningful after the Stage 1 full 8GB/4MB run passes.
 # Fail closed on a missing or mismatched complete private-replay receipt.
@@ -39,8 +43,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=050c3e288fd2dfef45b9da733aa4313064dfb467
-runnerpin=91b4e7bc0086f2b1ede5b0caa927617650e286db
+sourcepin=729b8f0e7288aa7aa2f0c6d91d30311802c2ea10
+runnerpin=6949409ebe4b6514d59f3afeb60644e7bef8750e
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -104,6 +108,11 @@ grep -Fq 'C1_USN_ASYNC_START.txt' "$runner" &&
 grep -Fq 'C1_USN_ASYNC_COMPLETE.txt' "$runner" &&
 grep -Fq 'C1_SECURITY_COPY_CALLS.txt' "$runner" &&
 grep -Fq 'C1_SOURCE_PARENT_STAGES.txt' "$runner" &&
+grep -Fq 'C1_SOURCE_PARENT_COPY_DETAIL.txt' "$runner" &&
+grep -Fq 'C1_SOURCE_PARENT_BACKEND.txt' "$runner" &&
+grep -Fq 'private_c1_source_profile.go' "$runner" &&
+grep -Fq 'FI_C1_SOURCE_PROFILE_8G' "$runner" &&
+grep -Fq "'source_parent'" "$runner" &&
 grep -Fq 'C1_SECURITY_8G_PROFILE.txt' "$runner" &&
 grep -Fq 'FI C1 SECURITY 8G SELECTION PASS' "$runner" &&
 grep -Fq 'FI_C1_SECURITY_8G_EXPERIMENT' "$runner" &&
@@ -230,7 +239,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 DEV PASS prefix8=$FI_C1_DEV_PREFIX8 groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_USN_ASYNC_START.txt C1_USN_ASYNC_COMPLETE.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SOURCE_PARENT_STAGES.txt C1_SECURITY_8G_PROFILE.txt C1_SECURITY_COPY.txt C1_SECURITY_COPY_CALLS.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_USN_ASYNC_START.txt C1_USN_ASYNC_COMPLETE.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SOURCE_PARENT_STAGES.txt C1_SOURCE_PARENT_BACKEND.txt C1_SOURCE_PARENT_COPY_DETAIL.txt C1_SECURITY_8G_PROFILE.txt C1_SECURITY_COPY.txt C1_SECURITY_COPY_CALLS.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -255,6 +264,10 @@ cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
 cat "$runroot/C1_SQL_PROFILE.txt"
 cat "$runroot/C1_SOURCE_PARENT_STAGES.txt"
+[ "$sourceprof" = 0 ] || {
+  cat "$runroot/C1_SOURCE_PARENT_BACKEND.txt"
+  cat "$runroot/C1_SOURCE_PARENT_COPY_DETAIL.txt"
+}
 cat "$runroot/C1_SECURITY_8G_PROFILE.txt"
 cat "$runroot/C1_SECURITY_COPY.txt"
 cat "$runroot/C1_SECURITY_COPY_CALLS.txt"
