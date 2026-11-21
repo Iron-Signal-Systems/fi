@@ -265,12 +265,17 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
         }
     }()
     go func(){
-        // Reader EOF also occurs when B crashes before sending GROUPS.
-        // Cancel only the child context so the sender cannot strand A.
+        // Do NOT cancel a healthy verifier after it emits its final
+        // result: doing so kills B before cmd.Wait can collect exit(0).
+        // Cancellation is only necessary for an unexpected stdout EOF or
+        // protocol error, to release a blocked command sender. Never cancel A.
         scanErr:=<-stdoutDone
-        cancel()
+        if scanErr!=nil||!v.gotFinal{
+            cancel()
+        }
         sendErr:=<-writerDone
         processErr:=cmd.Wait()
+        cancel() // release child context resources after Wait
         if sendErr!=nil{
             v.err=fmt.Errorf("FI C1 B: transport: %w",sendErr)
         }else if processErr!=nil{
