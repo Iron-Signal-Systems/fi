@@ -376,9 +376,11 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     // batch. The signed reader still finishes and validates every original
     // batch's original manifest identity, byte count, record count and LF
     // boundary before opening the next; no duplicate SHA-256 over batch data. P6 remains continuous across all reporting windows.
-    fmt.Printf("FI C1 INGEST CLOCK START utc=%s stage=P5_stream_entry setup_excluded=true verifier_excluded=true\n",
-        time.Now().UTC().Format(time.RFC3339Nano))
     started:=time.Now()
+    fmt.Printf("FI C1 INGEST CLOCK START utc=%s stage=Preparation_entry setup_excluded=true verifier_excluded=true\n",
+        started.UTC().Format(time.RFC3339Nano))
+    fmt.Printf("FI C1 RECORD PROCESSING CLOCK START utc=%s starts=Preparation ends=FamilyProcessing_All_SQL_ACKed preflight_excluded=true verifier_excluded=true\n",
+        started.UTC().Format(time.RFC3339Nano))
     groupRows,groupBytes,e:=privateC1ConsumeContinuousSigned(
         ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare,commitReady.Seal)
     if e!=nil{return empty,fmt.Errorf("FI C1: continuous signed P5: %w",e)}
@@ -401,8 +403,11 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     verifier.MarkDrained()
     fmt.Printf("FI C1 P6 FINAL DRAIN START records_admitted=%d marker_unwritten=true\n",totalRows)
     if err=buffers.Finish(ctx);err!=nil{return empty,fmt.Errorf("FI C1: P6 shared-pool five-family drain: %w",err)}
+    processingElapsed:=time.Since(started)
     fmt.Printf("FI C1 P6 SQL DRAIN elapsed=%s records_admitted=%d verifier_independent=true\n",
-        time.Since(started),totalRows)
+        processingElapsed,totalRows)
+    fmt.Printf("FI C1 FAMILY PROCESSING COMPLETE elapsed=%s records_committed=%d preparation_included=true verification_excluded=true preflight_excluded=true durable_sql_acks=true\n",
+        processingElapsed,totalRows)
     if err=commitReady.FinishCommitted();err!=nil{
         return empty,fmt.Errorf("FI C1: complete signed SQL commit receipts: %w",err)
     }
