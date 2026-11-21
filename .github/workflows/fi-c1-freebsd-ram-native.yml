@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/fi-c1-freebsd-ram-native.yml'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_ram_smoke.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_two_jail_smoke.sh'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_*.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_host_runtime_install*.go'
 
@@ -32,3 +33,4 @@ jobs:
             set -eu
             uname -sr
             GITHUB_ACTIONS=true sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_ram_smoke.sh
+            GITHUB_ACTIONS=true sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_two_jail_smoke.sh
