@@ -3,7 +3,7 @@
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
 // C1 ISOLATED C220 CLONE: P6 native source/relational SQL, one ordered source-parent SQL connection and an adaptive shared pool
-// of 1..16 SQL workers. Five P5/P6 families remain independent.
+// of 1..32 SQL workers. Five P5/P6 families remain independent.
 // No new pending_source_record staging, no P7 preparer bridge, no alternate
 // relational projectors. Failure renders this disposable SQL clone unusable;
 // never resume it or treat partially committed parents as a checkpoint.
@@ -26,7 +26,7 @@ import (
 // independently bounded to at least four and at most the configured pool max.
 const privateC1MaxFamilyHandoffsInFlight = 4
 const privateC1DefaultSQLWorkersMax = 5
-const privateC1HardSQLWorkersMax = 16
+const privateC1HardSQLWorkersMax = 32
 const privateC1SQLWorkerIdleRetire = 30 * time.Second
 
 // Parent ACKs are broadcast fences: multiple child transactions can depend
@@ -102,7 +102,7 @@ func privateC1SQLWorkersMax() (int,error) {
     if raw=="" {return privateC1DefaultSQLWorkersMax,nil}
     n,e:=strconv.Atoi(raw)
     if e!=nil||n<1||n>privateC1HardSQLWorkersMax{
-        return 0,fmt.Errorf("FI C1: SQL worker maximum must be between 1 and 16, got %q",raw)
+        return 0,fmt.Errorf("FI C1: SQL worker maximum must be between 1 and 32, got %q",raw)
     }
     return n,nil
 }
