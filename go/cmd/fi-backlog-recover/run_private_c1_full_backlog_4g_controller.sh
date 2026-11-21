@@ -8,6 +8,11 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 [ "$#" -eq 2 ] || fail 'usage: sh controller preflight|compile|prefix8|c1 20261115T153532Z'
 case "$1" in preflight|compile|c1|prefix8) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
+security8=${FI_C1_SECURITY_8G_EXPERIMENT:-0}
+case "$security8" in 0|1) ;; *)fail 'FI_C1_SECURITY_8G_EXPERIMENT must be exactly 0 or 1';;esac
+[ "$security8" = 0 ] || [ "$mode" = prefix8 ] ||
+  fail 'Security 8192/32MiB, 65536/16MiB, and reusable COPY rows are permitted only in C1 prefix8 mode'
+export FI_C1_SECURITY_8G_EXPERIMENT="$security8"
 # Stage 2 is only meaningful after the Stage 1 full 8GB/4MB run passes.
 # Fail closed on a missing or mismatched complete private-replay receipt.
 prior=${FI_C1_WAL8_BASELINE_REPORT:-}
@@ -34,8 +39,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=4595b6c024ac29b2261be089b035bf05cd5ad481
-runnerpin=852f88316312f6194d9ece667d2ebefed775b2f9
+sourcepin=91c83d41124b9cd1164affd2afa7b9c23abd359b
+runnerpin=4ea08a83c591226b6a6fb2376266640b14347087
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -50,7 +55,11 @@ grep -Fxq 'FI C220 W512 PERSISTENT P5 TWO-WINDOW ACCEPTED windows=2 new_records=
 grep -Fxq 'FI C220 W512 ATOMIC FAMILY P6 TWO-WINDOW ACCEPTED windows=2 new_records=997434 elapsed=4m7.626s min_workers=2 max_workers=16 max_slots=80 credits=32 writer=1 authoritative=0 accepted=0' "$p6/SUMMARY.txt" ||
   fail 'P6 accepted source/relational performance baseline changed'
 if [ "$mode" = prefix8 ];then
-  runroot=/var/tmp/fi-c1-async-prefix8-$(date -u '+%Y%m%dT%H%M%SZ')
+  if [ "$security8" = 1 ];then
+    runroot=/var/tmp/fi-c1-async-prefix8-security123-$(date -u '+%Y%m%dT%H%M%SZ')
+  else
+    runroot=/var/tmp/fi-c1-async-prefix8-control-$(date -u '+%Y%m%dT%H%M%SZ')
+  fi
 else
   runroot=/var/tmp/fi-c1-full-backlog-4g-$(date -u '+%Y%m%dT%H%M%SZ')
 fi
@@ -95,6 +104,9 @@ grep -Fq 'C1_USN_ASYNC_START.txt' "$runner" &&
 grep -Fq 'C1_USN_ASYNC_COMPLETE.txt' "$runner" &&
 grep -Fq 'C1_SECURITY_COPY_CALLS.txt' "$runner" &&
 grep -Fq 'C1_SOURCE_PARENT_STAGES.txt' "$runner" &&
+grep -Fq 'C1_SECURITY_8G_PROFILE.txt' "$runner" &&
+grep -Fq 'FI C1 SECURITY 8G SELECTION PASS' "$runner" &&
+grep -Fq 'FI_C1_SECURITY_8G_EXPERIMENT' "$runner" &&
 grep -Fq 'FI C1 ASYNC USN COMMIT ACCOUNTING PASS' "$runner" &&
 grep -Fq 'queue_max=64 ordered_SQL_commits=true file_dependencies=commit_fences' "$runner" &&
 grep -Fq 'FI C1 DIPS TELEMETRY PREFLIGHT PASS' "$runner" &&
@@ -218,7 +230,7 @@ case "$out" in /var/tmp/fi-window-chunks-family-p3-*) :;;
  *) fail 'untrusted C1 private SQL output location';;esac
 grep -Fq "FI C220 C1 DEV PASS prefix8=$FI_C1_DEV_PREFIX8 groups=" "$out/SUMMARY.txt" ||
   fail 'native shared-SQL benchmark acceptance missing'
-for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_USN_ASYNC_START.txt C1_USN_ASYNC_COMPLETE.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SOURCE_PARENT_STAGES.txt C1_SECURITY_COPY.txt C1_SECURITY_COPY_CALLS.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
+for f in C1_READ.txt C1_BACKENDS.txt C1_FAMILIES.txt C1_PLAN.txt C1_FULL_PROOF.txt C1_COMPLETE.txt C1_PREP.txt C1_STREAM.txt C1_B_GROUPS.txt C1_B_FINAL.txt C1_COMMIT_READY.txt C1_ASYNC_VERIFY.txt C1_SQL_DRAIN.txt C1_SETUP.txt C1_INGEST_START.txt C1_IDLE_TIMER.txt C1_USN_ASYNC_START.txt C1_USN_ASYNC_COMPLETE.txt C1_P5_LANES.txt C1_SQL_PROFILE.txt C1_SOURCE_PARENT_STAGES.txt C1_SECURITY_8G_PROFILE.txt C1_SECURITY_COPY.txt C1_SECURITY_COPY_CALLS.txt C1_CONTINUOUS_FAMILIES.txt C1_POOL.txt RESULT.txt WINDOWS.txt;do
   [ -s "$out/clone-w512-2g/$f" ] || fail "C1 metrics missing $f"
   cp "$out/clone-w512-2g/$f" "$runroot/$f"
 done
@@ -243,6 +255,7 @@ cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
 cat "$runroot/C1_SQL_PROFILE.txt"
 cat "$runroot/C1_SOURCE_PARENT_STAGES.txt"
+cat "$runroot/C1_SECURITY_8G_PROFILE.txt"
 cat "$runroot/C1_SECURITY_COPY.txt"
 cat "$runroot/C1_SECURITY_COPY_CALLS.txt"
 wall_duration=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
@@ -311,6 +324,7 @@ printf 'FI C1 VERIFICATION TIMER phase=B_groups groups=%s seconds=%s excluded_fr
 printf 'FI C1 VERIFICATION TIMER phase=B_final duration=%s excluded_from_ingest_rate=true\n' "$final_verify_duration"
 printf 'FI C1 OPERATIONAL WALL TIMER duration=%s excluded_from_ingest_rate=true\n' "$wall_duration"
 if [ "$mode" = prefix8 ];then
+  printf 'FI C1 SECURITY 8G A/B RESULT candidate=%s ingest_seconds=%s records_per_second=%s sql_workers_max=%s checks=relational_and_B_pass\n' "$security8" "$seconds" "$rate" "$sqlmax"
   printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 ingest_seconds=%s records_per_second=%s verification_excluded=true full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
   printf 'FI C1 COMMIT-READY 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s receiver_custody_sha=true one_shot_relational_proofs=true verifier_timing_independent=true original_relational_rescans=removed all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
 else
