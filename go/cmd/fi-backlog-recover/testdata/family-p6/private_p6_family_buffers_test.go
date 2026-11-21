@@ -9,6 +9,10 @@ import (
     "fmt"
     "strings"
     "testing"
+    "reflect"
+    "time"
+
+    "github.com/jackc/pgx/v5"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
@@ -62,6 +66,46 @@ func privateP6Fixture(batch int,ordinal int64,kind string)privateP6Record{
             RawRecordBytes:raw,RecordBytes:len(raw),
         },
     }
+}
+
+func TestPrivateP6OrderedSourceCOPYCursorExactNineColumns(t *testing.T){
+    rows:=[]privateP6Record{
+        privateP6Fixture(205,1,"WindowsSecurityEvent"),
+        privateP6Fixture(205,2,"FileObservation"),
+        privateP6Fixture(206,1,"USNReadBoundary"),
+    }
+    for i:=range rows{
+        rows[i].prepared.WrittenAtUTC=time.Date(2026,11,21,10,i,0,0,time.UTC)
+        rows[i].prepared.RecordDigest[0]=byte(i+10)
+        rows[i].prepared.RecordDigest[31]=byte(i+100)
+    }
+    reference:=pgx.CopyFromSlice(len(rows),func(i int)([]any,error){
+        r:=rows[i]
+        p:=r.prepared
+        return []any{r.sourceBatchID,r.ordinal,p.Record.Version,p.Record.RecordKind,
+            p.Record.ScopeID,p.WrittenAtUTC,p.RecordBytes,p.RecordDigest[:],IngestVersion},nil
+    })
+    cur:=&privateP6SourceCopyCursor{rows:rows}
+    if _,err:=cur.Values();err==nil{t.Fatal("SourceParent cursor permitted Values before Next")}
+    if !cur.Next(){t.Fatal("SourceParent cursor dropped the first signed record")}
+    for i:=range rows{
+        if i>0&&!cur.Next(){t.Fatalf("SourceParent cursor dropped signed record %d",i)}
+        if !reference.Next(){t.Fatal("old SourceParent reference cursor was shorter")}
+        got,err:=cur.Values()
+        if err!=nil{t.Fatal(err)}
+        want,err:=reference.Values()
+        if err!=nil{t.Fatal(err)}
+        if !reflect.DeepEqual(got,want){
+            t.Fatalf("SourceParent row %d changed source batch/ordinal/digest or one of 9 SQL values: got=%v want=%v",i,got,want)
+        }
+        if len(got)!=9{t.Fatalf("SourceParent row has %d columns instead of 9",len(got))}
+    }
+    if cur.Next()||reference.Next()||cur.Err()!=nil{
+        t.Fatal("SourceParent cursor added/omitted a signed row")
+    }
+    var nilCursor *privateP6SourceCopyCursor
+    if nilCursor.Next(){t.Fatal("nil SourceParent cursor advanced")}
+    if _,err:=nilCursor.Values();err==nil{t.Fatal("nil SourceParent cursor returned values")}
 }
 
 func TestPrivateP6RoutesEverySignedKindExactlyOnce(t *testing.T){
