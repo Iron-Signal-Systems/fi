@@ -161,3 +161,56 @@ func TestC1SoRSignedBatchOrdinalBoundaries(t *testing.T){
         }
     })
 }
+
+func TestC1SoRRejectsDuplicateTypedOrdinalsAcrossHandoffs(t *testing.T){
+    ctx:=context.Background()
+    sink:=&c1SQLHandoffTestSink{}
+    h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local",
+        "generation-test",strings.Repeat("b",64),[]int64{55},
+        []int64{1},1)
+    if err!=nil{t.Fatal(err)}
+    if err:=h.Commit(ctx,c1SQLTestFrame(c1handoff.Source,1));err!=nil{t.Fatal(err)}
+    first:=c1SQLTestFrame(c1handoff.Other,2)
+    if err:=h.Commit(ctx,first);err!=nil{t.Fatal(err)}
+    duplicate:=c1SQLTestFrame(c1handoff.Other,3)
+    if err:=h.Commit(ctx,duplicate);err==nil{
+        t.Fatal("fi-sor admitted duplicate typed ordinal across handoffs")
+    }
+    if sink.typed!=1||h.typedRows!=1{
+        t.Fatal("duplicate typed row reached C1 SQL writer")
+    }
+}
+func TestC1SoRRejectsDuplicateTypedOrdinalsWithinFrame(t *testing.T){
+    ctx:=context.Background()
+    sink:=&c1SQLHandoffTestSink{}
+    h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local",
+        "generation-test",strings.Repeat("b",64),[]int64{55},
+        []int64{2},2)
+    if err!=nil{t.Fatal(err)}
+    first:=c1SQLTestFrame(c1handoff.Source,1)
+    second:=first.Rows[0]
+    second.Ordinal=2
+    first.Rows=append(first.Rows,second)
+    if err:=h.Commit(ctx,first);err!=nil{t.Fatal(err)}
+    typed:=c1SQLTestFrame(c1handoff.Other,2)
+    typed.Rows=append(typed.Rows,typed.Rows[0])
+    if err:=h.Commit(ctx,typed);err==nil{
+        t.Fatal("fi-sor admitted same signed typed ordinal twice in one frame")
+    }
+    if sink.typed!=0{
+        t.Fatal("duplicate typed payload reached SQL writer")
+    }
+}
+func TestC1SoRRejectsTypedOrdinalOutsideOriginalManifest(t *testing.T){
+    sink:=&c1SQLHandoffTestSink{}
+    h,err:=newC1SoRCommitHandler(sink,"iss-fs-22a.iss.local",
+        "generation-test",strings.Repeat("b",64),[]int64{55},
+        []int64{1},1)
+    if err!=nil{t.Fatal(err)}
+    f:=c1SQLTestFrame(c1handoff.Other,1)
+    f.Rows[0].Ordinal=2
+    if err:=h.Commit(context.Background(),f);err==nil{
+        t.Fatal("fi-sor admitted typed ordinal beyond signed manifest")
+    }
+    if sink.typed!=0{t.Fatal("out-of-range typed row reached SQL writer")}
+}

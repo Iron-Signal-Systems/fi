@@ -63,6 +63,6 @@ func (s *c1SoRCommitHandler) Enqueue(ctx context.Context,
     if err:=pool.Family(ctx,family,rows);err!=nil{return nil,err}
     ack:=pool.lanes[family].latestCommitted
     if ack==nil{return nil,errors.New("FI C1 SoR: typed family accepted without durable fence")}
-    s.typedRows+=int64(len(rows))
+    s.accountTyped(rows)
     return c1SourceCommitted(ctx,ack),nil
 }

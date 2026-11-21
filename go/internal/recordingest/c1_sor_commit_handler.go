@@ -32,6 +32,8 @@ type c1SoRCommitHandler struct {
     sourceBatches []int64
     batchRecordCounts []int64 // immutable original signed per-batch manifest counts
     parentBatchCounts []int64 // source rows admitted/committed for each non-seed batch
+    typedBatchCounts []int64 // typed row admissions from every projector, counted by signed batch
+    typedSeen [][]uint64 // one bit per signed ordinal, bounded by immutable manifest counts
     minBatchIndex uint32 // immutable signed prefix cannot be reprojected
     expectedRecords int64
     parentRows int64
@@ -54,11 +56,26 @@ func newC1SoRCommitHandler(
             return nil,errors.New("C1 fi-sor: missing original signed source-batch identity or record count")
         }
     }
+    // One bit per source ordinal is enough to reject duplicate typed
+    // coverage across independent SQL families. Bound total memory based on
+    // original fi-sor manifest counts, not client-supplied allocations.
+    const maxCoverageBytes int64=64<<20
+    var coverageBytes int64
+    for _,count:=range batchRecordCounts{
+        words:=count/64
+        if count%64!=0{words++}
+        if words>maxCoverageBytes/8-coverageBytes/8{
+            return nil,errors.New("C1 fi-sor: original signed per-ordinal coverage exceeds bounded memory")
+        }
+        coverageBytes+=words*8
+    }
     return &c1SoRCommitHandler{sink:sink,sourceID:sourceID,
         generationID:generationID,receipt:strings.ToLower(receipt),
         sourceBatches:append([]int64(nil),sourceBatches...),
         batchRecordCounts:append([]int64(nil),batchRecordCounts...),
         parentBatchCounts:make([]int64,len(sourceBatches)),
+        typedBatchCounts:make([]int64,len(sourceBatches)),
+        typedSeen:make([][]uint64,len(sourceBatches)),
         expectedRecords:expectedRecords},nil
 }
 func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
@@ -78,9 +95,10 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
                 s.parentRows,s.typedRows,s.expectedRecords)
         }
         for i:=int(s.minBatchIndex);i<len(s.batchRecordCounts);i++{
-            if s.parentBatchCounts[i]!=s.batchRecordCounts[i]{
-                return fmt.Errorf("C1 fi-sor: signed source batch %d incomplete parents=%d expected=%d",
-                    i,s.parentBatchCounts[i],s.batchRecordCounts[i])
+            if s.parentBatchCounts[i]!=s.batchRecordCounts[i]||
+                s.typedBatchCounts[i]!=s.batchRecordCounts[i]{
+                return fmt.Errorf("C1 fi-sor: signed source batch %d incomplete parents=%d typed=%d expected=%d",
+                    i,s.parentBatchCounts[i],s.typedBatchCounts[i],s.batchRecordCounts[i])
             }
         }
         s.drained=true
@@ -98,7 +116,7 @@ func (s *c1SoRCommitHandler) Commit(ctx context.Context,f c1handoff.Frame)error{
     family:=privateP6Family(f.Kind-2)
     if err:=s.sink.Family(ctx,family,rows);err!=nil{return err}
     if err:=s.sink.WaitFamily(ctx,family);err!=nil{return err}
-    s.typedRows+=int64(len(rows))
+    s.accountTyped(rows)
     return nil
 }
 // prepareRows maps every signed original batch/ordinal to its exact
@@ -117,11 +135,30 @@ func(s *c1SoRCommitHandler)prepareRows(f c1handoff.Frame)([]privateP6Record,erro
         return nil,errors.New("C1 fi-sor: expected original signed SQL handoff")
     }
     rows:=make([]privateP6Record,0,len(f.Rows))
+    // Detect intra-handoff duplicate ordinals before SQL admission, and
+    // prevent all cross-handoff/cross-family duplicate typed coverage.
+    // Ordered parent frames have their own stricter contiguous-range proof.
+    type originalOrdinal struct{ batch int; ordinal int64 }
+    localSeen:=make(map[originalOrdinal]struct{},len(f.Rows))
     for i,row:=range f.Rows {
         index:=int(row.SignedBatchIndex)
         if index<int(s.minBatchIndex)||index>=len(s.sourceBatches)||
             row.SourceBatchID!=s.sourceBatches[index] {
             return nil,fmt.Errorf("C1 fi-sor: row %d is not mapped to verified signed batch",i)
+        }
+        if f.Kind!=c1handoff.Source{
+            if row.Ordinal<=0||row.Ordinal>s.batchRecordCounts[index]{
+                return nil,fmt.Errorf("C1 fi-sor: typed ordinal %d exceeds signed batch %d",row.Ordinal,index)
+            }
+            position:=originalOrdinal{batch:index,ordinal:row.Ordinal}
+            if _,ok:=localSeen[position];ok{
+                return nil,errors.New("C1 fi-sor: duplicate typed signed ordinal within SQL handoff")
+            }
+            localSeen[position]=struct{}{}
+            bits:=s.typedSeen[index]
+            if len(bits)>0 && bits[(row.Ordinal-1)/64]&(uint64(1)<<uint((row.Ordinal-1)%64))!=0{
+                return nil,errors.New("C1 fi-sor: duplicate typed signed ordinal across SQL handoffs")
+            }
         }
         prepared,err:=PrepareSourceRecord(row.RawRecord)
         if err!=nil{return nil,fmt.Errorf("C1 fi-sor: signed source decode %d: %w",i,err)}
@@ -185,6 +222,22 @@ func(s *c1SoRCommitHandler)accountSource(rows []privateP6Record){
     last:=rows[len(rows)-1]
     s.lastParentBatch=uint32(last.signedBatchIndex)
     s.lastParentOrdinal=last.ordinal
+}
+
+// On successful typed admission, reserve each signed ordinal once across
+// all five family workers. PostgreSQL commit futures remain authoritative
+// for durability; this bitmap is only an in-session completeness invariant.
+func(s *c1SoRCommitHandler)accountTyped(rows []privateP6Record){
+    s.typedRows+=int64(len(rows))
+    for _,r:=range rows{
+        i:=r.signedBatchIndex
+        if s.typedSeen[i]==nil{
+            s.typedSeen[i]=make([]uint64,(s.batchRecordCounts[i]+63)/64)
+        }
+        pos:=r.ordinal-1
+        s.typedSeen[i][pos/64]|=uint64(1)<<uint(pos%64)
+        s.typedBatchCounts[i]++
+    }
 }
 
 // Keep signed-batch indexes as the exact original metadata, not PostgreSQL
