@@ -24,7 +24,16 @@ const (
 	fileObservationBulkMaxBytes   = 8 << 20
 )
 
+// validatedSourceFileObservation can only be constructed after full
+// ntfs.ValidateObservation. The C1 family SQL path passes this proof
+// into the real File projector, avoiding an identical second validation.
+// Non-C1 rows retain the existing full validation path.
+type validatedSourceFileObservation struct {
+    observation ntfs.Observation
+}
+
 type fileObservationBulkRecord struct {
+    validatedSource *validatedSourceFileObservation
 	sourceID       string
 	sourceRecordID int64
 	ordinal        int64
@@ -97,6 +106,13 @@ func copyFileObservationBulk(ctx context.Context, tx pgx.Tx, pending []fileObser
 
 	counters, _ := ctx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters)
 	batchStarted := time.Now()
+    // A validated C1 source is the value-of-record. Do not trust a
+    // separately mutable value when a validation proof is present.
+    for i := range pending {
+        if proof := pending[i].validatedSource; proof != nil {
+            pending[i].value = proof.observation
+        }
+    }
 	prefetchStarted := time.Now()
 	if err := prefetchNTFSObjectIdentities(ctx, tx, pending); err != nil {
 		return err
@@ -185,9 +201,17 @@ func prepareFileObservationBulk(ctx context.Context, tx pgx.Tx, p fileObservatio
 	if v.VolumeIdentity != v.GovernedRoot.VolumeIdentity {
 		return nil, nil, errors.New("FI NTFS observation volume identity does not match governed-root volume")
 	}
-	if err := ntfs.ValidateObservation(v); err != nil {
-		return nil, nil, fmt.Errorf("validate FI NTFS observation: %w", err)
-	}
+	if p.validatedSource == nil {
+        if err := ntfs.ValidateObservation(v); err != nil {
+            return nil, nil, fmt.Errorf("validate FI NTFS observation: %w", err)
+        }
+    } else {
+        // The actual bulk projector consumes the source validation proof;
+        // the P6 caller never increments this reuse counter itself.
+        if counters, _ := ctx.Value(ntfsStageTimingContextKey{}).(*ntfsStageTimingCounters); counters != nil {
+            counters.FileBulkValidationReused++
+        }
+    }
 
 	volumeID, err := ensureNTFSVolume(ctx, tx, p.sourceID, v.VolumeIdentity)
 	if err != nil {
