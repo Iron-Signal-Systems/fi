@@ -241,10 +241,16 @@ func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reas
     // become SQL-visible before dependent USN starts; other families
     // remain queued and are not drained by this dependency.
     if f==privateP6USN {
-        if wait,ok:=b.sink.(interface{WaitFamily(context.Context,privateP6Family)error});ok{
-            if err:=wait.WaitFamily(ctx,privateP6File);err!=nil{
-                b.failed=fmt.Errorf("FI P6 direct: File prerequisite commit: %w",err)
-                return b.failed
+        // C1's ordered USN dispatcher snapshots and awaits EVERY earlier
+        // File SQL broadcast fence off the main Preparation consumer.
+        // Ordinary P6 sinks still enforce their synchronous File barrier.
+        async,ok:=b.sink.(interface{AsyncUSNDependencies() bool})
+        if !ok||!async.AsyncUSNDependencies(){
+            if wait,ok:=b.sink.(interface{WaitFamily(context.Context,privateP6Family)error});ok{
+                if err:=wait.WaitFamily(ctx,privateP6File);err!=nil{
+                    b.failed=fmt.Errorf("FI P6 direct: File prerequisite commit: %w",err)
+                    return b.failed
+                }
             }
         }
     }
