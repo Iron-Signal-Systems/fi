@@ -75,6 +75,11 @@ type privateC1SQLLane struct {
     securityCopies securityBulkTimingCounters
 }
 type privateC1FiveSQL struct {
+    // The original private clone keeps its exact socket/PGDATA guard;
+    // fi-sor uses a separate fail-closed LOCAL PostgreSQL opener. Both
+    // execute this same verified C1 source and five-family SQL engine.
+    openSQL func(context.Context,string,string)(*pgx.Conn,int64,error)
+    cloneOnly bool
     parent *pgx.Conn
     sourceProfile bool // explicit 8GiB-only profiling, never a production setting
     parentBackendPID int64
@@ -200,15 +205,31 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     if e!=nil{return nil,e}
     sourceProfile,e:=privateC1SourceProfileMode()
     if e!=nil{return nil,e}
+    return newC1SQLWithOpener(ctx,dsn,pgdata,sourceID,max,sourceProfile,
+        privateC1CloneConnection,true)
+}
+
+// C1's native five-SQL engine runs in fi-sor. The connection opener is
+// pinned at process construction; the original benchmark still refuses
+// all non-clone addresses. No second relational ingestion algorithm exists.
+func newC1SQLWithOpener(ctx context.Context,dsn,pgdata,sourceID string,
+    max int,sourceProfile bool,
+    open func(context.Context,string,string)(*pgx.Conn,int64,error),
+    cloneOnly bool,
+)(*privateC1FiveSQL,error){
+    if ctx==nil||sourceID==""||open==nil||max<1||max>privateC1HardSQLWorkersMax{
+        return nil,errors.New("FI C1: incomplete or unbounded fi-sor SQL pool parameters")
+    }
     owner,cancel:=context.WithCancel(ctx)
     w:=&privateC1FiveSQL{
         ctx:owner,cancel:cancel,sourceID:sourceID,dsn:dsn,pgdata:pgdata,
+        openSQL:open,cloneOnly:cloneOnly,
         maxWorkers:max,sourceProfile:sourceProfile,sourceJobs:make(chan privateC1SourceJob,2),
         jobs:make(chan privateC1SQLJob,max*2),
         usnPending:make(chan privateC1SQLJob,privateC1MaxPendingUSNHandoffs),
         pids:make(map[int64]bool),
     }
-    parent,pid,e:=privateC1CloneConnection(ctx,dsn,pgdata)
+    parent,pid,e:=w.openSQL(ctx,dsn,pgdata)
     if e!=nil{cancel();return nil,e}
     w.parent=parent
     w.parentBackendPID=pid
@@ -240,14 +261,15 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     w.usnWG.Add(1)
     go w.runUSNDispatcher()
     fmt.Printf("FI C1 ASYNC USN DISPATCH START queue_max=%d ordered_SQL_commits=true file_dependencies=commit_fences shared_sql_workers=true extra_pg_connections=0\n",privateC1MaxPendingUSNHandoffs)
-    fmt.Printf("FI C1 P6 NATIVE SQL BACKENDS parent=1 shared_workers_initial=1 workers_max=%d distinct_pids=2 clone_only=true\n",max)
+    fmt.Printf("FI C1 P6 NATIVE SQL BACKENDS parent=1 shared_workers_initial=1 workers_max=%d distinct_pids=2 fi_sor_sql_phase=true clone_only=%t\n",max,cloneOnly)
     return w,nil
 }
 
 // Called from the signed-reader goroutine to add ONE verified PostgreSQL
 // session. Workers are never pinned to Security, File, Coverage, USN or Other.
 func (w *privateC1FiveSQL) startWorker(ctx context.Context)error{
-    conn,pid,err:=privateC1CloneConnection(ctx,w.dsn,w.pgdata)
+    if w.openSQL==nil{return errors.New("FI C1: unbound SQL connection opener")}
+    conn,pid,err:=w.openSQL(ctx,w.dsn,w.pgdata)
     if err!=nil{return fmt.Errorf("FI C1: shared SQL worker connection: %w",err)}
     w.mu.Lock()
     if w.pids[pid]||w.workerCount>=w.maxWorkers{
