@@ -84,19 +84,39 @@ type privateP6Limits struct{
 // A per-family inactivity timer flushes pending records after 30 seconds
 // without a new record for THAT family. Capacity/dependency flushes remain
 // immediate, and no signed-batch/group/verifier event triggers a flush.
-// The combined Security (buffer, field COPY, reusable row) comparison is
-// isolated to the existing 8GiB two-group C1 development replay. A malformed
-// value or an attempted full-generation/ordinary selection fails closed.
+// The three unchanged Security candidate changes are gated to the private
+// C1 two-group comparison OR the separately approved full signed replay.
+// Both paths require the original P6 direct private clone. No production or
+// partially selected candidate configuration is permitted.
 func privateC1Security8GiBExperiment()(bool,error){
     raw:=os.Getenv("FI_C1_SECURITY_8G_EXPERIMENT")
-    if raw==""||raw=="0"{return false,nil}
-    if raw!="1"{return false,fmt.Errorf("FI C1: invalid Security 8GiB experiment flag %q",raw)}
-    if os.Getenv("FI_C1_DEV_PREFIX8")!="1"||
-        os.Getenv("FI_W512_C1_P6_DIRECT")!="1"||
-        os.Getenv("FI_W512_C1_FULL_BACKLOG")=="1"{
-        return false,errors.New("FI C1: Security 8192/32MiB experiment requires 8GiB direct private clone, never full replay")
+    fullOptIn:=os.Getenv("FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE")
+    if raw!=""&&raw!="0"&&raw!="1"{
+        return false,fmt.Errorf("FI C1: invalid Security candidate flag %q",raw)
     }
-    return true,nil
+    if fullOptIn!=""&&fullOptIn!="0"&&fullOptIn!="1"{
+        return false,fmt.Errorf("FI C1: invalid Security full-backlog opt-in %q",fullOptIn)
+    }
+    if raw!="1" {
+        if fullOptIn=="1"{
+            return false,errors.New("FI C1: full-backlog candidate opt-in without Security candidate")
+        }
+        return false,nil
+    }
+    if !privateC1Enabled() {
+        return false,errors.New("FI C1: Security candidate requires direct P6 private clone")
+    }
+    full:=os.Getenv("FI_W512_C1_FULL_BACKLOG")=="1"
+    prefix:=os.Getenv("FI_C1_DEV_PREFIX8")=="1"
+    if full&& !prefix && fullOptIn=="1" &&
+        os.Getenv("FI_W512_C1_GROUP_GIB")=="4" &&
+        os.Getenv("FI_W512_C1_STOP_WINDOWS")==""{
+        return true,nil
+    }
+    if !full&&prefix && fullOptIn!="1"{
+        return true,nil
+    }
+    return false,errors.New("FI C1: Security candidate requires exact private 8GiB prefix or explicit unbounded 4GiB-group full-backlog opt-in")
 }
 
 const privateC1FamilyIdleTimeout = 30*time.Second

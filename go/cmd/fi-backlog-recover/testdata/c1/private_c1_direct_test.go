@@ -16,6 +16,7 @@ func TestPrivateC1Security8GiBBufferProfileFailClosedAndBounded(t *testing.T){
         t.Fatal("established C1 Security buffer was modified without candidate opt-in")
     }
     t.Setenv("FI_C1_SECURITY_8G_EXPERIMENT","1")
+    t.Setenv("FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE","0")
     candidate,err:=newPrivateP6Buffers(1,&privateP6TestSink{})
     if err!=nil{t.Fatal(err)}
     if candidate.lanes[privateP6Security].limit!=(privateP6Limits{rows:8192,bytes:32<<20}){
@@ -38,8 +39,28 @@ func TestPrivateC1Security8GiBBufferProfileFailClosedAndBounded(t *testing.T){
     if !privateP6ShouldFlush(&bytesBound,2){t.Fatal("Security candidate exceeded 32MiB bound")}
     t.Setenv("FI_W512_C1_FULL_BACKLOG","1")
     if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
-        t.Fatal("C1 experimental Security profile selected in full 8399-batch run")
+        t.Fatal("C1 Security candidate selected for full backlog without opt-in")
     }
+    t.Setenv("FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE","1")
+    t.Setenv("FI_C1_DEV_PREFIX8","0")
+    t.Setenv("FI_W512_C1_GROUP_GIB","4")
+    t.Setenv("FI_W512_C1_STOP_WINDOWS","")
+    fullCandidate,err:=newPrivateP6Buffers(1,&privateP6TestSink{})
+    if err!=nil{t.Fatalf("full signed development replay should select unchanged candidate: %v",err)}
+    if fullCandidate.lanes[privateP6Security].limit!=candidate.lanes[privateP6Security].limit{
+        t.Fatal("full backlog changed exact Security 8192/32MiB candidate limits")
+    }
+    t.Setenv("FI_W512_C1_STOP_WINDOWS","2")
+    if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
+        t.Fatal("full backlog candidate permitted a partial stop")
+    }
+    t.Setenv("FI_W512_C1_STOP_WINDOWS","")
+    t.Setenv("FI_W512_C1_GROUP_GIB","2")
+    if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
+        t.Fatal("full backlog candidate permitted non-4GiB grouping")
+    }
+    t.Setenv("FI_W512_C1_GROUP_GIB","4")
+    t.Setenv("FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE","0")
     t.Setenv("FI_W512_C1_FULL_BACKLOG","0")
     t.Setenv("FI_C1_DEV_PREFIX8","0")
     if _,err:=newPrivateP6Buffers(1,&privateP6TestSink{});err==nil{
