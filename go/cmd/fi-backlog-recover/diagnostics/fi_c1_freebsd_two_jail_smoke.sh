@@ -35,7 +35,7 @@ trap cleanup EXIT HUP INT TERM
 mkdir -p "$host"
 for root in "$ingest" "$sor";do
   mkdir -p "$root/bin" "$root/lib" "$root/libexec" \
-    "$root/usr/lib" "$root/usr/local/sbin" "$root/var/run/fi-c1-handoff"
+    "$root/usr/bin" "$root/usr/lib" "$root/usr/local/sbin" "$root/var/run/fi-c1-handoff"
 done
 [ -f "${FI_C1_RAM_PROBE_BINARY:-}" ] ||
   fail "native FreeBSD RAMStore probe binary is missing"
@@ -61,6 +61,7 @@ for root in "$ingest" "$sor";do
   mount_ro /bin "$root/bin"
   mount_ro /lib "$root/lib"
   mount_ro /libexec "$root/libexec"
+  mount_ro /usr/bin "$root/usr/bin"
   mount_ro /usr/lib "$root/usr/lib"
 done
 mount -t nullfs -o rw "$host" "$ingest/var/run/fi-c1-handoff" ||
