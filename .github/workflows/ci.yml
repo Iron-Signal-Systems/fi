@@ -1,13 +1,42 @@
-# Backend runtime target: FreeBSD 15.1 amd64.
-# Cross-build is checked by fi-freebsd-cross-build.yml (Ubuntu is a CI
-# build host there, not an FI deployment platform). Native FreeBSD replay
-# acceptance runs on a private C220 clone.
-# Collector runtime target remains Windows.
-name: FI Platform CI
+# Windows collector CI only. Backend C1/receiver/SoR changes belong to
+# FreeBSD-specific workflows, not to Windows tests.
+name: FI Windows Collector CI
 
 on:
   push:
+    paths:
+      - 'go/cmd/fi/**'
+      - 'go/cmd/fi-sender/**'
+      - 'go/cmd/fi-source/**'
+      - 'go/cmd/fi-usn/**'
+      - 'go/cmd/usnprobe/**'
+      - 'go/cmd/collectorboundaryprobe/**'
+      - 'go/cmd/fi-spool-workdir-check/**'
+      - 'go/internal/windows/**'
+      - 'go/internal/transportsender/**'
+      - 'go/internal/transportrecovery/**'
+      - 'go/internal/config/**'
+      - 'go/internal/records/**'
+      - 'go/internal/spool/**'
+      - 'examples/windows/**'
+      - 'examples/gmsa_provisioning/**'
   pull_request:
+    paths:
+      - 'go/cmd/fi/**'
+      - 'go/cmd/fi-sender/**'
+      - 'go/cmd/fi-source/**'
+      - 'go/cmd/fi-usn/**'
+      - 'go/cmd/usnprobe/**'
+      - 'go/cmd/collectorboundaryprobe/**'
+      - 'go/cmd/fi-spool-workdir-check/**'
+      - 'go/internal/windows/**'
+      - 'go/internal/transportsender/**'
+      - 'go/internal/transportrecovery/**'
+      - 'go/internal/config/**'
+      - 'go/internal/records/**'
+      - 'go/internal/spool/**'
+      - 'examples/windows/**'
+      - 'examples/gmsa_provisioning/**'
 
 permissions:
   contents: read
