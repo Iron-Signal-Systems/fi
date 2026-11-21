@@ -44,6 +44,9 @@ func c1MigrationWithoutTransactionEnvelope(source string)(string,error){
         source=strings.Replace(source,begin,"\n",1)
         source=strings.Replace(source,end,"\n",1)
     }
+    if strings.Contains(source,"BEGIN;")||strings.Contains(source,"COMMIT;"){
+        return "",errors.New("C1 schema: nested or noncanonical SQL transaction boundary")
+    }
     return source,nil
 }
 
