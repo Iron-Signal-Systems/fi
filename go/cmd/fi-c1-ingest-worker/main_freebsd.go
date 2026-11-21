@@ -29,7 +29,8 @@ func main(){
     custody:=flags.String("custody-root","","read-only receiver generation custody")
     recorded:=flags.String("recorded-root","","read-only durable recorded-receipt custody")
     ns:=flags.Bool("source-namespaces",false,"use installed per-source recorded custody namespaces")
-    target:=flags.String("sor-address","","private fi-sor C1 mTLS handoff listener")
+    target:=flags.String("sor-address","","private fi-sor C1 mTLS control and COMMIT ACK listener")
+    ram:=flags.String("shared-ram-dir","","fi-ingest write view of host tmpfs C1 handoff")
     tlsCert:=flags.String("tls-cert","","fi-ingest mTLS client certificate")
     tlsKey:=flags.String("tls-key","","fi-ingest mTLS private key")
     tlsCA:=flags.String("tls-ca","","pinned C1 trust CA PEM")
@@ -41,7 +42,7 @@ func main(){
     if err:=flags.Parse(os.Args[1:]);err!=nil{fatal(err)}
     if flags.NArg()!=0{fatal(errors.New("FI C1 ingest: no positional arguments allowed"))}
     if os.Geteuid()==0{fatal(errors.New("FI C1 ingest: refuse root execution"))}
-    if *source==""||*generation==""||*custody==""||*recorded==""{
+    if *source==""||*generation==""||*custody==""||*recorded==""||*ram==""{
         fatal(errors.New("FI C1 ingest: signed source, generation, and both custody roots required"))
     }
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
@@ -56,6 +57,7 @@ func main(){
     result,err:=recordingest.RunC1IngestGeneration(ctx,signed,
         recordingest.C1IngestTransport{
             SoRAddress:*target,ExpectedSoRServerDNS:*sorDNS,StartBatch:*startBatch,
+            SharedRAMDir:*ram,
             TLSIdentity:c1handoff.TLSFiles{Certificate:*tlsCert,
                 PrivateKey:*tlsKey,TrustCA:*tlsCA},
         })

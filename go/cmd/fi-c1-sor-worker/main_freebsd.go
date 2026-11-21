@@ -32,6 +32,7 @@ func main(){
     flags:=flag.NewFlagSet("fi-c1-sor-worker",flag.ExitOnError)
     bind:=flags.String("bind","","private fi-sor workload address for mTLS handoff")
     db:=flags.String("postgres-local","","PostgreSQL Unix-domain DSN inside fi-sor, dbname=fi user=fi_ingest")
+    ram:=flags.String("shared-ram-dir","","fi-sor read-only nullfs view of C1 host tmpfs")
     max:=flags.Int("sql-workers-max",32,"bounded native C1 shared PostgreSQL workers (1..32)")
     cert:=flags.String("tls-cert","","fi-sor dedicated mTLS server certificate")
     key:=flags.String("tls-key","","fi-sor dedicated mTLS private key")
@@ -40,8 +41,10 @@ func main(){
     if err:=flags.Parse(os.Args[1:]);err!=nil{fatal(err)}
     if flags.NArg()!=0 {fatal(errors.New("FI C1 SoR: no positional arguments allowed"))}
     if os.Geteuid()==0 {fatal(errors.New("FI C1 SoR: refuse root execution; dedicate an unprivileged fi-sor service account"))}
+    if *ram==""{fatal(errors.New("FI C1 SoR: shared RAM mount required for two-jail C1 service"))}
     cfg:=recordingest.C1SoRServerConfig{
         Bind:*bind,LocalPostgresDSN:*db,SQLWorkersMax:*max,
+        SharedRAMDir:*ram,
         ExpectedIngestClientDNS:*ingest,
         TransportCert:c1handoff.TLSFiles{
             Certificate:*cert,PrivateKey:*key,TrustCA:*ca,

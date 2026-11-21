@@ -21,6 +21,7 @@ type C1SoRServerConfig struct {
     Bind string
     LocalPostgresDSN string
     SQLWorkersMax int
+    SharedRAMDir string // read-only fi-sor nullfs mount
     TransportCert c1handoff.TLSFiles
     ExpectedIngestClientDNS string
 }
@@ -57,6 +58,7 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         // writer's session ownership and preventing concurrent replays.
         service,e:=NewC1SoRService(cfg.LocalPostgresDSN,cfg.SQLWorkersMax)
         if e!=nil{conn.Close();return e}
+        service.SharedRAMDir=cfg.SharedRAMDir
         endpoint:=&c1handoff.Server{
             Bootstrap:service.Bootstrap,Handler:service.Commit,
             Dispatch:service.Dispatch,IOTimeout:5*time.Minute,

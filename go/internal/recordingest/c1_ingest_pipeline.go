@@ -27,6 +27,7 @@ type C1IngestTransport struct {
     TLSIdentity c1handoff.TLSFiles
     ExpectedSoRServerDNS string
     StartBatch int // 0 for clean generation; may follow a separately verified seed
+    SharedRAMDir string // pre-mounted host tmpfs producer view; not durable storage
 }
 type C1IngestStageResult struct {
     SourceID string
@@ -107,6 +108,11 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     // The session's first sequence was START. Every subsequent SourceParent
     // and five-family handoff is assigned its own distinct durable ACK ID.
     remote.next=2
+    if cfg.SharedRAMDir!=""{
+        store,e:=c1handoff.NewRAMStore(cfg.SharedRAMDir)
+        if e!=nil{return result,e}
+        if e=remote.EnableSharedRAM(store);e!=nil{return result,e}
+    }
     pool,err:=newC1P5RuntimePool(ctx,1)
     if err!=nil{return result,err}
     defer pool.Close()

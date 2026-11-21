@@ -25,6 +25,11 @@ type c1HandoffSender interface {
 type c1RemoteSoRSink struct {
     mu sync.Mutex // group seal arrives from signed reader, SQL buffers from consumer
     sender c1HandoffSender
+    sharedStore *c1handoff.RAMStore
+    sharedSlots chan struct{}
+    sharedCleanups sync.WaitGroup
+    sharedMu sync.Mutex
+    sharedErr error
     sourceID, generationID, receiptSHA256 string
     next uint64
     drained bool
@@ -37,23 +42,64 @@ func newC1RemoteSoRSink(sender c1HandoffSender,sourceID,generationID,receiptSHA2
         generationID:generationID,receiptSHA256:strings.ToLower(receiptSHA256),
         next:1},nil
 }
+func(s *c1RemoteSoRSink)EnableSharedRAM(store *c1handoff.RAMStore)error{
+    if s==nil||store==nil||s.sharedStore!=nil||s.next!=2{
+        return errors.New("C1 RAM: configure exactly once immediately after signed START")
+    }
+    s.sharedStore=store
+    s.sharedSlots=make(chan struct{},c1handoff.MaxSharedRAMInflight)
+    return nil
+}
 // emit admits work without waiting for an unrelated SQL connection's
 // COMMIT; final WaitAll and Drain require durable acknowledgments.
 func(s *c1RemoteSoRSink)emit(ctx context.Context,f c1handoff.Frame)error{
     if pipeline,ok:=s.sender.(interface{
         Submit(context.Context,c1handoff.Frame)(<-chan error,error)
     });ok{
-        _,err:=pipeline.Submit(ctx,f)
-        return err
+        future,err:=pipeline.Submit(ctx,f)
+        if err!=nil{return err}
+        if f.Shared.Name!=""{
+            s.sharedCleanups.Add(1)
+            go func(ref c1handoff.SharedRAMRef,committed <-chan error){
+                defer s.sharedCleanups.Done()
+                outcome,ok:=<-committed
+                // A missing or rejected ACK is NOT a durable SQL commit.
+                // Keep that volatile buffer until controlled restart/replay.
+                if ok&&outcome==nil{
+                    if e:=s.sharedStore.Remove(ref);e!=nil{
+                        s.sharedMu.Lock()
+                        if s.sharedErr==nil{s.sharedErr=e}
+                        s.sharedMu.Unlock()
+                    }
+                }
+                <-s.sharedSlots
+            }(f.Shared,future)
+        }
+        return nil
     }
-    return s.sender.Send(ctx,f)
+    err:=s.sender.Send(ctx,f)
+    if err==nil&&f.Shared.Name!=""{err=s.sharedStore.Remove(f.Shared)}
+    if f.Shared.Name!=""{<-s.sharedSlots}
+    return err
 }
 func (s *c1RemoteSoRSink) WaitAll(ctx context.Context)error{
     if s==nil||s.sender==nil||ctx==nil{
         return errors.New("C1 remote SoR: missing final source/family ACK barrier")
     }
     if p,ok:=s.sender.(interface{WaitAll(context.Context)error});ok{
-        return p.WaitAll(ctx)
+        if err:=p.WaitAll(ctx);err!=nil{return err}
+    }
+    if s.sharedStore!=nil{
+        done:=make(chan struct{})
+        go func(){s.sharedCleanups.Wait();close(done)}()
+        select{
+        case <-done:
+        case <-ctx.Done():return ctx.Err()
+        }
+        s.sharedMu.Lock()
+        err:=s.sharedErr
+        s.sharedMu.Unlock()
+        if err!=nil{return fmt.Errorf("C1 RAM: committed buffer cleanup: %w",err)}
     }
     return nil
 }
@@ -64,7 +110,6 @@ func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records
     frame:=c1handoff.Frame{
         Kind:kind,SourceID:s.sourceID,GenerationID:s.generationID,
         ReceiptSHA256:s.receiptSHA256,Sequence:s.next,
-        Rows:make([]c1handoff.Row,0,len(records)),
     }
     for i,r:=range records {
         if !r.valid(){
@@ -75,13 +120,31 @@ func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records
         if kind!=c1handoff.Source && kind!=c1handoff.Kind(family+2){
             return fmt.Errorf("C1 remote SoR: signed kind %q crossed incorrect SQL lane",r.prepared.Record.RecordKind)
         }
-        frame.Rows=append(frame.Rows,c1handoff.Row{
-            SignedBatchIndex:uint32(r.signedBatchIndex),
-            SourceBatchID:r.sourceBatchID,Ordinal:r.ordinal,
-            RawRecord:r.prepared.RawRecordBytes,Digest:r.prepared.RecordDigest,
-        })
+        if s.sharedStore==nil{
+            frame.Rows=append(frame.Rows,c1handoff.Row{
+                SignedBatchIndex:uint32(r.signedBatchIndex),
+                SourceBatchID:r.sourceBatchID,Ordinal:r.ordinal,
+                RawRecord:r.prepared.RawRecordBytes,Digest:r.prepared.RecordDigest,
+            })
+        }
+    }
+    if s.sharedStore!=nil{
+        // At most sixteen outstanding buffers: 16 x 128 MiB = 2 GiB.
+        // This bounds the RAM transport independently of the SQL pool.
+        select{
+        case s.sharedSlots<-struct{}{}:
+        case <-ctx.Done():return ctx.Err()
+        }
+        prepared,err:=encodeC1PreparedRAMRows(records)
+        if err!=nil{<-s.sharedSlots;return err}
+        ref,err:=s.sharedStore.Put(prepared,len(records))
+        if err!=nil{<-s.sharedSlots;return err}
+        frame.Shared=ref
     }
     if err:=s.emit(ctx,frame);err!=nil {
+        // An uncertain SQL admission must not erase the RAM object while
+        // fi-sor may still be reading it. Replay comes from signed custody.
+        if frame.Shared.Name!=""{<-s.sharedSlots}
         return fmt.Errorf("C1 remote SoR: signed SQL handoff admission failed: %w",err)
     }
     // A pooled handoff may still be committing in fi-sor. Never treat
