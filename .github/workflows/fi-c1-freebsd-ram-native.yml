@@ -1,0 +1,34 @@
+name: FI C1 native FreeBSD 15.1 RAM mount smoke (disposable VM)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'dev/c1-two-process-20261120'
+    paths:
+      - '.github/workflows/fi-c1-freebsd-ram-native.yml'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_ram_smoke.sh'
+      - 'go/internal/freebsd/backendinstall/c1_ram_mount_*.go'
+      - 'go/internal/freebsd/backendinstall/c1_ram_host_runtime_install*.go'
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-freebsd-tmpfs-nullfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout development C1 mount test
+        uses: actions/checkout@v4
+      - name: Real FreeBSD 15.1 tmpfs/nullfs producer-consumer mount semantics
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '15.1'
+          arch: x86_64
+          mem: 4096
+          sync: rsync
+          run: |
+            set -eu
+            uname -sr
+            GITHUB_ACTIONS=true sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_ram_smoke.sh
