@@ -184,6 +184,9 @@ staged_git="$jailroot/home/jwood/fi-w512-c220-stage"
 jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit^{commit}" 2>/dev/null ||
   fail "missing pinned family P3 commit $sourcecommit; fetch experiment/fi-family-processors-w512-20261115 into C220 staging checkout"
 for asset in \
+  go/internal/recordingest/security_bulk_profiles.go \
+  go/internal/recordingest/security_field_profile_dual.go \
+  go/internal/recordingest/security_field_profile_dual_test.go \
   go/internal/recordingest/private_canonical_spool_dispatch.go \
   go/internal/recordingest/private_canonical_spool_dispatch_test.go \
   go/cmd/fi-backlog-recover/testdata/header-first/private_header_first_p2.go \
@@ -234,7 +237,7 @@ do
   jexec -U jwood fi-dev git -C /home/jwood/fi-w512-c220-stage cat-file -e "$sourcecommit:$asset" 2>/dev/null ||
     fail "missing pinned experimental source asset $asset"
 done
-echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=46 clone_only=true p5_min=2 p5_max=32 sql_workers_max=$sqlmax sql_modules=5"
+echo "FI FAMILY P6 SOURCE PREFLIGHT PASS commit=$sourcecommit assets=49 clone_only=true p5_min=2 p5_max=32 sql_workers_max=$sqlmax sql_modules=5"
 # Compile the EXACT pinned patcher before allocating a private PostgreSQL clone.
 # This checks syntax in both preflight and benchmark modes, without switching
 # the staging Git checkout or modifying the historical source.
