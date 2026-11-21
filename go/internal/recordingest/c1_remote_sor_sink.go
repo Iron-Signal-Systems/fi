@@ -89,6 +89,10 @@ func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records
     s.next++
     return nil
 }
+// File prerequisites are enforced by the original fi-sor C1 USN
+// dispatcher, not by forcing unrelated ingest family buffers to drain.
+func(s *c1RemoteSoRSink)AsyncUSNDependencies()bool{return s!=nil}
+
 func (s *c1RemoteSoRSink) Source(ctx context.Context,rows []privateP6Record)error{
     return s.submit(ctx,c1handoff.Source,rows)
 }
