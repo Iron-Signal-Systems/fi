@@ -256,9 +256,12 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
         }
     }()
     go func(){
+        // Reader EOF also occurs when B crashes before sending GROUPS.
+        // Cancel only the child context so the sender cannot strand A.
+        scanErr:=<-stdoutDone
+        cancel()
         sendErr:=<-writerDone
         processErr:=cmd.Wait()
-        scanErr:=<-stdoutDone
         if sendErr!=nil{
             v.err=fmt.Errorf("FI C1 B: transport: %w",sendErr)
         }else if processErr!=nil{
