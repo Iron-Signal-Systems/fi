@@ -65,7 +65,12 @@ func TestC1MutualTLSAndCommitAcknowledgment(t *testing.T){
     committed:=make(chan struct{})
     entered:=make(chan struct{})
     serverDone:=make(chan error,1)
-    srv:=&Server{Handler:func(_ context.Context,f Frame)error{
+    srv:=&Server{Bootstrap:func(_ context.Context,f Frame)([]int64,error){
+        if f.Kind!=Start||len(f.BatchIDs)!=1||f.BatchIDs[0]!="original-batch-1"{
+            return nil,errors.New("invalid signed Start manifest")
+        }
+        return []int64{10},nil
+    },Handler:func(_ context.Context,f Frame)error{
         if f.Kind==Source{
             close(entered)
             <-committed // Simulates waiting for PostgreSQL COMMIT ACK
@@ -75,8 +80,16 @@ func TestC1MutualTLSAndCommitAcknowledgment(t *testing.T){
     go func(){serverDone<-srv.ServeConn(context.Background(),tls.Server(rawServer,tlsServer))}()
     c,e:=NewClient(tls.Client(rawClient,tlsClient));if e!=nil{t.Fatal(e)}
     defer c.Close()
-    sent:=make(chan error,1)
     f:=sampleFrame()
+    start:=Frame{Kind:Start,SourceID:f.SourceID,
+        GenerationID:f.GenerationID,ReceiptSHA256:f.ReceiptSHA256,
+        Sequence:1,BatchIDs:[]string{"original-batch-1"},ExpectedRecords:1}
+    if err:=c.Send(context.Background(),start);err!=nil{t.Fatal(err)}
+    if ids:=c.BatchSQLIDs();len(ids)!=1||ids[0]!=10{
+        t.Fatalf("SoR original signed batch SQL mapping missing: %v",ids)
+    }
+    f.Sequence=2
+    sent:=make(chan error,1)
     go func(){sent<-c.Send(context.Background(),f)}()
     select{case <-entered:case <-time.After(5*time.Second):t.Fatal("SoR did not receive signed buffer")}
     select{case <-sent:t.Fatal("SQL commit ACK was sent before COMMIT")
@@ -84,7 +97,7 @@ func TestC1MutualTLSAndCommitAcknowledgment(t *testing.T){
     close(committed)
     if e:=<-sent;e!=nil{t.Fatal(e)}
     done:=Frame{Kind:Drain,SourceID:f.SourceID,GenerationID:f.GenerationID,
-        ReceiptSHA256:f.ReceiptSHA256,Sequence:2}
+        ReceiptSHA256:f.ReceiptSHA256,Sequence:3}
     if e=c.Send(context.Background(),done);e!=nil{t.Fatal(e)}
     if e=<-serverDone;e!=nil{t.Fatal(e)}
 }
