@@ -84,14 +84,18 @@ type privateP5Pool struct {
     closeOnce sync.Once
 }
 
+// Private C1 P5 capacity is independent of historical P4/A8 limits.
+// Each of the five adaptive family preparation lanes may scale 2..32.
+const privateP5MaxWorkers = 32
+
 type privateP5Lane struct {
     pool *privateP5Pool
     family spoolDispatchFamily
     input chan *privateP5Task
     started chan struct{}
     done chan int
-    jobs [privateDynamicMaxWorkers]chan *privateP5Task
-    busy [privateDynamicMaxWorkers]bool
+    jobs [privateP5MaxWorkers]chan *privateP5Task
+    busy [privateP5MaxWorkers]bool
     pending []*privateP5Task
 
     mu sync.Mutex
@@ -147,7 +151,7 @@ func (l *privateP5Lane) spawn() {
             // Publish worker availability before reporting the source task
             // complete. Thus a next signed batch cannot race the prior
             // worker-completion notice and spuriously spawn another worker.
-            // Buffered by 16 slots: at most one outstanding notice/worker.
+            // Buffered by 32 slots: at most one outstanding notice/worker.
             select {
             case <-l.pool.ctx.Done():
                 s.wg.Done()
@@ -193,7 +197,7 @@ func (l *privateP5Lane) flushPending() {
         id:=l.idleWorker()
         scaled:=false
         if id<0 {
-            if l.live==privateDynamicMaxWorkers{return}
+            if l.live==privateP5MaxWorkers{return}
             l.spawn()
             id=l.live-1
             scaled=true
@@ -249,10 +253,10 @@ func (l *privateP5Lane) run() {
 func newPrivateP5Pool(ctx context.Context,windowIndex int)(*privateP5Pool,error){
     if ctx==nil || !privateP5Enabled() ||
         os.Getenv("FI_W512_P3_DYNAMIC_MIN")!="2" ||
-        os.Getenv("FI_W512_P3_DYNAMIC_MAX")!="16" ||
+        os.Getenv("FI_W512_P3_DYNAMIC_MAX")!="32" ||
         os.Getenv("FI_W512_P3_SECURITY_WORKERS")!="" ||
         os.Getenv("FI_W512_P3_GENERAL_WORKERS")!="" {
-        return nil,errors.New("FI P5 private window: invalid explicit 2..16 scaling gate")
+        return nil,errors.New("FI P5 private window: invalid explicit 2..32 scaling gate")
     }
     // Keep the pool alive long enough to DRAIN canceled batch tasks before
     // the typed-window's deferred Close. If we inherited ctx cancellation,
@@ -264,13 +268,13 @@ func newPrivateP5Pool(ctx context.Context,windowIndex int)(*privateP5Pool,error)
         lane:=&privateP5Lane{pool:p,family:spoolDispatchFamily(i),
             input:make(chan *privateP5Task,privateFamilyP3Credits),
             started:make(chan struct{}),
-            done:make(chan int,privateDynamicMaxWorkers)}
+            done:make(chan int,privateP5MaxWorkers)}
         p.lanes[i]=lane
         go lane.run()
     }
     // All five families have two real workers before the first batch.
     for _,lane:=range p.lanes {<-lane.started}
-    fmt.Printf("FI P5 PERSISTENT WINDOW START window=%d families=5 worker_min=2 worker_max=16 credits=32 sql_writers=1\n",windowIndex)
+    fmt.Printf("FI P5 PERSISTENT WINDOW START window=%d families=5 worker_min=2 worker_max=32 credits=32 sql_writers=1\n",windowIndex)
     return p,nil
 }
 func (p *privateP5Pool) Close(){
@@ -294,14 +298,14 @@ func (p *privateP5Pool) newStream(
         return nil,errors.New("FI P5: missing persistent active pool, parent context, reader or preparer")
     }
     sessionCtx,sessionCancel:=context.WithCancel(parent)
-    cfg:=privateFamilyP3Topology{Security:privateDynamicMaxWorkers,
-        General:4*privateDynamicMaxWorkers,Dynamic:true,
-        Min:privateDynamicMinWorkers,Max:privateDynamicMaxWorkers}
+    cfg:=privateFamilyP3Topology{Security:privateP5MaxWorkers,
+        General:4*privateP5MaxWorkers,Dynamic:true,
+        Min:privateDynamicMinWorkers,Max:privateP5MaxWorkers}
     metrics:=&privateFamilyP3Telemetry{Topology:cfg}
     for f:=range metrics.Lanes{
-        cfg.Counts[f]=privateDynamicMaxWorkers
-        metrics.Lanes[f].Workers=privateDynamicMaxWorkers
-        metrics.Lanes[f].WorkersStats=make([]privateFamilyP3WorkerStat,privateDynamicMaxWorkers)
+        cfg.Counts[f]=privateP5MaxWorkers
+        metrics.Lanes[f].Workers=privateP5MaxWorkers
+        metrics.Lanes[f].WorkersStats=make([]privateFamilyP3WorkerStat,privateP5MaxWorkers)
     }
     metrics.Topology=cfg
     sess:=&privateP5Session{ctx:sessionCtx,cancel:sessionCancel,
@@ -315,7 +319,7 @@ func (p *privateP5Pool) newStream(
         privateFamilyP3Telemetry:metrics,privateP5Session:sess,
     }
     for i:=0;i<privateFamilyP3Credits;i++ {s.credits<-struct{}{}}
-    fmt.Printf("FI FAMILY P3 SCHEDULER lanes=5 mode=persistent priority_fill=true min_workers=2 max_workers=16 max_worker_slots=80 credits=32 max_pending_bytes=%d sql_writers=1 atomic_window=true\n",
+    fmt.Printf("FI FAMILY P3 SCHEDULER lanes=5 mode=persistent priority_fill=true min_workers=2 max_workers=32 max_worker_slots=160 credits=32 max_pending_bytes=%d sql_writers=1 atomic_window=true\n",
         privateFamilyP3Bytes)
     sess.wg.Add(1) // Reader exists before any worker task / waiter.
     go func(){
