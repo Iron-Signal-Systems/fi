@@ -305,6 +305,11 @@ func (w *privateC1FiveSQL) runWorker(conn *pgx.Conn,pid int64){
             w.mu.Lock()
             w.busyWorkers--
             w.completedJobs++
+            if job.family==privateP6USN&&err==nil{
+                // Count SQL completion before publishing the consumer ACK,
+                // so post-drain statistics cannot lag the last USN commit.
+                w.usnCompleted++
+            }
             w.mu.Unlock()
             if job.committed!=nil{
                 job.committed.err=err
@@ -363,7 +368,6 @@ func (w *privateC1FiveSQL) runUSNDispatcher(){
                 failed=privateC1AwaitSource(w.ctx,job.committed)
                 w.mu.Lock()
                 w.usnSQLWaitWall+=time.Since(waitStarted)
-                if failed==nil{w.usnCompleted++}
                 w.mu.Unlock()
                 // The worker owns job.done; this branch MUST NOT consume
                 // the result reserved for WaitFamily/the signed reader.
