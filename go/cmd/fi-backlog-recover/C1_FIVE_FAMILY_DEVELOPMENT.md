@@ -324,3 +324,43 @@ PostgreSQL backend, no Accepted/authoritative writes and matched final
 generation proof. Verification may finish after A drains because sparse
 families retain their own capacity/dependency thresholds; this must not be
 "fixed" by coupling A's flushing to B.
+
+## Adaptive 32-worker full signed-backlog experiment — November 21
+
+The isolated C220 **full** C1 replay uses `sh controller c1
+20261115T153532Z` and no early stop, processing all 8,399 original
+signed batches (15 new 4 GiB reporting groups after the seeded group).
+All original signed, custody and SQL integrity checks remain mandatory.
+
+- **P5:** Five separate, persistent priority-fill preparation pools:
+  Security, File/NTFS, Coverage, USN/Dependency and Other. Each begins with
+  **2 workers and may grow independently up to 32** when it has work. Max
+  available preparation slots: **160**, not 160 fixed goroutines. This is
+  implemented using a P5-specific worker ceiling; the earlier P4 dynamic
+  2..16 experiment and accepted report fixtures remain unchanged.
+- **P6:** The five independent capacity/dependency-buffered family handoffs
+  and File-before-USN SQL commit fence remain unchanged. No reporting-group
+  flushes and no B-triggered flushes.
+- **SQL:** The **one** shared adaptive PostgreSQL family writer pool begins
+  with **1 connection**, grows on family-queue demand to **32**, then retires
+  idle extra connections after 30 seconds; workers remain interchangeable.
+  The source-parent SQL writer stays separate and ordered; B uses its own
+  read-only PostgreSQL session. This is **not** five dedicated SQL pools.
+- **Memory/IO:** Keep the 32 global P5 record credits, 256 MiB raw-input
+  budget, 8 GiB PostgreSQL max WAL size, 16 MiB WAL buffers and all PostgreSQL
+  durability controls ON. Enlarging worker ceilings alone does not guarantee
+  utilization or a throughput gain. The C220 test records actual peak workers.
+- **Safety:** Work only against a newly disposable clone on `fast`,
+  with the verified signed cache and historic baseline inputs unchanged.
+  Original source records, Accepted/published rows, live FI services and
+  canonical SoR are never changed by this experiment.
+- **Checks:** Go/race compilation first, full run second, successful original
+  15-group and total 15,140,785-record read-only B final-generation proof,
+  verified SQL parent/child counts, distinct A/B PIDs, no Accepted/published
+  writes, required metric receipts and telemetry. Any failed clone is
+  discarded and never restarted in place.
+
+This is an experimental **adaptive maximum** of 32 for each P5 family and
+32 for the single SQL family pool; it is not a minimum or a permanently
+allocated set of connections. Compare full-run wall time and actual SQL
+peak with the previous 16-worker C1 run, not merely with the 8 GiB prefix.
