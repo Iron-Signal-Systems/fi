@@ -788,10 +788,14 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
     if s.FieldLatency.Calls>0{
         avgFieldRows=float64(s.Fields)/float64(s.FieldLatency.Calls)
     }
-    fmt.Printf("FI C1 SECURITY COPY CALL PROFILE event_calls=%d event_max=%s event_ge_1s=%d scope_calls=%d scope_max=%s scope_ge_1s=%d field_calls=%d field_rows=%d field_rows_per_call=%.2f field_max_rows=32768 field_max_bytes=8388608 field_call_min=%s field_call_max=%s field_ge_1s=%d field_ge_5s=%d field_total=%s concurrent_time_sum=true\n",
+    fieldMaxRows,fieldMaxBytes:=32768,8<<20
+    if os.Getenv("FI_C1_SECURITY_8G_EXPERIMENT")=="1" {
+        fieldMaxRows,fieldMaxBytes=65536,16<<20
+    }
+    fmt.Printf("FI C1 SECURITY COPY CALL PROFILE event_calls=%d event_max=%s event_ge_1s=%d scope_calls=%d scope_max=%s scope_ge_1s=%d field_calls=%d field_rows=%d field_rows_per_call=%.2f field_max_rows=%d field_max_bytes=%d field_call_min=%s field_call_max=%s field_ge_1s=%d field_ge_5s=%d field_total=%s concurrent_time_sum=true\n",
         s.EventLatency.Calls,s.EventLatency.Max,s.EventLatency.AtLeastOneSecond,
         s.ScopeLatency.Calls,s.ScopeLatency.Max,s.ScopeLatency.AtLeastOneSecond,
-        s.FieldLatency.Calls,s.Fields,avgFieldRows,s.FieldLatency.Min,
+        s.FieldLatency.Calls,s.Fields,avgFieldRows,fieldMaxRows,fieldMaxBytes,s.FieldLatency.Min,
         s.FieldLatency.Max,s.FieldLatency.AtLeastOneSecond,
         s.FieldLatency.AtLeastFiveSeconds,s.FieldLatency.Total)
 
