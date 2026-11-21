@@ -12,6 +12,7 @@ import (
     "context"
     "errors"
     "fmt"
+    "os"
     "time"
 )
 
@@ -83,6 +84,21 @@ type privateP6Limits struct{
 // A per-family inactivity timer flushes pending records after 30 seconds
 // without a new record for THAT family. Capacity/dependency flushes remain
 // immediate, and no signed-batch/group/verifier event triggers a flush.
+// The combined Security (buffer, field COPY, reusable row) comparison is
+// isolated to the existing 8GiB two-group C1 development replay. A malformed
+// value or an attempted full-generation/ordinary selection fails closed.
+func privateC1Security8GiBExperiment()(bool,error){
+    raw:=os.Getenv("FI_C1_SECURITY_8G_EXPERIMENT")
+    if raw==""||raw=="0"{return false,nil}
+    if raw!="1"{return false,fmt.Errorf("FI C1: invalid Security 8GiB experiment flag %q",raw)}
+    if os.Getenv("FI_C1_DEV_PREFIX8")!="1"||
+        os.Getenv("FI_W512_C1_P6_DIRECT")!="1"||
+        os.Getenv("FI_W512_C1_FULL_BACKLOG")=="1"{
+        return false,errors.New("FI C1: Security 8192/32MiB experiment requires 8GiB direct private clone, never full replay")
+    }
+    return true,nil
+}
+
 const privateC1FamilyIdleTimeout = 30*time.Second
 const privateC1FamilyIdlePollInterval = time.Second
 type privateP6Lane struct{
@@ -123,6 +139,11 @@ func newPrivateP6Buffers(window int,sink privateP6SQLHandoff)(*privateP6Buffers,
     // by existing P5 global 256 MiB raw-record admission and source caps).
     b.source.limit=privateP6Limits{rows:8192,bytes:64<<20}
     b.lanes[privateP6Security].limit=privateP6Limits{rows:4096,bytes:16<<20}
+    experimental,err:=privateC1Security8GiBExperiment()
+    if err!=nil{return nil,err}
+    if experimental{
+        b.lanes[privateP6Security].limit=privateP6Limits{rows:8192,bytes:32<<20}
+    }
     b.lanes[privateP6File].limit=privateP6Limits{rows:8192,bytes:32<<20}
     b.lanes[privateP6Coverage].limit=privateP6Limits{rows:512,bytes:8<<20}
     b.lanes[privateP6USN].limit=privateP6Limits{rows:512,bytes:8<<20}
