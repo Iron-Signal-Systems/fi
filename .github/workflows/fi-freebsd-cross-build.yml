@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - 'go/internal/recordingest/**'
+      - 'go/internal/freebsd/backendinstall/**'
+      - 'go/cmd/fi-ingest-worker/**'
+      - 'tools/deployment/freebsd/runtime.d/**'
       - 'go/cmd/fi-backlog-recover/**'
       - 'go/cmd/fi-backlog-pg-relay/**'
       - 'go/cmd/fi-crl-publish/**'
