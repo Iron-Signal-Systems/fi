@@ -6,34 +6,99 @@
 P5 and P6 work. It is not a version, release, promotion, or production
 acceptance statement. Do not label earlier tests as released or accepted.
 
-## Invariants being implemented
+## Current C1 design and measured control — November 21, 2026
 
-1. **P5 preparation:** five independently scheduled pools (Security,
-   NTFS/File, Coverage, USN/Dependency, Other); 2–16 actual workers per
-   family, bounded global inflight admission and original signed-byte
-   verification.
-2. **P6 family buffers:** one bounded buffer per family. Hand off a completed
-   buffer as soon as its own row/byte capacity requires, or for a genuine
-   File-to-USN dependency. Never flush another family because a signed
-   batch, read chunk, or W512 reporting window ended. At true end of input,
-   drain the remaining partial buffers once.
-3. **SQL:** one adaptive shared pool of 1..16 PostgreSQL projection workers
-   starts with one real connection and grows when ready family handoffs
-   outnumber idle workers. No SQL connection belongs permanently to a family.
-   Idle extra workers retire after 30 seconds. A separate ordered parent
-   writer retains the signed source ledger and source-FK broadcast fences.
-   Preserve source batch/ordinal, original five relational projectors,
-   child COPY, FKs and keys; wait for every File SQL commit before dependent
-   USN begins. No sixth family or extra staging layer.
-4. **Data:** original signed cache and manifest readback; 13 record kinds;
-   49-table relational source model; no second source staging, duplicate
-   signed payload store, additional source artifact copy, or canonical
-   fi.* writes.
-5. **No premature checkpoint:** the contiguous typed-window marker can
-   advance only after five family SQL writers have finished, each family
-   count matches the original signed parent count, and the existing SQL
-   relational checks have passed. Do not publish authoritative or Accepted
-   outcomes.
+**Status: experimental development, never released or authoritative.**
+The following design supersedes older 1..16 worker, synchronous-USN and
+capacity-only statements retained as historical engineering notes below.
+
+### Verified control replay (BEFORE async-USN scheduling change)
+
+On C220, the full clone-only replay of **8,399 signed source batches**
+(8,194 newly processed after the unchanged seed) completed successfully:
+
+| Measurement | Verified result |
+| --- | --- |
+| Newly processed signed records | 14,647,307 |
+| Complete generation including unchanged seed | 15,140,785 |
+| Preparation through final Family Processing SQL ACK | 13m11.464s |
+| **Ingestion throughput** | **18,506.60 records/sec** |
+| Pre-ingestion setup (excluded from throughput) | 24.789s |
+| Independent B group verification (excluded) | 140.246s |
+| Independent B final proof (excluded) | 1.336s |
+| Read-only group proofs | 15/15 PASS, 13 during ingestion |
+| Shared SQL workers observed | 19 of 32 maximum |
+| Main consumer USN SQL-ACK backpressure | 52 waits, 20.802s |
+| Full replay, typed markers, no publication | PASS |
+
+These are control measurements. They are **not performance results** for
+the asynchronous USN modification introduced after that replay. Previous
+C1 18,619 rec/s measurements use a different timer boundary and must not
+be presented as a demonstrated improvement from these new changes.
+
+### Continuous Preparation and Family Processing
+
+1. **Preparation** has five independently adaptive families, each with
+   minimum 2 and maximum **32** workers. The signed source is read once
+   in exact batch/ordinal order with the original signed custody proof.
+   There is no stop/restart at signed batch or 4 GiB group boundaries.
+2. **Family Processing** retains five independently bounded buffers:
+   Security, File/NTFS, Coverage, USNDependency, and Other. A buffer hands
+   off on its own capacity, a genuine File→USN dependency, **30 seconds
+   without receiving a new record for that family**, or true end of input.
+   The independent one-second inactivity ticker runs on the buffer-owning
+   consumer, even with no incoming source records. A new record resets only
+   its family's timer; no B verification request causes a flush.
+3. **PostgreSQL** has one ordered source-parent writer and **one adaptive
+   shared SQL pool with at most 32 actual SQL worker connections**.
+   A SourceParent ACK is a broadcast prerequisite. The ordinary File/NTFS,
+   Security, Coverage, and Other work remains independently schedulable.
+4. **Asynchronous USN scheduling (new; not yet benchmarked):**
+   - The signed consumer submits USN Family Processing handoffs to a
+     **bounded 64-handoff FIFO**, rather than awaiting the previous USN
+     SQL ACK for every new buffer.
+   - A separate in-process dispatcher snapshots **every outstanding
+     earlier File/NTFS SQL COMMIT fence**. It waits for those File fences,
+     then submits exactly **one USN SQL job at a time into the existing
+     shared SQL worker pool**. It waits for USN COMMIT before submitting
+     the next USN job. No dedicated SQL connection, new SQL pool, or
+     additional write/staging table is introduced.
+   - The ordered source-parent ACK must precede all dependent child SQL.
+     The existing non-null USN-boundary and NTFS-object FKs remain intact.
+     **USN projection is deferred; its data integrity is not deferred.**
+   - Once 64 USN handoffs remain unacknowledged, normal fail-closed
+     bounded admission backpressure resumes. At end of input, the five
+     family SQL ACKs (including all USN work) must finish before typed
+     completion and B whole-generation verification.
+   - A failed File prerequisite, USN SQL transaction, or source-parent
+     commit withholds the generation's completion marker. Do not resume
+     an interrupted disposable clone.
+5. **Independent Process B:** separate OS executable and read-only
+   PostgreSQL session against the same disposable clone. It verifies
+   committed groups and the final whole-generation state independently
+   of A's SQL connections. B's verification timer, final-proof timer and
+   total operational wall clock are **excluded from ingestion rec/sec**.
+   Preflight is also excluded. Processing stalls after Preparation starts
+   are included in throughput.
+
+### Acceptance still required for new async USN modification
+
+The source, clone-only runner, controller, and regression tests are staged
+on \`dev/c1-two-process-20261120\`. Tests cover ordered USN SQL, all
+preceding File COMMIT fences, independent Security admission, 64-slot
+backpressure, and fail-closed File/USN errors. The runner additionally
+demands \`C1_USN_ASYNC_START.txt\`, \`C1_USN_ASYNC_COMPLETE.txt\` and exact
+USN commit-count reconciliation.
+
+**Do not claim an async-USN performance PASS** before C220 Go/race
+compilation, a fresh 8 GiB prefix on a disposable clone, and a full
+8,399-batch clean-clone integrity run. Preserve the successful November 21
+control report and its one-second CPU/PostgreSQL wait telemetry for the
+before/after comparison.
+
+---
+
+## Earlier C1 invariants and historical notes (superseded where inconsistent)
 
 ## Current engineering state and explicit limitation
 
