@@ -138,8 +138,11 @@ SELECT has_schema_privilege('fi_ingest','fi_recovery_projection','USAGE'),
     err=admin.QueryRow(ctx,`
 SELECT count(*)
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-WHERE c.relkind='S' AND n.nspname IN ('fi_recovery_projection','fi_recovery')
- AND NOT has_sequence_privilege('fi_ingest',c.oid,'USAGE')`).
+WHERE CASE
+    WHEN c.relkind='S' AND n.nspname IN ('fi_recovery_projection','fi_recovery')
+    THEN NOT has_sequence_privilege('fi_ingest',c.oid,'USAGE')
+    ELSE false
+ END`).
         Scan(&missingSequences)
     if err!=nil{t.Fatal(err)}
     if missingSequences!=0{
