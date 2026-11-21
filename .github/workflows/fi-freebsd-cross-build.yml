@@ -325,9 +325,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=e0bd9a6c174b19eddf8993e6256a551740713060' in controller
-          assert 'runnerpin=fb9a4eea217afdd77be743ebc4f61a4f6933f1a3' in controller
-          assert 'sourcecommit=e0bd9a6c174b19eddf8993e6256a551740713060' in runner
+          assert 'sourcepin=9bb74afc4194d920c679f25fa7027d59f881eb48' in controller
+          assert 'runnerpin=c23c1d91d8e4baf12ed9ea84a069869f9c6381c6' in controller
+          assert 'sourcecommit=9bb74afc4194d920c679f25fa7027d59f881eb48' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -358,7 +358,15 @@ jobs:
           assert 'FI REAL BACKLOG PRIVATE COMPLETE' in runner
           assert 'C1_FULL_PROOF.txt' in runner and controller
           assert 'fi-c1-full-backlog-4g-$stamp.tar.gz' in runner
-          assert 'privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)' in source
+          assert 'privateC1VerifyCompleteGroupedReplay(ctx,reader,g,ds)' not in source
+          assert 'privateC1VerifyCompleteGroupedReplay(ctx,conn,g,p.Descriptors)' in process
+          assert 'privateC1VerifyEightGiBPrefix(ctx,conn,g,p.Descriptors,p.End)' in process
+          assert 'verifier.WaitGroups(ctx)' in source
+          assert 'verifiedByB,e:=verifier.Finish(ctx)' in source
+          assert 'FI C1 B GROUPS PROOF PASS ' in process
+          assert 'FI C1 B FINAL GENERATION VERIFY PASS ' in process
+          assert 'C1_B_GROUPS.txt' in runner and 'C1_B_FINAL.txt' in runner
+          assert 'final_generation_proof=B' in runner
           assert 'TestPrivateC1FullFourGiBGroupsCoverEntireSignedGeneration' in test
           sql=(root/'testdata/c1/private_c1_five_sql.go').read_text()
           race=(root/'testdata/c1/private_c1_backpressure_test.go').read_text()
