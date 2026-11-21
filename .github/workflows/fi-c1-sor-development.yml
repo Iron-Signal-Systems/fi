@@ -11,6 +11,7 @@ on:
       - 'go/internal/c1handoff/**'
       - 'go/cmd/fi-ingest-worker/**'
       - 'go/cmd/fi-c1-sor-worker/**'
+      - 'go/cmd/fi-c1-ingest-worker/**'
       - '.github/workflows/fi-c1-sor-development.yml'
   workflow_dispatch:
 
@@ -37,6 +38,8 @@ jobs:
         run: go test -race ./internal/c1handoff -count=1
       - name: Compile C1 ported SoR and independent verifier
         run: go test -tags fi_c1_sor_dev ./internal/recordingest -run '^TestC1' -count=1
+      - name: Cross-compile C1 fi-ingest service implementation
+        run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-ingest-worker ./cmd/fi-c1-ingest-worker
       - name: Cross-compile fi-sor native C1 SQL worker for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-worker ./cmd/fi-c1-sor-worker
       - name: Cross-compile C1 ingest worker for FreeBSD
