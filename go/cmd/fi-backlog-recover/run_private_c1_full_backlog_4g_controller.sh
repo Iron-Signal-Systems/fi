@@ -9,9 +9,20 @@ fail() { printf 'FI C1 STOP: %s\n' "$*" >&2; exit 1; }
 case "$1" in preflight|compile|c1|prefix8) mode=$1;;*)fail 'unknown mode';;esac
 [ "$2" = 20261115T153532Z ] || fail 'only pinned signed W512 seed'
 security8=${FI_C1_SECURITY_8G_EXPERIMENT:-0}
-case "$security8" in 0|1) ;; *)fail 'FI_C1_SECURITY_8G_EXPERIMENT must be exactly 0 or 1';;esac
-[ "$security8" = 0 ] || [ "$mode" = prefix8 ] ||
-  fail 'Security 8192/32MiB, 65536/16MiB, and reusable COPY rows are permitted only in C1 prefix8 mode'
+fullcandidate=${FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE:-0}
+case "$security8" in 0|1) ;; *) fail 'FI_C1_SECURITY_8G_EXPERIMENT must be 0 or 1';; esac
+case "$fullcandidate" in 0|1) ;; *) fail 'FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE must be 0 or 1';; esac
+if [ "$security8" = 1 ];then
+  if [ "$mode" = prefix8 ];then
+    [ "$fullcandidate" = 0 ] || fail 'full candidate flag incompatible with 8GiB prefix'
+  elif [ "$mode" = c1 ];then
+    [ "$fullcandidate" = 1 ] || fail 'full-backlog Security candidate requires explicit opt-in'
+  else
+    fail 'Security candidate allowed only for prefix8 or full c1 mode'
+  fi
+else
+  [ "$fullcandidate" = 0 ] || fail 'full candidate flag requires Security candidate'
+fi
 sourceprof=${FI_C1_SOURCE_PROFILE_8G:-0}
 case "$sourceprof" in 0|1) ;; *) fail 'FI_C1_SOURCE_PROFILE_8G must be 0 or 1';; esac
 [ "$sourceprof" = 0 ] || { [ "$security8" = 1 ] && [ "$mode" = prefix8 ]; } ||
@@ -43,8 +54,8 @@ grep -Fxq 'FI C1 FULL GROUPED RELATIONAL PROOF PASS windows=16 signed_batches=83
 grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=14647307 source_bytes=63081148153 last_batch=8399 signed_batches=8399' "$prior16/run.log" ||
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
-sourcepin=729b8f0e7288aa7aa2f0c6d91d30311802c2ea10
-runnerpin=6949409ebe4b6514d59f3afeb60644e7bef8750e
+sourcepin=35bf436452aa8c009648ada40e3d2dbf47ca4542
+runnerpin=917fd80c0a0a8076db4aab0bc71f7382bc577dad
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -116,6 +127,8 @@ grep -Fq "'source_parent'" "$runner" &&
 grep -Fq 'C1_SECURITY_8G_PROFILE.txt' "$runner" &&
 grep -Fq 'FI C1 SECURITY 8G SELECTION PASS' "$runner" &&
 grep -Fq 'FI_C1_SECURITY_8G_EXPERIMENT' "$runner" &&
+grep -Fq 'FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE' "$runner" &&
+grep -Fq 'FI C1 SECURITY FULL BACKLOG CANDIDATE PASS' "$runner" &&
 grep -Fq 'FI C1 ASYNC USN COMMIT ACCOUNTING PASS' "$runner" &&
 grep -Fq 'queue_max=64 ordered_SQL_commits=true file_dependencies=commit_fences' "$runner" &&
 grep -Fq 'FI C1 DIPS TELEMETRY PREFLIGHT PASS' "$runner" &&
@@ -269,6 +282,7 @@ cat "$runroot/C1_SOURCE_PARENT_STAGES.txt"
   cat "$runroot/C1_SOURCE_PARENT_COPY_DETAIL.txt"
 }
 cat "$runroot/C1_SECURITY_8G_PROFILE.txt"
+[ "$fullcandidate" = 0 ] || grep 'FI C1 SECURITY FULL BACKLOG CANDIDATE PASS' "$log"
 cat "$runroot/C1_SECURITY_COPY.txt"
 cat "$runroot/C1_SECURITY_COPY_CALLS.txt"
 wall_duration=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
