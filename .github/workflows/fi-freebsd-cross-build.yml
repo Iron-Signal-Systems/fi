@@ -325,9 +325,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=b5e42c3c7697cef972a35f0b09239d96be358bbb' in controller
-          assert 'runnerpin=3fcf6a308a6b0a2e61279eb740af2aa2785df82b' in controller
-          assert 'sourcecommit=b5e42c3c7697cef972a35f0b09239d96be358bbb' in runner
+          assert 'sourcepin=e0bd9a6c174b19eddf8993e6256a551740713060' in controller
+          assert 'runnerpin=fb9a4eea217afdd77be743ebc4f61a4f6933f1a3' in controller
+          assert 'sourcecommit=e0bd9a6c174b19eddf8993e6256a551740713060' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -341,6 +341,9 @@ jobs:
           assert 'TestPrivateC1BProcessProtocolFailsClosed' in process_tests
           assert 'fi-c1-verifier.c220' in runner
           assert 'FI_C1_DEV_VERIFIER_BIN' in runner
+          assert 'verifier_host="$jailroot$root/fi-c1-verifier"' in runner
+          assert 'FI C1 B HOST EXECUTABLE PREFLIGHT PASS' in runner
+          assert 'expectedHost:="/fast/jails/roots/fi-dev"+expectedInside' in process
           assert 'C1 B PID must differ from ingestion A PID' in runner
           assert 'privateC1SparseMaxBatchLag' not in family
           assert 's.hasher.Write(' not in reader
