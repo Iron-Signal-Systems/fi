@@ -33,7 +33,7 @@ func c1NativeBTestPlan()c1NativeBPlan{
     }
     ds:=[]BacklogCheckpointDescriptor{
         {SourceID:f.SourceID,GenerationID:f.GenerationID,
-            ReceiptSHA256:receipt,TransferSHA256:transfer},
+            ReceiptSHA256:receipt,TransferSHA256:transfer,EndBatch:1},
         {SourceID:f.SourceID,GenerationID:f.GenerationID,
             ReceiptSHA256:receipt,TransferSHA256:transfer,
             StartBatch:1,EndBatch:2,StartRecord:0,EndRecord:2,DataBytes:80},
@@ -52,6 +52,9 @@ func TestC1NativeBPlanRejectsChangedSourceAndGroup(t *testing.T){
         "wrong group end":func(p *c1NativeBPlan){p.Descriptors[1].EndBatch=1},
         "wrong group record count":func(p *c1NativeBPlan){p.Descriptors[1].EndRecord=3},
         "wrong group data bytes":func(p *c1NativeBPlan){p.Descriptors[1].DataBytes=81},
+        "wrong seed batch boundary":func(p *c1NativeBPlan){p.Descriptors[0].EndBatch=0},
+        "wrong seed record boundary":func(p *c1NativeBPlan){p.Descriptors[0].EndRecord=1},
+        "wrong group start record":func(p *c1NativeBPlan){p.Descriptors[1].StartRecord=1},
         "wrong signed receipt":func(p *c1NativeBPlan){p.Descriptors[1].ReceiptSHA256=strings.Repeat("0",64)},
         "extra batch in Start":func(p *c1NativeBPlan){p.Start.BatchIDs=append(p.Start.BatchIDs,"batch-0003")},
     }{

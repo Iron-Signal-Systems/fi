@@ -51,10 +51,20 @@ func c1ValidateNativeBPlan(p c1NativeBPlan)error{
     groups,err:=c1SoRGroupPlan(p.Batches,int(f.StartBatchIndex))
     if err!=nil{return err}
     if len(groups)+1!=len(p.Descriptors){return errors.New("C1 B: grouping changed")}
+    seed:=p.Descriptors[0]
+    if seed.EndBatch!=int(f.StartBatchIndex)||seed.EndRecord!=0||
+        seed.SourceID!=f.SourceID||seed.GenerationID!=f.GenerationID||
+        seed.ReceiptSHA256!=f.ReceiptSHA256||seed.TransferSHA256!=p.Transfer{
+        return errors.New("C1 B: signed verified seed is not the precise group chain origin")
+    }
     var total int64
     for i,g:=range groups{
         d:=p.Descriptors[i+1]
+        prev:=p.Descriptors[i]
         if d.StartBatch!=g.firstBatch||d.EndBatch!=g.endBatch||
+            d.StartBatch!=prev.EndBatch||
+            d.StartRecord!=prev.EndRecord||
+            d.EndRecord<=d.StartRecord||
             d.EndRecord-d.StartRecord!=uint64(g.count)||d.DataBytes!=uint64(g.bytes)||
             d.SourceID!=f.SourceID||d.GenerationID!=f.GenerationID||
             d.ReceiptSHA256!=f.ReceiptSHA256||d.TransferSHA256!=p.Transfer{
@@ -62,7 +72,10 @@ func c1ValidateNativeBPlan(p c1NativeBPlan)error{
         }
         total+=g.count
     }
-    if total!=f.ExpectedRecords{return errors.New("C1 B: partial or changed signed group count")}
+    if total!=f.ExpectedRecords||
+        p.Descriptors[len(p.Descriptors)-1].EndRecord!=uint64(f.ExpectedRecords){
+        return errors.New("C1 B: partial, discontinuous or changed signed group count")
+    }
     for i,b:=range p.Batches{
         if p.SQLIDs[i]<=0||b.BatchID!=f.BatchIDs[i]||
             b.Manifest.RecordCount<=0||b.Manifest.DataBytes<=0||

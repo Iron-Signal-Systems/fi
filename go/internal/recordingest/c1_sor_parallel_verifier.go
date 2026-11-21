@@ -141,14 +141,22 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     ds[0].GenerationID=frame.GenerationID
     ds[0].ReceiptSHA256=frame.ReceiptSHA256
     ds[0].TransferSHA256=g.Receipt.TransferSHA256
+    ds[0].EndBatch=int(frame.StartBatchIndex) // original verified seed is not replayed
+    var endRecord uint64
     for i,group:=range groups {
+        startRecord:=endRecord
+        endRecord+=uint64(group.count)
         ds[i+1]=BacklogCheckpointDescriptor{
             SourceID:frame.SourceID,GenerationID:frame.GenerationID,
             ReceiptSHA256:frame.ReceiptSHA256,
             TransferSHA256:g.Receipt.TransferSHA256,
             StartBatch:group.firstBatch,EndBatch:group.endBatch,
-            EndRecord:uint64(group.count),DataBytes:uint64(group.bytes),
+            StartRecord:startRecord,EndRecord:endRecord,
+            DataBytes:uint64(group.bytes),
         }
+    }
+    if endRecord!=uint64(frame.ExpectedRecords){
+        return closeOnError(errors.New("C1 verifier: cumulative signed group record chain differs from Start"))
     }
     // The planner only reads signed metadata; B independently verifies
     // it from its own connection in a different fi-sor OS process.
