@@ -15,6 +15,7 @@ import (
     "errors"
     "fmt"
     "strings"
+    "sync"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
 )
@@ -22,6 +23,7 @@ type c1HandoffSender interface {
     Send(context.Context,c1handoff.Frame)error
 }
 type c1RemoteSoRSink struct {
+    mu sync.Mutex // group seal arrives from signed reader, SQL buffers from consumer
     sender c1HandoffSender
     sourceID, generationID, receiptSHA256 string
     next uint64
@@ -36,6 +38,8 @@ func newC1RemoteSoRSink(sender c1HandoffSender,sourceID,generationID,receiptSHA2
         next:1},nil
 }
 func (s *c1RemoteSoRSink) submit(ctx context.Context,kind c1handoff.Kind,records []privateP6Record)error{
+    s.mu.Lock()
+    defer s.mu.Unlock()
     if s==nil||s.sender==nil||ctx==nil||s.drained {return errors.New("C1 remote SoR: invalid or closed commit handoff")}
     frame:=c1handoff.Frame{
         Kind:kind,SourceID:s.sourceID,GenerationID:s.generationID,
@@ -70,7 +74,23 @@ func (s *c1RemoteSoRSink) Family(ctx context.Context,f privateP6Family,rows []pr
     if f>=privateP6FamilyCount{return errors.New("C1 remote SoR: unknown SQL family")}
     return s.submit(ctx,c1handoff.Kind(f+2),rows)
 }
+func (s *c1RemoteSoRSink) Seal(ctx context.Context,group int)error{
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s==nil||s.sender==nil||ctx==nil||s.drained||group<1 {
+        return errors.New("C1 remote SoR: invalid signed reporting group seal")
+    }
+    frame:=c1handoff.Frame{Kind:c1handoff.Seal,
+        SourceID:s.sourceID,GenerationID:s.generationID,
+        ReceiptSHA256:s.receiptSHA256,Sequence:s.next,
+        SealedGroup:uint32(group)}
+    if err:=s.sender.Send(ctx,frame);err!=nil{return err}
+    s.next++
+    return nil
+}
 func (s *c1RemoteSoRSink) Drain(ctx context.Context)error{
+    s.mu.Lock()
+    defer s.mu.Unlock()
     if s==nil||s.drained||s.sender==nil||ctx==nil{return errors.New("C1 remote SoR: invalid final drain")}
     frame:=c1handoff.Frame{Kind:c1handoff.Drain,
         SourceID:s.sourceID,GenerationID:s.generationID,

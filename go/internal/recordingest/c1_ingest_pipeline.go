@@ -131,7 +131,7 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
             // B's independent read-only proof will subscribe to committed
             // group receipts, not this uncommitted reader-seal notification.
             fmt.Printf("FI C1 SIGNED GROUP SEALED group=%d no_flush=true verifier_awaits_commits=true\n",group)
-            return nil
+            return remote.Seal(ctx,group)
         })
     if err!=nil{return result,err}
     var processedRows int64

@@ -39,6 +39,7 @@ const (
     Drain Kind = 7
     Ack Kind = 8
     Start Kind = 9
+    Seal Kind = 10
 )
 
 type Row struct {
@@ -61,6 +62,7 @@ type Frame struct {
     BatchSQLIDs []int64 // Only the fi-sor START acknowledgment carries these.
     ExpectedRecords int64
     StartBatchIndex uint32 // first signed batch not already in verified seed
+    SealedGroup uint32 // Seal never flushes any SQL family buffer
     // Acknowledgments are emitted only after durable SQL COMMIT.
     Committed bool
     Error string
@@ -77,7 +79,7 @@ func (f Frame) Validate() error {
     if err!=nil || len(digest)!=32 || strings.ToLower(f.ReceiptSHA256)!=f.ReceiptSHA256 {
         return errors.New("C1 handoff: invalid canonical signed receipt SHA-256")
     }
-    if !isSQLKind(f.Kind) && f.Kind!=Drain && f.Kind!=Ack && f.Kind!=Start {
+    if !isSQLKind(f.Kind) && f.Kind!=Drain && f.Kind!=Ack && f.Kind!=Start && f.Kind!=Seal {
         return errors.New("C1 handoff: unknown phase")
     }
     if len(f.Error)>maxError { return errors.New("C1 handoff: oversized error") }
@@ -101,6 +103,8 @@ func (f Frame) Validate() error {
         f.ExpectedRecords!=0||f.StartBatchIndex!=0) {
         return errors.New("C1 handoff: unexpected batch-map metadata outside Start")
     }
+    if f.Kind==Seal && f.SealedGroup==0{return errors.New("C1 handoff: missing signed group seal")}
+    if f.Kind!=Seal && f.SealedGroup!=0{return errors.New("C1 handoff: unexpected signed group seal")}
     if f.Kind==Ack{
         if len(f.BatchIDs)!=0||f.ExpectedRecords!=0||f.StartBatchIndex!=0||
             len(f.BatchSQLIDs)>65535 {
@@ -191,6 +195,7 @@ func WriteFrame(w io.Writer,f Frame)error{
     for _,id:=range f.BatchSQLIDs{if err:=binary.Write(&body,binary.BigEndian,id);err!=nil{return err}}
     if err:=binary.Write(&body,binary.BigEndian,f.ExpectedRecords);err!=nil{return err}
     if err:=binary.Write(&body,binary.BigEndian,f.StartBatchIndex);err!=nil{return err}
+    if err:=binary.Write(&body,binary.BigEndian,f.SealedGroup);err!=nil{return err}
     if body.Len()>MaxPayloadBytes{return errors.New("C1 handoff: payload exceeds ceiling")}
     sum:=sha256.Sum256(body.Bytes())
     var hdr [44]byte
@@ -275,6 +280,7 @@ func ReadFrame(r io.Reader)(Frame,error){
     }
     if err=binary.Read(rd,binary.BigEndian,&f.ExpectedRecords);err!=nil{return empty,err}
     if err=binary.Read(rd,binary.BigEndian,&f.StartBatchIndex);err!=nil{return empty,err}
+    if err=binary.Read(rd,binary.BigEndian,&f.SealedGroup);err!=nil{return empty,err}
     if rd.Len()!=0{return empty,errors.New("C1 handoff: trailing unrecognized bytes")}
     if err=f.Validate();err!=nil{return empty,err}
     return f,nil
