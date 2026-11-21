@@ -1,0 +1,37 @@
+# C1 is unreleased development. This job compiles the staged SQL and
+# preparation implementation without deploying anything to the C220 jails.
+name: FI C1 SoR Integration Compile
+
+on:
+  push:
+    branches:
+      - dev/c1-two-process-20261120
+    paths:
+      - 'go/internal/recordingest/**'
+      - 'go/cmd/fi-ingest-worker/**'
+      - '.github/workflows/fi-c1-sor-development.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c1-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Compile C1 ported SoR and independent verifier
+        run: go test -tags fi_c1_sor_dev ./internal/recordingest -run '^TestC1' -count=1
+      - name: Cross-compile fi-ingest-worker for FreeBSD
+        run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fi-ingest-worker ./cmd/fi-ingest-worker
