@@ -3,6 +3,7 @@ package recordingest
 import (
 	"context"
 	"testing"
+    "strings"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
@@ -110,5 +111,45 @@ func TestC1Security8GiBFieldCopyChunkBoundedAt65536Rows(t *testing.T){
     if err!=nil{t.Fatal(err)}
     if v[1]!=65537 || second.rows!=1 || second.Next() || cursor.hasNext(){
         t.Fatal("candidate child COPY lost/reordered final field or exceeded bound")
+    }
+}
+
+func TestC1Security8GiBFieldCopyByteBoundAndOversizeRecord(t *testing.T){
+    ctx,err:=withFixedSecurityBulkProfile(context.Background(),"P4")
+    if err!=nil{t.Fatal(err)}
+    ctx=withC1SecurityCOPYExperiment(ctx)
+    bigValue:=strings.Repeat("x",9<<20)
+    pending:=[]securityBulkRecord{{
+        sourceRecordID:8080,
+        value:records.WindowsSecurityEventObservation{Fields:[]records.WindowsSecurityEventField{
+            {Name:"first",Value:bigValue},
+            {Name:"second",Value:bigValue},
+        }},
+    }}
+    cursor:=newSecurityFieldCopyCursor(pending)
+    first:=&securityFieldCopyChunk{cursor:cursor,
+        maxRows:securityFieldCopyRowsForContext(ctx),
+        maxBytes:securityFieldCopyBytesForContext(ctx)}
+    if !first.Next() || first.rows!=1 || first.Next() || first.oversized {
+        t.Fatal("two 9MiB fields must not share a 16MiB COPY")
+    }
+    second:=&securityFieldCopyChunk{cursor:cursor,
+        maxRows:securityFieldCopyRowsForContext(ctx),
+        maxBytes:securityFieldCopyBytesForContext(ctx)}
+    if !second.Next()||second.rows!=1||second.Next()||cursor.hasNext(){
+        t.Fatal("field-copy byte cap discarded or combined a boundary row")
+    }
+    oversized:=[]securityBulkRecord{{
+        sourceRecordID:8081,
+        value:records.WindowsSecurityEventObservation{Fields:[]records.WindowsSecurityEventField{
+            {Name:"huge",Value:strings.Repeat("y",17<<20)},
+        }},
+    }}
+    larger:=newSecurityFieldCopyCursor(oversized)
+    chunk:=&securityFieldCopyChunk{cursor:larger,
+        maxRows:securityFieldCopyRowsForContext(ctx),
+        maxBytes:securityFieldCopyBytesForContext(ctx)}
+    if !chunk.Next()||chunk.rows!=1||!chunk.oversized||chunk.Next(){
+        t.Fatal("single oversized valid Security field was not isolated intact")
     }
 }
