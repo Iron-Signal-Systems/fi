@@ -62,6 +62,7 @@ type privateC1SQLLane struct {
     mu sync.Mutex // SQL metrics and first SQL error; workers are interchangeable
     outstanding []chan error // signed reader only
     fileReceipts []*privateC1SourceAck // File only; tracks same FIFO, signed-reader owned
+    latestCommitted *privateC1SourceAck // independent network ACK observes this broadcast fence
     committed int64
     handoffs int64
     err error
@@ -701,9 +702,10 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
     if w.sourceLast==nil{return errors.New("FI C1: family has no ordered source-parent fence")}
     job:=privateC1SQLJob{family:f,rows:rows,source:w.sourceLast,
         done:make(chan error,1)}
-    if f==privateP6File||f==privateP6USN{
-        job.committed=&privateC1SourceAck{done:make(chan struct{})}
-    }
+    // Every family carries an independent COMMIT broadcast fence for the
+    // fi-sor mTLS ACK writer. The original signed-reader FIFO still owns
+    // job.done; no second goroutine may steal its ordered completion.
+    job.committed=&privateC1SourceAck{done:make(chan struct{})}
     if f==privateP6USN{
         if w.usnPending==nil||w.lanes[privateP6File]==nil{
             return errors.New("FI C1: missing bounded asynchronous USN dispatcher or File prerequisites")
@@ -718,6 +720,7 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
         case w.usnPending<-job:
         }
         lane.outstanding=append(lane.outstanding,job.done)
+        lane.latestCommitted=job.committed
         if len(lane.outstanding)>w.usnPeakOutstanding{
             w.usnPeakOutstanding=len(lane.outstanding)
         }
@@ -729,6 +732,7 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
     case w.jobs<-job:
     }
     lane.outstanding=append(lane.outstanding,job.done)
+    lane.latestCommitted=job.committed
     if f==privateP6File{
         lane.fileReceipts=append(lane.fileReceipts,job.committed)
     }
