@@ -81,6 +81,10 @@ type BootstrapHandler func(context.Context,Frame)([]int64,error)
 type Server struct {
     Handler CommitHandler
     Bootstrap BootstrapHandler
+    // When configured, SQL source/family work is enqueued into the native
+    // fi-sor C1 pool without blocking the network reader. Each future
+    // resolves only after its own PostgreSQL transaction commits.
+    Dispatch func(context.Context,Frame)(<-chan error,error)
     IOTimeout time.Duration
 }
 func ensureAuthenticated(conn net.Conn)error{
@@ -141,6 +145,9 @@ func (s *Server) ServeConn(ctx context.Context,conn net.Conn)error{
         if commitErr!=nil{return fmt.Errorf("C1 handoff: backend commit failed: %w",commitErr)}
         if f.Kind==Drain {return nil}
         sequence++
+        if f.Kind==Start && s.Dispatch!=nil {
+            return s.servePipelined(ctx,conn,source,generation,receipt,sequence,idle)
+        }
     }
 }
 type Client struct{
