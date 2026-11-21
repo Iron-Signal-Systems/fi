@@ -29,8 +29,9 @@ const privateC1DefaultSQLWorkersMax = 5
 const privateC1HardSQLWorkersMax = 32
 const privateC1SQLWorkerIdleRetire = 30 * time.Second
 // USN SQL is still strictly serial, but its admission is asynchronous.
-// 64 * 8 MiB is an upper bound on retained USN family buffers. This does
-// NOT create extra PostgreSQL connections or alter the shared 32-worker cap.
+// Each retained buffer obeys the existing per-family limits (including the
+// governed oversize-single-record exception). The queue cannot grow without
+// bound; it creates no extra PostgreSQL connections or SQL workers.
 const privateC1MaxPendingUSNHandoffs = 64
 
 // Parent ACKs are broadcast fences: multiple child transactions can depend
@@ -85,6 +86,9 @@ type privateC1FiveSQL struct {
     usnPending chan privateC1SQLJob // bounded, ordered, no dedicated SQL connection
     usnWG sync.WaitGroup
     usnPeakOutstanding int // signed-reader owned
+    usnFileWaitWall time.Duration // dispatcher writes, mu protects reads
+    usnSQLWaitWall time.Duration // dispatcher writes, mu protects reads
+    usnCompleted int64 // dispatcher writes, mu protects reads
     dsn,pgdata string
     maxWorkers int
     mu sync.Mutex
@@ -336,12 +340,16 @@ func (w *privateC1FiveSQL) runUSNDispatcher(){
     var failed error
     for job:=range w.usnPending{
         if failed==nil{
+            waitStarted:=time.Now()
             for _,fileAck:=range job.filePrerequisites{
                 if err:=privateC1AwaitSource(w.ctx,fileAck);err!=nil{
                     failed=fmt.Errorf("FI C1: USN File prerequisite SQL commit: %w",err)
                     break
                 }
             }
+            w.mu.Lock()
+            w.usnFileWaitWall+=time.Since(waitStarted)
+            w.mu.Unlock()
         }
         if failed==nil{
             select{
@@ -351,7 +359,12 @@ func (w *privateC1FiveSQL) runUSNDispatcher(){
                 // Shared SQL worker checks the exact source-parent ACK.
             }
             if failed==nil{
+                waitStarted:=time.Now()
                 failed=privateC1AwaitSource(w.ctx,job.committed)
+                w.mu.Lock()
+                w.usnSQLWaitWall+=time.Since(waitStarted)
+                if failed==nil{w.usnCompleted++}
+                w.mu.Unlock()
                 // The worker owns job.done; this branch MUST NOT consume
                 // the result reserved for WaitFamily/the signed reader.
                 continue
@@ -715,10 +728,13 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
             privateP6FamilyNames[lane.family],w.familyHandoffLimit(lane.family),
             lane.backpressureWaits,lane.backpressureWaitWall,len(lane.outstanding))
     }
-    fmt.Printf("FI C1 ASYNC USN DISPATCH COMPLETE queue_max=%d peak_outstanding=%d backpressure_waits=%d backpressure_wall=%s ordered_commit=true shared_sql=true\n",
+    w.mu.Lock()
+    fmt.Printf("FI C1 ASYNC USN DISPATCH COMPLETE queue_max=%d peak_outstanding=%d committed_handoffs=%d file_dependency_wait=%s ordered_sql_wait=%s reader_backpressure_waits=%d reader_backpressure_wall=%s ordered_commit=true shared_sql=true\n",
         privateC1MaxPendingUSNHandoffs,w.usnPeakOutstanding,
+        w.usnCompleted,w.usnFileWaitWall,w.usnSQLWaitWall,
         w.lanes[privateP6USN].backpressureWaits,
         w.lanes[privateP6USN].backpressureWaitWall)
+    w.mu.Unlock()
     s:=w.lanes[privateP6Security].securityCopies
     fmt.Printf("FI C1 SECURITY COPY PROFILE batches=%d events=%d scopes=%d fields=%d source_bytes=%d source_copy=%s event_copy=%s scope_copy=%s field_copy=%s child_prepare=%s bulk_id_lookup=%s bulk_prepare=%s\n",
         s.Batches,s.Events,s.Scopes,s.Fields,s.SourceBytes,
