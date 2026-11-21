@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=0c7f6869f145193ffa19e578da68bc7b85d5d4f3
+sourcecommit=24b3eba4756c02025b4dd877d678911188dc14e6
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -1009,9 +1009,22 @@ grep '^FI C1 COMMIT READY ' "$log" > "$out/$name/C1_COMMIT_READY.txt" ||
 [ "$(wc -l < "$out/$name/C1_COMMIT_READY.txt" | tr -d '[:space:]')" = "$windows" ] &&
 grep -Fq 'custody_batch_sealed=true no_group_flush=true' "$out/$name/C1_COMMIT_READY.txt" ||
   fail 'C1 did not emit durable source+family and custody-bound group readiness'
-# No sparse-age handoffs are permitted just to satisfy verifier timing.
+# Age or verifier-driven handoffs are forbidden. An independent 30-second
+# inactivity timer is a real Family Processing flush trigger, not a B command.
 if grep '^FI P6 FAMILY ' "$log" | grep -Eq ' age=[1-9][0-9]* '; then
   fail 'C1 added sparse-family SQL handoffs to schedule B'
+fi
+grep '^FI C1 FAMILY PROCESSING INACTIVITY TIMER ' "$log" > "$out/$name/C1_IDLE_TIMER.txt" ||
+  fail 'C1 independent 30-second inactivity timer never started'
+[ "$(wc -l < "$out/$name/C1_IDLE_TIMER.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq 'timeout=30s poll=1s per_family=true resets_on=received_record no_input_required=true owner=ordered_consumer no_batch_flush=true no_group_flush=true' "$out/$name/C1_IDLE_TIMER.txt" ||
+  fail 'C1 30s inactivity timer is not single-owner or per-family'
+grep '^FI C1 FAMILY PROCESSING IDLE FLUSH ' "$log" > "$out/$name/C1_IDLE_FLUSH.txt" || :
+# A fully active run can legitimately have zero idle flushes. Preserve an
+# empty evidence file rather than inventing a timer event.
+if grep '^FI C1 FAMILY PROCESSING IDLE FLUSH ' "$log" |
+  grep -Ev 'timeout=30s .*trigger=inactivity no_batch_flush=true no_group_flush=true verifier_independent=true'; then
+  fail 'C1 unexpected idle-family trigger or timeout'
 fi
 grep '^FI C1 ASYNC VERIFY PASS ' "$log" > "$out/$name/C1_ASYNC_VERIFY.txt" ||
   fail 'C1 independent read-only group proofs missing'
@@ -1133,6 +1146,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/recover.log" "$name/C1_READ.txt" "$name/C1_BACKENDS.txt" \
   "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SETUP.txt" "$name/C1_INGEST_START.txt" \
+  "$name/C1_IDLE_TIMER.txt" "$name/C1_IDLE_FLUSH.txt" \
   "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
