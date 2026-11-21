@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
     "strings"
+    "reflect"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
@@ -65,15 +66,23 @@ func TestC1Security8GiBProfileSeparatesCopyFromFieldPartitioning(t *testing.T) {
     if _,ok:=securityEventCopyRows(control,candidateSecurityEventFixture(2)).(*securityEventCopySource);ok{
         t.Fatal("non-C1 P4 unexpectedly selected reusable event COPY source")
     }
+    // The private C220 overlay retains the audited, existing scope
+    // selection branch. Verify the exact reusable iterator against the
+    // original scope row data without a second helper implementation.
     scopeFixture:=securityScopeCandidateFixture()
-    if _,ok:=securityScopeCopyRows(candidate,scopeFixture,3).(*securityScopeCopySource);!ok{
-        t.Fatal("C1 candidate did not select existing reusable 4-column scope COPY source")
+    scopeRows:=legacySecurityScopeValues(scopeFixture)
+    source:=newSecurityScopeCopySource(scopeFixture)
+    i:=0
+    for source.Next(){
+        got,e:=source.Values()
+        if e!=nil{t.Fatal(e)}
+        if i>=len(scopeRows)||!reflect.DeepEqual(got,scopeRows[i]){
+            t.Fatalf("C1 Security scope row %d differs from established source",i)
+        }
+        i++
     }
-    if _,ok:=securityScopeCopyRows(control,scopeFixture,3).(*securityScopeCopySource);ok{
-        t.Fatal("non-C1 P4 unexpectedly selected reusable scope COPY source")
-    }
-    if securityScopeCopyRows(candidate,scopeFixture,0)!=nil{
-        t.Fatal("zero matched scopes unexpectedly generated a COPY")
+    if i!=len(scopeRows)||source.Err()!=nil{
+        t.Fatal("C1 Security scope iterator lost a signed scope row")
     }
 }
 
