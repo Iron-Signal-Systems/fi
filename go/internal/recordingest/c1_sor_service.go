@@ -59,6 +59,12 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     if s.pool!=nil||s.session!=nil||s.failed!=nil {
         return nil,errors.New("C1 fi-sor: generation already started or prior attempt failed; no automatic replay")
     }
+    if frame.StartBatchIndex==0{
+        if err:=StageC1SignedPrivateMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
+            s.failed=err
+            return nil,fmt.Errorf("C1 fi-sor: original signed private ledger bootstrap: %w",err)
+        }
+    }
     ids,err:=s.validateSignedPrivateStage(ctx,frame)
     if err!=nil{
         // A partial committed source/family transaction must NEVER be
