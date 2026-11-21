@@ -43,6 +43,39 @@ func newPrivateP6SQLCoordinator(tx privateProjectionTx,sourceID string,
     return &privateP6SQLCoordinator{tx:tx,sourceID:sourceID,profile:profile},nil
 }
 
+// The ordered source ledger is on C1's critical path. Reuse one fixed
+// nine-column value array instead of allocating one []any per signed record.
+// pgx.CopyFrom consumes Values before the next Next; source rows and their
+// SHA-256 bytes remain immutable until the database transaction acknowledges.
+type privateP6SourceCopyCursor struct {
+    rows []privateP6Record
+    offset int
+    values [9]any
+}
+func (c *privateP6SourceCopyCursor) Next() bool {
+    if c==nil||c.offset>=len(c.rows){return false}
+    c.offset++
+    return true
+}
+func (c *privateP6SourceCopyCursor) Values()([]any,error){
+    if c==nil||c.offset<=0||c.offset>len(c.rows){
+        return nil,errors.New("FI P6 source COPY: Values without an active signed record")
+    }
+    r:=&c.rows[c.offset-1]
+    p:=&r.prepared
+    c.values[0]=r.sourceBatchID
+    c.values[1]=r.ordinal
+    c.values[2]=p.Record.Version
+    c.values[3]=p.Record.RecordKind
+    c.values[4]=p.Record.ScopeID
+    c.values[5]=p.WrittenAtUTC
+    c.values[6]=p.RecordBytes
+    c.values[7]=p.RecordDigest[:]
+    c.values[8]=IngestVersion
+    return c.values[:],nil
+}
+func (c *privateP6SourceCopyCursor) Err()error{return nil}
+
 // SOURCE is inserted in original signed order, not individual family order.
 // Existing USN's <source_record_id prerequisite remains correct, and every
 // relational child still references the exact source batch/ordinal/digest.
@@ -62,13 +95,7 @@ func(w *privateP6SQLCoordinator) Source(ctx context.Context,rows []privateP6Reco
         "scope_id","written_at","record_bytes","record_sha256","ingest_version"}
     started:=time.Now()
     n,err:=w.tx.CopyFrom(ctx,pgx.Identifier{"fi","source_record"},columns,
-        pgx.CopyFromSlice(len(rows),func(i int)([]any,error){
-            r:=rows[i]
-            p:=r.prepared
-            return []any{r.sourceBatchID,r.ordinal,p.Record.Version,p.Record.RecordKind,
-                p.Record.ScopeID,p.WrittenAtUTC,p.RecordBytes,p.RecordDigest[:],
-                IngestVersion},nil
-        }))
+        &privateP6SourceCopyCursor{rows:rows})
     w.profile.SourceSQL+=time.Since(started)
     if err!=nil{return fmt.Errorf("FI P6 SQL: signed source parent COPY: %w",err)}
     if n!=int64(len(rows)){return errors.New("FI P6 SQL: incomplete source parent COPY")}
