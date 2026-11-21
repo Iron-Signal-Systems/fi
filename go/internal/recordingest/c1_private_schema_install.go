@@ -81,7 +81,8 @@ func C1PrivateSchemaPlan()([]C1PrivateSchemaStatement,error){
     if err!=nil{return nil,err}
     if !strings.Contains(ledger,"CREATE SCHEMA fi_recovery;")||
         !strings.Contains(ledger,"CREATE TABLE fi_recovery.typed_window")||
-        strings.Contains(ledger,"fi.recorded_generation")||
+        strings.Contains(ledger,"CREATE TABLE fi.")||
+        strings.Contains(ledger,"INSERT INTO fi.")||
         strings.Contains(ledger,"DROP TABLE")||
         strings.Contains(ledger,"DROP SCHEMA"){
         return nil,errors.New("C1 schema: unapproved private recovery ledger")
