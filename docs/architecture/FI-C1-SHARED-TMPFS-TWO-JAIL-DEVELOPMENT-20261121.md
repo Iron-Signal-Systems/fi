@@ -262,3 +262,19 @@ the live populated canonical fi database yet.
   consumer feeding unchanged ordered SourceParent/SQL projectors.
 - `go/cmd/fi-c1-ingest-worker`, `go/cmd/fi-c1-sor-worker` — FreeBSD
   service candidates; neither is authorized for live ingestion yet.
+
+## PostgreSQL 18 private schema SQL role grants (offline installation)
+
+The C1 private-schema installer now applies a **single-transaction**
+private-only access grant after all 49 projection/recovery relations are
+created. The exact pre-existing `fi_ingest` PostgreSQL role, used **only
+by fi-sor** on its local Unix socket, receives schema `USAGE`,
+table `SELECT/INSERT/UPDATE/DELETE`, and sequence `USAGE/SELECT` on
+`fi_recovery_projection` and `fi_recovery`. No schema `CREATE`,
+`TRUNCATE` or canonical `fi` grant is introduced by this operation.
+The installer fails closed if that database role is missing.
+
+Disposable PostgreSQL 18 CI now verifies permissions on **every**
+private table/sequence and rolls back both the schema and grants on a
+forced transaction failure. This does **not** give the separate
+`fi-ingest` jail SQL access, and does not prove live C220 authorization.

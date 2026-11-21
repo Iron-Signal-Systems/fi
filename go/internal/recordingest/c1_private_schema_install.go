@@ -105,6 +105,22 @@ func c1InstallPrivateSchemaTx(ctx context.Context,tx pgx.Tx)error{
             return fmt.Errorf("C1 schema: private DDL %s: %w",script.Name,err)
         }
     }
+    // PostgreSQL's default new-schema/table privileges exclude fi_ingest.
+    // The *fi-sor jail* C1 writer uses the fi_ingest DATABASE role on its
+    // local Unix socket. Without explicit private-only grants the very
+    // first SourceParent COPY fails despite successful DDL/CI compilation.
+    // These grants are part of this SAME atomic offline transaction; no
+    // GRANT touches canonical fi, and no schema CREATE/TRUNCATE privilege is
+    // delegated. fi-ingest jail itself never gets any PostgreSQL socket.
+    for _,statement:=range []string{
+        "GRANT USAGE ON SCHEMA fi_recovery_projection, fi_recovery TO fi_ingest",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA fi_recovery_projection, fi_recovery TO fi_ingest",
+        "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA fi_recovery_projection, fi_recovery TO fi_ingest",
+    }{
+        if _,err=tx.Exec(ctx,statement);err!=nil{
+            return fmt.Errorf("C1 schema: atomic private SoR writer role privileges: %w",err)
+        }
+    }
     return nil
 }
 
@@ -131,6 +147,13 @@ func InstallC1PrivateSchemas(ctx context.Context,admin *pgx.Conn)error{
     if database!="fi"||role==""||!local||recovery||!superuser||
         !canonical||privateProjection||ledger||version<180000{
         return errors.New("C1 schema: requires clean private namespaces on a local PostgreSQL18 fi administrative session")
+    }
+    var ingestRolePresent bool
+    if err=admin.QueryRow(ctx,`SELECT EXISTS(
+        SELECT 1 FROM pg_roles WHERE rolname='fi_ingest')`).
+        Scan(&ingestRolePresent);err!=nil{return err}
+    if !ingestRolePresent{
+        return errors.New("C1 schema: local fi_ingest SQL writer role must exist before private DDL")
     }
     tx,err:=admin.Begin(ctx)
     if err!=nil{return err}

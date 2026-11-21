@@ -101,6 +101,50 @@ func TestC1PrivateSchemaRealPostgres18AtomicDDL(t *testing.T){
         t.Fatalf("C1 complete private schemas/canonical unchanged failure: private=%d expected=%d ledger=%d canonical=%d/%d",
             privateTables,canonicalBefore,ledgerTables,canonicalAfter,canonicalBefore)
     }
+    // Verify the real fi-sor SQL worker DATABASE role can read and write
+    // every new private table while retaining no schema CREATE privilege.
+    // New private objects belong to the offline admin only; this is not a
+    // GRANT to the fi-ingest jail or to canonical fi.
+    var missingWorkerPrivileges int64
+    err=admin.QueryRow(ctx,`
+SELECT count(*) FROM pg_tables
+WHERE schemaname IN ('fi_recovery_projection','fi_recovery')
+ AND (
+    NOT has_table_privilege('fi_ingest',
+        format('%I.%I',schemaname,tablename),'SELECT')
+ OR NOT has_table_privilege('fi_ingest',
+        format('%I.%I',schemaname,tablename),'INSERT')
+ OR NOT has_table_privilege('fi_ingest',
+        format('%I.%I',schemaname,tablename),'UPDATE')
+ OR NOT has_table_privilege('fi_ingest',
+        format('%I.%I',schemaname,tablename),'DELETE')
+ )`).Scan(&missingWorkerPrivileges)
+    if err!=nil{t.Fatal(err)}
+    if missingWorkerPrivileges!=0{
+        t.Fatalf("fi-sor C1 SQL role cannot access %d private tables",missingWorkerPrivileges)
+    }
+    var projectionUsage,ledgerUsage,projectionCreate,ledgerCreate bool
+    err=admin.QueryRow(ctx,`
+SELECT has_schema_privilege('fi_ingest','fi_recovery_projection','USAGE'),
+       has_schema_privilege('fi_ingest','fi_recovery','USAGE'),
+       has_schema_privilege('fi_ingest','fi_recovery_projection','CREATE'),
+       has_schema_privilege('fi_ingest','fi_recovery','CREATE')`).
+       Scan(&projectionUsage,&ledgerUsage,&projectionCreate,&ledgerCreate)
+    if err!=nil{t.Fatal(err)}
+    if !projectionUsage||!ledgerUsage||projectionCreate||ledgerCreate{
+        t.Fatal("C1 SQL role private-only USAGE / deny-CREATE contract invalid")
+    }
+    var missingSequences int64
+    err=admin.QueryRow(ctx,`
+SELECT count(*)
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE c.relkind='S' AND n.nspname IN ('fi_recovery_projection','fi_recovery')
+ AND NOT has_sequence_privilege('fi_ingest',c.oid,'USAGE')`).
+        Scan(&missingSequences)
+    if err!=nil{t.Fatal(err)}
+    if missingSequences!=0{
+        t.Fatalf("C1 private identity sequences unavailable to SQL worker: %d",missingSequences)
+    }
     var source,intake,accepted int64
     if err=admin.QueryRow(ctx,`SELECT
        (SELECT count(*) FROM fi_recovery_projection.source_record),
