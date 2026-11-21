@@ -28,6 +28,10 @@ const privateC1MaxFamilyHandoffsInFlight = 4
 const privateC1DefaultSQLWorkersMax = 5
 const privateC1HardSQLWorkersMax = 32
 const privateC1SQLWorkerIdleRetire = 30 * time.Second
+// USN SQL is still strictly serial, but its admission is asynchronous.
+// 64 * 8 MiB is an upper bound on retained USN family buffers. This does
+// NOT create extra PostgreSQL connections or alter the shared 32-worker cap.
+const privateC1MaxPendingUSNHandoffs = 64
 
 // Parent ACKs are broadcast fences: multiple child transactions can depend
 // on the same committed source prefix without stealing an acknowledgment.
@@ -44,12 +48,17 @@ type privateC1SQLJob struct {
     rows []privateP6Record
     source *privateC1SourceAck
     done chan error
+    // The dispatcher's read-only broadcast fences do not steal the
+    // signed reader's SQL result from done.
+    committed *privateC1SourceAck
+    filePrerequisites []*privateC1SourceAck
 }
 type privateC1SQLLane struct {
     family privateP6Family
     module privateC1FamilyModule
     mu sync.Mutex // SQL metrics and first SQL error; workers are interchangeable
     outstanding []chan error // signed reader only
+    fileReceipts []*privateC1SourceAck // File only; tracks same FIFO, signed-reader owned
     committed int64
     handoffs int64
     err error
@@ -73,6 +82,9 @@ type privateC1FiveSQL struct {
     sourceBackpressureWall time.Duration
     lanes [privateP6FamilyCount]*privateC1SQLLane
     jobs chan privateC1SQLJob // ONE shared ready queue; no family owns a SQL worker
+    usnPending chan privateC1SQLJob // bounded, ordered, no dedicated SQL connection
+    usnWG sync.WaitGroup
+    usnPeakOutstanding int // signed-reader owned
     dsn,pgdata string
     maxWorkers int
     mu sync.Mutex
@@ -112,17 +124,19 @@ func (w *privateC1FiveSQL) familyLimit() int {
     }
     return w.maxWorkers
 }
-// The P6 USN projector binds each object to a preceding capture boundary
-// using signed source-record order and a generation-local capture map.
-// Unrelated SQL families can run concurrently, but a later USN handoff
-// must not begin SQL before the prior USN handoff COMMITTED. A single
-// outstanding USN handoff preserves this without weakening capture checks.
+// USN admission is buffered independently of USN execution. The dispatcher
+// submits only one USN job at a time to the SAME shared SQL worker pool,
+// and waits for that transaction to commit before submitting its successor.
+// The 64-slot bound applies backpressure only when genuinely saturated.
 func (w *privateC1FiveSQL) familyHandoffLimit(f privateP6Family) int {
     if f==privateP6USN {
-        return 1
+        return privateC1MaxPendingUSNHandoffs
     }
     return w.familyLimit()
 }
+// Family buffers may defer File commit fencing to the ordered USN dispatcher.
+// Other SQL sinks preserve the original synchronous behavior.
+func (w *privateC1FiveSQL) AsyncUSNDependencies() bool { return w!=nil&&w.usnPending!=nil }
 
 func privateC1Enabled() bool {
     return os.Getenv("FI_W512_C1_P6_DIRECT")=="1" &&
@@ -170,7 +184,9 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     w:=&privateC1FiveSQL{
         ctx:owner,cancel:cancel,sourceID:sourceID,dsn:dsn,pgdata:pgdata,
         maxWorkers:max,sourceJobs:make(chan privateC1SourceJob,2),
-        jobs:make(chan privateC1SQLJob,max*2),pids:make(map[int64]bool),
+        jobs:make(chan privateC1SQLJob,max*2),
+        usnPending:make(chan privateC1SQLJob,privateC1MaxPendingUSNHandoffs),
+        pids:make(map[int64]bool),
     }
     parent,pid,e:=privateC1CloneConnection(ctx,dsn,pgdata)
     if e!=nil{cancel();return nil,e}
@@ -190,6 +206,9 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
     }
     w.sourceWG.Add(1)
     go w.runSource()
+    w.usnWG.Add(1)
+    go w.runUSNDispatcher()
+    fmt.Printf("FI C1 ASYNC USN DISPATCH START queue_max=%d ordered_SQL_commits=true file_dependencies=commit_fences shared_sql_workers=true extra_pg_connections=0\n",privateC1MaxPendingUSNHandoffs)
     fmt.Printf("FI C1 P6 NATIVE SQL BACKENDS parent=1 shared_workers_initial=1 workers_max=%d distinct_pids=2 clone_only=true\n",max)
     return w,nil
 }
@@ -283,6 +302,10 @@ func (w *privateC1FiveSQL) runWorker(conn *pgx.Conn,pid int64){
             w.busyWorkers--
             w.completedJobs++
             w.mu.Unlock()
+            if job.committed!=nil{
+                job.committed.err=err
+                close(job.committed.done)
+            }
             job.done<-err
             close(job.done)
             if !timer.Stop(){select{case <-timer.C:default:}}
@@ -299,6 +322,47 @@ func (w *privateC1FiveSQL) runWorker(conn *pgx.Conn,pid int64){
             w.mu.Unlock()
             timer.Reset(privateC1SQLWorkerIdleRetire)
         }
+    }
+}
+
+// runUSNDispatcher never touches the signed reader's outstanding slices.
+// It submits exactly one USN job to the shared pool at a time. Each USN
+// handoff carries broadcast commit fences for ALL earlier File handoffs,
+// including those already running on different PostgreSQL connections.
+// A SQL error fails this USN and every subsequently queued USN handoff;
+// no incomplete generation can be published.
+func (w *privateC1FiveSQL) runUSNDispatcher(){
+    defer w.usnWG.Done()
+    var failed error
+    for job:=range w.usnPending{
+        if failed==nil{
+            for _,fileAck:=range job.filePrerequisites{
+                if err:=privateC1AwaitSource(w.ctx,fileAck);err!=nil{
+                    failed=fmt.Errorf("FI C1: USN File prerequisite SQL commit: %w",err)
+                    break
+                }
+            }
+        }
+        if failed==nil{
+            select{
+            case <-w.ctx.Done():
+                failed=w.ctx.Err()
+            case w.jobs<-job:
+                // Shared SQL worker checks the exact source-parent ACK.
+            }
+            if failed==nil{
+                failed=privateC1AwaitSource(w.ctx,job.committed)
+                // The worker owns job.done; this branch MUST NOT consume
+                // the result reserved for WaitFamily/the signed reader.
+                continue
+            }
+        }
+        // The job was never submitted to a SQL worker. Publish the
+        // failure to BOTH independent ACK recipients without dropping it.
+        job.committed.err=failed
+        close(job.committed.done)
+        job.done<-failed
+        close(job.done)
     }
 }
 
@@ -525,13 +589,39 @@ func(w *privateC1FiveSQL) Family(ctx context.Context,f privateP6Family,rows []pr
         if err!=nil{return err}
     }
     if w.sourceLast==nil{return errors.New("FI C1: family has no ordered source-parent fence")}
-    job:=privateC1SQLJob{family:f,rows:rows,source:w.sourceLast,done:make(chan error,1)}
+    job:=privateC1SQLJob{family:f,rows:rows,source:w.sourceLast,
+        done:make(chan error,1)}
+    if f==privateP6File||f==privateP6USN{
+        job.committed=&privateC1SourceAck{done:make(chan struct{})}
+    }
+    if f==privateP6USN{
+        if w.usnPending==nil||w.lanes[privateP6File]==nil{
+            return errors.New("FI C1: missing bounded asynchronous USN dispatcher or File prerequisites")
+        }
+        // Snapshot every earlier unresolved File SQL commit, not merely
+        // the last File ACK: File handoffs themselves may run concurrently.
+        job.filePrerequisites=append(job.filePrerequisites,
+            w.lanes[privateP6File].fileReceipts...)
+        select{
+        case <-ctx.Done():return ctx.Err()
+        case <-w.ctx.Done():return w.ctx.Err()
+        case w.usnPending<-job:
+        }
+        lane.outstanding=append(lane.outstanding,job.done)
+        if len(lane.outstanding)>w.usnPeakOutstanding{
+            w.usnPeakOutstanding=len(lane.outstanding)
+        }
+        return nil
+    }
     select{
     case <-ctx.Done():return ctx.Err()
     case <-w.ctx.Done():return w.ctx.Err()
     case w.jobs<-job:
     }
     lane.outstanding=append(lane.outstanding,job.done)
+    if f==privateP6File{
+        lane.fileReceipts=append(lane.fileReceipts,job.committed)
+    }
     if err:=w.growWorkers(ctx);err!=nil{
         w.failed=fmt.Errorf("FI C1: adaptive SQL pool could not scale: %w",err)
         return w.failed
@@ -557,6 +647,13 @@ func(w *privateC1FiveSQL) waitNextFamily(ctx context.Context,f privateP6Family)e
         // in-progress SQL jobs remain queued, maintaining continuity.
         lane.outstanding[0]=nil
         lane.outstanding=lane.outstanding[1:]
+        if f==privateP6File{
+            if len(lane.fileReceipts)==0{
+                return errors.New("FI C1: missing File commit broadcast fence")
+            }
+            lane.fileReceipts[0]=nil
+            lane.fileReceipts=lane.fileReceipts[1:]
+        }
         if !ok&&err==nil{err=errors.New("missing SQL writer acknowledgment")}
         if err!=nil{
             w.failed=fmt.Errorf("FI C1: family %s SQL commit: %w",privateP6FamilyNames[f],err)
@@ -615,9 +712,13 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
             lane.sourceParentWaitWall,lane.identityLookup,lane.projectionWall,lane.commitWall)
         lane.mu.Unlock()
         fmt.Printf("FI C1 P6 CONTINUOUS FAMILY family=%s max_outstanding=%d backpressure_waits=%d backpressure_wall=%s remaining_ack=%d\n",
-            privateP6FamilyNames[lane.family],w.familyLimit(),
+            privateP6FamilyNames[lane.family],w.familyHandoffLimit(lane.family),
             lane.backpressureWaits,lane.backpressureWaitWall,len(lane.outstanding))
     }
+    fmt.Printf("FI C1 ASYNC USN DISPATCH COMPLETE queue_max=%d peak_outstanding=%d backpressure_waits=%d backpressure_wall=%s ordered_commit=true shared_sql=true\n",
+        privateC1MaxPendingUSNHandoffs,w.usnPeakOutstanding,
+        w.lanes[privateP6USN].backpressureWaits,
+        w.lanes[privateP6USN].backpressureWaitWall)
     s:=w.lanes[privateP6Security].securityCopies
     fmt.Printf("FI C1 SECURITY COPY PROFILE batches=%d events=%d scopes=%d fields=%d source_bytes=%d source_copy=%s event_copy=%s scope_copy=%s field_copy=%s child_prepare=%s bulk_id_lookup=%s bulk_prepare=%s\n",
         s.Batches,s.Events,s.Scopes,s.Fields,s.SourceBytes,
@@ -634,6 +735,10 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
 func(w *privateC1FiveSQL) Close(){
     if w==nil||w.closed{return}
     w.closed=true
+    if w.usnPending!=nil{
+        close(w.usnPending)
+        w.usnWG.Wait() // all queued USN work finished before closing shared jobs
+    }
     if w.sourceJobs!=nil {close(w.sourceJobs)}
     if w.jobs!=nil {close(w.jobs)}
     // No family job can be lost: the shared workers drain the closed queue,
