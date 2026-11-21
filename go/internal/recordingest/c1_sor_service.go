@@ -54,7 +54,23 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         return nil,errors.New("C1 fi-sor: generation already started or prior attempt failed; no automatic replay")
     }
     ids,err:=s.validateSignedPrivateStage(ctx,frame)
-    if err!=nil{s.failed=err;return nil,err}
+    if err!=nil{
+        // A partial committed source/family transaction must NEVER be
+        // silently replayed. The read-only audit reports the PostgreSQL
+        // relational prefix while preserving the original rejection.
+        // This does not flush family buffers or authorize restart.
+        audit,auditErr:=AuditC1SoRPrivateRecovery(ctx,s.DSN,frame)
+        if auditErr==nil {
+            fmt.Printf("FI C1 RECOVERY AUDIT source=%s generation=%s complete_parent_batches=%d complete_relational_batches=%d first_unresolved_batch=%d existing_parents=%d dirty_tail=%t automatic_replay=false canonical_unchanged=true\\n",
+                audit.SourceID,audit.GenerationID,audit.SourceCompletePrefix,
+                audit.RelationalCompletePrefix,audit.FirstUnresolvedBatch,
+                audit.TotalExistingParents,audit.DirtyTail)
+        }else{
+            fmt.Printf("FI C1 RECOVERY AUDIT BLOCKED read_only=true reason=%v\\n",auditErr)
+        }
+        s.failed=err
+        return nil,err
+    }
     counts,err:=s.loadSignedBatchRecordCounts(ctx,ids)
     if err!=nil{s.failed=err;return nil,err}
     pool,err:=newC1SoRSQLPool(ctx,s.DSN,frame.SourceID,s.MaxSQLWorkers)

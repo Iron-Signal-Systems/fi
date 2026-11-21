@@ -90,6 +90,26 @@ with the same source, fi-ingest is RW and fi-sor is RO. Do not substitute
 example jail-root placeholders or skip the real host check. A separate
 mount-installation and runtime wiring acceptance gate remains.
 
+## Read-only committed-prefix recovery audit (development)
+
+`AuditC1SoRPrivateRecovery` runs after a rejected dirty START preflight
+using a separate **read-only, repeatable-read** PostgreSQL transaction.
+It scans all signed source-batch manifests and committed SourceParent
+rows, enforces contiguous 1-based ordinals and exact signed byte totals,
+then uses the existing 13-kind typed-root projection coverage checker
+to locate the first batch lacking a fully committed relational root.
+
+It logs the **last parent-complete batch prefix** and **last typed-complete
+relational batch prefix**; these may differ because the five SQL families
+commit independently. No RAM buffer is needed or recovered for this scan.
+
+The audit is **not an authorization to resume**. It has no signed raw-record
+readback, no reconciliation of a partially committed batch's five family
+state, and no authority to delete SQL rows or publish the canonical SoR.
+Until a complete idempotent per-record replay and original-custody
+comparison pass acceptance, the current START deliberately stops on a
+dirty stage. This preserves all committed PostgreSQL work for diagnosis.
+
 ## Interruption semantics
 
 On power loss, both jails discard incomplete prepared work and reconstruct
