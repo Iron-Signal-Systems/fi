@@ -329,9 +329,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=24b3eba4756c02025b4dd877d678911188dc14e6' in controller
-          assert 'runnerpin=467de469a14ab3ecf15d3299bf75de187be84d94' in controller
-          assert 'sourcecommit=24b3eba4756c02025b4dd877d678911188dc14e6' in runner
+          assert 'sourcepin=abd330f1c59906585a30c7682518e8a70dbe7751' in controller
+          assert 'runnerpin=42c192103a0d8ba54854860888f4f0a7fa3905c4' in controller
+          assert 'sourcecommit=abd330f1c59906585a30c7682518e8a70dbe7751' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -339,6 +339,8 @@ jobs:
           child=Path('cmd/fi-c1-verifier/main.go').read_text()
           assert 'privateC1StartProcessVerify(ctx,dsn,pgdata' in source
           assert 'RunPrivateC1VerifyChild' in process and child
+          assert child.startswith('//go:build fi_c1_private')
+          assert 'go127 build -tags fi_c1_private' in runner
           assert 'os/exec' in process and 'cmd.Start()' in process
           assert 'SET default_transaction_read_only = on' in process
           assert 'privateC1VerifyProcessCommands' in process
