@@ -98,6 +98,27 @@ func c1ClassifyRecoverySourcePrefix(evidence []C1RecoveryBatchEvidence)(
     return prefix,dirty,total,nil
 }
 
+
+// c1FindReadOnlyTypedPrefix uses monotone committed typed-root evidence.
+// A missing typed root is recoverable only after its original signed bytes
+// and partial family SQL state are reconciled; other SQL errors fail closed.
+func c1FindReadOnlyTypedPrefix(completeParents int,check func(int)error)(int,error){
+    if completeParents<0||check==nil{
+        return 0,errors.New("C1 recovery: missing relational coverage predicate")
+    }
+    low,high:=0,completeParents
+    for low<high{
+        mid:=low+(high-low+1)/2
+        err:=check(mid)
+        if err==nil{low=mid;continue}
+        if !errors.Is(err,ErrSourceRecordRejected){
+            return 0,fmt.Errorf("C1 recovery: read-only typed projection proof failed: %w",err)
+        }
+        high=mid-1
+    }
+    return low,nil
+}
+
 // AuditC1SoRPrivateRecovery uses one REPEATABLE READ / READ ONLY snapshot
 // inside fi-sor. It has zero SQL writes, uses no RAM buffer, never invokes
 // a P5/P6 flush, and explicitly does NOT authorize automatic replay.
@@ -189,24 +210,15 @@ ORDER BY sb.batch_id`,generationID)
     if err!=nil{return report,err}
 
     // A SourceParent row is NOT equivalent to completed typed projection.
-    // Binary search only the contiguous complete SourceParent prefix using
-    // the original existing 13-kind relational coverage checker. Every
-    // prefix predicate is monotone: a missing typed root stays missing.
-    typedPrefix:=0
+    // The original 13-kind relational coverage checker proves only an
+    // existing contiguous prefix, independent of the private P6 buffers.
     shadow:=privateProjectionTx{Tx:tx}
-    low,high:=0,sourcePrefix
-    for low<high{
-        mid:=low+(high-low+1)/2
+    typedPrefix,err:=c1FindReadOnlyTypedPrefix(sourcePrefix,func(mid int)error{
         originals:=make([]PreparedBatch,mid)
         for i:=0;i<mid;i++{originals[i].BatchID=evidence[i].BatchID}
-        coverageErr:=verifyBacklogWindowProjectionCoverage(ctx,shadow,generationID,originals)
-        if coverageErr==nil{low=mid;continue}
-        if !errors.Is(coverageErr,ErrSourceRecordRejected){
-            return report,fmt.Errorf("C1 recovery: private typed projection read-only proof: %w",coverageErr)
-        }
-        high=mid-1
-    }
-    typedPrefix=low
+        return verifyBacklogWindowProjectionCoverage(ctx,shadow,generationID,originals)
+    })
+    if err!=nil{return report,err}
     if err=tx.Commit(ctx);err!=nil{return report,err}
     report=C1RecoveryAuditReport{
         SourceID:plan.SourceID,GenerationID:plan.GenerationID,

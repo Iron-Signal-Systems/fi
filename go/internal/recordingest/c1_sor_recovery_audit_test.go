@@ -2,7 +2,7 @@
 
 package recordingest
 
-import "testing"
+import ("testing";"errors")
 
 func TestC1RecoverySourcePrefixClassification(t *testing.T){
     original:=[]C1RecoveryBatchEvidence{
@@ -54,5 +54,35 @@ func TestC1RecoveryRejectsNoncontiguousPartialCommit(t *testing.T){
                 t.Fatal("unsafe or inconsistent recovery evidence accepted")
             }
         })
+    }
+}
+
+func TestC1RecoveryTypedPrefixRequiresAllCommittedRoots(t *testing.T){
+    for _,tc:=range []struct{name string;complete,expected int}{
+        {"none",0,0},{"all",8,8},{"first-two",8,2},{"only-one",5,1},
+    }{
+        t.Run(tc.name,func(t *testing.T){
+            seen:=0
+            n,err:=c1FindReadOnlyTypedPrefix(tc.complete,func(prefix int)error{
+                seen++
+                if prefix>tc.expected{return ErrSourceRecordRejected}
+                return nil
+            })
+            if err!=nil||n!=tc.expected{
+                t.Fatalf("source/typed prefix mismatch got=%d want=%d err=%v",n,tc.expected,err)
+            }
+            if seen>5{
+                t.Fatalf("C1 recovery used too many read-only group checks: %d",seen)
+            }
+        })
+    }
+}
+func TestC1RecoveryTypedPrefixRefusesUnexpectedSQLFailure(t *testing.T){
+    _,err:=c1FindReadOnlyTypedPrefix(4,func(int)error{
+        return errors.New("PostgreSQL permission denied")
+    })
+    if err==nil{t.Fatal("SQL fault incorrectly classified as missing typed root")}
+    if _,err=c1FindReadOnlyTypedPrefix(3,nil);err==nil{
+        t.Fatal("nil PostgreSQL coverage verifier accepted")
     }
 }
