@@ -18,7 +18,6 @@ import (
     "os"
     "path/filepath"
     "strings"
-    "syscall"
 )
 
 const MaxSharedRAMObjectBytes = 128 << 20
@@ -75,7 +74,7 @@ func(s *RAMStore)Put(payload []byte,rows int)(SharedRAMRef,error){
     ref.SHA256=sha256.Sum256(payload)
     part:=filepath.Join(s.root,ref.Name+".part")
     final:=filepath.Join(s.root,ref.Name)
-    f,err:=os.OpenFile(part,os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW,0600)
+    f,err:=openC1RAMExclusive(part)
     if err!=nil{return SharedRAMRef{},err}
     defer os.Remove(part)
     if _,err=f.Write(payload);err!=nil{f.Close();return SharedRAMRef{},err}
@@ -92,7 +91,7 @@ func(s *RAMStore)Get(ref SharedRAMRef)([]byte,error){
     if s==nil||s.root==""{return nil,errors.New("C1 RAM: reader not configured")}
     if err:=ref.Validate();err!=nil{return nil,err}
     path:=filepath.Join(s.root,ref.Name)
-    f,err:=os.OpenFile(path,os.O_RDONLY|syscall.O_NOFOLLOW,0)
+    f,err:=openC1RAMReadOnly(path)
     if err!=nil{return nil,err}
     defer f.Close()
     info,err:=f.Stat()
