@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=96dd43076570a406dfcaa8efc363bfeef487b60d
+sourcecommit=4595b6c024ac29b2261be089b035bf05cd5ad481
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -1141,6 +1141,13 @@ usn_async_commits=$(awk '{
   fail 'C1 asynchronous USN commit count differs from real Family Processing SQL handoffs'
 echo "FI C1 ASYNC USN COMMIT ACCOUNTING PASS handoffs=$usn_async_commits ordered=true file_fences=true bounded=true"
 
+grep '^FI C1 SOURCE PARENT STAGES ' "$log" > "$out/$name/C1_SOURCE_PARENT_STAGES.txt" ||
+  fail 'C1 serial SourceParent COPY/commit breakdown was not recorded'
+[ "$(wc -l < "$out/$name/C1_SOURCE_PARENT_STAGES.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Fq 'single_connection=true no_schema_change=true' "$out/$name/C1_SOURCE_PARENT_STAGES.txt" &&
+grep -Eq 'copy=[0-9]' "$out/$name/C1_SOURCE_PARENT_STAGES.txt" &&
+grep -Eq 'commit=[0-9]' "$out/$name/C1_SOURCE_PARENT_STAGES.txt" ||
+  fail 'C1 ordered SourceParent stage breakdown incomplete'
 grep '^FI C1 SQL PROFILE ' "$log" > "$out/$name/C1_SQL_PROFILE.txt" ||
   fail 'C1 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/C1_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
@@ -1202,7 +1209,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SETUP.txt" "$name/C1_INGEST_START.txt" \
   "$name/C1_IDLE_TIMER.txt" "$name/C1_IDLE_FLUSH.txt" \
-  "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
+  "$name/C1_SQL_PROFILE.txt" "$name/C1_SOURCE_PARENT_STAGES.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/C1_USN_ASYNC_START.txt" "$name/C1_USN_ASYNC_COMPLETE.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
