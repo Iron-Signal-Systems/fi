@@ -15,6 +15,8 @@ on:
       - 'go/cmd/fi-c1-host-preflight/**'
       - 'go/cmd/fi-c1-private-schema/**'
       - 'go/internal/freebsd/backendinstall/c1_private_projection_migration_sources.go'
+      - 'go/internal/freebsd/backendinstall/c1_ram_mount_size.go'
+      - 'go/internal/freebsd/backendinstall/c1_ram_mount_size_test.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_fstab_audit.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_fstab_audit_test.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_plan.go'
@@ -62,6 +64,8 @@ jobs:
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-ingest-worker ./cmd/fi-c1-ingest-worker
       - name: Cross-compile fi-sor native C1 SQL worker for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-worker ./cmd/fi-c1-sor-worker
+      - name: Test mounted tmpfs actual block limit
+        run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMFilesystemStatfsLimit' -count=1
       - name: Test C1 mount fstab collision rejection (no mutations)
         run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMFSTAB' -count=1
       - name: Test C1 volatile host tmpfs and RO fi-sor nullfs mount plan

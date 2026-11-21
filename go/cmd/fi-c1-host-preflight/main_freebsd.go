@@ -18,6 +18,8 @@ import (
     "path/filepath"
     "strings"
     "syscall"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
 )
 
 const mntReadOnly uint64=0x00000001 // FreeBSD sys/mount.h MNT_RDONLY
@@ -101,6 +103,14 @@ func run()error{
     // Require actual mountpoints, not arbitrary descendants of a mount:
     // otherwise a normal ZFS folder could look like a RAM transport.
     if err=verifyMount(hostPath,"tmpfs","",false);err!=nil{return err}
+    // Reject a default/unbounded tmpfs: C1 credits limit completed objects
+    // to 2 GiB, while the actual host tmpfs must be 2..4 GiB including
+    // temporary .part writes and metadata. Never use a ZFS-backed path.
+    var ramStat syscall.Statfs_t
+    if err=syscall.Statfs(hostPath,&ramStat);err!=nil{return err}
+    if err=backendinstall.ValidateC1RAMFilesystemSize(ramStat.Blocks,ramStat.Bsize);err!=nil{
+        return fmt.Errorf("C1 host: unsafe tmpfs byte ceiling: %w",err)
+    }
     if err=verifyMount(ingestPath,"nullfs",hostPath,false);err!=nil{return err}
     if err=verifyMount(sorPath,"nullfs",hostPath,true);err!=nil{return err}
     originalPath,err:=canonicalDirectory(*originalHost)
