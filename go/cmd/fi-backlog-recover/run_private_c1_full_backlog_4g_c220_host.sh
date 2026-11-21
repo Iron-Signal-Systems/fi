@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=656f31929327b98eb2c35bec1d780d66e9593f95
+sourcecommit=e2839176f11413c1f9dcd31186756a60e48f9563
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -446,6 +446,17 @@ for item in private_c1_five_sql.go private_c1_direct.go private_c1_direct_test.g
   git -C "$expected" show "$sourcecommit:go/cmd/fi-backlog-recover/testdata/c1/$item" \
     > "$src/go/internal/recordingest/$item" || exit 1
 done
+# C1's persistent P5 pool is 2..32. Historical P4 2..16 test fixtures
+# are retained, but C1's own two signed-stream regression tests must use 32.
+for test in private_c1_direct_test.go private_c1_continuous_signed_stream_test.go; do
+  if grep -Fq 'FI_W512_P3_DYNAMIC_MAX","16"' "$src/go/internal/recordingest/$test"; then
+    echo "FI C1 STOP: stale P5 max=16 configuration in $test" >&2
+    exit 1
+  fi
+  grep -Fq 'FI_W512_P3_DYNAMIC_MAX","32"' "$src/go/internal/recordingest/$test" ||
+    { echo "FI C1 STOP: expected P5 max=32 missing from $test" >&2; exit 1; }
+done
+echo 'FI C1 P5 TEST CONTRACT PASS continuous=true direct=true adaptive_worker_max=32'
 mkdir -p "$src/go/cmd/fi-c1-verifier" || exit 1
 [ ! -e "$src/go/cmd/fi-c1-verifier/main.go" ] || exit 1
 git -C "$expected" show "$sourcecommit:go/cmd/fi-c1-verifier/main.go" \
