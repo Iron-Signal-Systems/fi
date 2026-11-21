@@ -198,13 +198,13 @@ func TestPrivateC1AdaptiveSQLWorkersMaxValidation(t *testing.T){
     if n,e:=privateC1SQLWorkersMax();e!=nil||n!=5{
         t.Fatalf("expected default 5, got %d %v",n,e)
     }
-    for _,n:=range []int{1,2,5,8,12,16}{
+    for _,n:=range []int{1,2,5,8,12,16,24,31,32}{
         t.Setenv("FI_W512_C1_SQL_WORKERS_MAX",fmt.Sprint(n))
         if got,e:=privateC1SQLWorkersMax();e!=nil||got!=n{
             t.Fatalf("requested %d shared workers, got %d %v",n,got,e)
         }
     }
-    for _,s:=range []string{"0","17","-1","bogus","1.5"," 5","0000"}{
+    for _,s:=range []string{"0","33","64","-1","bogus","1.5"," 5","0000"}{
         t.Setenv("FI_W512_C1_SQL_WORKERS_MAX",s)
         if _,e:=privateC1SQLWorkersMax();e==nil{
             t.Fatalf("accepted invalid shared SQL worker maximum %q",s)
@@ -244,7 +244,7 @@ func privateC1TestKind(f privateP6Family)string{
     }
 }
 func TestPrivateC1SharedSQLFamilyBoundFollowsMax(t *testing.T){
-    for _,n:=range []int{1,4,5,8,12,16}{
+    for _,n:=range []int{1,4,5,8,12,16,24,32}{
         w:=&privateC1FiveSQL{maxWorkers:n}
         want:=n
         if want<4{want=4}
@@ -260,13 +260,13 @@ func TestPrivateC1USNRequiresPreviousCommittedSQLACK(t *testing.T){
     parent:=&privateC1SourceAck{done:make(chan struct{})}
     close(parent.done)
     w:=&privateC1FiveSQL{ctx:context.Background(),sourceLast:parent,
-        maxWorkers:16,workerCount:16,jobs:make(chan privateC1SQLJob,8)}
+        maxWorkers:32,workerCount:32,jobs:make(chan privateC1SQLJob,8)}
     w.lanes[privateP6USN]=&privateC1SQLLane{family:privateP6USN}
     w.lanes[privateP6Security]=&privateC1SQLLane{family:privateP6Security}
     if got:=w.familyHandoffLimit(privateP6USN);got!=1 {
         t.Fatalf("C1 USN SQL limit=%d, must be one committed handoff",got)
     }
-    if got:=w.familyHandoffLimit(privateP6Security);got!=16 {
+    if got:=w.familyHandoffLimit(privateP6Security);got!=32 {
         t.Fatalf("C1 must not throttle unrelated Security SQL: %d",got)
     }
     first:=privateP6Fixture(1,1,"USNReadBoundary")
