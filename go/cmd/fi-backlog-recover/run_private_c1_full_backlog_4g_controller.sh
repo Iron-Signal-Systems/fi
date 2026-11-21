@@ -222,8 +222,9 @@ cat "$runroot/C1_ASYNC_VERIFY.txt"
 cat "$runroot/C1_SQL_DRAIN.txt"
 cat "$runroot/C1_CONTINUOUS_FAMILIES.txt"
 cat "$runroot/C1_POOL.txt"
-elapsed=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
-[ -n "$elapsed" ] || fail 'C1 full-backlog duration missing'
+wall_duration=$(sed -n 's/.* duration=\([^ ]*\).*/\1/p' "$runroot/RESULT.txt")
+elapsed=$(sed -n 's/^FI C1 P6 SQL DRAIN elapsed=\([^ ]*\) .*/\1/p' "$runroot/C1_SQL_DRAIN.txt")
+[ -n "$elapsed" ] || fail 'C1 ingestion SQL drain duration missing'
 seconds=$(awk -v t="$elapsed" 'BEGIN {
   h=0;m=0
   if(index(t,"h")){n=split(t,a,"h");if(n!=2)exit 1;h=a[1]+0;t=a[2]}
@@ -260,13 +261,15 @@ else
   [ "$lastbatch" = "$signed_batches" ] && [ "$groups" -gt 2 ] ||
     fail 'complete signed generation missing'
 fi
+# Only P5/P6 committed ingest seconds are the divisor. B verification
+# and operating-system cleanup belong to separate, non-throughput clocks.
 rate=$(awk -v t="$seconds" -v r="$records" 'BEGIN{if(t<=0||r<=0)exit 1;printf "%.2f",r/t}') ||
   fail 'C1 reported invalid throughput'
 if [ "$mode" = prefix8 ];then
-  printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 elapsed_seconds=%s records_per_second=%s full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
+  printf 'FI C1 ASYNC 8G PREFIX THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=2 ingest_seconds=%s records_per_second=%s verification_excluded=true full_generation=false\n' "$records" "$bytes" "$seconds" "$rate"
   printf 'FI C1 COMMIT-READY 8G PREFIX TEST PASS groups=2 records=%s source_bytes=%s receiver_custody_sha=true one_shot_relational_proofs=true verifier_timing_independent=true original_relational_rescans=removed all_sql_acked=true authoritative=0 accepted=0 published=0 telemetry=complete output=%s\n' "$records" "$bytes" "$runroot"
 else
-  printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s elapsed_seconds=%s records_per_second=%s shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
+  printf 'FI C1 FULL BACKLOG THROUGHPUT records=%s source_bytes=%s group_gib=4 groups=%s ingest_seconds=%s records_per_second=%s verification_excluded=true shared_sql_workers_max=%s last_batch=%s\n' "$records" "$bytes" "$groups" "$seconds" "$rate" "$sqlmax" "$lastbatch"
   printf 'FI C1 ASYNC RELATIONAL VERIFIER CANDIDATE max_wal_size=8GB wal_buffers=16MB comparator=continuous_p5_previous_run read_only=true final_marker_unchanged=true proof=clone_only\n'
   printf 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=%s records=%s source_bytes=%s last_batch=%s signed_batches=%s shared_sql_workers_max=%s source_parent_writers=1 seed_unchanged=true clean_start=true typed_full=true artifact_source_markers=seed_only private_clone_only=true authoritative=0 published=0 output=%s\n' "$groups" "$records" "$bytes" "$lastbatch" "$signed_batches" "$sqlmax" "$runroot"
 fi
