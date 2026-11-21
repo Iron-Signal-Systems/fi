@@ -312,6 +312,9 @@ jobs:
           sh -n ./cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_controller.sh
           sh -n ./cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_direct.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_process_verify.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_process_verify_test.go >/dev/null
+          gofmt -e ./cmd/fi-c1-verifier/main.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_full_backlog.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_full_backlog_test.go >/dev/null
           python3 - <<'PY'
@@ -322,9 +325,25 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=6ecee24c98bba5c5876850ccce08be81e46b066e' in controller
-          assert 'runnerpin=e922b9d52f1152a0f1776030261975457845e4b9' in controller
-          assert 'sourcecommit=6ecee24c98bba5c5876850ccce08be81e46b066e' in runner
+          assert 'sourcepin=b5e42c3c7697cef972a35f0b09239d96be358bbb' in controller
+          assert 'runnerpin=3fcf6a308a6b0a2e61279eb740af2aa2785df82b' in controller
+          assert 'sourcecommit=b5e42c3c7697cef972a35f0b09239d96be358bbb' in runner
+          process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
+          process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
+          reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
+          family=(root/'testdata/c1/private_c1_family_buffers.go').read_text()
+          child=Path('cmd/fi-c1-verifier/main.go').read_text()
+          assert 'privateC1StartProcessVerify(ctx,dsn,pgdata' in source
+          assert 'RunPrivateC1VerifyChild' in process and child
+          assert 'os/exec' in process and 'cmd.Start()' in process
+          assert 'SET default_transaction_read_only = on' in process
+          assert 'privateC1VerifyProcessCommands' in process
+          assert 'TestPrivateC1BProcessProtocolFailsClosed' in process_tests
+          assert 'fi-c1-verifier.c220' in runner
+          assert 'FI_C1_DEV_VERIFIER_BIN' in runner
+          assert 'C1 B PID must differ from ingestion A PID' in runner
+          assert 'privateC1SparseMaxBatchLag' not in family
+          assert 's.hasher.Write(' not in reader
           assert 'FI_W512_C1_FULL_BACKLOG=1' in runner
           assert 'FI_W512_C1_FULL_BACKLOG' in source
           assert 'unset FI_W512_C1_STOP_WINDOWS' in runner
