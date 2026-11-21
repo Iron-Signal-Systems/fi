@@ -1,0 +1,38 @@
+name: FI C1 PostgreSQL 18 native FreeBSD acceptance (disposable VM)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'dev/c1-two-process-20261120'
+    paths:
+      - '.github/workflows/fi-c1-freebsd-postgres-native.yml'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh'
+      - 'go/internal/recordingest/c1_sor_replay_pg_integration_test.go'
+      - 'go/internal/recordingest/c1_private_schema_pg_integration_test.go'
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-freebsd-postgresql-18:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout FI C1 development branch
+        uses: actions/checkout@v4
+      - name: Build and test disposable PG18 recovery/DDL on real FreeBSD 15.1
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '15.1'
+          arch: x86_64
+          mem: 8192
+          sync: rsync
+          prepare: |
+            set -eu
+            env ASSUME_ALWAYS_YES=yes pkg install -y go127 postgresql18-server postgresql18-client
+          run: |
+            set -eu
+            export PATH="/usr/local/go127/bin:$PATH"
+            go version
+            GITHUB_ACTIONS=true sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh
