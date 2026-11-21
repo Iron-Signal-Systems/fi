@@ -11,7 +11,6 @@ package recordingest
 import (
     "bytes"
     "context"
-    "errors"
     "os"
     "strings"
     "testing"
@@ -125,8 +124,11 @@ CREATE TABLE fi_recovery_projection.source_record(
     }
     bad:=original
     bad.prepared.RecordDigest[0]^=1
-    if _,err=c1AuditCommittedRowStates(ctx,mustC1ReadOnlyTx(t,ctx,conn),
-        []privateP6Record{bad});err==nil{
+    auditTx,e:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
+    if e!=nil{t.Fatal(e)}
+    _,badErr:=c1AuditCommittedRowStates(ctx,auditTx,[]privateP6Record{bad})
+    _=auditTx.Rollback(context.Background())
+    if badErr==nil{
         t.Fatal("mutated original signed digest accepted as matching committed row")
     }
     // Check the stored SHA-256 independently, too; a mutated SQL digest
@@ -137,11 +139,3 @@ CREATE TABLE fi_recovery_projection.source_record(
         t.Fatalf("mutated PostgreSQL signed SHA should block replay: %v",err)
     }
 }
-func mustC1ReadOnlyTx(t *testing.T,ctx context.Context,conn *pgx.Conn)pgx.Tx{
-    t.Helper()
-    tx,e:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
-    if e!=nil{t.Fatal(e)}
-    t.Cleanup(func(){_ =tx.Rollback(context.Background())})
-    return tx
-}
-var _=errors.New
