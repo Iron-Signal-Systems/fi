@@ -335,7 +335,7 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
     defer pool.Close()
     var prepTotals privateC1PrepTotals
     fmt.Printf("FI C1 P5 PREP POOL START lanes=5 min=2 max=32 persistent_across_signed_batches=true persistent_across_W512=true\n")
-    started:=time.Now()
+    setupStarted:=time.Now()
     // Resolve the original signed manifest and exact shadow source identity
     // for every batch before opening the single continuous P5 session.
     // These are verified receiver-custody artifacts, NOT new source staging.
@@ -354,6 +354,8 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
             })
         }
     }
+    manifestElapsed:=time.Since(setupStarted)
+    verifierStarted:=time.Now()
     // Process B starts before A's P5/P6 loop, with an independent PID and
     // PostgreSQL session. Only bounded original group metadata and COMMIT-ready
     // receipts cross the one-way pipe; B never controls any P6 buffer.
@@ -363,10 +365,16 @@ WHERE receipt_sha256=$1 AND window_index=$2`,receipt,startWindow-1).Scan(&prevDi
         })
     if e!=nil{return empty,fmt.Errorf("FI C1: async relational verifier startup: %w",e)}
     defer verifier.Stop()
+    verifierElapsed:=time.Since(verifierStarted)
+    fmt.Printf("FI C1 PRE-INGEST SETUP elapsed=%s signed_manifest_lookup=%s verifier_spawn=%s signed_batches=%d excluded_from_ingest_rate=true\n",
+        time.Since(setupStarted),manifestElapsed,verifierElapsed,len(signed))
     // P5 preparation no longer drains and recreates one stream per signed
     // batch. The signed reader still finishes and validates every original
     // batch's original manifest identity, byte count, record count and LF
     // boundary before opening the next; no duplicate SHA-256 over batch data. P6 remains continuous across all reporting windows.
+    fmt.Printf("FI C1 INGEST CLOCK START utc=%s stage=first_P5_signed_record_admission setup_excluded=true verifier_excluded=true\n",
+        time.Now().UTC().Format(time.RFC3339Nano))
+    started:=time.Now()
     groupRows,groupBytes,e:=privateC1ConsumeContinuousSigned(
         ctx,pool,signed,buffers,&prepTotals,len(ds),privateHeaderFirstPrepare,commitReady.Seal)
     if e!=nil{return empty,fmt.Errorf("FI C1: continuous signed P5: %w",e)}
