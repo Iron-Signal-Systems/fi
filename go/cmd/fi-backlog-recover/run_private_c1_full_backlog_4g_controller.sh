@@ -35,7 +35,7 @@ grep -Fq 'FI C1 FULL BACKLOG INTEGRATION PASS group_gib=4 groups=15 records=1464
   fail '8GB/16MB complete signed/relational comparator proof missing'
 repo=/home/jwood/fi-w512-c220-stage
 sourcepin=abd330f1c59906585a30c7682518e8a70dbe7751
-runnerpin=42c192103a0d8ba54854860888f4f0a7fa3905c4
+runnerpin=b0c81795b9dcdc15794fcb033610c23609514edc
 runnerpath=go/cmd/fi-backlog-recover/run_private_c1_full_backlog_4g_c220_host.sh
 jexec -U jwood fi-dev git -C "$repo" cat-file -e "$sourcepin^{commit}" ||
   fail 'native P6 signed source pin unavailable'
@@ -91,6 +91,8 @@ grep -Fq 'C1_SQL_DRAIN.txt' "$runner" &&
 grep -Fq 'C1_SETUP.txt' "$runner" &&
 grep -Fq 'C1_INGEST_START.txt' "$runner" &&
 grep -Fq 'C1_IDLE_TIMER.txt' "$runner" &&
+grep -Fq 'FI C1 DIPS TELEMETRY PREFLIGHT PASS' "$runner" &&
+grep -Fq 'dip_preflight.jsonl' "$runner" &&
 grep -Fq 'C1_IDLE_FLUSH.txt' "$runner" &&
 grep -Fq 'timeout=30s poll=1s per_family=true' "$runner" &&
 grep -Fq 'C1 read-only B proof incomplete or incorrectly reported' "$runner" &&
