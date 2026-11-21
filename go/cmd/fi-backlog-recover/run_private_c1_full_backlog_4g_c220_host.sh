@@ -78,7 +78,7 @@ private_root="$private_parent/fi-w512-family-clone-p3-$stamp"
 # Use the relay-allowed port proven by the accepted C220 header-first P2 run.
 port=55983
 # Source commit is pinned before this runner was created; never build from moving HEAD.
-sourcecommit=a21b4f4e1583bf48f0aa74a3403d098fe4a2a806
+sourcecommit=96dd43076570a406dfcaa8efc363bfeef487b60d
 jailroot=$(jls -j fi-dev path) || fail 'fi-dev missing'
 devjid=$(jls -j fi-dev jid) || fail 'fi-dev JID missing'
 sorjid=$(jls -j fi-sor jid) || fail 'fi-sor JID missing'
@@ -1145,6 +1145,13 @@ grep '^FI C1 SQL PROFILE ' "$log" > "$out/$name/C1_SQL_PROFILE.txt" ||
   fail 'C1 per-family SQL performance and commit profile missing'
 [ "$(wc -l < "$out/$name/C1_SQL_PROFILE.txt" | tr -d '[:space:]')" = 6 ] ||
   fail 'C1 did not report the source parent and five SQL family lanes'
+grep '^FI C1 SECURITY COPY CALL PROFILE ' "$log" > "$out/$name/C1_SECURITY_COPY_CALLS.txt" ||
+  fail 'C1 Security COPY per-call latency telemetry missing'
+[ "$(wc -l < "$out/$name/C1_SECURITY_COPY_CALLS.txt" | tr -d '[:space:]')" = 1 ] &&
+grep -Eq 'event_calls=[1-9][0-9]* ' "$out/$name/C1_SECURITY_COPY_CALLS.txt" &&
+grep -Eq 'field_calls=[1-9][0-9]* ' "$out/$name/C1_SECURITY_COPY_CALLS.txt" &&
+grep -Fq 'concurrent_time_sum=true' "$out/$name/C1_SECURITY_COPY_CALLS.txt" ||
+  fail 'C1 Security field COPY call distribution incomplete'
 grep '^FI C1 SHARED SQL POOL ' "$log" > "$out/$name/C1_POOL.txt" ||
   fail 'C1 dynamic SQL worker pool metrics missing'
 [ "$(wc -l < "$out/$name/C1_POOL.txt" | tr -d '[:space:]')" = 1 ] &&
@@ -1195,7 +1202,7 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/C1_FAMILIES.txt" "$name/C1_PLAN.txt" "$name/C1_FULL_PROOF.txt" "$name/C1_COMPLETE.txt" "$name/C1_PREP.txt" "$name/C1_STREAM.txt" "$name/C1_B_SPAWN.txt" "$name/C1_B_PROCESS.txt" "$name/C1_B_GROUPS.txt" "$name/C1_B_FINAL.txt" "$name/C1_COMMIT_READY.txt" "$name/C1_ASYNC_VERIFY.txt" "$name/C1_SQL_DRAIN.txt" "$name/C1_P5_LANES.txt" \
   "$name/C1_SETUP.txt" "$name/C1_INGEST_START.txt" \
   "$name/C1_IDLE_TIMER.txt" "$name/C1_IDLE_FLUSH.txt" \
-  "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" \
+  "$name/C1_SQL_PROFILE.txt" "$name/C1_SECURITY_COPY.txt" "$name/C1_SECURITY_COPY_CALLS.txt" \
   "$name/C1_CONTINUOUS_FAMILIES.txt" "$name/C1_POOL.txt" \
   "$name/C1_USN_ASYNC_START.txt" "$name/C1_USN_ASYNC_COMPLETE.txt" \
   "$name/RESULT.txt" "$name/WINDOWS.txt" \
