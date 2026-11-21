@@ -354,11 +354,12 @@ fi
 relaypid=
 iostatpid=
 vmstatpid=
+dipmonpid=
 cleanup(){
     code=$?
     trap - 0 1 2 15
     report_clear
-    for pid in "$iostatpid" "$vmstatpid" "$relaypid"; do
+    for pid in "$iostatpid" "$vmstatpid" "$dipmonpid" "$relaypid"; do
         [ -n "$pid" ] || continue
         kill -TERM "$pid" 2>/dev/null || :
         wait "$pid" 2>/dev/null || :
@@ -770,10 +771,50 @@ stats(){
     sql 'SELECT row_to_json(x)::text FROM (SELECT * FROM pg_stat_bgwriter) x' > "$out/$name/bgwriter_$phase.jsonl"
 }
 stats before || fail 'pre-run PostgreSQL stats unavailable'
-iostat -x -w 5 > "$out/$name/iostat.txt" 2>&1 &
+# Automatic C1 pause telemetry: UTC-aligned one-second sampling.
+# SELECT-only against disposable clone. No extra batch hashing/SQL handoffs.
+iostat -x -w 1 > "$out/$name/iostat.txt" 2>&1 &
 iostatpid=$!
-vmstat -w 5 > "$out/$name/vmstat.txt" 2>&1 &
+vmstat -w 1 > "$out/$name/vmstat.txt" 2>&1 &
 vmstatpid=$!
+dip_sql=$(cat <<'C1_DIP_SQL'
+SELECT json_build_object(
+ 'utc',to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+ 'activity',coalesce((SELECT json_agg(row_to_json(a)) FROM (
+   SELECT backend_type,state,wait_event_type,wait_event,count(*) AS backends
+   FROM pg_stat_activity
+   WHERE datname=current_database() AND pid<>pg_backend_pid()
+   GROUP BY backend_type,state,wait_event_type,wait_event
+   ORDER BY backend_type,state,wait_event_type,wait_event
+ ) a),'[]'::json),
+ 'wal',(SELECT row_to_json(w) FROM pg_stat_wal w),
+ 'checkpointer',(SELECT row_to_json(c) FROM pg_stat_checkpointer c),
+ 'io',coalesce((SELECT json_agg(row_to_json(i)) FROM pg_stat_io i),'[]'::json)
+)::text
+C1_DIP_SQL
+)
+: > "$out/$name/dip_sample_errors.txt"
+(
+ while :; do
+   utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+   {
+     printf 'UTC %s\n' "$utc"
+     sysctl -n kern.cp_time 2>&1 || :
+     sysctl -n kern.cp_times 2>&1 || :
+   } >> "$out/$name/cpu_ticks_1s.txt"
+   {
+     printf 'UTC %s\n' "$utc"
+     ps -ax -o pid,comm,pcpu,rss,state |
+       awk 'NR==1 || $2 ~ /fi-optfield|postgres|fi-c1-verifier/' || :
+   } >> "$out/$name/processes_1s.txt"
+   if ! sql "$dip_sql" >> "$out/$name/postgres_waits_1s.jsonl" 2>> "$out/$name/dip_sample_errors.txt"; then
+     printf 'UTC %s POSTGRES_SAMPLE_ERROR\n' "$utc" >> "$out/$name/dip_sample_errors.txt"
+   fi
+   sleep 1
+ done
+) > "$out/$name/dip_monitor.stderr" 2>&1 &
+dipmonpid=$!
+echo "FI C1 DIPS TELEMETRY START utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ') period=1s cpu_ticks=true pg_activity_waits=true wal=true checkpointer=true pg_io=true disk=true process=true readonly=true"
 printf "FI FAMILY C1 SIGNED DIRECT START start_index=1 prefix8=$prefix8 group_gib=$group prep_lanes=5 prep_workers=2..32 sql_modules=5 source_ledger=ordered writer=shared_adaptive max_sql_workers=$sqlmax buffers=persistent_across_windows\n" | tee "$out/SUMMARY.txt"
 export FI_W512_C1_P6_DIRECT=1
 export FI_C1_DEV_ASYNC_VERIFY=1
@@ -830,13 +871,19 @@ else
         fail 'C1 signed replay failed before controlled 8GiB prefix proof'
     fi
 fi
-for pid in "$iostatpid" "$vmstatpid"; do
+for pid in "$iostatpid" "$vmstatpid" "$dipmonpid"; do
     kill -TERM "$pid" 2>/dev/null || :
     wait "$pid" 2>/dev/null || :
 done
 iostatpid=
 vmstatpid=
+dipmonpid=
 stats after || fail 'postrun PostgreSQL stats unavailable'
+[ -s "$out/$name/cpu_ticks_1s.txt" ] &&
+[ -s "$out/$name/processes_1s.txt" ] &&
+[ -s "$out/$name/postgres_waits_1s.jsonl" ] ||
+  fail 'one-second CPU/SQL telemetry missing'
+echo "FI C1 DIPS TELEMETRY PASS sample_period=1s CPU=true PostgreSQL_waits=true WAL=true checkpoints=true"
 log="$out/$name/recover.log"
 echo "FI C1 POSTGRES WAL BUFFERS EXPERIMENT PASS max_wal_size=$pg_max_wal wal_buffers=$pg_wal_buffers durability=on checkpoint_stats=before_after clone_only=true"
 if [ "$prefix8" = 1 ];then
@@ -1078,7 +1125,10 @@ tar -C "$out" -czf "$out/fi-c1-full-backlog-4g-$stamp.tar.gz" RUN_MANIFEST.txt S
   "$name/tables_before.jsonl" "$name/tables_after.jsonl" \
   "$name/indexes_before.jsonl" "$name/indexes_after.jsonl" \
   "$name/bgwriter_before.jsonl" "$name/bgwriter_after.jsonl" \
-  "$name/iostat.txt" "$name/vmstat.txt" || fail 'C1 metrics bundle failed'
+  "$name/iostat.txt" "$name/vmstat.txt" \
+  "$name/cpu_ticks_1s.txt" "$name/processes_1s.txt" \
+  "$name/postgres_waits_1s.jsonl" "$name/dip_sample_errors.txt" \
+  "$name/dip_monitor.stderr" || fail 'C1 metrics bundle failed'
 bundle="$out/fi-c1-full-backlog-4g-$stamp.tar.gz"
 [ -s "$bundle" ] || fail 'C1 full-backlog 4GiB metrics bundle missing'
 bundle_sha=$(sha256 -q "$bundle") || fail 'C1 full-backlog 4GiB metrics bundle SHA failed'
