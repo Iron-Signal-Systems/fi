@@ -18,7 +18,7 @@ func privateP5TestMode(t *testing.T){
     t.Helper()
     t.Setenv("FI_W512_P5_PERSISTENT","1")
     t.Setenv("FI_W512_P3_DYNAMIC_MIN","2")
-    t.Setenv("FI_W512_P3_DYNAMIC_MAX","16")
+    t.Setenv("FI_W512_P3_DYNAMIC_MAX","32")
     t.Setenv("FI_W512_P3_SECURITY_WORKERS","")
     t.Setenv("FI_W512_P3_GENERAL_WORKERS","")
 }
@@ -89,7 +89,7 @@ func TestPrivateP5ReuseAllFiveLanesAcrossSignedBatches(t *testing.T){
     }
     if batches!=8||all!=880{t.Fatalf("batch count=%d rows=%d",batches,all)}
     for i:=range pool.lanes {
-        if n:=pool.lanes[i].spawned();n<2||n>16 {
+        if n:=pool.lanes[i].spawned();n<2||n>32 {
             t.Fatalf("family %d spawned workers=%d",i,n)
         }
     }
@@ -153,7 +153,7 @@ func TestPrivateP5CanceledSessionDoesNotPoisonNextBatch(t *testing.T){
 func TestPrivateP5RejectsInvalidWindowConfig(t *testing.T){
     t.Setenv("FI_W512_P5_PERSISTENT","1")
     t.Setenv("FI_W512_P3_DYNAMIC_MIN","2")
-    t.Setenv("FI_W512_P3_DYNAMIC_MAX","16")
+    t.Setenv("FI_W512_P3_DYNAMIC_MAX","32")
     t.Setenv("FI_W512_P3_SECURITY_WORKERS","8")
     t.Setenv("FI_W512_P3_GENERAL_WORKERS","")
     if _,err:=newPrivateP5Pool(context.Background(),1);err==nil {
