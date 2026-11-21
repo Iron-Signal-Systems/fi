@@ -421,6 +421,19 @@ func privateC1BoundedProjectorContext(ctx context.Context)(
     return ctx,hashCopy,aceCopy,usnCopy
 }
 
+// Merge already-captured COPY call distributions after each successful
+// Security SQL module. This is constant-time per handoff and does not
+// instrument COPY's hot row path, SQL, or transaction ordering.
+func privateC1MergeCopyCallLatency(dst *copyCallLatency, src copyCallLatency){
+    if dst==nil||src.Calls==0{return}
+    if dst.Calls==0||src.Min<dst.Min{dst.Min=src.Min}
+    if src.Max>dst.Max{dst.Max=src.Max}
+    dst.Calls+=src.Calls
+    dst.Total+=src.Total
+    dst.AtLeastOneSecond+=src.AtLeastOneSecond
+    dst.AtLeastFiveSeconds+=src.AtLeastFiveSeconds
+}
+
 func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane,conn *pgx.Conn,rows []privateP6Record)error{
     lane.mu.Lock()
     previous:=lane.err
@@ -463,6 +476,10 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
         s.ChildPrepare+=counters.ChildPrepare
         s.ScopeCopy+=counters.ScopeCopy
         s.FieldCopy+=counters.FieldCopy
+        privateC1MergeCopyCallLatency(&s.SourceLatency,counters.SourceLatency)
+        privateC1MergeCopyCallLatency(&s.EventLatency,counters.EventLatency)
+        privateC1MergeCopyCallLatency(&s.ScopeLatency,counters.ScopeLatency)
+        privateC1MergeCopyCallLatency(&s.FieldLatency,counters.FieldLatency)
         lane.mu.Unlock()
     }
     // The same privateProjectionTx rewrites all five family's COPY
@@ -744,6 +761,19 @@ func(w *privateC1FiveSQL) Stats()(int64,int64,[privateP6FamilyCount]int64){
         s.Batches,s.Events,s.Scopes,s.Fields,s.SourceBytes,
         s.SourceCopy,s.EventCopy,s.ScopeCopy,s.FieldCopy,
         s.ChildPrepare,s.IDLookup,s.Prepare)
+    // Call totals are the SUM over concurrent SQL workers, not elapsed
+    // ingestion wall time. A long call includes client encode and PG waits.
+    var avgFieldRows float64
+    if s.FieldLatency.Calls>0{
+        avgFieldRows=float64(s.Fields)/float64(s.FieldLatency.Calls)
+    }
+    fmt.Printf("FI C1 SECURITY COPY CALL PROFILE event_calls=%d event_max=%s event_ge_1s=%d scope_calls=%d scope_max=%s scope_ge_1s=%d field_calls=%d field_rows=%d field_rows_per_call=%.2f field_max_rows=32768 field_max_bytes=8388608 field_call_min=%s field_call_max=%s field_ge_1s=%d field_ge_5s=%d field_total=%s concurrent_time_sum=true\n",
+        s.EventLatency.Calls,s.EventLatency.Max,s.EventLatency.AtLeastOneSecond,
+        s.ScopeLatency.Calls,s.ScopeLatency.Max,s.ScopeLatency.AtLeastOneSecond,
+        s.FieldLatency.Calls,s.Fields,avgFieldRows,s.FieldLatency.Min,
+        s.FieldLatency.Max,s.FieldLatency.AtLeastOneSecond,
+        s.FieldLatency.AtLeastFiveSeconds,s.FieldLatency.Total)
+
     w.mu.Lock()
     fmt.Printf("FI C1 SHARED SQL POOL workers_min=1 workers_max=%d workers_peak=%d workers_current=%d busy=%d scale_ups=%d scale_downs=%d available_connections=%d security_sql_peak=%d jobs_completed=%d\n",
         w.maxWorkers,w.peakWorkers,w.workerCount,w.busyWorkers,
