@@ -6,13 +6,13 @@ umask 077
 fail(){ echo "FI C1 READINESS STOP: $*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] ||
   fail "root on physical c220 required"
-jls -j fi-sor >/dev/null 2>&1 || fail "fi-sor jail unavailable"
+jls -j fi-sor-db >/dev/null 2>&1 || fail "fi-sor jail unavailable"
 sock=/var/db/fi/sor/run
-jexec -U postgres fi-sor pg_isready -h "$sock" -p 5432 >/dev/null ||
+jexec -U postgres fi-sor-db pg_isready -h "$sock" -p 5432 >/dev/null ||
   fail "real PostgreSQL unavailable"
 
 echo "===== C1 TARGET AND PRIVATE STAGING: READ-ONLY ====="
-jexec -U postgres fi-sor psql -X -w -h "$sock" -p 5432 -d fi \
+jexec -U postgres fi-sor-db psql -X -w -h "$sock" -p 5432 -d fi \
   -v ON_ERROR_STOP=1 -A -F '|' <<'SQL'
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='180s';
@@ -55,7 +55,7 @@ COMMIT;
 SQL
 
 echo "===== TELEMETRY FRESHNESS AND DELIVERY: READ-ONLY ====="
-jexec -U postgres fi-sor psql -X -w -h "$sock" -p 5432 -d fi_telemetry \
+jexec -U postgres fi-sor-db psql -X -w -h "$sock" -p 5432 -d fi_telemetry \
   -v ON_ERROR_STOP=1 -A -F '|' <<'SQL'
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='120s';

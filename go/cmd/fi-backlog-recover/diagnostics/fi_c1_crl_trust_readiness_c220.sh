@@ -8,7 +8,7 @@ umask 077
 fail() { echo "FI C1 CRL PREFLIGHT STOP: $*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] ||
   fail "requires root on C220"
-for j in fi-receiver fi-ingest fi-sor;do
+for j in fi-receiver fi-ingest fi-sor-db;do
   jls -j "$j" >/dev/null 2>&1 || fail "required jail not running: $j"
 done
 
