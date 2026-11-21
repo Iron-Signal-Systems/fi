@@ -81,12 +81,19 @@ fi-c1-host-preflight \\
   --host-tmpfs /var/run/fi-c1-handoff \\
   --ingest-root /ACTUAL/fi-ingest-jail-root \\
   --sor-root /ACTUAL/fi-sor-db-jail-root \\
-  --jail-ram-path /var/run/fi-c1-handoff
+  --jail-ram-path /var/run/fi-c1-handoff \\
+  --host-custody-root /ACTUAL/receiver/signed/custody \\
+  --host-recorded-root /ACTUAL/receiver/recorded/receipts \\
+  --sor-custody-path /ACTUAL/readonly/custody/in/sor \\
+  --sor-recorded-path /ACTUAL/readonly/receipts/in/sor
 ```
 
 This is a **read-only check**, not an installer. It proves the actual host
-mount is `tmpfs`, both jail paths are distinct exact `nullfs` mountpoints
-with the same source, fi-ingest is RW and fi-sor is RO. Do not substitute
+mount is `tmpfs`, both jail RAM paths are distinct exact `nullfs`
+mountpoints with the same source, fi-ingest is RW and fi-sor is RO.
+It also proves that fi-sor's original signed receiver custody and
+recorded-receipt paths are two separate **read-only exact nullfs mounts**
+with their own explicitly supplied original host sources. Do not substitute
 example jail-root placeholders or skip the real host check. A separate
 mount-installation and runtime wiring acceptance gate remains.
 

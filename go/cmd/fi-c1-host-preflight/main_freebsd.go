@@ -81,10 +81,16 @@ func run()error{
     ingest:=flags.String("ingest-root","","actual fi-ingest jail root")
     sor:=flags.String("sor-root","","actual fi-sor-db jail root")
     at:=flags.String("jail-ram-path","/var/run/fi-c1-handoff","same in-jail mount path for both services")
+    originalHost:=flags.String("host-custody-root","","real host original signed receiver custody root")
+    receiptHost:=flags.String("host-recorded-root","","real host original signed recorded receipt root")
+    originalJail:=flags.String("sor-custody-path","","read-only original signed custody path visible inside fi-sor jail")
+    receiptJail:=flags.String("sor-recorded-path","","read-only recorded receipt path visible inside fi-sor jail")
     if err:=flags.Parse(os.Args[1:]);err!=nil{return err}
     if flags.NArg()!=0{return errors.New("C1 host: unexpected positional arguments")}
-    if *host==""||*ingest==""||*sor==""{
-        return errors.New("C1 host: host tmpfs and both actual jail roots required")
+    if *host==""||*ingest==""||*sor==""||
+        *originalHost==""||*receiptHost==""||
+        *originalJail==""||*receiptJail==""{
+        return errors.New("C1 host: RAM, both jail roots and both original signed custody RO mappings required")
     }
     hostPath,err:=canonicalDirectory(*host);if err!=nil{return err}
     ingestPath,err:=jailedPath(*ingest,*at);if err!=nil{return err}
@@ -97,8 +103,26 @@ func run()error{
     if err=verifyMount(hostPath,"tmpfs","",false);err!=nil{return err}
     if err=verifyMount(ingestPath,"nullfs",hostPath,false);err!=nil{return err}
     if err=verifyMount(sorPath,"nullfs",hostPath,true);err!=nil{return err}
-    fmt.Printf("FI C1 HOST RAM PREFLIGHT PASS tmpfs=%s producer=%s consumer=%s consumer_readonly=true host_backing=tmpfs durable_ram_handoff=false\n",
-        hostPath,ingestPath,sorPath)
+    originalPath,err:=canonicalDirectory(*originalHost)
+    if err!=nil{return err}
+    receiptPath,err:=canonicalDirectory(*receiptHost)
+    if err!=nil{return err}
+    originalTarget,err:=jailedPath(*sor,*originalJail)
+    if err!=nil{return err}
+    receiptTarget,err:=jailedPath(*sor,*receiptJail)
+    if err!=nil{return err}
+    if originalPath==receiptPath||originalTarget==receiptTarget||
+        originalTarget==sorPath||receiptTarget==sorPath{
+        return errors.New("C1 host: original custody, receipts and volatile RAM must be distinct")
+    }
+    if err=verifyMount(originalTarget,"nullfs",originalPath,true);err!=nil{
+        return fmt.Errorf("C1 host: original receiver custody read-only mount: %w",err)
+    }
+    if err=verifyMount(receiptTarget,"nullfs",receiptPath,true);err!=nil{
+        return fmt.Errorf("C1 host: original recorded receipt read-only mount: %w",err)
+    }
+    fmt.Printf("FI C1 HOST RAM AND SIGNED CUSTODY PREFLIGHT PASS tmpfs=%s producer=%s consumer=%s custody=%s recorded=%s all_consumer_mounts_readonly=true host_ram_backing=tmpfs handoff_durable=false\n",
+        hostPath,ingestPath,sorPath,originalTarget,receiptTarget)
     return nil
 }
 func main(){
