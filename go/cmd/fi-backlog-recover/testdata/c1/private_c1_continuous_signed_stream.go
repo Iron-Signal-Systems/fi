@@ -19,6 +19,7 @@ import (
     "fmt"
     "io"
     "os"
+    "time"
 )
 
 type privateC1StreamBatch struct {
@@ -177,16 +178,55 @@ func privateC1ConsumeContinuousSigned(ctx context.Context,pool *privateP5Pool,
     source,err:=newPrivateC1SignedContinuousReader(batches)
     if err!=nil{return nil,nil,err}
     source.onSealedGroup=onSealedGroup
-    stream,err:=pool.newStream(ctx,bufio.NewReaderSize(source,128<<10),prepare)
-    if err!=nil{_ =source.Close();return nil,nil,err}
-    defer func(){stream.Close();_ =source.Close()}()
+    // The signed input reader may block while waiting for the next prepared
+    // record. Keep Next on ONE goroutine and all family buffers/SQL flushes
+    // on the consumer goroutine, where a 1s tick runs independently of input.
+    consumerCtx,cancelConsumer:=context.WithCancel(ctx)
+    stream,err:=pool.newStream(consumerCtx,bufio.NewReaderSize(source,128<<10),prepare)
+    if err!=nil{cancelConsumer();_ =source.Close();return nil,nil,err}
+    incoming:=make(chan privateParallelLine,1)
+    readerDone:=make(chan struct{})
+    go func(){
+        defer close(incoming)
+        defer close(readerDone)
+        for{
+            line,ok:=stream.Next()
+            if !ok{return}
+            select{
+            case <-consumerCtx.Done():return
+            case incoming<-line:
+            }
+        }
+    }()
+    defer func(){
+        cancelConsumer()
+        stream.Close()
+        <-readerDone
+        _ =source.Close()
+    }()
+    ticker:=time.NewTicker(privateC1FamilyIdlePollInterval)
+    defer ticker.Stop()
+    fmt.Printf("FI C1 FAMILY PROCESSING INACTIVITY TIMER timeout=%s poll=%s per_family=true resets_on=received_record no_input_required=true owner=ordered_consumer no_batch_flush=true no_group_flush=true\n",
+        buffers.idleTimeout,privateC1FamilyIdlePollInterval)
     rows:=make([]int64,windowCount)
     sizes:=make([]int64,windowCount)
     batchCursor:=0
     var localOrdinal,localBytes,globalOrdinal int64
     for{
         if err:=ctx.Err();err!=nil{return nil,nil,err}
-        line,ok:=stream.Next()
+        var line privateParallelLine
+        var ok bool
+        select{
+        case <-ctx.Done():
+            return nil,nil,ctx.Err()
+        case <-ticker.C:
+            if err:=buffers.flushIdleFamilies(ctx,time.Now());err!=nil{
+                return nil,nil,fmt.Errorf("FI C1: 30-second Family Processing inactivity flush: %w",err)
+            }
+            continue
+        case line,ok=<-incoming:
+            if !ok{break}
+        }
         if !ok{break}
         if line.readErr!=nil{return nil,nil,fmt.Errorf("FI C1 continuous: reader: %w",line.readErr)}
         if line.prepareErr!=nil{return nil,nil,fmt.Errorf("FI C1 continuous: preparation: %w",line.prepareErr)}
