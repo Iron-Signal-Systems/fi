@@ -3,6 +3,8 @@ package recordingest
 import (
 	"context"
 	"testing"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 func TestDualSecurityFieldCopyP3Limits(t *testing.T) {
@@ -71,5 +73,42 @@ func TestC1Security8GiBProfileSeparatesCopyFromFieldPartitioning(t *testing.T) {
     }
     if securityScopeCopyRows(candidate,scopeFixture,0)!=nil{
         t.Fatal("zero matched scopes unexpectedly generated a COPY")
+    }
+}
+
+func TestC1Security8GiBFieldCopyChunkBoundedAt65536Rows(t *testing.T){
+    ctx,err:=withFixedSecurityBulkProfile(context.Background(),"P4")
+    if err!=nil{t.Fatal(err)}
+    ctx=withC1SecurityCOPYExperiment(ctx)
+    fields:=make([]records.WindowsSecurityEventField,65537)
+    for i:=range fields{fields[i]=records.WindowsSecurityEventField{Name:"k",Value:"v"}}
+    pending:=[]securityBulkRecord{{
+        sourceRecordID:9001,
+        value:records.WindowsSecurityEventObservation{Fields:fields},
+    }}
+    cursor:=newSecurityFieldCopyCursor(pending)
+    first:=&securityFieldCopyChunk{
+        cursor:cursor,maxRows:securityFieldCopyRowsForContext(ctx),
+        maxBytes:securityFieldCopyBytesForContext(ctx),
+    }
+    for first.Next(){
+        v,e:=first.Values()
+        if e!=nil{t.Fatal(e)}
+        if v[0]!=int64(9001)||v[1]!=first.rows||v[2]!="k"||v[3]!="v"{
+            t.Fatalf("field COPY row %d changed source FK, ordinal or value",first.rows)
+        }
+    }
+    if first.rows!=65536||first.oversized{
+        t.Fatalf("first candidate field COPY should contain exactly 65536 rows: rows=%d oversize=%v",first.rows,first.oversized)
+    }
+    second:=&securityFieldCopyChunk{
+        cursor:cursor,maxRows:securityFieldCopyRowsForContext(ctx),
+        maxBytes:securityFieldCopyBytesForContext(ctx),
+    }
+    if !second.Next(){t.Fatal("candidate dropped final child row")}
+    v,err:=second.Values()
+    if err!=nil{t.Fatal(err)}
+    if v[1]!=65537 || second.rows!=1 || second.Next() || cursor.hasNext(){
+        t.Fatal("candidate child COPY lost/reordered final field or exceeded bound")
     }
 }
