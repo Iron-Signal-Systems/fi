@@ -60,3 +60,54 @@ func TestC1PreparedRAMSecuritySinglePassSurvivesJailBoundary(t *testing.T){
         t.Fatal("exact prepared Security values did not cross RAM transport")
     }
 }
+
+func TestC1PreparedRAMFileAndCoverageCrossJail(t *testing.T){
+    kinds:=[]string{"FileObservation","WindowsSecurityCoverage"}
+    for i,kind:=range kinds{
+        t.Run(kind,func(t *testing.T){
+            raw:=[]byte("{\"version\":\"fi-spool-record/0.1\",\"record_kind\":\""+kind+"\",\"scope_id\":\"root\",\"written_at\":\"2026-11-21T19:00:00Z\",\"payload\":{}}\n")
+            prepared,err:=PrepareSourceRecord(raw);if err!=nil{t.Fatal(err)}
+            date:=time.Date(2026,11,21,19,0,0,0,time.UTC)
+            switch kind{
+            case "FileObservation":
+                prepared.PrivateFamilyP3File=&fileObservationPayload{}
+            case "WindowsSecurityCoverage":
+                prepared.PrivateFamilyP3Coverage=&privateFamilyP3CoverageValue{
+                    value:records.WindowsSecurityCoverageObservation{
+                        ObservedAt:"2026-11-21T19:00:00Z",
+                    },observedAt:date,
+                }
+            }
+            original:=[]privateP6Record{{signedBatchIndex:i,sourceBatchID:60+int64(i),
+                ordinal:5,prepared:prepared}}
+            data,err:=encodeC1PreparedRAMRows(original);if err!=nil{t.Fatal(err)}
+            restored,err:=decodeC1PreparedRAMRows(data);if err!=nil{t.Fatal(err)}
+            if len(restored)!=1||restored[0].prepared.RecordDigest!=prepared.RecordDigest{
+                t.Fatal("original signed File/Coverage record identity lost")
+            }
+            switch kind{
+            case "FileObservation":
+                if restored[0].prepared.PrivateFamilyP3File==nil||
+                    restored[0].prepared.PrivateFamilyP3Coverage!=nil{
+                    t.Fatal("File P5 validated payload not carried across RAM")
+                }
+            case "WindowsSecurityCoverage":
+                got:=restored[0].prepared.PrivateFamilyP3Coverage
+                if got==nil||got.value.ObservedAt!="2026-11-21T19:00:00Z"||
+                    !got.observedAt.Equal(date){
+                    t.Fatal("Coverage P5 validated payload/observation time lost")
+                }
+            }
+        })
+    }
+}
+func TestC1PreparedRAMFileAndCoverageCannotFallBackToReparse(t *testing.T){
+    for _,kind:=range []string{"FileObservation","WindowsSecurityCoverage"}{
+        raw:=[]byte("{\"version\":\"fi-spool-record/0.1\",\"record_kind\":\""+kind+"\",\"scope_id\":\"root\",\"written_at\":\"2026-11-21T19:00:00Z\",\"payload\":{}}\n")
+        prepared,err:=PrepareSourceRecord(raw);if err!=nil{t.Fatal(err)}
+        _,err=encodeC1PreparedRAMRows([]privateP6Record{{
+            signedBatchIndex:0,sourceBatchID:42,ordinal:1,prepared:prepared,
+        }})
+        if err==nil{t.Fatalf("unprepared %s accepted across RAM transport",kind)}
+    }
+}
