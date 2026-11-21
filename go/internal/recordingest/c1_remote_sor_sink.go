@@ -59,18 +59,32 @@ func(s *c1RemoteSoRSink)emit(ctx context.Context,f c1handoff.Frame)error{
         future,err:=pipeline.Submit(ctx,f)
         if err!=nil{return err}
         if f.Shared.Name!=""{
+            // An asynchronous transport that supplies no matching SQL
+            // COMMIT future cannot ever authorize RAM reclamation.
+            // The original signed custody is the only recovery source.
+            if future==nil{
+                return errors.New("C1 RAM: missing SQL COMMIT future; retain uncertain buffer for signed replay")
+            }
             s.sharedCleanups.Add(1)
             go func(ref c1handoff.SharedRAMRef,committed <-chan error){
                 defer s.sharedCleanups.Done()
                 outcome,ok:=<-committed
                 // A missing or rejected ACK is NOT a durable SQL commit.
                 // Keep that volatile buffer until controlled restart/replay.
-                if ok&&outcome==nil{
-                    if e:=s.sharedStore.Remove(ref);e!=nil{
-                        s.sharedMu.Lock()
-                        if s.sharedErr==nil{s.sharedErr=e}
-                        s.sharedMu.Unlock()
+                if !ok || outcome!=nil{
+                    // Never allow a misleading sender.WaitAll success to
+                    // mask one rejected/uncertain SQL buffer. Keep its RAM
+                    // object until an isolated PostgreSQL replay audit.
+                    if !ok{
+                        outcome=errors.New("C1 RAM: SQL COMMIT future closed without an outcome")
                     }
+                    s.sharedMu.Lock()
+                    if s.sharedErr==nil{s.sharedErr=fmt.Errorf("C1 RAM: SQL COMMIT not confirmed for %s: %w",ref.Name,outcome)}
+                    s.sharedMu.Unlock()
+                }else if e:=s.sharedStore.Remove(ref);e!=nil{
+                    s.sharedMu.Lock()
+                    if s.sharedErr==nil{s.sharedErr=fmt.Errorf("C1 RAM: committed handoff %s cleanup failed: %w",ref.Name,e)}
+                    s.sharedMu.Unlock()
                 }
                 <-s.sharedSlots
             }(f.Shared,future)

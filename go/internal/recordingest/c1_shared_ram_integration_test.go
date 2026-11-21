@@ -124,3 +124,57 @@ func TestC1SharedRAMConfiguredSoRRejectsRawInlineFallback(t *testing.T){
     }
     if sink.parent!=0{t.Fatal("forbidden fallback reached PostgreSQL")}
 }
+
+func TestC1SharedRAMFailedSQLACKRetainsBufferAndFailsFinalDrain(t *testing.T){
+    for _,tc:=range []struct{name string;outcome error;send bool}{
+        {name:"SQL rejection",outcome:errors.New("injected PostgreSQL COMMIT failure"),send:true},
+        {name:"missing SQL COMMIT outcome",send:false},
+    }{
+        t.Run(tc.name,func(t *testing.T){
+            store:=c1RAMTestStore(t)
+            sender:=&c1RAMFakeCommitSender{future:make(chan error,1)}
+            sink,err:=newC1RemoteSoRSink(sender,"iss-fs-22a.iss.local",
+                "generation-test",strings.Repeat("b",64))
+            if err!=nil{t.Fatal(err)}
+            sink.next=2
+            if err=sink.EnableSharedRAM(store);err!=nil{t.Fatal(err)}
+            prepared,err:=PrepareSourceRecord(c1SQLTestFrame(c1handoff.Source,1).Rows[0].RawRecord)
+            if err!=nil{t.Fatal(err)}
+            if err=sink.Source(context.Background(),[]privateP6Record{{
+                signedBatchIndex:0,sourceBatchID:55,ordinal:1,prepared:prepared,
+            }});err!=nil{t.Fatal(err)}
+            if len(sender.received)!=1{t.Fatal("missing original RAM SQL handoff")}
+            ref:=sender.received[0].Shared
+            if tc.send{sender.future<-tc.outcome}
+            close(sender.future)
+            if err=sink.WaitAll(context.Background());err==nil||
+                !strings.Contains(err.Error(),"SQL COMMIT"){
+                t.Fatalf("uncertain/failed SQL commit passed final drain: %v",err)
+            }
+            if _,err=store.Get(ref);err!=nil{
+                t.Fatalf("uncertain SQL buffer discarded before signed replay: %v",err)
+            }
+        })
+    }
+}
+type c1RAMNilFutureSender struct {}
+func(c1RAMNilFutureSender)Send(context.Context,c1handoff.Frame)error{return nil}
+func(c1RAMNilFutureSender)Submit(context.Context,c1handoff.Frame)(<-chan error,error){
+    return nil,nil
+}
+func TestC1SharedRAMMissingFutureRejectedWithoutDeletingVolatileObject(t *testing.T){
+    store:=c1RAMTestStore(t)
+    sink,err:=newC1RemoteSoRSink(c1RAMNilFutureSender{},"iss-fs-22a.iss.local",
+        "generation-test",strings.Repeat("b",64))
+    if err!=nil{t.Fatal(err)}
+    sink.next=2
+    if err=sink.EnableSharedRAM(store);err!=nil{t.Fatal(err)}
+    prepared,err:=PrepareSourceRecord(c1SQLTestFrame(c1handoff.Source,1).Rows[0].RawRecord)
+    if err!=nil{t.Fatal(err)}
+    err=sink.Source(context.Background(),[]privateP6Record{{
+        signedBatchIndex:0,sourceBatchID:55,ordinal:1,prepared:prepared,
+    }})
+    if err==nil||!strings.Contains(err.Error(),"missing SQL COMMIT future"){
+        t.Fatalf("missing SQL commit future not blocked: %v",err)
+    }
+}
