@@ -17,13 +17,25 @@ func TestC1PrivateSchemaPlanOnlyExactPrivateMigrations(t *testing.T){
         t.Fatal("native private schemas lost exact five FI DDL source order")
     }
     for _,item:=range plan{
+        // Audit executable SQL, not explanatory "--" migration comments.
+        // The frozen, SHA-pinned source files must retain their comments;
+        // removing a comment must not alter the installer SQL itself.
+        var executable strings.Builder
+        for _,line:=range strings.Split(item.SQL,"\n"){
+            if i:=strings.Index(line,"--");i>=0{
+                line=line[:i]
+            }
+            executable.WriteString(line)
+            executable.WriteByte('\n')
+        }
+        sql:=executable.String()
         if item.SQL==""||
-            strings.Contains(item.SQL,"fi.source_record")||
-            strings.Contains(item.SQL,"CREATE TABLE fi.")||
-            strings.Contains(item.SQL,"DROP INDEX CONCURRENTLY")||
-            strings.Contains(item.SQL,"\nBEGIN;\n")||
-            strings.Contains(item.SQL,"\nCOMMIT;\n"){
-            t.Fatalf("unsafe or non-atomic private SQL migration: %s",item.Name)
+            strings.Contains(sql,"fi.source_record")||
+            strings.Contains(sql,"CREATE TABLE fi.")||
+            strings.Contains(sql,"DROP INDEX CONCURRENTLY")||
+            strings.Contains(sql,"\nBEGIN;\n")||
+            strings.Contains(sql,"\nCOMMIT;\n"){
+            t.Fatalf("unsafe or non-atomic executable private SQL migration: %s",item.Name)
         }
     }
     if !strings.Contains(plan[0].SQL,
