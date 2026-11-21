@@ -317,6 +317,11 @@ jobs:
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_five_sql.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_family_buffers.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_direct_test.go >/dev/null
+          gofmt -e ./cmd/fi-backlog-recover/testdata/family-p6/private_p6_sql_security.go >/dev/null
+          gofmt -e ./internal/recordingest/security_bulk_profiles.go >/dev/null
+          gofmt -e ./internal/recordingest/security_bulk.go >/dev/null
+          gofmt -e ./internal/recordingest/security_field_profile_dual.go >/dev/null
+          gofmt -e ./internal/recordingest/security_field_profile_dual_test.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_backpressure_test.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_process_verify.go >/dev/null
           gofmt -e ./cmd/fi-backlog-recover/testdata/c1/private_c1_process_verify_test.go >/dev/null
@@ -331,9 +336,9 @@ jobs:
           source=(root/'testdata/c1/private_c1_direct.go').read_text()
           proof=(root/'testdata/c1/private_c1_full_backlog.go').read_text()
           test=(root/'testdata/c1/private_c1_full_backlog_test.go').read_text()
-          assert 'sourcepin=96dd43076570a406dfcaa8efc363bfeef487b60d' in controller
-          assert 'runnerpin=7266674b751a3f6e7ce97454af8738fd19ffbe66' in controller
-          assert 'sourcecommit=96dd43076570a406dfcaa8efc363bfeef487b60d' in runner
+          assert 'sourcepin=91c83d41124b9cd1164affd2afa7b9c23abd359b' in controller
+          assert 'runnerpin=4ea08a83c591226b6a6fb2376266640b14347087' in controller
+          assert 'sourcecommit=91c83d41124b9cd1164affd2afa7b9c23abd359b' in runner
           process=(root/'testdata/c1/private_c1_process_verify.go').read_text()
           process_tests=(root/'testdata/c1/private_c1_process_verify_test.go').read_text()
           reader=(root/'testdata/c1/private_c1_continuous_signed_stream.go').read_text()
@@ -407,6 +412,30 @@ jobs:
           assert 'FI C1 SECURITY COPY CALL PROFILE' in sql
           assert 'field_rows_per_call=' in sql
           assert 'field_ge_1s=' in sql
+          assert 'TestPrivateC1Security8GiBBufferProfileFailClosedAndBounded' in (root/'testdata/c1/private_c1_direct_test.go').read_text()
+          assert 'privateC1Security8GiBExperiment()' in family
+          assert 'rows:8192,bytes:32<<20' in family
+          assert 'FI_C1_DEV_PREFIX8' in family
+          assert 'FI C1 SECURITY 8G PROFILE mode=' in source
+          assert 'C1_SECURITY_8G_PROFILE.txt' in runner and controller
+          assert 'FI C1 SECURITY 8G SELECTION PASS' in runner
+          assert 'FI C1 SECURITY 8G A/B RESULT' in controller
+          assert 'if [ "$security8" = 1 ]' in runner
+          assert 'fail \'Security 8192/32MiB, 65536/16MiB, and reusable COPY rows are permitted only in C1 prefix8 mode\'' in controller
+          security_module=(root/'testdata/family-p6/private_p6_sql_security.go').read_text()
+          assert 'profile="P4"' in security_module
+          assert 'withC1SecurityCOPYExperiment(ctx)' in security_module
+          security_profiles=Path('internal/recordingest/security_bulk_profiles.go').read_text()
+          security_copy=Path('internal/recordingest/security_bulk.go').read_text()
+          security_field=Path('internal/recordingest/security_field_profile_dual.go').read_text()
+          security_tests=Path('internal/recordingest/security_field_profile_dual_test.go').read_text()
+          assert 'type securityC1COPYExperimentKey struct{}' in security_profiles
+          assert 'securityC1COPYExperimentEnabled(ctx)' in security_copy
+          assert 'securityC1COPYExperimentEnabled(ctx)' in security_field
+          assert 'return 65536' in security_field and 'return 16 << 20' in security_field
+          assert 'TestC1Security8GiBProfileSeparatesCopyFromFieldPartitioning' in security_tests
+          assert 'TestC1Security8GiBFieldCopyChunkBoundedAt65536Rows' in security_tests
+          assert 'privateSecurityFieldPartitionsEnabled(ctx)' not in security_module
 
           assert 'C1_USN_ASYNC_START.txt' in controller and 'C1_USN_ASYNC_COMPLETE.txt' in controller
           p5=(root/'testdata/family-p3/private_family_persistent_p5.go').read_text()
