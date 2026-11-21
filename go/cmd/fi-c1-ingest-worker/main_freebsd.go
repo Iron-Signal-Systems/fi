@@ -45,6 +45,9 @@ func main(){
     if *source==""||*generation==""||*custody==""||*recorded==""||*ram==""{
         fatal(errors.New("FI C1 ingest: signed source, generation, and both custody roots required"))
     }
+    ramMount,e:=c1handoff.NewRAMStore(*ram)
+    if e!=nil{fatal(e)}
+    if e=c1handoff.RequireFreeBSDRAMMount(ramMount,false);e!=nil{fatal(e)}
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
     defer stop()
     signed,err:=recordingest.LoadRecordedGeneration(recordingest.GenerationLoadConfig{
