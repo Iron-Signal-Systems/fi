@@ -213,7 +213,7 @@ fi_receiver_generation_max_manifest_bytes="1048576"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker-run.sh
-// SHA256: 569c676de0801ee8997e45f447ab6fa4fb15f2640fe42bf3039ae9dd416e8f39
+// SHA256: 49e436925501dc37e97b0a544d27f68feb502a0f2340f62029165d54d2106d06
 const runtimeAssetIngestRunner = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -268,8 +268,8 @@ fi_ingest_worker_workers="${fi_ingest_worker_workers:-1}"
 # C1 shared relational SQL workers can grow from one to this hard limit.
 fi_ingest_worker_sql_workers_max="${fi_ingest_worker_sql_workers_max:-5}"
 case "$fi_ingest_worker_sql_workers_max" in
-    [1-9]|1[0-6]) ;;
-    *) fail "fi_ingest_worker_sql_workers_max must be a decimal integer from 1 to 16" ;;
+    [1-9]|[12][0-9]|3[0-2]) ;;
+    *) fail "fi_ingest_worker_sql_workers_max must be a decimal integer from 1 to 32" ;;
 esac
 
 case "$fi_ingest_worker_workers" in
@@ -492,11 +492,14 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-ingest-worker.rc.conf.template
-// SHA256: 7c0bde8b9b5d454fa9f1dbe8b4ce476006a7b6161a60d4627fed0cf126284fbf
+// SHA256: 90d43436b4d1176fe60d4df5af581139b1ac7203da727ced3e1ba25803cc2350
 const runtimeAssetIngestRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: ingest-worker-runtime-config
 
-fi_ingest_worker_enable="YES"
+# C1 runtime is not wired to the service yet. Do not autostart the
+# pre-C1 ingester against an already-populated authoritative SoR.
+# Enable explicitly only after C1 live integration and acceptance.
+fi_ingest_worker_enable="NO"
 
 # Namespaced ingest requires completed migration and operator approval.
 # The installer must not silently activate this mode.
@@ -506,7 +509,9 @@ fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_
 fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
 fi_ingest_worker_workers="2"
 
-# Maximum adaptive SQL workers within one generation; 1-16 (default 5).
+# C1 shared SQL backend connection ceiling, 1-32 (default 5).
+# Backend execution remains in fi-sor PostgreSQL, not in fi-ingest.
+# This setting alone does not activate C1.
 # Separate from fi_ingest_worker_workers (concurrent source generations).
 fi_ingest_worker_sql_workers_max="5"
 
