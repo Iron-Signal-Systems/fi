@@ -142,8 +142,8 @@ func privateC1StartProcessVerify(ctx context.Context,dsn,pgdata string,
         cmd:cmd,cancel:cancel,stdin:stdin,done:make(chan struct{}),
         drained:make(chan struct{}),start:start,end:end,
     }
-    fmt.Printf("FI C1 B OS PROCESS SPAWN pid=%d groups=%d transport=bounded_stdin read_only=true controls_p6=false original_batch_sha_pass=none\n",
-        cmd.Process.Pid,end-start)
+    fmt.Printf("FI C1 B OS PROCESS SPAWN pid=%d parent_pid=%d groups=%d transport=bounded_stdin read_only=true controls_p6=false original_batch_sha_pass=none\n",
+        cmd.Process.Pid,os.Getpid(),end-start)
     writerDone:=make(chan error,1)
     go func(){
         defer close(writerDone)
