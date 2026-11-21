@@ -339,6 +339,14 @@ awk -F '\t' -v sec="$security_workers" -v each="$general_each" -v total="$family
     fail 'worker summary self-test incorrect counts or zero-work families'
 printf 'FI FAMILY P4 WORKER SUMMARY PREFLIGHT PASS min=2 max=16 slots_per_family=16 max_slots=80 zero_work_families=retained\n'
 printf 'FI C220 FAMILY P4 DYNAMIC PREFLIGHT PASS min_workers=2 max_workers=16 families=5 max_slots=80 credits=32 writer=1 start=1 windows=2 cache=authenticated live_ingest=stopped\n'
+# Preserve pinned historical 16-slot P4 report fixtures above. The C1
+# execution below uses five independently adaptive P5 2..32 pools (160
+# available slots) plus ONE adaptive 1..32 PostgreSQL family SQL pool.
+security_workers=32
+general_workers=128
+general_each=32
+family_workers=160
+printf 'FI C1 FULL ADAPTIVE CAPACITY PREFLIGHT PASS p5_lanes=5 p5_worker_min=2 p5_worker_max=32 p5_max_slots=160 sql_worker_min=1 sql_worker_max=%s ordered_parent=1 shared_sql=true credits=32\n' "$sqlmax"
 if [ "$mode" = preflight ]; then
   echo 'FI C220 W512 P2 PREFLIGHT ONLY: no database started, no source changed'
   exit 0
