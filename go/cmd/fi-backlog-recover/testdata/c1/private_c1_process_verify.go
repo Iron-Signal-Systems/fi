@@ -359,6 +359,12 @@ func privateC1VerifyProcessCommands(ctx context.Context,scanner *bufio.Scanner,
             if !drained||groupsAck||expected!=p.End{
                 return fmt.Errorf("FI C1 B: incomplete or duplicate group proof expected=%d end=%d",expected,p.End)
             }
+            // B must prove that verification actually overlapped the running
+            // ingestion workflow. A fully serialized post-drain validation
+            // is not an acceptable substitute for the C1 verifier scheduler.
+            if p.End-p.Start>1 && during==0 {
+                return errors.New("FI C1 B: no group verified during active ingest; serialized validation is forbidden")
+            }
             groupsAck=true
             fmt.Printf("FI C1 ASYNC VERIFY COMPLETE groups=%d during_ingest=%d after_drain=%d independent_read_only=true committed_ready=true original_relational_rescans=removed final_marker_gate=preserved separate_os_process=true\n",
                 p.End-p.Start,during,p.End-p.Start-during)

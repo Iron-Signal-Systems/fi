@@ -97,6 +97,9 @@ func TestPrivateC1BProcessProtocolFailsClosed(t *testing.T){
         "READY 1\nREADY 2\nGROUPS\nGROUPS\nFINAL\n",
         "READY 1\nREADY 2\nGROUPS\nREADY 1\nFINAL\n",
         "UNTRUSTED 1\n",
+        // Both checks can pass, but a verifier which only starts after
+        // A drains violates C1's concurrent A/B processing contract.
+        "DRAIN\nREADY 1\nREADY 2\nGROUPS\nFINAL\n",
     }
     for i,commands:=range tests{
         t.Run(fmt.Sprintf("invalid-%d",i),func(t *testing.T){
