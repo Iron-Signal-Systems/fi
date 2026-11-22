@@ -225,7 +225,11 @@ by fi-ingest or over the authenticated transport.
 The disposable test also starts the SAME production B parent launcher,
 notification-channel writer, strict PASS response scanner, process-lifetime
 management and final `Finish` barrier, with the test binary substituted
-for the installed worker executable. The test child exits without Go's
+for the installed worker executable. That test revealed a real protocol
+fault: successful original signed-custody verification wrote a human-readable
+diagnostic to stdout, where the parent accepts **only** `PASS n` or
+`FINAL PASS`. The original signed-custody diagnostic now goes to stderr,
+without weakening the parser or changing final proof semantics. The test child exits without Go's
 extra PASS footer, so the real parent parser accepts only exact C1 proof
 protocol messages. The production launcher remains pinned to its own
 `--c1-b-child` executable; the substitute is injectable only from

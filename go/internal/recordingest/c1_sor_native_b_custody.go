@@ -251,7 +251,10 @@ func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
         i!=expectedArtifacts{
         return errors.New("C1 B custody: original signed transfer/receipt/artifact completeness mismatch")
     }
-    fmt.Printf("FI C1 B ORIGINAL SIGNED CUSTODY PASS source=%s generation=%s batches=%d records=%d data_bytes=%d SQL_readonly=true staged_copy=false canonical_publication=false\n",
+    // The production B child uses stdout ONLY for exact PASS n and
+    // FINAL PASS IPC. Even successful diagnostics on stdout would make
+    // its parent fail closed. All human-readable B diagnostics go stderr.
+    fmt.Fprintf(os.Stderr,"FI C1 B ORIGINAL SIGNED CUSTODY PASS source=%s generation=%s batches=%d records=%d data_bytes=%d SQL_readonly=true staged_copy=false canonical_publication=false\n",
         p.Start.SourceID,p.Start.GenerationID,len(p.Batches),originalRows,originalBytes)
     return nil
 }
