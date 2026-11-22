@@ -8,15 +8,34 @@ fail(){ printf 'FI C1 REAL SOR PREFLIGHT STOP: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -un)" = root ] || fail 'run as root on c220'
 [ "$(hostname -s)" = c220 ] || fail 'unexpected host; requires c220'
-jls -j fi-sor-db >/dev/null 2>&1 || fail 'fi-sor jail not running'
+# The observed C220 baseline and later deployment scripts disagree on the
+# database jail name. Select only a single actually running candidate.
+# Never infer SQL custody from a logical FI component label.
+sor_jail=''
+for candidate in fi-sor-db fi-sor; do
+  if jls -j "$candidate" jid >/dev/null 2>&1; then
+    [ -z "$sor_jail" ] ||
+      fail 'both fi-sor-db and fi-sor are running: ambiguous PostgreSQL owner'
+    sor_jail=$candidate
+  fi
+done
+[ -n "$sor_jail" ] || fail 'neither FI SoR PostgreSQL jail is running'
+printf 'C1_SOR_JAIL_SELECTED=%s\\n' "$sor_jail"
 command -v jexec >/dev/null 2>&1 || fail 'missing jexec'
 # C220 PostgreSQL 18 uses a dedicated Unix-domain socket directory.
 pgsocket=/var/db/fi/sor/run
-jexec -U postgres fi-sor-db pg_isready -h "$pgsocket" -p 5432 >/dev/null 2>&1 ||
+jexec -U postgres "$sor_jail" pg_isready -h "$pgsocket" -p 5432 >/dev/null 2>&1 ||
   fail 'fi-sor jail running but PostgreSQL not ready on the configured socket'
 
+# Bind the selected running jail to the documented REAL data directory.
+# A second PostgreSQL instance with a matching socket name must not pass.
+actual_pgdata=$(jexec -U postgres "$sor_jail" psql -X -w -h "$pgsocket" -p 5432 \
+  -d fi -At -v ON_ERROR_STOP=1 -c 'SHOW data_directory') ||
+  fail 'cannot identify actual SoR PostgreSQL data directory'
+[ "$actual_pgdata" = /var/db/fi/sor/postgres ] ||
+  fail "unexpected SoR PostgreSQL data directory: $actual_pgdata"
 echo '===== FI C1 REAL DEVELOPMENT SOR: READ-ONLY POSTGRESQL INVENTORY ====='
-jexec -U postgres fi-sor-db psql -X -w -h "$pgsocket" -p 5432 -v ON_ERROR_STOP=1 -A -F '|' -d fi <<'SQL'
+jexec -U postgres "$sor_jail" psql -X -w -h "$pgsocket" -p 5432 -v ON_ERROR_STOP=1 -A -F '|' -d fi <<'SQL'
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='180s';
 
