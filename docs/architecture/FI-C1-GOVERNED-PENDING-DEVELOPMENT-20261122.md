@@ -48,6 +48,12 @@ canonical recorded_generation + Accepted journal in a fresh read-only
 PostgreSQL transaction before returning `FinalAccepted`. An uncertain SQL
 outcome leaves fi-ingest READY intact and requires read-only reconciliation.
 
+Disposable PostgreSQL 18 tests now also exercise the real pending-to-canonical
+remapper with a **synthetic relational test-only proof callback**, late CHECK
+failure rollback, exactly one Accepted journal transaction, canonical readback,
+and duplicate retry. That proves SQL transaction mechanics only; it does NOT
+replace independent signed-custody verifier B or full two-jail acceptance.
+
 This automatic implementation is **not yet accepted for live deployment**:
 pending retention/cleanup, interrupted-generation recovery, power-loss and
 full two-jail signed-generation acceptance remain incomplete. The optional

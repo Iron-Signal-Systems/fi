@@ -545,6 +545,10 @@ WHERE CASE
     if pendingControls!=0||canonicalAccepted!=0{
         t.Fatal("C1 pending CI fixture left state or canonical Accepted journal")
     }
+    // Validate the REAL one-transaction canonical remapper under a
+    // disposable, populated-shape PostgreSQL18 schema. This is synthetic
+    // relational evidence only, not a substitute for full signed B proof.
+    c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,worker)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
