@@ -92,6 +92,16 @@ func prepareSecurityBulkRecord(ordinal int64, prepared SourceRecord, digest []by
 	}, nil
 }
 
+// The C1 SQL coordinator sets this unexported context key only AFTER the
+// ordered, signed SourceParent SQL transaction has committed. Keep the key
+// in the common source package so the default Security bulk implementation
+// retains its own unchanged parent COPY outside this trusted P6 path.
+type privateP6SourceAlreadyInsertedKey struct{}
+
+func privateP6SourceAlreadyInserted(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(privateP6SourceAlreadyInsertedKey{}) == true
+}
+
 func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pending []securityBulkRecord, profile *ingestStageProfile) error {
 	if len(pending) == 0 {
 		return nil
@@ -105,16 +115,23 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	sourceColumns := []string{"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id", "written_at", "record_bytes", "record_sha256", "ingest_version"}
 	// Preserve production COPY values; reuse rows only in private W128/P3.
 	sourceRows := securitySourceRecordCopyRows(ctx, pending, sourceBatchID)
-	sourceCopyStarted := time.Now()
-	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns, sourceRows)
-	elapsedSourceCopy := time.Since(sourceCopyStarted)
-	profile.SecurityBulk.SourceCopy += elapsedSourceCopy
-	profile.SecurityBulk.SourceLatency.observe(elapsedSourceCopy)
-	if err != nil {
-		return fmt.Errorf("FI Security bulk source COPY: %w", err)
-	}
-	if copied != int64(len(pending)) {
-		return fmt.Errorf("FI Security bulk source COPY count: got %d expected %d", copied, len(pending))
+	// In the C1 native five-family path the ordered SourceParent writer
+	// has already COMMITTED these exact signed (batch,ordinal) identities.
+	// Security must COPY only its event/scope/field children; replaying the
+	// parent here would violate source_record_batch_ordinal_uq. The existing
+	// non-C1 bulk path still performs its original source COPY unchanged.
+	if !privateP6SourceAlreadyInserted(ctx) {
+		sourceCopyStarted := time.Now()
+		copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns, sourceRows)
+		elapsedSourceCopy := time.Since(sourceCopyStarted)
+		profile.SecurityBulk.SourceCopy += elapsedSourceCopy
+		profile.SecurityBulk.SourceLatency.observe(elapsedSourceCopy)
+		if err != nil {
+			return fmt.Errorf("FI Security bulk source COPY: %w", err)
+		}
+		if copied != int64(len(pending)) {
+			return fmt.Errorf("FI Security bulk source COPY count: got %d expected %d", copied, len(pending))
+		}
 	}
 
 	idLookupStarted := time.Now()

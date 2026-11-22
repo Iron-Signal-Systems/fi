@@ -19,11 +19,6 @@ import (
     "github.com/jackc/pgx/v5"
 )
 
-type privateP6SourceAlreadyInsertedKey struct{}
-
-func privateP6SourceAlreadyInserted(ctx context.Context)bool {
-    return ctx!=nil && ctx.Value(privateP6SourceAlreadyInsertedKey{})==true
-}
 func privateP6Selected()bool{
     return os.Getenv("FI_W512_P6_FAMILY_SQL")=="1"
 }

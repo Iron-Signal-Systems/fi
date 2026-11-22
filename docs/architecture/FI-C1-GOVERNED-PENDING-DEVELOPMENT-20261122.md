@@ -316,3 +316,19 @@ authoritative database or revive the deleted private development schemas.
 Do not start C1, install pending DDL, change canonical PostgreSQL or restart
 C220 on the strength of this schema-plan commit. Only tested and reviewed
 application integration can lift that hold.
+
+
+### Signed Security SourceParent ownership (2026-11-22)
+
+The native FreeBSD mixed Security/Coverage/Other fixture exposed a real
+`source_record_batch_ordinal_uq` failure: the ordered C1 SourceParent
+writer had committed the original signed source row, but the common
+Security bulk SQL routine tried to COPY the same parent again. The
+Security P6 coordinator already supplies an explicit internal
+`privateP6SourceAlreadyInsertedKey` only after an ordered parent commit.
+The common Security bulk routine now honors that key by **skipping only
+the duplicate SourceParent COPY**. Its existing source ID lookup and
+forty-column Security event/scope/field SQL remain intact. Without the
+key, the non-C1 Security bulk routine continues its ordinary parent COPY,
+preserving the other ingestion workflows. The signed mixed-family
+FreeBSD/PostgreSQL18 acceptance fixture is the integration regression gate.
