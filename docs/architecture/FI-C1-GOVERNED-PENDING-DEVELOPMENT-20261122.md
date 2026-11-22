@@ -177,7 +177,11 @@ serialized signed plan and isolated fixture receiver trust, opens its own
 `fi_ingest` PostgreSQL session with `default_transaction_read_only=on`,
 independently verifies original recorded receipt and custody bytes,
 all signed manifests/JSONL, SQL SourceParent/typed roots, and complete
-relational coverage. A failed child blocks the test publisher. This is
+relational coverage. Before invoking the successful B child, the native regression also
+mutates a committed Pending SourceParent SHA-256 and requires the
+distinct B process to **reject the changed SQL evidence**, then restores
+only that isolated fixture row and requires a successful independent
+re-verification. A failed child blocks the test publisher. This is
 the real B verification code inside a disposable test child, but the
 test does not yet run the actual `fi-c1-sor-worker --c1-b-child` process
 or its asynchronous group notification protocol.
