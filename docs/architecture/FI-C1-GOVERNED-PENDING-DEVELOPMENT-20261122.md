@@ -130,6 +130,15 @@ uses the installed receiver trust path. This avoids inventing any replacement SQ
 ingestion code. The full B independent OS-process lifecycle is still a
 separate acceptance gate.
 
+The first real signed SourceParent -> PostgreSQL -> independent B test
+exposed an identity mismatch when recorder JSONL timestamps contain
+nanoseconds: PostgreSQL `timestamptz` preserves microseconds. The
+read-only recovery/B identity comparison now normalizes only the SQL
+timestamp to microsecond precision. The original signed JSONL byte count,
+SHA-256 digest, record kind, scope and version remain exact comparisons,
+so changed evidence still fails. Unit tests include real RFC3339Nano
+timestamps, a changed microsecond and modified SHA.
+
 This is **custody-to-Pending-SQL parent/typed and read-only original-data
 proof** coverage, not yet a complete two-jail mTLS/shared-RAM independently
 B-verified Accepted transaction. Pending replay remains explicitly

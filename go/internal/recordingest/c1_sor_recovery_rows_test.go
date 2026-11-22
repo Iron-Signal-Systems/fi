@@ -109,3 +109,38 @@ func TestC1RecoveredHandoffRejectsWrongFamilyAndDuplicate(t *testing.T){
         t.Fatal("duplicate original signed source row accepted")
     }
 }
+
+
+func TestC1SignedNanosecondWrittenAtSurvivesPostgresMicrosecondStorage(t *testing.T) {
+    // This is a real recorder-supported RFC3339Nano timestamp. PostgreSQL
+    // timestamptz stores 6 fractional digits, while the signed JSONL SHA
+    // still binds all 9 original fractional digits.
+    raw:=[]byte("{\"version\":\"fi-spool-record/0.1\",\"record_kind\":\"CollectorIdentity\",\"scope_id\":\"c1-microsecond\",\"written_at\":\"2026-11-22T14:57:12.123456789Z\",\"payload\":{\"name\":\"real-source\"}}\n")
+    prepared,err:=PrepareSourceRecord(raw)
+    if err!=nil{t.Fatal(err)}
+    if prepared.WrittenAtUTC.Nanosecond()!=123456789 {
+        t.Fatalf("original signed nanosecond timestamp changed before SQL: %s",prepared.WrittenAtUTC)
+    }
+    signed:=privateP6Record{sourceBatchID:55,ordinal:1,prepared:prepared}
+    stored:=c1PersistedSourceIdentity{
+        ID:123,Version:prepared.Record.Version,Kind:prepared.Record.RecordKind,
+        Scope:prepared.Record.ScopeID,WrittenAt:prepared.WrittenAtUTC.Truncate(time.Microsecond),
+        Bytes:int64(prepared.RecordBytes),Digest:bytes.Clone(prepared.RecordDigest[:]),
+        TypedRoot:true,
+    }
+    state,err:=c1VerifyPersistedSourceIdentity(signed,stored)
+    if err!=nil||!state.ParentCommitted||!state.TypedRootCommitted {
+        t.Fatalf("C1 falsely rejects original signed nanosecond time at PostgreSQL exact storage precision: %+v %v",state,err)
+    }
+    modifiedTime:=stored
+    modifiedTime.WrittenAt=stored.WrittenAt.Add(time.Microsecond)
+    if _,err=c1VerifyPersistedSourceIdentity(signed,modifiedTime);err==nil{
+        t.Fatal("C1 accepted a real changed PostgreSQL timestamp")
+    }
+    modifiedDigest:=stored
+    modifiedDigest.Digest=bytes.Clone(stored.Digest)
+    modifiedDigest.Digest[0]^=1
+    if _,err=c1VerifyPersistedSourceIdentity(signed,modifiedDigest);err==nil{
+        t.Fatal("C1 accepted a changed original signed JSONL digest")
+    }
+}

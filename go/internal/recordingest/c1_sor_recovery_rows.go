@@ -47,11 +47,16 @@ func c1VerifyPersistedSourceIdentity(want privateP6Record,got c1PersistedSourceI
         if got.TypedRoot{return state,errors.New("C1 recovery: typed root without SourceParent")}
         return state,nil
     }
+    // Original LF-terminated JSONL may encode nanosecond timestamps.
+    // PostgreSQL timestamptz stores microseconds, and the existing FI
+    // projector uses that precision for written_at. Compare exactly at
+    // PostgreSQL's stored precision; retain the FULL raw-record SHA-256
+    // and byte count as the authoritative unrounded signed identity.
     if got.ID<0||got.Version!=want.prepared.Record.Version||
         got.Kind!=want.prepared.Record.RecordKind||
         got.Scope!=want.prepared.Record.ScopeID||
         got.Bytes!=int64(want.prepared.RecordBytes)||
-        !got.WrittenAt.Equal(want.prepared.WrittenAtUTC)||
+        !got.WrittenAt.UTC().Equal(want.prepared.WrittenAtUTC.UTC().Truncate(time.Microsecond))||
         len(got.Digest)!=32||
         !bytes.Equal(got.Digest,want.prepared.RecordDigest[:]){
         return state,errors.New("C1 recovery: existing PostgreSQL source identity CONFLICTS with original signed record")
