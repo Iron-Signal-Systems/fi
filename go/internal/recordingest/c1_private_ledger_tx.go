@@ -22,6 +22,22 @@ import (
 // Accepted journal or canonical SQL table is written.
 func c1StageOriginalPrivateLedgerTx(ctx context.Context,tx pgx.Tx,
     original *PreparedGeneration)([]int64,error){
+    return c1StageOriginalLedgerTx(ctx,tx,original,privateProjectionSchema)
+}
+
+// The governed fi-sor path reuses the exact original signed-generation and
+// source_batch writer, changing ONLY the SQL target. It does not claim B
+// verification or create a canonical Accepted journal entry.
+func c1StageOriginalPendingLedgerTx(ctx context.Context,tx pgx.Tx,
+    original *PreparedGeneration)([]int64,error){
+    return c1StageOriginalLedgerTx(ctx,tx,original,c1GovernedPendingSchema)
+}
+
+func c1StageOriginalLedgerTx(ctx context.Context,tx pgx.Tx,
+    original *PreparedGeneration,schema string)([]int64,error){
+    if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema {
+        return nil,errors.New("C1 bootstrap: unapproved signed ledger SQL destination")
+    }
     if ctx==nil||tx==nil||original==nil||len(original.Batches)==0||
         len(original.ReceiptSHA256)!=64{
         return nil,errors.New("C1 bootstrap: original signed receipt and owning SQL transaction required")
@@ -30,7 +46,7 @@ func c1StageOriginalPrivateLedgerTx(ctx context.Context,tx pgx.Tx,
     if err!=nil||len(digest)!=32{
         return nil,errors.New("C1 bootstrap: invalid original signed receipt digest")
     }
-    shadow:=privateProjectionTx{Tx:tx}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema}
     id,err:=insertRecordedGeneration(ctx,shadow,original)
     if err!=nil{return nil,fmt.Errorf("C1 bootstrap: private signed generation insert: %w",err)}
     profile:=&sourceBatchBulkProfile{}

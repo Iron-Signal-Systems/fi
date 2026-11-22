@@ -76,6 +76,7 @@ func TestC1GovernedPendingControlCannotClaimAcceptance(t *testing.T) {
 		"REVOKE ALL ON fi_c1_pending.ingest_journal FROM fi_ingest",
 		"REVOKE ALL ON fi_c1_pending.generation_control FROM fi_ingest",
 		"GRANT SELECT ON fi_c1_pending.generation_control TO fi_ingest",
+		"GRANT INSERT (source_id, generation_id, receipt_sha256, transfer_sha256,",
 	}
 	for _, fragment := range expected {
 		if !strings.Contains(control, fragment) {

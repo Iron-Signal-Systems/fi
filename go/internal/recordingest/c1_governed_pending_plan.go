@@ -16,8 +16,6 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
 )
 
-const c1GovernedPendingSchema = "fi_c1_pending"
-
 // C1GovernedPendingStatement describes a transaction-owned migration step.
 type C1GovernedPendingStatement struct {
 	Name string
@@ -66,6 +64,11 @@ CREATE UNIQUE INDEX fi_c1_pending_one_unretired_generation
 REVOKE ALL ON fi_c1_pending.ingest_journal FROM fi_ingest;
 REVOKE ALL ON fi_c1_pending.generation_control FROM fi_ingest;
 GRANT SELECT ON fi_c1_pending.generation_control TO fi_ingest;
+-- fi_ingest may admit ONLY an exact signed Pending identity in the SAME
+-- metadata transaction. It cannot insert state, verifier fields or proof.
+GRANT INSERT (source_id, generation_id, receipt_sha256, transfer_sha256,
+              record_count, batch_count)
+    ON fi_c1_pending.generation_control TO fi_ingest;
 `
 
 // C1GovernedPendingPlan constructs an additive, checksum-pinned SQL plan.

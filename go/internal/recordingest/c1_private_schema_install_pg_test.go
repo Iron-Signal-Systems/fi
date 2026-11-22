@@ -417,6 +417,7 @@ WHERE CASE
     }
     var sqlWorkerUsage,sqlWorkerCreate,sqlWorkerSourceRead,sqlWorkerSourceInsert bool
     var sqlWorkerControlRead,sqlWorkerControlWrite,sqlWorkerJournalWrite bool
+    var sqlWorkerControlIdentityInsert,sqlWorkerControlProofInsert bool
     e=admin.QueryRow(ctx,`SELECT
       has_schema_privilege('fi_ingest','fi_c1_pending','USAGE'),
       has_schema_privilege('fi_ingest','fi_c1_pending','CREATE'),
@@ -424,14 +425,18 @@ WHERE CASE
       has_table_privilege('fi_ingest','fi_c1_pending.source_record','INSERT'),
       has_table_privilege('fi_ingest','fi_c1_pending.generation_control','SELECT'),
       has_table_privilege('fi_ingest','fi_c1_pending.generation_control','UPDATE'),
+      has_column_privilege('fi_ingest','fi_c1_pending.generation_control','source_id','INSERT'),
+      has_column_privilege('fi_ingest','fi_c1_pending.generation_control','state','INSERT'),
       has_table_privilege('fi_ingest','fi_c1_pending.ingest_journal','INSERT')`).
       Scan(&sqlWorkerUsage,&sqlWorkerCreate,&sqlWorkerSourceRead,
         &sqlWorkerSourceInsert,&sqlWorkerControlRead,&sqlWorkerControlWrite,
+        &sqlWorkerControlIdentityInsert,&sqlWorkerControlProofInsert,
         &sqlWorkerJournalWrite)
     if e!=nil{t.Fatal(e)}
     if !sqlWorkerUsage||sqlWorkerCreate||!sqlWorkerSourceRead||
         !sqlWorkerSourceInsert||!sqlWorkerControlRead||
-        sqlWorkerControlWrite||sqlWorkerJournalWrite{
+        sqlWorkerControlWrite||!sqlWorkerControlIdentityInsert||
+        sqlWorkerControlProofInsert||sqlWorkerJournalWrite{
         t.Fatal("C1 governed pending worker could create objects, modify verifier, forge journal or could not write source")
     }
     var pendingFKs int64

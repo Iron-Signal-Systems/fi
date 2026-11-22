@@ -43,6 +43,7 @@ func c1InstallGovernedPendingSchemaTx(ctx context.Context, tx pgx.Tx) error {
 		"REVOKE ALL ON fi_c1_pending.ingest_journal FROM fi_ingest",
 		"REVOKE ALL ON fi_c1_pending.generation_control FROM fi_ingest",
 		"GRANT SELECT ON fi_c1_pending.generation_control TO fi_ingest",
+		"GRANT INSERT (source_id, generation_id, receipt_sha256, transfer_sha256, record_count, batch_count) ON fi_c1_pending.generation_control TO fi_ingest",
 	} {
 		if _, err = tx.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("C1 pending: atomic worker grants: %w", err)

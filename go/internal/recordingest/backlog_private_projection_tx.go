@@ -15,6 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// c1GovernedPendingSchema is an exact, compile-time-only SQL destination.
+// No remote frame or runtime environment may supply a schema name.
+const c1GovernedPendingSchema = "fi_c1_pending"
+
 // privateProjectionTx routes only FI's existing SQL statements from a
 // transaction into the shadow copy of the full relational schema. It is an
 // experimental projector boundary for isolated testing, NOT a production
@@ -35,7 +39,7 @@ func (p privateProjectionTx) destinationSchema() (string, error) {
 	if schema == "" {
 		schema = privateProjectionSchema
 	}
-	if schema != privateProjectionSchema && schema != "fi_c1_pending" {
+	if schema != privateProjectionSchema && schema != c1GovernedPendingSchema {
 		return "", errors.New("FI C1: unapproved relational projection schema")
 	}
 	return schema, nil
@@ -126,7 +130,7 @@ func rewritePrivateProjectionStatementTo(sql, targetSchema string) (string, erro
 	if targetSchema == "" {
 		targetSchema = privateProjectionSchema
 	}
-	if targetSchema != privateProjectionSchema && targetSchema != "fi_c1_pending" {
+	if targetSchema != privateProjectionSchema && targetSchema != c1GovernedPendingSchema {
 		return "", errors.New("FI C1: unapproved relational projection schema")
 	}
 	words := strings.Fields(sql)

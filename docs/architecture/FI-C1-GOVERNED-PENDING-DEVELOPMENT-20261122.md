@@ -28,8 +28,13 @@ Control state is `Pending`, `SQLSealed`, `BVerified`,
 `PublicationUncertain`, or `Retired`. None means canonically Accepted.
 The unique index admits only one unresolved generation; an uncertain
 commit fails closed rather than making a new generation eligible.
-The SQL worker role cannot modify verifier state or write a pending
-`ingest_journal`. The canonical journal remains the sole acceptance
+The SoR SQL worker role may INSERT only the six signed-identity columns of
+a Pending generation control record in the same transaction as the original
+signed source metadata. It cannot specify B proof fields or the lifecycle
+state, and cannot UPDATE those fields or write a pending `ingest_journal`.
+The new `StageC1SignedPendingMetadata` primitive enforces original
+immutable signed receipt and exact batch roster before this atomic SQL
+admission; it does not enable service startup or claim final acceptance. The canonical journal remains the sole acceptance
 authority.
 
 This is a **design candidate**, not approval to install a second
@@ -41,10 +46,13 @@ authoritative database or revive the deleted private development schemas.
    existing transaction-scoped DDL helper and disposable PostgreSQL 18 tests
    cover rollback, mirrored FKs, writer ACLs and unresolved-generation fence;
    production preflight and a safe state-transition owner are still missing.
-2. Move the existing C1 signed metadata, SourceParent, five-family pool,
-   independent B verification and crash-prefix readback from discarded
-   development schemas to this pending state. No second SQL ingestion
-   algorithm; keep fi-ingest without PostgreSQL access.
+2. Replace the active C1 Bootstrap/private-stage preflight with the new
+   guarded pending metadata transaction, then move signed SQL-ID readback,
+   SourceParent, the existing five-family pool, independent B and crash-prefix
+   recovery to the same pending namespace. The pending metadata primitive
+   and SQL writer target exist, but are not yet invoked as a complete service.
+   Do not introduce a second SQL ingestion algorithm or PostgreSQL access in
+   fi-ingest.
 3. Rework the existing canonical promotion SQL for exact generation-scoped
    pending tables, **not** global copied staging tables. Lock and independently
    re-verify original immutable custody, hashes, relational completeness,
