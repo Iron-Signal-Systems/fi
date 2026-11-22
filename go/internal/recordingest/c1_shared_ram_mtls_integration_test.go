@@ -108,6 +108,11 @@ func TestC1RealMTLSPipelinePreservesPreparedRAMUntilOwnCommitACK(t *testing.T){
             if f.Kind!=c1handoff.Drain{return errors.New("unexpected C1 synchronous request")}
             return nil
         },
+        // Simulate completed independent B, never canonical publication.
+        FinalProof:func(_ context.Context,f c1handoff.Frame)(c1handoff.FinalStatus,error){
+            if f.Kind!=c1handoff.Drain{return c1handoff.FinalNone,errors.New("wrong proof frame")}
+            return c1handoff.FinalVerified,nil
+        },
         Dispatch:func(ctx context.Context,f c1handoff.Frame)(<-chan error,error){
             if f.Shared.Name==""||len(f.Rows)!=0||f.Shared.Rows!=1{
                 return nil,errors.New("C1 RAM: inline source incorrectly used after P5")
@@ -185,6 +190,9 @@ func TestC1RealMTLSPipelinePreservesPreparedRAMUntilOwnCommitACK(t *testing.T){
         t.Fatalf("confirmed typed SQL COMMIT did not release RAM: %v",err)
     }
     if err=remote.Drain(ctx);err!=nil{t.Fatal(err)}
+    if remote.finalStatus!=c1handoff.FinalVerified{
+        t.Fatal("C1 signed B proof missing or SQL-only ACK incorrectly accepted")
+    }
     select{
     case err=<-serverDone:
         if err!=nil{t.Fatal(err)}
