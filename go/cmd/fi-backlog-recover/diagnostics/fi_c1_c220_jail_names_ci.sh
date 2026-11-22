@@ -170,6 +170,7 @@ for token in \
     'FI_C1_LIVE_MOUNTS_APPROVED' \
     'ONLY_C1_TMPFS_AND_FIVE_SOR_RO_VIEWS' \
     'FI C1 LIVE MOUNT AUDIT COMPLETE read_only=true' \
+    '::text")" = true ]' \
     "to_regnamespace('fi_recovery_projection') IS NULL" \
     'mount -t tmpfs -o' \
     "size=4g,uid=4100,gid=4100,mode=0770,nosuid,noexec" \
