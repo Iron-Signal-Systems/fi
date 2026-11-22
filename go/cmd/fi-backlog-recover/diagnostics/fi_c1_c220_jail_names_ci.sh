@@ -1,20 +1,57 @@
 #!/bin/sh
-# CI-only: verify that C220 C1 read-only diagnostics use the actual
-# installed FreeBSD jail name, not the logical fi-sor component label.
+# CI-only: exercise C220 diagnostic jail selection with mock jls.
+# No C220 access, no PostgreSQL connections, and no filesystem writes.
 set -eu
 root=go/cmd/fi-backlog-recover/diagnostics
+fail(){ echo "FI C1 JAIL SELECTOR CI FAIL: $*" >&2; exit 1; }
 for basename in \
     fi_c1_development_sor_preflight_c220.sh \
     fi_c1_populated_sor_readiness_c220.sh \
     fi_c1_crl_trust_readiness_c220.sh \
-    fi_c1_sor_telemetry_discovery_c220.sh;do
+    fi_c1_sor_telemetry_discovery_c220.sh; do
     file="$root/$basename"
-    sh -n "$file" || exit 1
-    grep -F 'fi-sor-db' "$file" >/dev/null ||
-        { echo "C1 C220 preflight missing real fi-sor-db jail name: $file" >&2; exit 1; }
-    if grep -E '(jls -j fi-sor([[:space:]]|$)|jexec (.* )?fi-sor([[:space:]]|$)|for j in .* fi-sor;)' "$file";then
-        echo "C1 C220 preflight used non-existent fi-sor jail: $file" >&2
-        exit 1
+    sh -n "$file" || fail "shell syntax: $file"
+    grep -F 'for candidate in fi-sor-db fi-sor; do' "$file" >/dev/null ||
+        fail "missing explicit real-jail candidates: $file"
+    grep -F 'jls -j "$candidate" jid' "$file" >/dev/null ||
+        fail "missing actual running jail check: $file"
+    grep -F 'sor_jail=$candidate' "$file" >/dev/null ||
+        fail "missing selected jail binding: $file"
+    grep -F '"$sor_jail"' "$file" >/dev/null ||
+        fail "selected jail never used: $file"
+    if grep -E '^[[:space:]]*jexec[[:space:]]+(-U[[:space:]]+postgres[[:space:]]+)?fi-sor(-db)?[[:space:]]' "$file"; then
+        fail "hardcoded SoR exec bypasses jail resolution: $file"
     fi
+    # Extract and execute the EXACT checked-in candidate-selection block,
+    # not a separate lookalike implementation. Mock jls returns only
+    # requested candidates, so this test is portable to Linux CI.
+    selector=$(sed -n "/^sor_jail=''/,/^done$/p" "$file")
+    [ -n "$selector" ] || fail "missing jail selection logic: $file"
+    (
+        fail(){ exit 79; }
+        jls(){ [ "$1" = -j ] && [ "$2" = fi-sor-db ] && [ "$3" = jid ]; }
+        eval "$selector"
+        [ "$sor_jail" = fi-sor-db ]
+    ) || fail "did not select uniquely running fi-sor-db: $file"
+    (
+        fail(){ exit 79; }
+        jls(){ [ "$1" = -j ] && [ "$2" = fi-sor ] && [ "$3" = jid ]; }
+        eval "$selector"
+        [ "$sor_jail" = fi-sor ]
+    ) || fail "did not select uniquely running fi-sor: $file"
+    if (
+        fail(){ exit 79; }
+        jls(){ [ "$1" = -j ] && [ "$3" = jid ]; }
+        eval "$selector"
+    ); then
+        fail "ambiguous simultaneous SoR jails accepted: $file"
+    fi
+    # Discovery is allowed to inventory an offline SoR. Every gate
+    # requiring PostgreSQL must stop when neither candidate is running.
+    case "$basename" in
+    fi_c1_sor_telemetry_discovery_c220.sh) : ;;
+    *) grep -F '[ -n "$sor_jail" ] || fail' "$file" >/dev/null ||
+        fail "missing fail-closed offline SoR guard: $file" ;;
+    esac
 done
-echo "C1 C220 READ ONLY PREFLIGHT JAIL NAMES PASS real_jail=fi-sor-db"
+echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
