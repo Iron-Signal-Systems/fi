@@ -145,6 +145,20 @@ for token in \
     grep -F -- "$token" "$mount_plan" >/dev/null ||
         fail "C220 RAM mount plan lost fixed real-jail requirement: $token"
 done
+# Independent B must see signed custody, recorded receipt, pinned
+# trust and registry via fi-sor only, never via an ingest tmpfs copy.
+for token in \
+    'host_custody=/work/fi-c220-20261114/custody/generation' \
+    'host_recorded=/work/fi-c220-20261114/custody/recorded' \
+    'host_trust=/work/fi-c220-20261114/config/receiver/pki/trust' \
+    'host_sources=/work/fi-c220-20261114/config/receiver/sources' \
+    '/var/db/fi/custody/generation nullfs ro 0 0' \
+    '/var/db/fi/custody/recorded nullfs ro 0 0' \
+    '/usr/local/etc/fi/pki/trust nullfs ro 0 0' \
+    '/usr/local/etc/fi/sources nullfs ro 0 0'; do
+    grep -F -- "$token" "$mount_plan" >/dev/null ||
+        fail "C220 B original signed custody/trust RO mapping missing: $token"
+done
 if grep -Eq '^[[:space:]]*(mount[[:space:]]+-t|jail[[:space:]]+-r|jail[[:space:]]+-c|sysrc[[:space:]]|service[[:space:]]|pw[[:space:]]|mkdir[[:space:]]|install[[:space:]])' "$mount_plan"; then
     fail 'C220 RAM mount plan must not alter host state'
 fi
