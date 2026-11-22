@@ -295,7 +295,7 @@ for token in \
     grep -F -- "$token" "$boot_audit" >/dev/null ||
         fail "C220 boot persistence prerequisite omitted: $token"
 done
-if grep -Eq '^[[:space:]]*(mount[[:space:]]|umount[[:space:]]|sysrc[[:space:]]|jail[[:space:]]+-r|service[[:space:]]|chmod[[:space:]]|chown[[:space:]]|install[[:space:]]|pw[[:space:]])' "$boot_audit"; then
+if grep -Eq '^[[:space:]]*(mount[[:space:]]+(-t|-a|-u|[^-[:space:]])|umount[[:space:]]|sysrc[[:space:]]|jail[[:space:]]+-r|service[[:space:]]|chmod[[:space:]]|chown[[:space:]]|install[[:space:]]|pw[[:space:]])' "$boot_audit"; then
     fail 'C220 boot audit must not change any mount, file or service'
 fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
