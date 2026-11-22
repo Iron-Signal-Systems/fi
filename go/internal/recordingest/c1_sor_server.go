@@ -77,6 +77,15 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         endpoint:=&c1handoff.Server{
             Bootstrap:service.Bootstrap,Handler:service.Commit,
             Dispatch:service.Dispatch,FinalProof:service.FinalProof,
+            // Status runs before START and never initializes private SQL
+            // staging or any C1 worker. It only reads ORIGINAL receiver
+            // receipt and canonical Accepted transaction on the local SoR.
+            Status:func(ctx context.Context,f c1handoff.Frame)(
+                c1handoff.FinalStatus,error,
+            ){
+                return C1OriginalSignedStatus(ctx,cfg.LocalPostgresDSN,
+                    service.NativeBCustody,f)
+            },
             IOTimeout:5*time.Minute,
         }
         e=endpoint.ServeConn(ctx,conn)
