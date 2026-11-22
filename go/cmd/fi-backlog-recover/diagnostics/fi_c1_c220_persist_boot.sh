@@ -72,6 +72,14 @@ ram_start()
         echo "FI C1: foreign host mount at $p" >&2
         return 1
     fi
+    # A bare underlay directory is NOT proof that work/fast ZFS is mounted.
+    for pool in /fast /work; do
+        /sbin/mount -p | /usr/bin/awk -v p="$pool" \
+          '$2==p&&$3=="zfs"{n++}END{exit !(n==1)}' || {
+            echo "FI C1: required original ZFS pool is not mounted at $pool" >&2
+            return 1
+        }
+    done
     for source in /fast/data/fi/sor/pgdata \
        /work/fi-c220-20261114/custody/generation \
        /work/fi-c220-20261114/custody/recorded \
@@ -105,6 +113,11 @@ ram_stop()
 run_rc_command "$1"
 RC
 }
+# Confirm original work and fast are mounted ZFS filesystems.
+for pool in /fast /work; do
+    mount -p | awk -v p="$pool" '$2==p&&$3=="zfs"{n++}END{exit !(n==1)}' ||
+        die "original ZFS pool not mounted: $pool"
+done
 # Fail before altering anything if live mounts or config changed from
 # the accepted physical 2026-11-22 C220 inventory.
 for jail in fi-receiver fi-ingest fi-sor; do
@@ -141,6 +154,10 @@ for jail in fi-receiver fi-ingest fi-sor; do
     dest=/etc/jail.fstab.d/fi-c1-$jail.fstab
     [ ! -L "$dest" ] || die "symlinked fstab candidate: $dest"
     if [ -e "$dest" ]; then
+       [ "$(stat -f '%u:%g:%Lp' "$dest")" = '0:0:644' ] ||
+          die "fstab target permissions unexpected: $dest"
+    fi
+    if [ -e "$dest" ]; then
        [ -f "$dest" ] && [ "$(cat "$dest")" = "$(mounts "$jail")" ] ||
           die "foreign existing fstab: $dest"
     fi
@@ -167,6 +184,14 @@ for target in /usr/local/etc/rc.d/fi_c1_ram /etc/rc.conf.d/fi_c1_ram; do
     [ ! -L "$target" ] || die "symlinked boot service: $target"
     if [ -e "$target" ]; then
         [ -f "$target" ] || die "foreign target type: $target"
+        case "$target" in
+        */rc.d/*)
+            [ "$(stat -f '%u:%g:%Lp' "$target")" = '0:0:555' ] ||
+                die "host RAM rc ownership/mode unsafe: $target" ;;
+        */rc.conf.d/*)
+            [ "$(stat -f '%u:%g:%Lp' "$target")" = '0:0:644' ] ||
+                die "host RAM rc enablement ownership/mode unsafe: $target" ;;
+        esac
         case "$target" in
         */rc.d/*) [ "$(cat "$target")" = "$(ramrc)" ] || die 'foreign host RAM rc' ;;
         */rc.conf.d/*) [ "$(cat "$target")" = 'fi_c1_ram_enable="YES"' ] ||
