@@ -72,7 +72,7 @@ func TestC1DevelopmentRuntimePassesActualPublisherAuthority(t *testing.T) {
     // canonical PostgreSQL identity. Every generated config+runner must
     // carry the exact CLI argument; never silently reuse fi_ingest.
     for _,fragment:=range []string{
-        "fi_c1_sor_postgres_publisher_local=\\\"\\\"",
+        `fi_c1_sor_postgres_publisher_local=""`,
         "required C1 parameter absent: fi_c1_sor_postgres_publisher_local",
         "-postgres-publisher-local",
     }{
@@ -84,16 +84,16 @@ func TestC1DevelopmentRuntimePassesActualPublisherAuthority(t *testing.T) {
         "postgres_publisher")||strings.Contains(c1IngestRuntimeRunner,"-postgres"){
         t.Fatal("FI C1 fi-ingest runner was given a PostgreSQL publisher")
     }
-    if !strings.Contains(c1SoRRuntimeConfig,"fi_c1_sor_enable=\\\"NO\\\"") {
+        if !strings.Contains(c1SoRRuntimeConfig,`fi_c1_sor_enable="NO"`) {
         t.Fatal("SoR runtime service must remain disabled until accepted")
     }
 }
 
 func TestC1DevelopmentRuntimeSupportsContinuousSignedREADYQueue(t *testing.T){
     expected:=[]string{
-        "fi_c1_ingest_ready_root=\\\"\\\"",
-        "fi_c1_ingest_ready_batch_size=\\\"16\\\"",
-        "fi_c1_ingest_poll_interval=\\\"5s\\\"",
+        `fi_c1_ingest_ready_root=""`,
+        `fi_c1_ingest_ready_batch_size="16"`,
+        `fi_c1_ingest_poll_interval="5s"`,
         "choose generation-id OR continuous signed READY queue, not both",
         "missing original signed generation-id or READY queue root",
         "-ready-root",
@@ -110,7 +110,7 @@ func TestC1DevelopmentRuntimeSupportsContinuousSignedREADYQueue(t *testing.T){
         "READY queue must start at original signed batch zero") {
         t.Fatal("C1 rc may bypass signed START zero on continuous READY queue")
     }
-    if !strings.Contains(c1IngestRuntimeConfig,"fi_c1_ingest_enable=\\\"NO\\\""){
+        if !strings.Contains(c1IngestRuntimeConfig,`fi_c1_ingest_enable="NO"`){
         t.Fatal("continuous receiver queue must be installed disabled")
     }
     if strings.Contains(c1IngestRuntimeRunner,"-postgres-local")||
