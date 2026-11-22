@@ -15,7 +15,6 @@ import (
     "crypto/x509"
     "encoding/json"
     "errors"
-    "fmt"
     "os"
     "path/filepath"
     "strings"

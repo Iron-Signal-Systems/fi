@@ -25,7 +25,11 @@ log="$base/postgresql.log"
 mkdir -m 0700 "$data"
 chown postgres:postgres "$data"
 started=0
+offline_started=0
 cleanup(){
+    if [ "$offline_started" -eq 1 ];then
+        su -m postgres -c "/usr/local/bin/pg_ctl -D '$offline_data' -m immediate -w stop" || :
+    fi
     if [ "$started" -eq 1 ];then
         su -m postgres -c "/usr/local/bin/pg_ctl -D '$data' -m immediate -w stop" || :
     fi
@@ -116,4 +120,34 @@ go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
   fail "real signed C1 PostgreSQL WAL crash recovery, typed replay and exact Accepted"
 unset FI_C1_CI_CRASH_ROOT FI_C1_CI_CRASH_PHASE
 
-echo "FI C1 NATIVE FREEBSD PG18 PASS partial_powerloss_reconciliation=true real_postgresql_immediate_stop=true signed_crash_typed_replay=true accepted_exactly_once=true private_schema_atomic_rollback=true fsync=true synchronous_commit=true full_page_writes=true C220_untouched=true"
+# Dedicated second PostgreSQL18 cluster, not a schema inside the first
+# test cluster. Its FI database starts with just the genuine canonical
+# migration graph; the one-shot C1 governed offline installer must prove
+# full atomic rollback, then installation and a rejected repeated install.
+offline_data="$base/offline-pgdata"
+offline_socket="$base/offline-socket"
+offline_log="$base/offline-postgres.log"
+mkdir -m 0700 "$offline_data" "$offline_socket" ||
+  fail "allocate separate disposable offline governed SQL cluster"
+chown postgres:postgres "$offline_data" "$offline_socket"
+su -m postgres -c "/usr/local/bin/initdb -D '$offline_data' -A trust --locale=C --encoding=UTF8 --no-instructions" ||
+  fail "initialize separate offline governed SQL database"
+su -m postgres -c "/usr/local/bin/pg_ctl -D '$offline_data' -l '$offline_log' -o '-h 127.0.0.1 -k $offline_socket -p 5434 -c fsync=on -c synchronous_commit=on -c full_page_writes=on' -w start" ||
+  { cat "$offline_log" >&2 || :; fail "start separate offline governed SQL PostgreSQL18"; }
+offline_started=1
+psql -X -w -h "$offline_socket" -p 5434 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE fi_c1_schema_test WITH LOGIN SUPERUSER;
+CREATE DATABASE fi OWNER fi_c1_schema_test;
+SQL
+export FI_C1_CI_OFFLINE_INSTALL_APPROVED=ISOLATED_SECOND_PG18_CLUSTER_ONLY
+export FI_C1_CI_OFFLINE_INSTALL_DSN="host=$offline_socket port=5434 dbname=fi user=fi_c1_schema_test sslmode=disable"
+go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
+  -run '^TestC1GovernedPendingOfflineInstallerFreshPostgres18$' \
+  -v ./internal/recordingest ||
+  fail "governed existing-SoR offline Pending and publisher role install, rollback or idempotence"
+unset FI_C1_CI_OFFLINE_INSTALL_APPROVED FI_C1_CI_OFFLINE_INSTALL_DSN
+su -m postgres -c "/usr/local/bin/pg_ctl -D '$offline_data' -m immediate -w stop" ||
+  fail "stop separate offline SQL fixture"
+offline_started=0
+
+echo "FI C1 NATIVE FREEBSD PG18 PASS partial_powerloss_reconciliation=true real_postgresql_immediate_stop=true signed_crash_typed_replay=true accepted_exactly_once=true governed_offline_installer=true governed_atomic_rollback=true private_schema_atomic_rollback=true fsync=true synchronous_commit=true full_page_writes=true C220_untouched=true"
