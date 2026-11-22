@@ -68,9 +68,9 @@ jobs:
         working-directory: .
         run: sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_jail_names_ci.sh
       - name: Test bounded C1 inter-jail protocol
-        run: go test -race ./internal/c1handoff -count=1
-      - name: Repeated authenticated Drain ACK and clean EOF race proof
-        run: go test -race ./internal/c1handoff -run TestC1AuthenticatedFinalProofDistinctFromSQLAck -count=25
+        run: |
+          go test -race ./internal/c1handoff -count=1
+          go test -race ./internal/c1handoff -run TestC1AuthenticatedFinalProofDistinctFromSQLAck -count=25
       - name: Compile C1 ported SoR and independent verifier
         run: go test -race -tags fi_c1_sor_dev ./internal/recordingest -run '^TestC1' -count=1
       - name: Cross-compile C1 fi-ingest service implementation
