@@ -226,7 +226,32 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
             }
             return append([]int64(nil),batchSQLIDs...),nil
         },
-        Dispatch:h.Enqueue,
+        Dispatch:func(ctx context.Context,f c1handoff.Frame)(<-chan error,error){
+            future,err:=h.Enqueue(ctx,f)
+            if err!=nil{
+                t.Logf("C1 disposable signed SQL dispatch failed kind=%d sequence=%d: %v",
+                    f.Kind,f.Sequence,err)
+                return nil,err
+            }
+            if future==nil{
+                return nil,errors.New("C1 signed SQL fixture has no commit future")
+            }
+            // Keep exact protocol behavior while exposing the underlying
+            // PostgreSQL failure in native CI. Network ACKs intentionally
+            // remain generic and must never expose database details.
+            observed:=make(chan error,1)
+            go func(){
+                defer close(observed)
+                result,ok:=<-future
+                if !ok&&result==nil{result=errors.New("signed SQL fixture lost COMMIT completion")}
+                if result!=nil{
+                    t.Logf("C1 disposable signed SQL COMMIT failed kind=%d sequence=%d: %v",
+                        f.Kind,f.Sequence,result)
+                }
+                observed<-result
+            }()
+            return observed,nil
+        },
         Handler:func(ctx context.Context,f c1handoff.Frame)error{
             if f.Kind!=c1handoff.Drain{
                 return errors.New("C1 mTLS unexpected synchronous non-Drain")
