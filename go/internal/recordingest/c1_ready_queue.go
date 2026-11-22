@@ -37,6 +37,7 @@ type c1ReadyReceiptIdentity struct {
 type c1ReadyQueueOps struct {
     list func(string,string,uint64)([]string,error)
     identity func(C1ReadyQueueConfig,string)(c1ReadyReceiptIdentity,error)
+    probe func(context.Context,C1IngestTransport,string,string,string)(bool,error)
     load func(GenerationLoadConfig,string)(*PreparedGeneration,error)
     ingest func(context.Context,*PreparedGeneration,C1IngestTransport)(C1IngestStageResult,error)
     remove func(string,string,[]string)error
@@ -76,6 +77,7 @@ func c1ReadyQueueOpsDefault() c1ReadyQueueOps {
     return c1ReadyQueueOps{
         list:generationready.ReadReceiptNamesForSource,
         identity:c1OriginalReadyReceipt,
+        probe:ProbeC1CanonicalAccepted,
         load:LoadRecordedGeneration,
         ingest:RunC1IngestGeneration,
         remove:generationready.RemoveReceiptNamesForSource,
@@ -118,7 +120,8 @@ func runC1ReadyQueuePass(ctx context.Context,c C1ReadyQueueConfig,
     op c1ReadyQueueOps)(uint64,error){
     if ctx==nil{return 0,errors.New("C1 READY: missing context")}
     if err:=c1ReadyQueueValidConfig(c);err!=nil{return 0,err}
-    if op.list==nil||op.identity==nil||op.load==nil||op.ingest==nil||op.remove==nil{
+    if op.list==nil||op.identity==nil||op.probe==nil||
+        op.load==nil||op.ingest==nil||op.remove==nil{
         return 0,errors.New("C1 READY: complete original receipt and canonical acceptance handlers required")
     }
     markers,err:=op.list(c.ReadyRoot,c.SourceID,c.BatchSize)
@@ -128,6 +131,25 @@ func runC1ReadyQueuePass(ctx context.Context,c C1ReadyQueueConfig,
         if err:=ctx.Err();err!=nil{return accepted,err}
         want,err:=op.identity(c,marker)
         if err!=nil{return accepted,err}
+        // An Accepted transaction may have completed before the previous
+        // process crashed while its READY marker was still present.
+        // Probe via a fresh TLS 1.3 fi-sor connection BEFORE staging up to
+        // 64GiB of signed data or creating any SQL activity.
+        alreadyAccepted,err:=op.probe(ctx,c.Transport,c.SourceID,
+            want.generationID,want.receiptSHA)
+        if err!=nil{
+            return accepted,fmt.Errorf(
+                "C1 READY: canonical readback uncertain; do not retry or retire marker: %w",err)
+        }
+        if alreadyAccepted{
+            if err:=op.remove(c.ReadyRoot,c.SourceID,[]string{marker});err!=nil{
+                return accepted,fmt.Errorf("C1 READY: previously Accepted generation marker retirement uncertain: %w",err)
+            }
+            accepted++
+            fmt.Printf("FI C1 READY RECOVERED ACCEPTED source=%s generation=%s original_receipt=%s no_replay=true original_custody_preserved=true\n",
+                c.SourceID,want.generationID,want.receiptSHA)
+            continue
+        }
         signed,err:=op.load(c.GenerationLoad,want.generationID)
         if err!=nil{return accepted,fmt.Errorf(
             "C1 READY: load original signed generation %s: %w",want.generationID,err)}
