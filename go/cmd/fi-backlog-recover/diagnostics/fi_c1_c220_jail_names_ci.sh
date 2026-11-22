@@ -204,4 +204,21 @@ for token in \
     grep -F -- "$token" "$native" >/dev/null ||
         fail "C220 native acceptance lost a required signed verification gate: $token"
 done
+# Functional handoff is distinct from read-only native acceptance. It
+# may create ONE volatile tmpfs test file only under explicit approval,
+# must prove fi-sor RO behavior, and must always clean the created file.
+handoff="$root/fi_c1_c220_handoff_proof.sh"
+sh -n "$handoff" || fail 'C220 volatile handoff proof syntax'
+for token in \
+    'FI_C1_HANDOFF_PROOF_APPROVED' \
+    'VOLATILE_ONE_FILE_ONLY' \
+    'fi_c1_c220_native_acceptance.sh --verify' \
+    'jexec -U fi-ingest fi-ingest /usr/bin/mktemp' \
+    'jexec -U fi-sor fi-sor /usr/bin/cksum' \
+    'jexec -U fi-sor fi-sor /bin/sh -c' \
+    'jexec -U fi-ingest fi-ingest /bin/rm -f "$path"' \
+    'C1_C220_VOLATILE_HANDOFF_PROOF_PASS'; do
+    grep -F -- "$token" "$handoff" >/dev/null ||
+        fail "C220 volatile proof lost fail-closed guard: $token"
+done
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
