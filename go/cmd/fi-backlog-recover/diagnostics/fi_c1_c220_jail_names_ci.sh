@@ -323,7 +323,7 @@ for token in \
     'fi-sor) cat' \
     'fi-c1-$jail.fstab' \
     'mount.fstab =' \
-    'mount.devfs' \
+    'mount[.]devfs' \
     'nullfs ro 0 0' \
     'nullfs rw 0 0' \
     'size=4g,uid=4100,gid=4100,mode=0770' \
