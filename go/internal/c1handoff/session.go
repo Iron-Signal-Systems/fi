@@ -143,6 +143,7 @@ func (s *Server) ServeConn(ctx context.Context,conn net.Conn)error{
         var finalStatus FinalStatus
         if f.Kind==Drain && commitErr==nil && s.FinalProof!=nil {
             finalStatus,commitErr=s.FinalProof(ctx,f)
+            if commitErr!=nil { finalStatus=FinalNone }
         }
         ack:=Frame{Kind:Ack,SourceID:source,GenerationID:generation,
             ReceiptSHA256:receipt,Sequence:sequence,Committed:commitErr==nil,
