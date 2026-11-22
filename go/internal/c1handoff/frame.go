@@ -55,6 +55,9 @@ const (
     Ack Kind = 8
     Start Kind = 9
     Seal Kind = 10
+    // An initial, read-only, authenticated canonical acceptance probe.
+    // Status is never an ingest SQL phase and never carries RAM objects.
+    Status Kind = 11
 )
 
 type Row struct {
@@ -101,7 +104,7 @@ func (f Frame) Validate() error {
     if err!=nil || len(digest)!=32 || strings.ToLower(f.ReceiptSHA256)!=f.ReceiptSHA256 {
         return errors.New("C1 handoff: invalid canonical signed receipt SHA-256")
     }
-    if !isSQLKind(f.Kind) && f.Kind!=Drain && f.Kind!=Ack && f.Kind!=Start && f.Kind!=Seal {
+    if !isSQLKind(f.Kind) && f.Kind!=Drain && f.Kind!=Ack && f.Kind!=Start && f.Kind!=Seal && f.Kind!=Status {
         return errors.New("C1 handoff: unknown phase")
     }
     if len(f.Error)>maxError { return errors.New("C1 handoff: oversized error") }
