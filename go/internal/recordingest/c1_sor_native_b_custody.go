@@ -49,7 +49,8 @@ type c1NativeBCustodyConfig struct {
 // envelope and matched against its committed source-record digest and
 // typed projection root in the private fi-sor database.
 func c1NativeBVerifyData(ctx context.Context,conn *pgx.Conn,raw io.Reader,
-    batchIndex int,batchID int64,expected PreparedBatch)error{
+    batchIndex int,batchID int64,expected PreparedBatch,
+    targetSchema ...string)error{
     if ctx==nil||conn==nil||raw==nil||batchIndex<0||batchID<=0||
         expected.BatchID==""||expected.Manifest.RecordCount<=0||
         expected.Manifest.DataBytes<=0{
@@ -64,7 +65,7 @@ func c1NativeBVerifyData(ctx context.Context,conn *pgx.Conn,raw io.Reader,
         tx,e:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
         if e!=nil{return e}
         defer tx.Rollback(context.Background())
-        states,e:=c1AuditCommittedRowStates(ctx,tx,chunk)
+        states,e:=c1AuditCommittedRowStates(ctx,tx,chunk,targetSchema...)
         if e!=nil{return e}
         for i,state:=range states{
             if !state.ParentCommitted||!state.TypedRootCommitted{
@@ -188,7 +189,7 @@ func c1NativeBVerifySignedCustody(ctx context.Context,conn *pgx.Conn,
                 if name!=dataName{
                     return fmt.Errorf("C1 B custody: wrong signed batch file %q expected %q",name,dataName)
                 }
-                if err:=c1NativeBVerifyData(ctx,conn,r,idx,p.SQLIDs[idx],batch);err!=nil{
+                if err:=c1NativeBVerifyData(ctx,conn,r,idx,p.SQLIDs[idx],batch,p.SQLSchema);err!=nil{
                     return fmt.Errorf("C1 B custody: independent SourceParent/typed readback batch %d: %w",idx,err)
                 }
             }else{

@@ -138,15 +138,25 @@ func(v *privateC1AsyncVerifier) Stop(){
 
 func privateC1AsyncVerifyGroup(ctx context.Context,conn *pgx.Conn,
     g *PreparedGeneration,ds []BacklogCheckpointDescriptor,wi int,
+    targetSchema ...string,
 )error{
     if ctx==nil||conn==nil||g==nil||wi<1||wi>=len(ds){
         return errors.New("FI C1 commit-ready verifier: invalid original signed group")
+    }
+    schema:=privateProjectionSchema
+    if len(targetSchema)>0 {
+        if len(targetSchema)!=1||(targetSchema[0]!=""&&
+            targetSchema[0]!=privateProjectionSchema&&
+            targetSchema[0]!=c1GovernedPendingSchema){
+            return errors.New("C1 B: unapproved group verification schema")
+        }
+        if targetSchema[0]!=""{schema=targetSchema[0]}
     }
     d:=ds[wi]
     tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
-    shadow:=privateProjectionTx{Tx:tx}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema}
     id,ok,err:=lookupRecordedGeneration(ctx,shadow,
         ds[0].SourceID,ds[0].GenerationID,g.Receipt.TransferSHA256,g.ReceiptSHA256)
     if err!=nil{return err}

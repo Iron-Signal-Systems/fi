@@ -34,13 +34,25 @@ type c1NativeBPlan struct {
     Batches []PreparedBatch
     Descriptors []BacklogCheckpointDescriptor
     Transfer string
+    SQLSchema string // empty preserves the isolated private C1 benchmark
 }
 type c1SoRNativeB struct {
     cancel context.CancelFunc
     done chan struct{}
     err error // only written before closing done
 }
+// Schema is selected only by fi-sor's own frozen construction path.
+func c1NativeBSchema(p c1NativeBPlan)(string,error){
+    if p.SQLSchema==""||p.SQLSchema==privateProjectionSchema{
+        return privateProjectionSchema,nil
+    }
+    if p.SQLSchema!=c1GovernedPendingSchema{
+        return "",errors.New("C1 B: unapproved relational proof schema")
+    }
+    return c1GovernedPendingSchema,nil
+}
 func c1ValidateNativeBPlan(p c1NativeBPlan)error{
+    if _,err:=c1NativeBSchema(p);err!=nil{return err}
     f:=p.Start
     if f.Kind!=c1handoff.Start||len(p.SQLIDs)==0||
         len(p.SQLIDs)!=len(f.BatchIDs)||len(p.Batches)!=len(f.BatchIDs)||
@@ -250,7 +262,7 @@ func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)e
         if e!=nil||wi<1||wi>=len(p.Descriptors)||seen[wi]{
             return errors.New("C1 B: duplicate/invalid post-COMMIT group")
         }
-        if err:=privateC1AsyncVerifyGroup(ctx,conn,g,p.Descriptors,wi);err!=nil{
+        if err:=privateC1AsyncVerifyGroup(ctx,conn,g,p.Descriptors,wi,p.SQLSchema);err!=nil{
             return fmt.Errorf("C1 B: independent signed group %d: %w",wi,err)
         }
         seen[wi]=true
@@ -261,10 +273,12 @@ func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)e
 }
 
 func c1NativeBValidateStage(ctx context.Context,conn *pgx.Conn,p c1NativeBPlan)error{
+    schema,err:=c1NativeBSchema(p)
+    if err!=nil{return err}
     receipt,e:=hex.DecodeString(p.Start.ReceiptSHA256)
     if e!=nil{return e}
     var transfer []byte
-    err:=conn.QueryRow(ctx,"SELECT transfer_sha256 FROM fi_recovery_projection.recorded_generation WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3",
+    err=conn.QueryRow(ctx,"SELECT transfer_sha256 FROM "+pgx.Identifier{schema,"recorded_generation"}.Sanitize()+" WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3",
         p.Start.SourceID,p.Start.GenerationID,receipt).Scan(&transfer)
     if err!=nil||hex.EncodeToString(transfer)!=p.Transfer{
         return errors.New("C1 B: original transfer or receipt changed")
@@ -274,7 +288,7 @@ func c1NativeBValidateStage(ctx context.Context,conn *pgx.Conn,p c1NativeBPlan)e
         if _,ok:=index[id];ok{return errors.New("C1 B: duplicate SQL batch identity")}
         index[id]=i
     }
-    rows,err:=conn.Query(ctx,"SELECT source_batch_id,batch_id,record_count,data_bytes,manifest_sha256,data_sha256 FROM fi_recovery_projection.source_batch WHERE source_batch_id=ANY($1::bigint[])",p.SQLIDs)
+    rows,err:=conn.Query(ctx,"SELECT source_batch_id,batch_id,record_count,data_bytes,manifest_sha256,data_sha256 FROM "+pgx.Identifier{schema,"source_batch"}.Sanitize()+" WHERE source_batch_id=ANY($1::bigint[])",p.SQLIDs)
     if err!=nil{return err}
     found:=0
     for rows.Next(){
@@ -305,16 +319,22 @@ func c1NativeBValidateStage(ctx context.Context,conn *pgx.Conn,p c1NativeBPlan)e
 // required before remapping into canonical fi or writing Accepted.
 func c1NativeBCompleteRelational(ctx context.Context,conn *pgx.Conn,
     g *PreparedGeneration,p c1NativeBPlan)error{
+    schema,err:=c1NativeBSchema(p)
+    if err!=nil{return err}
     tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
-    shadow:=privateProjectionTx{Tx:tx}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema}
     id,ok,err:=lookupRecordedGeneration(ctx,shadow,
         p.Start.SourceID,p.Start.GenerationID,p.Transfer,p.Start.ReceiptSHA256)
     if err!=nil{return err}
     if !ok||id<=0{return errors.New("C1 B: final signed private generation unavailable")}
     var batches,records,bytes int64
-    err=tx.QueryRow(ctx,"SELECT (SELECT count(*) FROM fi_recovery_projection.source_batch WHERE recorded_generation_id=$1),(SELECT count(*) FROM fi_recovery_projection.source_record r JOIN fi_recovery_projection.source_batch b USING(source_batch_id) WHERE b.recorded_generation_id=$1),(SELECT coalesce(sum(r.record_bytes),0)::bigint FROM fi_recovery_projection.source_record r JOIN fi_recovery_projection.source_batch b USING(source_batch_id) WHERE b.recorded_generation_id=$1)",id).
+    // The complete relational proof reads only the exact generation under
+    // the approved fixed SQL schema; no dynamic frame-controlled SQL names.
+    completeSQL:=strings.ReplaceAll("SELECT (SELECT count(*) FROM fi_recovery_projection.source_batch WHERE recorded_generation_id=$1),(SELECT count(*) FROM fi_recovery_projection.source_record r JOIN fi_recovery_projection.source_batch b USING(source_batch_id) WHERE b.recorded_generation_id=$1),(SELECT coalesce(sum(r.record_bytes),0)::bigint FROM fi_recovery_projection.source_record r JOIN fi_recovery_projection.source_batch b USING(source_batch_id) WHERE b.recorded_generation_id=$1)",
+        privateProjectionSchema+".",schema+".")
+    err=tx.QueryRow(ctx,completeSQL,id).
         Scan(&batches,&records,&bytes)
     if err!=nil{return err}
     var expectedRows,expectedBytes int64

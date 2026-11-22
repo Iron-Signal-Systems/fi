@@ -66,6 +66,8 @@ func c1NativeFullPromotionProof(ctx context.Context,conn *pgx.Conn,
         return result,errors.New("C1 promotion: missing independent original proof inputs")
     }
     if err:=c1ValidateNativeBPlan(p);err!=nil{return result,err}
+    schema,err:=c1NativeBSchema(p)
+    if err!=nil{return result,err}
     if g.ReceiptSHA256!=p.Start.ReceiptSHA256||
         g.Receipt.TransferSHA256!=p.Transfer||
         g.Receipt.Descriptor.SourceID!=p.Start.SourceID||
@@ -87,7 +89,7 @@ func c1NativeFullPromotionProof(ctx context.Context,conn *pgx.Conn,
     tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
     if err!=nil{return result,err}
     defer tx.Rollback(context.Background())
-    shadow:=privateProjectionTx{Tx:tx}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema}
     id,found,err:=lookupRecordedGeneration(ctx,shadow,p.Start.SourceID,
         p.Start.GenerationID,p.Transfer,p.Start.ReceiptSHA256)
     if err!=nil{return result,err}

@@ -18,6 +18,7 @@ import (
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
+    "github.com/jackc/pgx/v5"
 )
 
 type c1SoRGroup struct {
@@ -76,6 +77,13 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     if ctx==nil||pool==nil||len(ids)==0||frame.Kind!=c1handoff.Start{
         return nil,nil,errors.New("C1 verifier: uninitialized signed source")
     }
+    // Bind independent B to precisely the same frozen relational schema
+    // that A's ordered parent/five-family SQL pool has already selected.
+    schema:=pool.projectionSchema
+    if schema==""{schema=privateProjectionSchema}
+    if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema{
+        return nil,nil,errors.New("C1 verifier: unapproved A/B relational schema")
+    }
     // This session belongs ONLY to verifier B and is not in A's native SQL
     // worker pool. Independent READ ONLY transactions cannot modify SoR.
     conn,pid,err:=openC1SoRLocalSQL(ctx,dsn,"")
@@ -90,17 +98,18 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     var transfer []byte
     receipt,e:=hex.DecodeString(frame.ReceiptSHA256)
     if e!=nil{return closeOnError(e)}
-    err=conn.QueryRow(ctx,`SELECT transfer_sha256 FROM fi_recovery_projection.recorded_generation
-        WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3`,
+    err=conn.QueryRow(ctx,"SELECT transfer_sha256 FROM "+
+        pgx.Identifier{schema,"recorded_generation"}.Sanitize()+
+        " WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3",
         frame.SourceID,frame.GenerationID,receipt).Scan(&transfer)
     if err!=nil||len(transfer)!=32{return closeOnError(errors.New("C1 verifier: original transfer evidence unavailable"))}
     batches:=make([]PreparedBatch,len(ids))
     indexBySQL:=make(map[int64]int,len(ids))
     for i,id:=range ids{indexBySQL[id]=i}
-    rows,err:=conn.Query(ctx,`SELECT source_batch_id,batch_id,record_count,data_bytes,
-        manifest_sha256,data_sha256
-        FROM fi_recovery_projection.source_batch
-        WHERE source_batch_id=ANY($1::bigint[])`,ids)
+    rows,err:=conn.Query(ctx,"SELECT source_batch_id,batch_id,record_count,data_bytes,"+
+        "manifest_sha256,data_sha256 FROM "+
+        pgx.Identifier{schema,"source_batch"}.Sanitize()+
+        " WHERE source_batch_id=ANY($1::bigint[])",ids)
     if err!=nil{return closeOnError(err)}
     count:=0
     for rows.Next(){
@@ -163,7 +172,8 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     // it from its own connection in a different fi-sor OS process.
     if err=conn.Close(context.Background());err!=nil{return nil,nil,err}
     plan:=c1NativeBPlan{Start:frame,SQLIDs:append([]int64(nil),ids...),
-        Batches:batches,Descriptors:ds,Transfer:g.Receipt.TransferSHA256}
+        Batches:batches,Descriptors:ds,Transfer:g.Receipt.TransferSHA256,
+        SQLSchema:schema}
     v,err:=startC1SoRNativeB(ctx,dsn,plan,tracker.notifications,custody)
     if err!=nil{return nil,nil,err}
     pool.commitReady=tracker

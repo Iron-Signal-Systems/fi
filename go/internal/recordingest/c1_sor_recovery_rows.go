@@ -16,6 +16,7 @@ import (
     "context"
     "errors"
     "fmt"
+    "strings"
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
@@ -66,9 +67,18 @@ func c1VerifyPersistedSourceIdentity(want privateP6Record,got c1PersistedSourceI
 // The query performs no SQL write and does not skip any SQL work itself.
 // Reuse only in reconciliation; do NOT insert it in the clean P5/P6 hot path.
 func c1AuditCommittedRowStates(ctx context.Context,tx pgx.Tx,
-    rows []privateP6Record)([]C1RecoveryRowState,error){
+    rows []privateP6Record,targetSchema ...string)([]C1RecoveryRowState,error){
     if ctx==nil||tx==nil||len(rows)==0||len(rows)>c1handoff.MaxRows{
         return nil,errors.New("C1 recovery: bounded original signed rows and read-only SQL required")
+    }
+    schema:=privateProjectionSchema
+    if len(targetSchema)>0 {
+        if len(targetSchema)!=1||(targetSchema[0]!=""&&
+            targetSchema[0]!=privateProjectionSchema&&
+            targetSchema[0]!=c1GovernedPendingSchema){
+            return nil,errors.New("C1 recovery: unapproved read-only relational namespace")
+        }
+        if targetSchema[0]!=""{schema=targetSchema[0]}
     }
     batches:=make([]int64,len(rows))
     ordinals:=make([]int64,len(rows))
@@ -132,7 +142,10 @@ FROM originals o
 LEFT JOIN fi_recovery_projection.source_record sr
    ON sr.source_batch_id=o.batch_id AND sr.record_ordinal=o.ordinal
 ORDER BY o.position`
-    result,err:=tx.Query(ctx,query,batches,ordinals)
+    // Both options are compile-time whitelisted; no signed-frame input can
+    // become a SQL identifier in the independent evidence readback.
+    scopedQuery:=strings.ReplaceAll(query,privateProjectionSchema+".",schema+".")
+    result,err:=tx.Query(ctx,scopedQuery,batches,ordinals)
     if err!=nil{return nil,err}
     state:=make([]C1RecoveryRowState,0,len(rows))
     for result.Next(){

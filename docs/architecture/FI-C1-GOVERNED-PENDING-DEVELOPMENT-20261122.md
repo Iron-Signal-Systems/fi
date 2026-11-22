@@ -22,7 +22,13 @@ the exact audited canonical relational structure, FKs and identity rules,
 and adds a constrained `generation_control` table linking all original
 signed generation fields. A transaction-scoped DDL helper is exercised only by disposable PostgreSQL 18 CI; no production installer or service invokes it.
 
-The native SoR five-family writer/COPY boundary is now capable of targeting the governed pending namespace while the original isolated benchmark path still targets its original schema. Startup metadata, verifier B, recovery and publication are not yet migrated.
+The native SoR five-family writer/COPY boundary is now capable of targeting the governed pending namespace while the original isolated benchmark path still targets its original schema.
+Independent verifier B now has an explicitly whitelisted SQL schema in its
+signed group plan. Its original receiver custody, committed group, typed-root
+and whole-generation relational readbacks can use exactly the same pending
+schema chosen by the SoR writer pool. The isolated benchmark preserves the
+original private schema by default; schema selection never comes from
+fi-ingest network input. Startup metadata, verifier B, recovery and publication are not yet migrated.
 
 Control state is `Pending`, `SQLSealed`, `BVerified`,
 `PublicationUncertain`, or `Retired`. None means canonically Accepted.
