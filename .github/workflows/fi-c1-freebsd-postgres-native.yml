@@ -8,9 +8,12 @@ on:
     paths:
       - '.github/workflows/fi-c1-freebsd-postgres-native.yml'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh'
-      - 'go/internal/recordingest/c1_sor_replay_pg_integration_test.go'
-      - 'go/internal/recordingest/c1_private_schema_install.go'
-      - 'go/internal/recordingest/c1_private_schema_install_pg_test.go'
+      - 'go/internal/recordingest/c1_*.go'
+      - 'go/internal/recordingest/private_c1_*.go'
+      - 'go/internal/recordingest/backlog_incremental_promote*.go'
+      - 'go/internal/recordingest/backlog_bootstrap_promote*.go'
+      - 'go/internal/recordingest/backlog_private_projection_tx.go'
+      - 'go/internal/recordingest/private_c1_async_verify.go'
 
 permissions:
   contents: read
