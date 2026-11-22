@@ -64,6 +64,11 @@ func main(){
     ramMount,e:=c1handoff.NewRAMStore(*ram)
     if e!=nil{fatal(e)}
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,false);e!=nil{fatal(e)}
+    // Original receiver custody is immutable authority. The ingest reader
+    // may use the host tmpfs write view, but may NEVER write or replace the
+    // signed source/recorded receipt nullfs mounts.
+    if e=c1handoff.RequireFreeBSDReadOnlyCustody(*custody);e!=nil{fatal(e)}
+    if e=c1handoff.RequireFreeBSDReadOnlyCustody(*recorded);e!=nil{fatal(e)}
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
     defer stop()
     load:=recordingest.GenerationLoadConfig{
@@ -93,7 +98,7 @@ func main(){
                 fatal(errors.New("FI C1 ingest preflight: original READY root missing or symlinked"))
             }
         }
-        fmt.Println("FI C1 INGEST READ-ONLY PREFLIGHT PASS postgres_client=false host_backed_tmpfs=true original_signed_custody_checked=true mTLS_validated=true generation_sent=false")
+        fmt.Println("FI C1 INGEST READ-ONLY PREFLIGHT PASS postgres_client=false host_backed_tmpfs=true original_custody_mounts_readonly=true mTLS_validated=true generation_sent=false")
         return
     }
     if *readyRoot!=""{

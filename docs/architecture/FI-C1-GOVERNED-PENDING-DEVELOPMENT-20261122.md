@@ -459,3 +459,23 @@ writes to canonical/pending tables.
 Both services remain installed OFF. A successful C220 `--ready` audit
 is **pre-activation**, not a claim that the two-jail live generation,
 interrupted-jail restart or C1 throughput acceptance has already passed.
+
+
+### C220 cutover exclusivity and original custody (2026-11-22)
+
+The actual fi-c1-ingest-worker now checks that **both original signed
+generation custody and recorded receipts are mounted READ ONLY inside
+fi-ingest**, even though its separate shared host tmpfs is writable to
+the producer. This rejects a misconfigured jail before signed input
+processing or a START handoff. fi-sor checks its own read-only custody
+and shared tmpfs views separately.
+
+The C220 governed deploy gate now also verifies that the existing
+`fi_ingest_worker` rc service is **disabled and not running** before
+C1 can be marked ready. This is a read-only check: it never stops,
+disables or modifies the existing worker. Both processing services
+must not independently consume the same original receiver READY work.
+Actual signed custody, canonical PostgreSQL, and all receipt files
+remain intact. The two C1 rc services remain disabled until a
+controlled, explicitly approved activation and live signed-generation
+acceptance.
