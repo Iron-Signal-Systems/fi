@@ -93,4 +93,20 @@ done
 if grep -Eq '^[[:space:]]*(DROP|TRUNCATE|DELETE|UPDATE|ALTER)[[:space:]]+(TABLE[[:space:]]+)?fi\.' "$discard"; then
   fail 'C220 private-stage discard touches canonical fi SQL'
 fi
+# Verify real C220 FI-jail inventory remains observational.
+contract="$root/fi_c1_c220_jail_runtime_contract.sh"
+sh -n "$contract" || fail "C220 jail runtime inventory syntax"
+for required in \
+    'jls -h jid name path' \
+    'C1_SOR_RUNTIME_IDENTITY=ABSENT' \
+    'mount -p' \
+    'PRIVATE_STAGE_ABSENT=' \
+    'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;' \
+    'FI C1 C220 EXISTING JAIL RUNTIME INVENTORY COMPLETE'; do
+    grep -F "$required" "$contract" >/dev/null ||
+      fail "C220 jail runtime inventory lost read-only proof: $required"
+done
+if grep -Eq '^[[:space:]]*(mount[[:space:]]+-t|jail[[:space:]]+-c|jail[[:space:]]+-r|sysrc[[:space:]]|service[[:space:]]|pw[[:space:]]+useradd|DROP[[:space:]]|DELETE[[:space:]]|TRUNCATE[[:space:]])' "$contract"; then
+    fail 'C220 jail runtime inventory includes state mutation'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
