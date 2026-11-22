@@ -610,6 +610,9 @@ WHERE CASE
     // Same full signed mTLS/RAM/B/canonical path but multiple original
     // ordinals split across independent SourceParent and typed SQL handoffs.
     c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,3)
+    // Genuine three source batches (2+2+1) cross both independent
+    // SourceParent handoffs and separate typed-family SQL transactions.
+    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,5)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator

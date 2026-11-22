@@ -41,8 +41,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         admin==worker||admin==publisher||worker==publisher{
         t.Fatal("C1 signed RAM SQL requires distinct administrative and worker identities")
     }
-    if recordCount!=1&&recordCount!=3 {
-        t.Fatal("C1 signed mTLS fixture supports only 1 or 3 original records")
+    if recordCount!=1&&recordCount!=3&&recordCount!=5 {
+        t.Fatal("C1 signed mTLS fixture supports only 1, 3 or 5 original records")
     }
     root:=t.TempDir()
     source:=fmt.Sprintf("c1-signed-mtls-%d-fixture.iss.local",recordCount)
@@ -53,6 +53,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     var signed m1SignedSource
     if recordCount==1 {
         signed=m1WriteSignedGeneration(t,root,source)
+    }else if recordCount==5 {
+        signed=c1WriteReceivedThreeBatchGeneration(t,root,source)
     }else{
         // These are real receiver-signed JSONL records, not duplicate
         // SQL-only rows. Different payloads guarantee distinct hashes.
@@ -82,14 +84,23 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     original,e:=c1StreamOriginalSignedManifestPlanWithTrust(ctx,
         source,signed.GenerationID,custody,trust)
     if e!=nil{t.Fatal(e)}
-    if len(original.Batches)!=1||original.Receipt.RecordCount!=uint64(recordCount){
-        t.Fatal("C1 mTLS fixture original signed batch cardinality changed")
+    wantBatches:=1
+    if recordCount==5{wantBatches=3}
+    if len(original.Batches)!=wantBatches||
+        original.Receipt.RecordCount!=uint64(recordCount){
+        t.Fatal("C1 mTLS fixture original signed multi-batch cardinality changed")
+    }
+    batchNames:=make([]string,len(original.Batches))
+    batchCounts:=make([]int64,len(original.Batches))
+    for i,batch:=range original.Batches {
+        batchNames[i]=batch.BatchID
+        batchCounts[i]=int64(batch.Manifest.RecordCount)
     }
     start:=c1handoff.Frame{
         Kind:c1handoff.Start,Sequence:1,SourceID:source,
         GenerationID:signed.GenerationID,ReceiptSHA256:original.ReceiptSHA256,
         ExpectedRecords:int64(original.Receipt.RecordCount),
-        BatchIDs:[]string{original.Batches[0].BatchID},
+        BatchIDs:batchNames,
     }
     if e=start.Validate();e!=nil{t.Fatal(e)}
     // Admission is the exact production fi-sor PostgreSQL transaction,
@@ -97,31 +108,35 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e=c1StageVerifiedPendingMetadata(ctx,worker,start,original);e!=nil{
         t.Fatalf("C1 authentic signed mTLS Pending bootstrap: %v",e)
     }
-    var batchID int64
-    if e=admin.QueryRow(ctx,`SELECT source_batch_id FROM fi_c1_pending.source_batch
-        WHERE batch_id=$1`,start.BatchIDs[0]).Scan(&batchID);e!=nil{t.Fatal(e)}
-    raw,e:=os.ReadFile(filepath.Join(root,source,"frozen",
-        original.Batches[0].DataArtifactName))
-    if e!=nil{t.Fatal(e)}
-    // Each line remains separately signed by the original generation
-    // manifest. Enqueue source ordinals in TWO independent handoffs when
-    // recordCount=3, rather than stuffing one frame with three rows.
-    lines:=bytes.SplitAfter(raw,[]byte{'\n'})
+    batchSQLIDs:=make([]int64,len(batchNames))
     signedRows:=make([]privateP6Record,0,recordCount)
-    for _,line:=range lines {
-        if len(line)==0{continue}
-        prepared,e:=PrepareSourceRecord(line)
-        if e!=nil{t.Fatal(e)}
-        if prepared.Record.RecordKind!="SupportingSourceCollectionError" {
-            t.Fatal("C1 multi-record signed fixture changed typed family")
+    for i,batch:=range original.Batches {
+        if e=admin.QueryRow(ctx,`SELECT source_batch_id FROM fi_c1_pending.source_batch
+            WHERE batch_id=$1`,batch.BatchID).Scan(&batchSQLIDs[i]);e!=nil{t.Fatal(e)}
+        raw,readErr:=os.ReadFile(filepath.Join(root,source,"frozen",
+            batch.DataArtifactName))
+        if readErr!=nil{t.Fatal(readErr)}
+        lines:=bytes.SplitAfter(raw,[]byte{'\n'})
+        ordinal:=int64(0)
+        for _,line:=range lines {
+            if len(line)==0{continue}
+            prepared,prepErr:=PrepareSourceRecord(line)
+            if prepErr!=nil{t.Fatal(prepErr)}
+            if prepared.Record.RecordKind!="SupportingSourceCollectionError" {
+                t.Fatal("C1 signed multi-batch record changed its typed projector")
+            }
+            ordinal++
+            signedRows=append(signedRows,privateP6Record{
+                signedBatchIndex:i,sourceBatchID:batchSQLIDs[i],
+                ordinal:ordinal,prepared:prepared,
+            })
         }
-        signedRows=append(signedRows,privateP6Record{
-            signedBatchIndex:0,sourceBatchID:batchID,
-            ordinal:int64(len(signedRows)+1),prepared:prepared,
-        })
+        if ordinal!=batchCounts[i]{
+            t.Fatalf("C1 source batch %d signed ordinals=%d manifest=%d",i,ordinal,batchCounts[i])
+        }
     }
-    if len(signedRows)!=recordCount {
-        t.Fatalf("C1 signed source JSONL ordinals=%d expected=%d",len(signedRows),recordCount)
+    if len(signedRows)!=recordCount{
+        t.Fatalf("C1 signed source across real batches rows=%d expected=%d",len(signedRows),recordCount)
     }
     family,e:=privateP6KindFamily(signedRows[0].prepared.Record.RecordKind)
     if e!=nil{t.Fatal(e)}
@@ -140,8 +155,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e!=nil{t.Fatal(e)}
     defer pool.Close()
     h,e:=newC1SoRCommitHandler(pool,source,signed.GenerationID,
-        original.ReceiptSHA256,[]int64{batchID},
-        []int64{int64(original.Receipt.RecordCount)},int64(original.Receipt.RecordCount))
+        original.ReceiptSHA256,batchSQLIDs,
+        batchCounts,int64(original.Receipt.RecordCount))
     if e!=nil{t.Fatal(e)}
     store:=c1RAMTestStore(t)
     h.sharedRAM=store
@@ -162,11 +177,15 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
                 f.GenerationID!=start.GenerationID||
                 f.ReceiptSHA256!=start.ReceiptSHA256||
                 f.ExpectedRecords!=start.ExpectedRecords||
-                f.StartBatchIndex!=0||len(f.BatchIDs)!=1||
-                f.BatchIDs[0]!=start.BatchIDs[0]{
+                f.StartBatchIndex!=0||len(f.BatchIDs)!=len(batchNames){
                 return nil,errors.New("C1 mTLS signed generation differs from recorded receiver custody")
             }
-            return []int64{batchID},nil
+            for i,name:=range f.BatchIDs {
+                if name!=batchNames[i]{
+                    return nil,errors.New("C1 mTLS foreign signed source batch roster")
+                }
+            }
+            return append([]int64(nil),batchSQLIDs...),nil
         },
         Dispatch:h.Enqueue,
         Handler:func(ctx context.Context,f c1handoff.Frame)error{
@@ -203,8 +222,13 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     defer client.Close()
     if e=client.Send(ctx,start);e!=nil{t.Fatalf("C1 mTLS original signed Start: %v",e)}
     ids:=client.BatchSQLIDs()
-    if len(ids)!=1||ids[0]!=batchID{
-        t.Fatalf("C1 fi-sor SQL identity changed over authenticated mTLS: %v",ids)
+    if len(ids)!=len(batchSQLIDs){
+        t.Fatalf("C1 fi-sor SQL roster length changed over authenticated mTLS: %v",ids)
+    }
+    for i,id:=range ids{
+        if id!=batchSQLIDs[i]{
+            t.Fatalf("C1 fi-sor SQL batch identity %d changed over authenticated mTLS: %v",i,ids)
+        }
     }
     pipeline,e:=c1handoff.NewClientPipeline(ctx,client,4)
     if e!=nil{t.Fatal(e)}
@@ -214,14 +238,22 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e!=nil{t.Fatal(e)}
     remote.next=2
     if e=remote.EnableSharedRAM(store);e!=nil{t.Fatal(e)}
-    if recordCount==1 {
+    if recordCount==1{
         if e=remote.Source(ctx,signedRows);e!=nil{t.Fatal(e)}
         if e=remote.Family(ctx,family,signedRows);e!=nil{t.Fatal(e)}
-    }else{
+    }else if recordCount==3{
         if e=remote.Source(ctx,signedRows[:2]);e!=nil{t.Fatal(e)}
         if e=remote.Source(ctx,signedRows[2:]);e!=nil{t.Fatal(e)}
         if e=remote.Family(ctx,family,signedRows[:1]);e!=nil{t.Fatal(e)}
         if e=remote.Family(ctx,family,signedRows[1:]);e!=nil{t.Fatal(e)}
+    }else{
+        // Source spans batch 0 and 1 in its first handoff; the second
+        // handoff completes batch 1 and begins batch 2. Typed SQL cuts
+        // occur at different positions and must retain signed identity.
+        if e=remote.Source(ctx,signedRows[:3]);e!=nil{t.Fatal(e)}
+        if e=remote.Source(ctx,signedRows[3:]);e!=nil{t.Fatal(e)}
+        if e=remote.Family(ctx,family,signedRows[:2]);e!=nil{t.Fatal(e)}
+        if e=remote.Family(ctx,family,signedRows[2:]);e!=nil{t.Fatal(e)}
     }
     if e=remote.WaitAll(ctx);e!=nil{t.Fatal(e)}
     if e=remote.Drain(ctx);e!=nil{t.Fatalf("C1 actual signed SQL + independent B Drain: %v",e)}
@@ -271,7 +303,7 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     // Mutation and restoration are limited to this disposable CI database.
     if _,e=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
         SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
-        bytes.Repeat([]byte{0x5e},32),batchID);e!=nil{t.Fatal(e)}
+        bytes.Repeat([]byte{0x5e},32),batchSQLIDs[0]);e!=nil{t.Fatal(e)}
     corrupted:=c1TestRunIndependentSignedBProcess(ctx,t,worker,
         promotionPlan,custody,signed.Trust)
     if corrupted==nil||!strings.Contains(corrupted.Error(),"CONFLICTS"){
@@ -279,7 +311,7 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     }
     if _,e=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
         SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
-        signedRows[0].prepared.RecordDigest[:],batchID);e!=nil{t.Fatal(e)}
+        signedRows[0].prepared.RecordDigest[:],batchSQLIDs[0]);e!=nil{t.Fatal(e)}
     // This is a REAL distinct FreeBSD OS process, not the same Go goroutine
     // as the C1 writer. Its own SQL session is fi_ingest, read-only, and
     // its input is only the original verified receiver trust/custody and
@@ -334,20 +366,27 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     // Verify every original signed ordinal and full SHA-256 in canonical
     // FI. A source/typed row count alone could miss reordered or duplicated
     // identities when consecutive RAM handoffs cross SQL transaction cuts.
-    canonicalRows,e:=admin.Query(ctx,`SELECT r.record_ordinal,r.record_sha256
+    canonicalRows,e:=admin.Query(ctx,`SELECT b.batch_id,r.record_ordinal,r.record_sha256
         FROM fi.source_record r
         JOIN fi.source_batch b USING(source_batch_id)
         JOIN fi.recorded_generation g USING(recorded_generation_id)
         WHERE g.source_id=$1 AND g.generation_id=$2
-        ORDER BY r.record_ordinal`,source,signed.GenerationID)
+        ORDER BY b.batch_id,r.record_ordinal`,source,signed.GenerationID)
     if e!=nil{t.Fatal(e)}
     ordinalCount:=0
     for canonicalRows.Next(){
         var ordinal int64
+        var batchName string
         var digest []byte
-        if e=canonicalRows.Scan(&ordinal,&digest);e!=nil{break}
-        if ordinalCount>=len(signedRows)||ordinal!=int64(ordinalCount+1)||
-            !bytes.Equal(digest,signedRows[ordinalCount].prepared.RecordDigest[:]){
+        if e=canonicalRows.Scan(&batchName,&ordinal,&digest);e!=nil{break}
+        if ordinalCount>=len(signedRows) {
+            e=errors.New("C1 canonical unexpected extra signed ordinal")
+            break
+        }
+        expected:=signedRows[ordinalCount]
+        if batchName!=batchNames[expected.signedBatchIndex]||
+            ordinal!=expected.ordinal||
+            !bytes.Equal(digest,expected.prepared.RecordDigest[:]){
             e=errors.New("C1 canonical SourceParent ordinal or original signed SHA-256 changed across RAM/SQL transactions")
             break
         }
