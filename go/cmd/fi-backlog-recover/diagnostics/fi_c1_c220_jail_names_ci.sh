@@ -306,4 +306,39 @@ done
 if grep -Eq '^[[:space:]]*(mount[[:space:]]+(-t|-a|-u|[^-[:space:]])|umount[[:space:]]|sysrc[[:space:]]|jail[[:space:]]+-r|service[[:space:]]|chmod[[:space:]]|chown[[:space:]]|install[[:space:]]|pw[[:space:]])' "$boot_audit"; then
     fail 'C220 boot audit must not change any mount, file or service'
 fi
+# Exact physical C220 reboot persistence includes all ORIGINAL receiver,
+# ingest, and SoR mappings, not just the seven new C1 mounts. devfs
+# remains jail-managed. Installer is separate from --audit and cannot
+# invoke mount, restart jails, enable C1 ingestion or touch canonical SQL.
+persist="$root/fi_c1_c220_persist_boot.sh"
+sh -n "$persist" || fail 'physical C220 boot installer shell syntax'
+for token in \
+    'FI_C1_BOOT_INSTALL_APPROVED' \
+    'PRESERVE_ALL_18_ORIGINAL_NULLFS' \
+    'FI C1 C220 BOOT PERSISTENCE AUDIT COMPLETE read_only=true' \
+    'FI C1 C220 BOOT CONFIG INSTALLED' \
+    'original_nullfs=18 devfs=3' \
+    'fi-receiver) cat' \
+    'fi-ingest) cat' \
+    'fi-sor) cat' \
+    'fi-c1-$jail.fstab' \
+    'mount.fstab =' \
+    'mount.devfs' \
+    'nullfs ro 0 0' \
+    'nullfs rw 0 0' \
+    'size=4g,uid=4100,gid=4100,mode=0770' \
+    'fi_c1_ram_enable="YES"' \
+    '# REQUIRE: FILESYSTEMS' \
+    '# BEFORE: jail' \
+    '/fast/data/fi/sor/pgdata' \
+    '/work/fi-c220-20261114/custody/generation' \
+    'cp -p /etc/fstab' \
+    'sync' \
+    'live_mount_changes=0 jail_restarts=0 c1_workers_started=false'; do
+    grep -F -- "$token" "$persist" >/dev/null ||
+        fail "C220 boot persistence safety requirement missing: $token"
+done
+if grep -Eq '^[[:space:]]*(jail[[:space:]]+(-r|-c)|service[[:space:]]|sysrc[[:space:]]|umount[[:space:]]|mount[[:space:]]+-t|psql[[:space:]]|DROP[[:space:]]|TRUNCATE[[:space:]])' "$persist"; then
+    fail 'C220 boot persistence must not restart jails, mount, or mutate SQL'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
