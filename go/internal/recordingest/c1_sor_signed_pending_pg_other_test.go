@@ -20,3 +20,6 @@ func c1TestSignedOriginalPendingPostgres18(_ *testing.T,_ context.Context,
 
 func c1TestSignedMTLSRAMPostgres18(_ *testing.T,_ context.Context,
     _,_,_ *pgx.Conn) {}
+
+func c1TestSignedInterruptedPendingReplayPG18(_ *testing.T,_ context.Context,
+    _,_ *pgx.Conn) {}

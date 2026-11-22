@@ -71,6 +71,22 @@ failure rollback, exactly one Accepted journal transaction, canonical readback,
 and duplicate retry. That proves SQL transaction mechanics only; it does NOT
 replace independent signed-custody verifier B or full two-jail acceptance.
 
+The native FreeBSD signed-replay fixture now separately commits an
+ORIGINAL receiver-signed SourceParent using the real C1 SQL pool, tears down
+the SQL pool before its typed-family transaction, and proves on a new
+read-only PostgreSQL session that the parent was durable but its typed
+root was not. Independent B must reject the incomplete original generation.
+A new C1 SQL pool then executes the exact `EnqueueReplay` path, assigning
+virtual commit credit only to the independently verified original parent,
+and actually writing only the missing typed family. The commit-ready
+scheduler, final SQL totals and independent original-custody B readback
+must then agree, with precisely one parent/typed root and no premature
+Accepted journal. The fixture destroys this deliberately unaccepted
+pending SQL only inside the disposable CI database.
+
+This is an SQL-worker **restart simulation**, not a full PostgreSQL
+immediate-stop, hard power-loss, or two-jail service restart test.
+
 A native FreeBSD restart test also confirms that the PostgreSQL
 single-generation advisory lock stays unavailable to a competing worker
 until the previous database session actually releases it. A bounded

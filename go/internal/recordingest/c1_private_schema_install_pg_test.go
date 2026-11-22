@@ -596,6 +596,9 @@ WHERE CASE
     // helper used by the production fi-sor Bootstrap. Synthetic publication
     // cycles below start from an empty pending schema afterward.
     c1TestSignedOriginalPendingPostgres18(t,ctx,admin,worker)
+    // Original signed custody, real committed parent and READ-ONLY replay
+    // of the exact persisted prefix before any missing typed SQL is written.
+    c1TestSignedInterruptedPendingReplayPG18(t,ctx,admin,worker)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,1)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,2)
     // The real receiver-signed mTLS case runs LAST: it adds a third
