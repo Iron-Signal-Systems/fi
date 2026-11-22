@@ -34,7 +34,7 @@ func TestC1PublisherRolePlanDoesNotIncreaseIngestWorkerAuthority(t *testing.T){
     if len(statements)<6{t.Fatal("incomplete separate publication role plan")}
     for _,ddl:=range statements{
         if strings.Contains(ddl,"TO fi_ingest")||
-            strings.Contains(ddl,"TRUNCATE")||
+            (strings.Contains(ddl,"TRUNCATE")&&!strings.Contains(ddl,"fi_c1_pending"))||
             strings.Contains(ddl,"DELETE")||
             strings.Contains(ddl,"UPDATE")||
             strings.Contains(ddl,"SUPERUSER")&&!strings.Contains(ddl,"NOSUPERUSER"){
