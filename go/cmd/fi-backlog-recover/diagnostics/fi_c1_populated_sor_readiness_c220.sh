@@ -85,6 +85,60 @@ SELECT 'TARGET_PRIVATE_MARKERS' AS section,
    WHERE receipt_sha256 IN (SELECT receipt_sha256 FROM target)) AS typed,
  (SELECT coalesce(sum(committed_records),0) FROM fi_recovery.typed_window
    WHERE receipt_sha256 IN (SELECT receipt_sha256 FROM target)) AS typed_records;
+SELECT 'C1_PRIVATE_SCHEMA_MIRROR' AS section,
+  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='fi' AND c.relkind IN ('r','p')) AS canonical_tables,
+  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='fi_recovery_projection' AND c.relkind IN ('r','p')) AS private_tables,
+  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='fi_recovery' AND c.relkind='r') AS recovery_ledgers,
+  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='fi' AND c.relkind IN ('r','p') AND NOT EXISTS(
+     SELECT 1 FROM pg_class p JOIN pg_namespace pn ON pn.oid=p.relnamespace
+     WHERE pn.nspname='fi_recovery_projection'
+       AND p.relname=c.relname AND p.relkind=c.relkind)) AS missing_private_tables;
+
+-- Marker coverage is metadata-only: do not scan private SourceParent or
+-- child rows or infer that any marker is permission to skip signed replay.
+WITH target AS (
+ SELECT receipt_sha256 FROM fi_recovery_projection.recorded_generation
+ WHERE source_id='iss-fs-22a.iss.local'
+   AND generation_id='20261030T000032.061323100Z-3e38b2210771462c'
+), a AS (
+ SELECT w.* FROM fi_recovery.verified_artifact_window w
+ JOIN target USING(receipt_sha256)
+), s AS (
+ SELECT w.* FROM fi_recovery.source_window w
+ JOIN target USING(receipt_sha256)
+), t AS (
+ SELECT w.* FROM fi_recovery.typed_window w
+ JOIN target USING(receipt_sha256)
+)
+SELECT 'C1_PRIVATE_MARKER_CONSISTENCY' AS section,
+ (SELECT count(*) FROM a) AS verified_artifacts,
+ (SELECT count(*) FROM s) AS committed_source_windows,
+ (SELECT count(*) FROM t) AS committed_typed_windows,
+ (SELECT coalesce(min(window_index),-1) FROM a) AS first_artifact_index,
+ (SELECT coalesce(max(window_index),-1) FROM a) AS last_artifact_index,
+ (SELECT count(*) FROM s LEFT JOIN a
+    ON s.receipt_sha256=a.receipt_sha256 AND s.window_index=a.window_index
+    WHERE a.window_index IS NULL) AS sources_without_artifact,
+ (SELECT count(*) FROM t LEFT JOIN s
+    ON t.receipt_sha256=s.receipt_sha256 AND t.window_index=s.window_index
+    WHERE s.window_index IS NULL) AS typed_without_source,
+ (SELECT count(*) FROM s JOIN a
+    ON s.receipt_sha256=a.receipt_sha256 AND s.window_index=a.window_index
+    WHERE s.descriptor_sha256<>a.descriptor_sha256
+       OR s.previous_digest_sha256<>a.previous_digest_sha256
+       OR s.start_batch<>a.start_batch OR s.end_batch<>a.end_batch
+       OR s.start_record<>a.start_record OR s.end_record<>a.end_record) AS source_descriptor_mismatches,
+ (SELECT count(*) FROM t JOIN s
+    ON t.receipt_sha256=s.receipt_sha256 AND t.window_index=s.window_index
+    WHERE t.descriptor_sha256<>s.descriptor_sha256
+       OR t.start_batch<>s.start_batch OR t.end_batch<>s.end_batch
+       OR t.committed_records<>s.staged_records) AS typed_marker_mismatches,
+ (SELECT coalesce(sum(staged_records),0) FROM s) AS source_marker_records,
+ (SELECT coalesce(sum(committed_records),0) FROM t) AS typed_marker_records;
 COMMIT;
 SQL
 
