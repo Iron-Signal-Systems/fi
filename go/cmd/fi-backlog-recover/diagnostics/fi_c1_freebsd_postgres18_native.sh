@@ -97,9 +97,7 @@ go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
 export FI_C1_CI_CRASH_ROOT="$base/signed-crash"
 export FI_C1_CI_CRASH_PHASE=before
 go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
-  -run '^TestC1SignedPostgres18ImmediateCrashRecovery
- \
-  -v ./internal/recordingest ||
+  -run '^TestC1SignedPostgres18ImmediateCrashRecovery$' -v ./internal/recordingest ||
   fail "original signed SourceParent failed before actual PostgreSQL crash"
 unset FI_C1_CI_CRASH_PHASE
 su -m postgres -c "/usr/local/bin/pg_ctl -D '$data' -m immediate -w stop" ||
@@ -115,9 +113,7 @@ for setting in fsync synchronous_commit full_page_writes;do
 done
 export FI_C1_CI_CRASH_PHASE=after
 go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
-  -run '^TestC1SignedPostgres18ImmediateCrashRecovery
- \
-  -v ./internal/recordingest ||
+  -run '^TestC1SignedPostgres18ImmediateCrashRecovery$' -v ./internal/recordingest ||
   fail "real signed C1 PostgreSQL WAL crash recovery, typed replay and exact Accepted"
 unset FI_C1_CI_CRASH_ROOT FI_C1_CI_CRASH_PHASE
 
