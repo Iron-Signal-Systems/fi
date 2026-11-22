@@ -81,7 +81,17 @@ func(p *ClientPipeline)read(){
     defer close(p.readerDone)
     for {
         f,err:=ReadFrame(p.conn)
-        if err!=nil{p.failAll(fmt.Errorf("C1 pipeline: SQL commit outcomes uncertain: %w",err));return}
+        if err!=nil{
+            // The SoR closes this one-generation mTLS session after the
+            // fully acknowledged final Drain. EOF *after* that distinct
+            // authenticated ACK is clean, not an uncertain SQL commit.
+            p.mu.Lock()
+            finalized:=p.finalACK && len(p.pending)==0 && p.firstError==nil
+            p.mu.Unlock()
+            if finalized{return}
+            p.failAll(fmt.Errorf("C1 pipeline: SQL commit outcomes uncertain: %w",err))
+            return
+        }
         if f.Kind!=Ack||f.SourceID!=p.source||f.GenerationID!=p.generation||
             f.ReceiptSHA256!=p.receipt||f.Sequence==0 {
             p.failAll(errors.New("C1 pipeline: untrusted or unmatched SQL commit acknowledgment"))
@@ -219,8 +229,13 @@ func(p *ClientPipeline)FinalProof()(FinalStatus,error){
     if p==nil{return FinalNone,errors.New("C1 pipeline: final proof reader missing")}
     p.mu.Lock()
     defer p.mu.Unlock()
-    if p.firstError!=nil{return FinalNone,p.firstError}
-    if !p.finalACK{return FinalNone,errors.New("C1 pipeline: no durable final Drain acknowledgment")}
+    if !p.finalACK{
+        if p.firstError!=nil{return FinalNone,p.firstError}
+        return FinalNone,errors.New("C1 pipeline: no durable final Drain acknowledgment")
+    }
+    // Final proof is already committed and tied to its acknowledged
+    // sequence. Closing the socket afterward cannot revoke that receipt.
+
     if p.finalStatus==FinalNone{
         return FinalNone,errors.New("C1 pipeline: independent B final proof not supplied by fi-sor")
     }
