@@ -33,6 +33,7 @@ type c1RemoteSoRSink struct {
     sourceID, generationID, receiptSHA256 string
     next uint64
     drained bool
+    finalStatus c1handoff.FinalStatus
 }
 func newC1RemoteSoRSink(sender c1HandoffSender,sourceID,generationID,receiptSHA256 string)(*c1RemoteSoRSink,error){
     if sender==nil || sourceID=="" || generationID=="" || len(receiptSHA256)!=64 {
@@ -200,6 +201,19 @@ func (s *c1RemoteSoRSink) Drain(ctx context.Context)error{
         ReceiptSHA256:s.receiptSHA256,Sequence:s.next}
     if err:=s.WaitAll(ctx);err!=nil{return err}
     if err:=s.sender.Send(ctx,frame);err!=nil{return err}
+    // The generic durable Drain SQL ACK is insufficient: only the
+    // independent B final proof can authorize a verified generation.
+    // Canonical acceptance remains a DIFFERENT, stronger final outcome.
+    proofReader,ok:=s.sender.(interface{
+        FinalProof()(c1handoff.FinalStatus,error)
+    })
+    if !ok{return errors.New("C1 remote SoR: authenticated final B proof channel missing")}
+    proof,err:=proofReader.FinalProof()
+    if err!=nil{return err}
+    if proof<c1handoff.FinalVerified{
+        return errors.New("C1 remote SoR: SQL Drain committed without independent original-custody proof")
+    }
+    s.finalStatus=proof
     s.next++
     s.drained=true
     return nil
