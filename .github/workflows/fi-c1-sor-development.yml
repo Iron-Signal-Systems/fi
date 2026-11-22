@@ -64,7 +64,7 @@ jobs:
           go-version: '1.27.4'
           cache: true
           cache-dependency-path: go/go.sum
-      - name: Verify C220 C1 read-only preflights name the installed fi-sor-db jail
+      - name: Verify C220 C1 read-only preflights resolve the unique real SoR jail
         working-directory: .
         run: sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_jail_names_ci.sh
       - name: Test bounded C1 inter-jail protocol
