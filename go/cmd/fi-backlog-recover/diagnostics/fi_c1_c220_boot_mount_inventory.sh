@@ -33,6 +33,28 @@ END{
 }
 ' || fail 'unexpected original/C1 mount inventory; do not plan reboot yet'
 
+echo '===== CANDIDATE JAIL FSTAB FILES FROM EXACT LIVE MOUNTS (NOT WRITTEN) ====='
+# Preserve every currently mounted PostgreSQL, custody, receiver,
+# runtime config and C1 RAM nullfs view in their current source/target
+# order. Never assume only the seven C1 additions need persistence.
+for name in fi-receiver fi-ingest fi-sor; do
+    root=/fast/jails/roots/$name
+    printf 'C1_PROPOSED_FSTAB=/etc/jail.fstab.d/fi-c1-%s.fstab\n' "$name"
+    mount -p | awk -v prefix="$root/" '
+    index($2,prefix)==1 {
+        if ($3!="nullfs" || $1=="" || $4=="") bad=1
+        print $1, $2, $3, $4, "0 0"
+        count++
+    }
+    END{if (count==0 || bad) exit 1}
+    ' || fail "cannot derive complete original + C1 fstab for $name"
+done
+echo '===== PROPOSED HOST FSTAB RAM ENTRY (NOT WRITTEN) ====='
+echo 'tmpfs /var/run/fi-c1-handoff tmpfs rw,noauto,nosuid,noexec,size=4g,uid=4100,gid=4100,mode=0770 0 0'
+echo '===== PROPOSED BOOT RC ORDER (NOT WRITTEN) ====='
+echo 'fi_c1_ram: REQUIRE FILESYSTEMS; BEFORE jail; enabled only AFTER original jail mount persistence review'
+echo 'Reboot persistence must not replace any original receiver, ingest or PostgreSQL mount.'
+
 echo '===== HOST VOLATILE RAM MOUNT ====='
 mount -p | awk '
 $2=="/var/run/fi-c1-handoff" {
