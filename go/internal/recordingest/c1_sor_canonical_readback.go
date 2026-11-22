@@ -74,6 +74,20 @@ func c1ReadCanonicalAcceptanceAfterB(ctx context.Context,dsn,
     })
     if err!=nil{return c1handoff.FinalNone,err}
     defer tx.Rollback(context.Background())
+    status,err:=c1CanonicalStatusInSnapshot(ctx,tx,source,generation,receiptSHA)
+    if err!=nil{return c1handoff.FinalNone,err}
+    if err=tx.Commit(ctx);err!=nil{return c1handoff.FinalNone,err}
+    return status,nil
+}
+
+// c1CanonicalStatusInSnapshot is also exercised against the real FI
+// 49-table DDL in disposable PostgreSQL18 CI. It assumes the caller
+// supplied a REPEATABLE READ READ ONLY transaction; it cannot mutate SQL.
+func c1CanonicalStatusInSnapshot(ctx context.Context,tx pgx.Tx,
+    source,generation,receiptSHA string)(c1handoff.FinalStatus,error){
+    if ctx==nil||tx==nil||source==""||generation==""{
+        return c1handoff.FinalNone,errors.New("C1 canonical: local read-only transaction and identity required")
+    }
     evidence:=c1CanonicalEvidence{}
     err=tx.QueryRow(ctx,`SELECT receipt_sha256,transfer_sha256,
             record_count,batch_count
@@ -96,8 +110,5 @@ func c1ReadCanonicalAcceptanceAfterB(ctx context.Context,dsn,
         source,generation,evidence.recordedTransfer,evidence.records).
         Scan(&evidence.acceptedEvents,&evidence.matchingAcceptedEvents)
     if err!=nil{return c1handoff.FinalNone,fmt.Errorf("C1 canonical: Accepted journal readback: %w",err)}
-    status,err:=c1CanonicalStatusFromEvidence(receiptSHA,evidence)
-    if err!=nil{return c1handoff.FinalNone,err}
-    if err=tx.Commit(ctx);err!=nil{return c1handoff.FinalNone,err}
-    return status,nil
+    return c1CanonicalStatusFromEvidence(receiptSHA,evidence)
 }
