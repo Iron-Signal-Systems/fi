@@ -62,6 +62,42 @@ Telemetry delivery last observed 2026-10-30 must be restored/verified
 as a separate acceptance prerequisite. None of these read-only
 observations constitutes authority to publish or enable live ingestion.
 
+## SoR independent B verifier has four additional required read-only inputs
+
+The real C220 `fi-sor` jail starts with **no** receiver-custody nullfs
+mount and no receiver trust/source registry mounts. C1's separate B
+process opens the original signed generation and recorded receipt and
+calls the fixed FreeBSD `/usr/local/etc/fi` trust/registry resolver.
+The two-jail RAM mount alone cannot satisfy B.
+
+The actual C220 read-only planner
+`go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_ram_mount_plan.sh`
+now also outputs these four **SoR-only RO nullfs** candidates after
+checking the host source directories:
+
+- `/work/fi-c220-20261114/custody/generation` to
+  `/fast/jails/roots/fi-sor/var/db/fi/custody/generation`
+- `/work/fi-c220-20261114/custody/recorded` to
+  `/fast/jails/roots/fi-sor/var/db/fi/custody/recorded`
+- `/work/fi-c220-20261114/config/receiver/pki/trust` to
+  `/fast/jails/roots/fi-sor/usr/local/etc/fi/pki/trust`
+- `/work/fi-c220-20261114/config/receiver/sources` to
+  `/fast/jails/roots/fi-sor/usr/local/etc/fi/sources`
+
+Those mappings must be checked against the actual host source directories,
+immutable object ownership/modes, existing jail destination directories
+and any external dependencies before applying. **Do not** alter
+`fi-receiver` or `fi-ingest` signed-custody mounts.
+The SoR nullfs consumer views must be read-only. A writable B trust
+or source root, or absent original signed custody, blocks C1.
+
+On this host, the existing fi-ingest and fi-sor jail configuration files
+are `/etc/jail.conf.d/fi-ingest.conf` and
+`/etc/jail.conf.d/fi-sor.conf`, with no current `mount.fstab` binding.
+A permanent C1 mount plan must explicitly reconcile and link the actual
+jail.conf `mount.fstab` files. It must not assume the old
+`/etc/fstab.fi-sor-db` convention or restart the running jails.
+
 ## Read-only installer invocation
 
 On the FreeBSD host, with the existing validated FI backend configuration:
