@@ -340,6 +340,11 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         promotionPlan,custody,signed.Trust);e!=nil{
         t.Fatalf("C1 independent B OS process before canonical publication: %v",e)
     }
+    // Unlike the previous test-only B method, this executes the ACTUAL
+    // production B child's READY/PASS/FINAL command parser on a separate
+    // FreeBSD OS process with the local PostgreSQL Unix socket. Wrong
+    // notification ordering and duplicate groups must fail closed.
+    c1TestNativeBReadyProtocol(t,ctx,admin,promotionPlan,custody,signed.Trust)
     generation,e:=c1NativePromotionGeneration(promotionPlan)
     if e!=nil{t.Fatal(e)}
     attempt:="c1-genuine-signed-"+signed.GenerationID

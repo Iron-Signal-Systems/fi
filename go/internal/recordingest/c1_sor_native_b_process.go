@@ -209,6 +209,18 @@ func(v *c1SoRNativeB)Stop(){
 }
 
 func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)error{
+    // Production B ALWAYS loads its installed receiver trust; no IPC
+    // frame, process environment or network peer can select a resolver.
+    return c1RunNativeBChildWithTrust(ctx,input,output,loadInstalledGenerationTrust)
+}
+
+// Internal disposable FreeBSD acceptance seam. This does not weaken the
+// production B child: only in-package tests can supply a separately signed
+// isolated trust fixture. All B IPC, SQL and COMMIT-group checks remain the
+// exact production code below.
+func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
+    output io.Writer,resolve generationTrustResolver)error{
+    if resolve==nil{return errors.New("C1 B: original receiver trust resolver required")}
     if ctx==nil||input==nil||output==nil||os.Getenv("FI_C1_B_CHILD")!="1"{
         return errors.New("C1 B: separate process child authorization required")
     }
@@ -250,7 +262,7 @@ func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)e
         if line=="FINAL"{
             if len(seen)!=len(p.Descriptors)-1{return errors.New("C1 B: unverified groups at final gate")}
             if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{return err}
-            if err:=c1NativeBVerifySignedCustody(ctx,conn,p,custody);err!=nil{
+            if err:=c1NativeBVerifySignedCustodyWithTrust(ctx,conn,p,custody,resolve);err!=nil{
                 return fmt.Errorf("C1 B: independent original signed custody and SQL readback: %w",err)
             }
             if _,err:=fmt.Fprintln(output,"FINAL PASS");err!=nil{return err}

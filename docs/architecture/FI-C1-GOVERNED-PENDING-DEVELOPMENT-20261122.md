@@ -211,16 +211,27 @@ relational coverage. Before invoking the successful B child, the native regressi
 mutates a committed Pending SourceParent SHA-256 and requires the
 distinct B process to **reject the changed SQL evidence**, then restores
 only that isolated fixture row and requires a successful independent
-re-verification. A failed child blocks the test publisher. This is
-the real B verification code inside a disposable test child, but the
-test does not yet run the actual `fi-c1-sor-worker --c1-b-child` process
-or its asynchronous group notification protocol.
+re-verification. A failed child blocks the test publisher. The next native FreeBSD acceptance case also runs the SAME
+`RunC1SoRNativeBChild` READY/PASS/FINAL protocol in a separate test
+operating-system process with its own **local PostgreSQL Unix socket**
+and read-only session. It must reject a premature FINAL and duplicate
+READY before accepting precisely one post-COMMIT group followed by final
+full original signed-custody and relational proof. The production
+`RunC1SoRNativeBChild` wrapper remains fixed to installed receiver
+trust; the unexported in-package test entrypoint alone uses ephemeral
+signed CI fixture trust. No arbitrary trust resolver can be selected
+by fi-ingest or over the authenticated transport.
+
+The fixture thus exercises the real B child protocol, but not yet
+the complete `fi-c1-sor-worker` executable lifecycle and its
+concurrent notification scheduling alongside live SQL traffic.
 
 The fixture uses the actual C1 SQL and canonical publisher primitives
 but invokes final publication as a **separate test step**, not as a live
 `C1SoRService.FinalProof` process in two jails. It is not yet evidence
 of distinct fi-ingest/fi-sor jail services, accepted parallel B child
-scheduling, power-loss recovery, or performance acceptance. Pending replay remains explicitly
+scheduling against concurrent SQL workloads, power-loss recovery, or
+performance acceptance. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under
