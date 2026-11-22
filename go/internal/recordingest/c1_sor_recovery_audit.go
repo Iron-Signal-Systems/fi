@@ -15,6 +15,7 @@ import (
     "encoding/hex"
     "errors"
     "fmt"
+    "strings"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/jackc/pgx/v5"
@@ -122,10 +123,11 @@ func c1FindReadOnlyTypedPrefix(completeParents int,check func(int)error)(int,err
 // AuditC1SoRPrivateRecovery uses one REPEATABLE READ / READ ONLY snapshot
 // inside fi-sor. It has zero SQL writes, uses no RAM buffer, never invokes
 // a P5/P6 flush, and explicitly does NOT authorize automatic replay.
-func AuditC1SoRPrivateRecovery(ctx context.Context,dsn string,plan c1handoff.Frame)(
-    C1RecoveryAuditReport,error,
-){
+func AuditC1SoRPrivateRecovery(ctx context.Context,dsn string,plan c1handoff.Frame,
+    targetSchema ...string)(C1RecoveryAuditReport,error){
     var report C1RecoveryAuditReport
+    schema,err:=sorPromotionSourceSchema(targetSchema...)
+    if err!=nil{return report,err}
     if ctx==nil||plan.Kind!=c1handoff.Start {
         return report,errors.New("C1 recovery: authenticated original signed START required")
     }
@@ -149,7 +151,7 @@ func AuditC1SoRPrivateRecovery(ctx context.Context,dsn string,plan c1handoff.Fra
     if published{return report,errors.New("C1 recovery: generation already authoritative")}
     var generationID,storedRecords,storedBatches int64
     if err=tx.QueryRow(ctx,`SELECT recorded_generation_id,record_count,batch_count
-        FROM fi_recovery_projection.recorded_generation
+        FROM `+pgx.Identifier{schema,"recorded_generation"}.Sanitize()+`
         WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3`,
         plan.SourceID,plan.GenerationID,digest).
         Scan(&generationID,&storedRecords,&storedBatches);err!=nil{return report,err}
@@ -157,14 +159,14 @@ func AuditC1SoRPrivateRecovery(ctx context.Context,dsn string,plan c1handoff.Fra
         return report,errors.New("C1 recovery: original signed generation size/identity differs from private stage")
     }
     var generations int64
-    if err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery_projection.recorded_generation`).
+    if err=tx.QueryRow(ctx,"SELECT count(*) FROM "+pgx.Identifier{schema,"recorded_generation"}.Sanitize()).
         Scan(&generations);err!=nil{return report,err}
     if generations!=1{return report,errors.New("C1 recovery: unrelated private generation present")}
 
     // The query reads every original signed batch (including any verified
     // immutable seed). No row data, checksum, timestamp or SQL state is
     // modified by the audit.
-    rows,err:=tx.Query(ctx,`
+    rows,err:=tx.Query(ctx,strings.ReplaceAll(`
 SELECT sb.batch_id,sb.source_batch_id,sb.record_count,sb.data_bytes,
        count(sr.source_record_id)::bigint,
        count(DISTINCT sr.record_ordinal)::bigint,
@@ -176,7 +178,7 @@ LEFT JOIN fi_recovery_projection.source_record sr
     ON sr.source_batch_id=sb.source_batch_id
 WHERE sb.recorded_generation_id=$1
 GROUP BY sb.batch_id,sb.source_batch_id,sb.record_count,sb.data_bytes
-ORDER BY sb.batch_id`,generationID)
+ORDER BY sb.batch_id`,privateProjectionSchema+".",schema+"."),generationID)
     if err!=nil{return report,err}
     evidence:=make([]C1RecoveryBatchEvidence,0,len(plan.BatchIDs))
     var signedRecords int64
@@ -212,7 +214,7 @@ ORDER BY sb.batch_id`,generationID)
     // A SourceParent row is NOT equivalent to completed typed projection.
     // The original 13-kind relational coverage checker proves only an
     // existing contiguous prefix, independent of the private P6 buffers.
-    shadow:=privateProjectionTx{Tx:tx}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema}
     typedPrefix,err:=c1FindReadOnlyTypedPrefix(sourcePrefix,func(mid int)error{
         originals:=make([]PreparedBatch,mid)
         for i:=0;i<mid;i++{originals[i].BatchID=evidence[i].BatchID}

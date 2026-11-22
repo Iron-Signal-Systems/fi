@@ -71,9 +71,20 @@ failure rollback, exactly one Accepted journal transaction, canonical readback,
 and duplicate retry. That proves SQL transaction mechanics only; it does NOT
 replace independent signed-custody verifier B or full two-jail acceptance.
 
+A development-only, explicitly gated **pending replay reconciler** now
+reopens original immutable recorded custody and signed manifest bytes,
+surveys the committed SourceParent/typed prefix read-only, and reuses C1's
+existing per-record signed-identity comparison to skip only matching
+committed SQL rows. The fi-sor SQL session holds a PostgreSQL advisory
+singleton lock throughout the attempted generation, and FinalProof
+requires that same lock before publication. This is not blind replay:
+unavailable original receipt, foreign pending source, inconsistent ordinal,
+missing typed proof, or uncertain canonical state fail closed.
+
 This automatic implementation is **not yet accepted for live deployment**:
-pending retention/cleanup, interrupted-generation recovery, power-loss and
-full two-jail signed-generation acceptance remain incomplete. The optional
+pending retention/cleanup, loss-of-power recovery and full two-jail signed
+generation tests remain incomplete. Pending replay remains explicitly
+opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under
 locks before committing Accepted. Existing incomplete generations fail closed.
@@ -100,12 +111,11 @@ authoritative database or revive the deleted private development schemas.
    existing transaction-scoped DDL helper and disposable PostgreSQL 18 tests
    cover rollback, mirrored FKs, writer ACLs and unresolved-generation fence;
    production preflight and a safe state-transition owner are still missing.
-2. Finish governed pending interrupted-generation read-only recovery,
-   committed-prefix reconciliation and safe replay. The active clean START
-   and A/B SQL readback have been routed to the same pending schema; a
-   previous dirty generation is intentionally rejected until replay proof is
-   accepted. No second SQL ingestion algorithm and no PostgreSQL access in
-   fi-ingest.
+2. Complete disposable PostgreSQL18/FreeBSD interruption and power-loss
+   acceptance for pending replay, including original signed custody checks,
+   partial SourceParent + typed families, missing/changed hashes, and recovery
+   of interrupted SQL commits. The replay implementation is gated until
+   this acceptance passes; no second SQL algorithm or PostgreSQL in fi-ingest.
 3. Validate the reused canonical promotion SQL against a fully populated
    disposable PostgreSQL 18 database and a genuine original signed C1
    generation, including NTFS natural-key remaps and each five-family table.

@@ -20,7 +20,7 @@ import (
 )
 
 func (s *C1SoRService) validateSignedPendingStage(ctx context.Context,
-	f c1handoff.Frame) ([]int64, error) {
+	f c1handoff.Frame, allowReconciledReplay ...bool) ([]int64, error) {
 	if s == nil || ctx == nil || f.Kind != c1handoff.Start || f.StartBatchIndex != 0 {
 		return nil, errors.New("C1 pending: unsupported replay or unsigned Start")
 	}
@@ -116,9 +116,12 @@ func (s *C1SoRService) validateSignedPendingStage(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if typed != 0 || journal != 0 {
-		return nil, errors.New("C1 pending: dirty stage or forged private acceptance evidence")
-	}
+	if journal != 0 || typed<0 || typed>records {
+        return nil, errors.New("C1 pending: invalid committed SourceParent count or staged journal")
+    }
+    if typed!=0&&(len(allowReconciledReplay)!=1||!allowReconciledReplay[0]){
+        return nil,errors.New("C1 pending: dirty SourceParent stage requires separately audited replay")
+    }
 	if err = tx.Commit(ctx); err != nil {
 		return nil, err
 	}

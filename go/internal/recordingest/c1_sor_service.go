@@ -31,6 +31,7 @@ type C1SoRService struct {
     AllowC1Replay bool
     replayMode bool
     replayRead *pgx.Conn
+    pendingSession *pgx.Conn // holds one active-generation advisory lock
     mu sync.Mutex
     session *c1SoRCommitHandler
     pool *privateC1FiveSQL
@@ -69,22 +70,32 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         s.failed=err
         return nil,fmt.Errorf("C1 fi-sor: governed pending SQL preflight: %w",err)
     }
-    // Dirty pending replay is not yet accepted. Preserve original custody
-    // and READY; never silently fall back to the old SQL ingester.
+    if err:=s.acquirePendingSessionLock(ctx);err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: singleton pending ownership: %w",err)
+    }
     if frame.StartBatchIndex!=0{
-        err:=errors.New("C1 fi-sor: governed pending restart requires read-only reconciliation; no blind replay")
+        err:=errors.New("C1 fi-sor: replay must restart from full original signed generation")
         s.failed=err
         return nil,err
     }
-    if err:=StageC1SignedPendingMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
-        s.failed=err
-        return nil,fmt.Errorf("C1 fi-sor: original signed Pending bootstrap: %w",err)
+    // Reopen signed custody and inspect the exact existing pending SQL
+    // generation before any replay. A zero-byte READY marker alone has no
+    // authority to skip previously committed SourceParent or typed roots.
+    replay,err:=s.c1InspectGovernedPendingReplay(ctx,frame)
+    if err!=nil{s.failed=err;return nil,err}
+    if !replay{
+        if err=StageC1SignedPendingMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
+            s.failed=err
+            return nil,fmt.Errorf("C1 fi-sor: original signed Pending bootstrap: %w",err)
+        }
     }
-    ids,err:=s.validateSignedPendingStage(ctx,frame)
+    ids,err:=s.validateSignedPendingStage(ctx,frame,replay)
     if err!=nil{
         s.failed=err
         return nil,fmt.Errorf("C1 fi-sor: signed Pending readback blocked: %w",err)
     }
+    s.replayMode=replay
     counts,err:=s.loadSignedBatchRecordCounts(ctx,ids)
     if err!=nil{s.failed=err;return nil,err}
     pool,err:=newC1SoRSQLPool(ctx,s.DSN,frame.SourceID,s.MaxSQLWorkers)
@@ -111,6 +122,11 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         if e!=nil{
             verifier.Stop();pool.Close();s.failed=e
             return nil,fmt.Errorf("C1 fi-sor: replay read-only SQL session: %w",e)
+        }
+        if _,e=read.Exec(ctx,"SET default_transaction_read_only = on");e!=nil{
+            _=read.Close(context.Background())
+            verifier.Stop();pool.Close();s.failed=e
+            return nil,fmt.Errorf("C1 fi-sor: replay read-only database session: %w",e)
         }
         s.replayRead=read
     }
@@ -264,6 +280,11 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
         }
         return status,nil
     }
+    if err:=s.pendingLockHealthy(ctx);err!=nil{
+        s.failed=err
+        s.mu.Unlock()
+        return c1handoff.FinalNone,err
+    }
     s.publishing=true
     s.mu.Unlock()
     // The independently completed B process is a prerequisite, never an
@@ -293,5 +314,9 @@ func(s *C1SoRService)Close(){
     if s.replayRead!=nil{
         _=s.replayRead.Close(context.Background())
         s.replayRead=nil
+    }
+    if s.pendingSession!=nil{
+        _=s.pendingSession.Close(context.Background())
+        s.pendingSession=nil
     }
 }

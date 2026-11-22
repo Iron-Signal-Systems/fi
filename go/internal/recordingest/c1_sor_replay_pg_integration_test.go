@@ -140,6 +140,90 @@ CREATE TABLE fi_recovery_projection.source_record(
     if err!=nil||len(selected.AlreadyCommitted)!=1||len(selected.MustWrite)!=0{
         t.Fatalf("durable SourceParent unnecessarily duplicated: %v %+v",err,selected)
     }
+    // The same read-only replay and B identity proof must work against
+    // the governed pending namespace, not just the isolated benchmark
+    // namespace. This minimal PostgreSQL18 fixture is intentionally
+    // disposable and does not install any canonical SQL objects.
+    if _,err=conn.Exec(ctx,"CREATE SCHEMA fi_c1_pending");err!=nil{t.Fatal(err)}
+    if _,err=conn.Exec(ctx,`CREATE TABLE fi_c1_pending.source_record (
+       LIKE fi_recovery_projection.source_record INCLUDING ALL)`);err!=nil{t.Fatal(err)}
+    for _,table:=range kinds{
+        if _,err=conn.Exec(ctx,`CREATE TABLE fi_c1_pending.`+table+
+            `(source_record_id bigint PRIMARY KEY REFERENCES
+               fi_c1_pending.source_record(source_record_id))`);err!=nil{
+            t.Fatalf("C1 pending replay typed root %s: %v",table,err)
+        }
+    }
+    var pendingID int64
+    err=conn.QueryRow(ctx,`INSERT INTO fi_c1_pending.source_record(
+       source_batch_id,record_ordinal,version,record_kind,scope_id,
+       written_at,record_bytes,record_sha256)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING source_record_id`,
+       original.sourceBatchID,original.ordinal,prepared.Record.Version,
+       prepared.Record.RecordKind,prepared.Record.ScopeID,
+       prepared.WrittenAtUTC,prepared.RecordBytes,prepared.RecordDigest[:]).
+       Scan(&pendingID)
+    if err!=nil{t.Fatal(err)}
+    checkPending:=func()([]C1RecoveryRowState,error){
+        tx,e:=conn.BeginTx(ctx,pgx.TxOptions{
+            IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+        })
+        if e!=nil{return nil,e}
+        defer tx.Rollback(context.Background())
+        states,e:=c1AuditCommittedRowStates(ctx,tx,
+            []privateP6Record{original},c1GovernedPendingSchema)
+        if e!=nil{return nil,e}
+        return states,tx.Commit(ctx)
+    }
+    pendingStates,err:=checkPending()
+    if err!=nil||len(pendingStates)!=1||
+        !pendingStates[0].ParentCommitted||pendingStates[0].TypedRootCommitted{
+        t.Fatalf("C1 pending replay missed committed parent before typed root: %+v %v",pendingStates,err)
+    }
+    if _,err=conn.Exec(ctx,`INSERT INTO fi_c1_pending.collector_identity(source_record_id)
+       VALUES($1)`,pendingID);err!=nil{t.Fatal(err)}
+    pendingStates,err=checkPending()
+    if err!=nil||!pendingStates[0].ParentCommitted||!pendingStates[0].TypedRootCommitted{
+        t.Fatalf("C1 pending replay missed committed typed proof: %+v %v",pendingStates,err)
+    }
+    if err=c1NativeBVerifyData(ctx,conn,bytes.NewReader(raw),0,44,
+       signedBatch,c1GovernedPendingSchema);err!=nil{
+        t.Fatalf("C1 B original signed custody could not prove pending SQL: %v",err)
+    }
+    if _,err=conn.Exec(ctx,`UPDATE fi_c1_pending.source_record
+        SET record_sha256=$1 WHERE source_record_id=$2`,
+        bytes.Repeat([]byte{2},32),pendingID);err!=nil{t.Fatal(err)}
+    if _,err=checkPending();err==nil{
+        t.Fatal("C1 pending replay accepted mutated committed SourceParent digest")
+    }
+    // Only one fi-sor may own this generation across processes. The
+    // lock vanishes on PostgreSQL session loss, allowing audited recovery.
+    owner,lockErr:=pgx.Connect(ctx,dsn)
+    if lockErr!=nil{t.Fatal(lockErr)}
+    challenger,lockErr:=pgx.Connect(ctx,dsn)
+    if lockErr!=nil{_ =owner.Close(context.Background());t.Fatal(lockErr)}
+    defer challenger.Close(context.Background())
+    var lockA,lockB bool
+    if lockErr=owner.QueryRow(ctx,`SELECT pg_try_advisory_lock($1::bigint)`,
+        c1PendingSessionLockKey).Scan(&lockA);lockErr!=nil||!lockA{
+        t.Fatalf("C1 pending singleton owner failed: %t %v",lockA,lockErr)
+    }
+    if lockErr=challenger.QueryRow(ctx,`SELECT pg_try_advisory_lock($1::bigint)`,
+        c1PendingSessionLockKey).Scan(&lockB);lockErr!=nil||lockB{
+        t.Fatalf("C1 pending admitted concurrent SQL owner: %t %v",lockB,lockErr)
+    }
+    session:=&C1SoRService{pendingSession:owner}
+    if lockErr=session.pendingLockHealthy(ctx);lockErr!=nil{
+        t.Fatalf("C1 pending owner lost exact advisory lock: %v",lockErr)
+    }
+    _=owner.Close(context.Background())
+    if lockErr=session.pendingLockHealthy(ctx);lockErr==nil{
+        t.Fatal("C1 pending failed open after owner SQL connection loss")
+    }
+    if lockErr=challenger.QueryRow(ctx,`SELECT pg_try_advisory_lock($1::bigint)`,
+        c1PendingSessionLockKey).Scan(&lockB);lockErr!=nil||!lockB{
+        t.Fatalf("C1 pending restart cannot reacquire lost lock: %t %v",lockB,lockErr)
+    }
     bad:=original
     bad.prepared.RecordDigest[0]^=1
     auditTx,e:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})

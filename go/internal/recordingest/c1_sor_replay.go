@@ -48,7 +48,7 @@ func(s *c1SoRCommitHandler)EnqueueReplay(ctx context.Context,
     if err!=nil{return nil,err}
     tx,err:=read.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
     if err!=nil{return nil,err}
-    state,err:=c1AuditCommittedRowStates(ctx,tx,rows)
+    state,err:=c1AuditCommittedRowStates(ctx,tx,rows,pool.projectionSchema)
     if err!=nil{
         _=tx.Rollback(context.Background())
         return nil,fmt.Errorf("C1 replay: original signed SourceParent proof: %w",err)
