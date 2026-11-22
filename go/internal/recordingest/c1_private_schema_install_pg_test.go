@@ -382,6 +382,112 @@ WHERE CASE
         t.Fatal("C1 private schema installation unexpectedly overwrote already created schema")
     }
     _=retry.Rollback(context.Background())
+    // The NEW governed pending representation is installed only inside
+    // this disposable PostgreSQL18 fixture. First prove complete rollback,
+    // then commit its DDL and audit every role/authority boundary.
+    pendingTx,e:=admin.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    if e=c1InstallGovernedPendingSchemaTx(ctx,pendingTx);e!=nil{
+        _=pendingTx.Rollback(context.Background())
+        t.Fatalf("C1 pending PostgreSQL18 migration: %v",e)
+    }
+    if _,e=pendingTx.Exec(ctx,"SELECT fi_c1_force_pending_ddl_rollback()");e==nil{
+        _=pendingTx.Rollback(context.Background())
+        t.Fatal("C1 pending intentional rollback injection unexpectedly passed")
+    }
+    _=pendingTx.Rollback(context.Background())
+    var pendingExists bool
+    if e=admin.QueryRow(ctx,"SELECT to_regnamespace('fi_c1_pending') IS NOT NULL").Scan(&pendingExists);e!=nil{t.Fatal(e)}
+    if pendingExists{t.Fatal("C1 governed pending migration left partial DDL after rollback")}
+    pendingTx,e=admin.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    if e=c1InstallGovernedPendingSchemaTx(ctx,pendingTx);e!=nil{
+        _=pendingTx.Rollback(context.Background())
+        t.Fatalf("C1 governed pending full DDL failed in PostgreSQL18: %v",e)
+    }
+    if e=pendingTx.Commit(ctx);e!=nil{t.Fatal(e)}
+    var pendingTables,canonicalAfterPending int64
+    if e=admin.QueryRow(ctx,`SELECT
+       (SELECT count(*) FROM information_schema.tables WHERE table_schema='fi_c1_pending'),
+       (SELECT count(*) FROM information_schema.tables WHERE table_schema='fi')`).
+       Scan(&pendingTables,&canonicalAfterPending);e!=nil{t.Fatal(e)}
+    if pendingTables!=canonicalBefore+1||canonicalAfterPending!=canonicalBefore{
+        t.Fatalf("C1 governed pending must mirror canonical plus one control: pending=%d expected=%d canonical=%d/%d",
+            pendingTables,canonicalBefore+1,canonicalAfterPending,canonicalBefore)
+    }
+    var sqlWorkerUsage,sqlWorkerCreate,sqlWorkerSourceRead,sqlWorkerSourceInsert bool
+    var sqlWorkerControlRead,sqlWorkerControlWrite,sqlWorkerJournalWrite bool
+    e=admin.QueryRow(ctx,`SELECT
+      has_schema_privilege('fi_ingest','fi_c1_pending','USAGE'),
+      has_schema_privilege('fi_ingest','fi_c1_pending','CREATE'),
+      has_table_privilege('fi_ingest','fi_c1_pending.source_record','SELECT'),
+      has_table_privilege('fi_ingest','fi_c1_pending.source_record','INSERT'),
+      has_table_privilege('fi_ingest','fi_c1_pending.generation_control','SELECT'),
+      has_table_privilege('fi_ingest','fi_c1_pending.generation_control','UPDATE'),
+      has_table_privilege('fi_ingest','fi_c1_pending.ingest_journal','INSERT')`).
+      Scan(&sqlWorkerUsage,&sqlWorkerCreate,&sqlWorkerSourceRead,
+        &sqlWorkerSourceInsert,&sqlWorkerControlRead,&sqlWorkerControlWrite,
+        &sqlWorkerJournalWrite)
+    if e!=nil{t.Fatal(e)}
+    if !sqlWorkerUsage||sqlWorkerCreate||!sqlWorkerSourceRead||
+        !sqlWorkerSourceInsert||!sqlWorkerControlRead||
+        sqlWorkerControlWrite||sqlWorkerJournalWrite{
+        t.Fatal("C1 governed pending worker could create objects, modify verifier, forge journal or could not write source")
+    }
+    var pendingFKs int64
+    if e=admin.QueryRow(ctx,`SELECT count(*) FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid=c.connamespace
+        WHERE n.nspname='fi_c1_pending' AND c.contype='f'`).Scan(&pendingFKs);e!=nil{t.Fatal(e)}
+    if pendingFKs<20{t.Fatalf("C1 pending relational FK graph incomplete: %d",pendingFKs)}
+    // Create two independently signed-looking metadata fixtures in a
+    // transaction, then prove the unique unresolved-generation fence.
+    // The entire fixture is rolled back: no caller can treat it as custody.
+    lifecycleTx,e:=admin.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    _,e=lifecycleTx.Exec(ctx,`INSERT INTO fi_c1_pending.recorded_generation (
+      receipt_version,descriptor_version,source_id,generation_id,
+      canonical_version,data_encoding,artifact_count,source_bytes,
+      canonical_bytes,canonical_sha256,encoded_data_bytes,
+      encoded_data_sha256,metadata_bytes,metadata_sha256,
+      transfer_bytes,transfer_sha256,batch_count,data_bytes,record_count,
+      receipt_bytes,receipt_sha256,ingest_version)
+      SELECT 'fixture','fixture','ci-source',g.gen,'fixture','none',
+      2,128,128,decode(repeat(g.digest,32),'hex'),64,decode(repeat(g.digest,32),'hex'),
+      32,decode(repeat(g.digest,32),'hex'),116,decode(repeat(g.digest,32),'hex'),
+      1,64,1,120,decode(repeat(g.digest,32),'hex'),'ci-only'
+      FROM (VALUES ('ci-generation-1','11'),('ci-generation-2','22')) AS g(gen,digest)`)
+    if e!=nil{
+        _=lifecycleTx.Rollback(context.Background())
+        t.Fatalf("C1 pending signed-identity FK fixture: %v",e)
+    }
+    insertControl:=`INSERT INTO fi_c1_pending.generation_control(
+        source_id,generation_id,receipt_sha256,transfer_sha256,record_count,batch_count)
+        SELECT source_id,generation_id,receipt_sha256,transfer_sha256,record_count,batch_count
+        FROM fi_c1_pending.recorded_generation WHERE generation_id=$1`
+    if _,e=lifecycleTx.Exec(ctx,insertControl,"ci-generation-1");e!=nil{t.Fatal(e)}
+    if _,e=lifecycleTx.Exec(ctx,"SAVEPOINT pending_second");e!=nil{t.Fatal(e)}
+    if _,e=lifecycleTx.Exec(ctx,insertControl,"ci-generation-2");e==nil{
+        _=lifecycleTx.Rollback(context.Background())
+        t.Fatal("C1 pending admitted two unresolved generations")
+    }
+    if _,e=lifecycleTx.Exec(ctx,"ROLLBACK TO SAVEPOINT pending_second");e!=nil{t.Fatal(e)}
+    if _,e=lifecycleTx.Exec(ctx,`UPDATE fi_c1_pending.generation_control
+        SET state='Retired',verifier_b_receipt_sha256=receipt_sha256,
+            verifier_b_at=clock_timestamp() WHERE generation_id='ci-generation-1'`);e!=nil{t.Fatal(e)}
+    if _,e=lifecycleTx.Exec(ctx,insertControl,"ci-generation-2");e!=nil{
+        _=lifecycleTx.Rollback(context.Background())
+        t.Fatalf("C1 pending failed to admit next generation after reviewed retirement: %v",e)
+    }
+    if e=lifecycleTx.Rollback(context.Background());e!=nil{t.Fatal(e)}
+    var pendingControls,canonicalAccepted int64
+    if e=admin.QueryRow(ctx,`SELECT
+        (SELECT count(*) FROM fi_c1_pending.generation_control),
+        (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')`).
+        Scan(&pendingControls,&canonicalAccepted);e!=nil{t.Fatal(e)}
+    if pendingControls!=0||canonicalAccepted!=0{
+        t.Fatal("C1 pending CI fixture left state or canonical Accepted journal")
+    }
+    t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
     _=strings.Builder{}

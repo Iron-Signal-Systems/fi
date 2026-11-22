@@ -20,7 +20,9 @@ B and a single atomic Accepted transaction complete.
 `fi_c1_pending` in the **existing fi-sor PostgreSQL server**. It mirrors
 the exact audited canonical relational structure, FKs and identity rules,
 and adds a constrained `generation_control` table linking all original
-signed generation fields. No installer or service currently executes it.
+signed generation fields. A transaction-scoped DDL helper is exercised only by disposable PostgreSQL 18 CI; no production installer or service invokes it.
+
+The native SoR five-family writer/COPY boundary is now capable of targeting the governed pending namespace while the original isolated benchmark path still targets its original schema. Startup metadata, verifier B, recovery and publication are not yet migrated.
 
 Control state is `Pending`, `SQLSealed`, `BVerified`,
 `PublicationUncertain`, or `Retired`. None means canonically Accepted.
@@ -35,10 +37,10 @@ authoritative database or revive the deleted private development schemas.
 
 ## Remaining mandatory engineering work
 
-1. Implement an audited, transaction-owned installation and lifecycle API.
-   Test only on disposable PostgreSQL 18; add a distinct writable role for
-   the SoR-owned lifecycle if needed. Verify exact permissions, no mixed
-   generation leakage and no unresolved-generation bypass.
+1. Complete the admin-only installation and SoR-owned lifecycle API. The
+   existing transaction-scoped DDL helper and disposable PostgreSQL 18 tests
+   cover rollback, mirrored FKs, writer ACLs and unresolved-generation fence;
+   production preflight and a safe state-transition owner are still missing.
 2. Move the existing C1 signed metadata, SourceParent, five-family pool,
    independent B verification and crash-prefix readback from discarded
    development schemas to this pending state. No second SQL ingestion
