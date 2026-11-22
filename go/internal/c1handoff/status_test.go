@@ -24,8 +24,12 @@ func TestC1AuthenticatedReadOnlyStatusBeforeStart(t *testing.T){
             if e!=nil{t.Fatal(e)}
             tlsClient,e:=ClientTLSConfig(cliCert,"fi-sor.local")
             if e!=nil{t.Fatal(e)}
-            a,b:=net.Pipe()
-            defer a.Close();defer b.Close()
+            // Use a real TCP socket, not unbuffered net.Pipe:
+            // TLS 1.3 CloseNotify on both ends of net.Pipe can block
+            // forever after a successful one-shot status response.
+            listener,e:=net.Listen("tcp4","127.0.0.1:0")
+            if e!=nil{t.Fatal(e)}
+            defer listener.Close()
             done:=make(chan error,1)
             srv:=&Server{
                 IOTimeout:5*time.Second,
@@ -45,8 +49,14 @@ func TestC1AuthenticatedReadOnlyStatusBeforeStart(t *testing.T){
                     return errors.New("wrong path")
                 },
             }
-            go func(){done<-srv.ServeConn(context.Background(),tls.Server(a,tlsServer))}()
-            client,e:=NewClient(tls.Client(b,tlsClient))
+            go func(){
+                peer,e:=listener.Accept()
+                if e!=nil{done<-e;return}
+                done<-srv.ServeConn(context.Background(),tls.Server(peer,tlsServer))
+            }()
+            raw,e:=net.DialTimeout("tcp4",listener.Addr().String(),3*time.Second)
+            if e!=nil{t.Fatal(e)}
+            client,e:=NewClient(tls.Client(raw,tlsClient))
             if e!=nil{t.Fatal(e)}
             defer client.Close()
             frame:=Frame{Kind:Status,Sequence:1,SourceID:"source.example",
