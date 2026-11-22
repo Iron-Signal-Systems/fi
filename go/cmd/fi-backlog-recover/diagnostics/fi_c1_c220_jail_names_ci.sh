@@ -259,4 +259,24 @@ done
 if grep -Eq '^[[:space:]]*(chmod[[:space:]]+-R|chgrp[[:space:]]+-R|chown[[:space:]]+-R|mount[[:space:]]+-t|jail[[:space:]]+-r|sysrc[[:space:]]|service[[:space:]])' "$parent_fix"; then
     fail 'C220 traverse-only correction may not change services, mounts, or descendants'
 fi
+# Before persisting jail mount.fstab, inventory receiver + ingest + SoR
+# as a set; otherwise preserving the C1 tmpfs would discard their
+# preexisting custody/PGDATA nullfs views on the next jail start.
+boot_audit="$root/fi_c1_c220_boot_mount_inventory.sh"
+sh -n "$boot_audit" || fail 'C220 boot mount inventory shell syntax'
+for token in \
+    'fi-receiver fi-ingest fi-sor' \
+    'C1_EXISTING_FI_JAIL_MOUNT_COUNT=' \
+    '/var/run/fi-c1-handoff' \
+    'C1_BOOT_FSTAB_RELATED_EXISTING_LINES=' \
+    'C1_CANONICAL_GENERATIONS=' \
+    'C1_PRIVATE_STAGE_ABSENT=' \
+    'FI C1 C220 BOOT MOUNT INVENTORY COMPLETE read_only=true' \
+    'C1_JAIL_RESTART=NOT_AUTHORIZED'; do
+    grep -F -- "$token" "$boot_audit" >/dev/null ||
+        fail "C220 boot inventory lacks required preservation gate: $token"
+done
+if grep -Eq '^[[:space:]]*(chmod|chown|chgrp|mount[[:space:]]+-t|umount|sysrc|service|jail[[:space:]]+-r|cp|mv|install|mkdir)' "$boot_audit"; then
+    fail 'C220 boot mount inventory is not read only'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
