@@ -62,6 +62,9 @@ CREATE UNIQUE INDEX fi_c1_pending_one_unretired_generation
     WHERE state <> 'Retired';
 -- The mirrored journal is never an authority and workers cannot forge B.
 REVOKE ALL ON fi_c1_pending.ingest_journal FROM fi_ingest;
+-- fi-sor must prove that the untrusted pending journal is EMPTY; SELECT
+-- is necessary for read-only admission/replay checks, never acceptance.
+GRANT SELECT ON fi_c1_pending.ingest_journal TO fi_ingest;
 REVOKE ALL ON fi_c1_pending.generation_control FROM fi_ingest;
 GRANT SELECT ON fi_c1_pending.generation_control TO fi_ingest;
 -- fi_ingest may admit ONLY an exact signed Pending identity in the SAME

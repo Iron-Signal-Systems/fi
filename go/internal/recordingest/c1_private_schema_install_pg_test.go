@@ -416,7 +416,7 @@ WHERE CASE
             pendingTables,canonicalBefore+1,canonicalAfterPending,canonicalBefore)
     }
     var sqlWorkerUsage,sqlWorkerCreate,sqlWorkerSourceRead,sqlWorkerSourceInsert bool
-    var sqlWorkerControlRead,sqlWorkerControlWrite,sqlWorkerJournalWrite bool
+    var sqlWorkerControlRead,sqlWorkerControlWrite,sqlWorkerJournalRead,sqlWorkerJournalWrite bool
     var sqlWorkerControlIdentityInsert,sqlWorkerControlProofInsert bool
     e=admin.QueryRow(ctx,`SELECT
       has_schema_privilege('fi_ingest','fi_c1_pending','USAGE'),
@@ -427,16 +427,17 @@ WHERE CASE
       has_table_privilege('fi_ingest','fi_c1_pending.generation_control','UPDATE'),
       has_column_privilege('fi_ingest','fi_c1_pending.generation_control','source_id','INSERT'),
       has_column_privilege('fi_ingest','fi_c1_pending.generation_control','state','INSERT'),
+      has_table_privilege('fi_ingest','fi_c1_pending.ingest_journal','SELECT'),
       has_table_privilege('fi_ingest','fi_c1_pending.ingest_journal','INSERT')`).
       Scan(&sqlWorkerUsage,&sqlWorkerCreate,&sqlWorkerSourceRead,
         &sqlWorkerSourceInsert,&sqlWorkerControlRead,&sqlWorkerControlWrite,
         &sqlWorkerControlIdentityInsert,&sqlWorkerControlProofInsert,
-        &sqlWorkerJournalWrite)
+        &sqlWorkerJournalRead,&sqlWorkerJournalWrite)
     if e!=nil{t.Fatal(e)}
     if !sqlWorkerUsage||sqlWorkerCreate||!sqlWorkerSourceRead||
         !sqlWorkerSourceInsert||!sqlWorkerControlRead||
         sqlWorkerControlWrite||!sqlWorkerControlIdentityInsert||
-        sqlWorkerControlProofInsert||sqlWorkerJournalWrite{
+        sqlWorkerControlProofInsert||!sqlWorkerJournalRead||sqlWorkerJournalWrite{
         t.Fatal("C1 governed pending worker could create objects, modify verifier, forge journal or could not write source")
     }
     // The real fi-sor START gate must also reject a renamed relation,
@@ -450,6 +451,21 @@ WHERE CASE
         t.Fatalf("C1 pending read-only START privilege gate: %v",e)
     }
     if e=pendingGateTx.Commit(ctx);e!=nil{t.Fatal(e)}
+    // A missing SELECT-only pending journal grant is a real bootstrap
+    // blocker. Correcting it must never require granting journal writes.
+    if _,e=admin.Exec(ctx,"REVOKE SELECT ON fi_c1_pending.ingest_journal FROM fi_ingest");e!=nil{
+        t.Fatal(e)
+    }
+    deniedJournal,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    journalErr:=c1ReadOnlyGovernedPendingWorkerPrivileges(ctx,deniedJournal)
+    _=deniedJournal.Rollback(context.Background())
+    if journalErr==nil{t.Fatal("C1 START accepted worker unable to inspect the pending acceptance journal")}
+    if _,e=admin.Exec(ctx,"GRANT SELECT ON fi_c1_pending.ingest_journal TO fi_ingest");e!=nil{
+        t.Fatal(e)
+    }
     if _,e=admin.Exec(ctx,`ALTER TABLE fi_c1_pending.file_observation
         RENAME TO fi_c1_removed_file_observation`);e!=nil{t.Fatal(e)}
     missingGateTx,e:=worker.BeginTx(ctx,pgx.TxOptions{

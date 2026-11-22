@@ -77,21 +77,27 @@ WHERE n.nspname='fi_c1_pending'`).Scan(&tableDenied, &sequenceDenied); err != ni
 		return errors.New("C1 pending: incomplete SQL worker table/sequence permissions")
 	}
 	var readControl, insertIdentity, insertState, insertProof, writeControl bool
-	var writeJournal, writeCanonical bool
+	var readJournal, writeJournal, updateJournal, deleteJournal, truncateJournal, writeCanonical bool
 	if err := tx.QueryRow(ctx, `SELECT
  has_table_privilege(current_user,'fi_c1_pending.generation_control','SELECT'),
  has_column_privilege(current_user,'fi_c1_pending.generation_control','source_id','INSERT'),
  has_column_privilege(current_user,'fi_c1_pending.generation_control','state','INSERT'),
  has_column_privilege(current_user,'fi_c1_pending.generation_control','verifier_b_at','INSERT'),
  has_table_privilege(current_user,'fi_c1_pending.generation_control','UPDATE'),
+ has_table_privilege(current_user,'fi_c1_pending.ingest_journal','SELECT'),
  has_table_privilege(current_user,'fi_c1_pending.ingest_journal','INSERT'),
+ has_table_privilege(current_user,'fi_c1_pending.ingest_journal','UPDATE'),
+ has_table_privilege(current_user,'fi_c1_pending.ingest_journal','DELETE'),
+ has_table_privilege(current_user,'fi_c1_pending.ingest_journal','TRUNCATE'),
  has_table_privilege(current_user,'fi.source_record','UPDATE')`).
 		Scan(&readControl,&insertIdentity,&insertState,&insertProof,
-			&writeControl,&writeJournal,&writeCanonical); err != nil {
+			&writeControl,&readJournal,&writeJournal,&updateJournal,&deleteJournal,
+            &truncateJournal,&writeCanonical); err != nil {
 		return err
 	}
 	if !readControl || !insertIdentity || insertState || insertProof ||
-		writeControl || writeJournal || writeCanonical {
+		writeControl || !readJournal || writeJournal || updateJournal ||
+        deleteJournal || truncateJournal || writeCanonical {
 		return errors.New("C1 pending: writer could forge B, Accepted, or mutate canonical history")
 	}
 	return nil

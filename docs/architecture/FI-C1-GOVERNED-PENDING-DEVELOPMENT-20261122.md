@@ -138,6 +138,11 @@ Control state is `Pending`, `SQLSealed`, `BVerified`,
 `PublicationUncertain`, or `Retired`. None means canonically Accepted.
 The unique index admits only one unresolved generation; an uncertain
 commit fails closed rather than making a new generation eligible.
+The SoR SQL worker role has SELECT-only access to the *pending*
+`ingest_journal`, because clean START/replay must prove it is empty.
+The first native signed PostgreSQL admission test caught that the prior
+total REVOKE made real clean START fail with SQLSTATE 42501. It must
+never be allowed to INSERT, UPDATE, DELETE, or TRUNCATE journal rows.
 The SoR SQL worker role may INSERT only the six signed-identity columns of
 a Pending generation control record in the same transaction as the original
 signed source metadata. It cannot specify B proof fields or the lifecycle

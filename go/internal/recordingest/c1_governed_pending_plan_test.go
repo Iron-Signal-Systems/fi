@@ -74,6 +74,7 @@ func TestC1GovernedPendingControlCannotClaimAcceptance(t *testing.T) {
 		"WHERE state <> 'Retired'",
 		"verifier_b_receipt_sha256 = receipt_sha256",
 		"REVOKE ALL ON fi_c1_pending.ingest_journal FROM fi_ingest",
+        "GRANT SELECT ON fi_c1_pending.ingest_journal TO fi_ingest",
 		"REVOKE ALL ON fi_c1_pending.generation_control FROM fi_ingest",
 		"GRANT SELECT ON fi_c1_pending.generation_control TO fi_ingest",
 		"GRANT INSERT (source_id, generation_id, receipt_sha256, transfer_sha256,",
