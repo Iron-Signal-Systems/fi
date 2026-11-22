@@ -112,6 +112,9 @@ func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pendi
 	}
 
 	sqlStarted := time.Now()
+	// Reused across event, scope and field COPY calls; Security's ordered
+	// SourceParent is already durable in the native C1 path.
+	var copied int64
 	sourceColumns := []string{"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id", "written_at", "record_bytes", "record_sha256", "ingest_version"}
 	// Preserve production COPY values; reuse rows only in private W128/P3.
 	sourceRows := securitySourceRecordCopyRows(ctx, pending, sourceBatchID)
