@@ -21,19 +21,40 @@ done
 echo '===== C220 THREE EXISTING JAILS ====='
 jls -h jid name path | awk '$2=="fi-receiver"||$2=="fi-ingest"||$2=="fi-sor"{print}'
 echo '===== HOST MOUNTS INTO THOSE JAILS (EXACT LIVE INVENTORY) ====='
+# FreeBSD devfs is mounted by the jail lifecycle, NOT a nullfs entry.
+# Require the physical C220 baseline of six nullfs + one devfs per jail.
 mount -p | awk '
 $2 ~ /^\/fast\/jails\/roots\/fi-(receiver|ingest|sor)\// {
     print
-    count++
-    if ($3!="nullfs") {bad=1}
+    n=split($2,parts,"/")
+    jail=parts[5]
+    if (jail!="fi-receiver" && jail!="fi-ingest" && jail!="fi-sor") bad=1
+    if ($3=="nullfs") {
+        if ($1=="" || ($4!="rw" && $4!="ro")) bad=1
+        nullfs[jail]++
+        nullfs_total++
+    } else if ($3=="devfs") {
+        if ($1!="devfs" || $2!="/fast/jails/roots/" jail "/dev" || $4!="rw") bad=1
+        devfs[jail]++
+        devfs_total++
+    } else {
+        bad=1
+    }
 }
 END{
-    printf "C1_EXISTING_FI_JAIL_MOUNT_COUNT=%d\n",count
-    if (count<12 || bad) exit 1
+    printf "C1_EXISTING_FI_JAIL_MOUNT_COUNT=%d\n",nullfs_total+devfs_total
+    printf "C1_EXISTING_FI_NULLFS_MOUNT_COUNT=%d\n",nullfs_total
+    printf "C1_EXISTING_FI_DEVFS_MOUNT_COUNT=%d\n",devfs_total
+    for (i=1;i<=3;i++) {
+        jail=(i==1?"fi-receiver":i==2?"fi-ingest":"fi-sor")
+        printf "C1_EXISTING_FI_JAIL_MOUNT_TYPES=%s nullfs=%d devfs=%d\n",jail,nullfs[jail],devfs[jail]
+        if (nullfs[jail]!=6 || devfs[jail]!=1) bad=1
+    }
+    if (nullfs_total!=18 || devfs_total!=3 || bad) exit 1
 }
-' || fail 'unexpected original/C1 mount inventory; do not plan reboot yet'
+' || fail 'unexpected original/C1 nullfs or devfs mount inventory; do not plan reboot yet'
 
-echo '===== CANDIDATE JAIL FSTAB FILES FROM EXACT LIVE MOUNTS (NOT WRITTEN) ====='
+echo '===== CANDIDATE JAIL NULLFS FSTAB FILES (devfs EXCLUDED; NOT WRITTEN) ====='
 # Preserve every currently mounted PostgreSQL, custody, receiver,
 # runtime config and C1 RAM nullfs view in their current source/target
 # order. Never assume only the seven C1 additions need persistence.
@@ -42,11 +63,23 @@ for name in fi-receiver fi-ingest fi-sor; do
     printf 'C1_PROPOSED_FSTAB=/etc/jail.fstab.d/fi-c1-%s.fstab\n' "$name"
     mount -p | awk -v prefix="$root/" '
     index($2,prefix)==1 {
-        if ($3!="nullfs" || $1=="" || $4=="") bad=1
-        print $1, $2, $3, $4, "0 0"
+        if ($3=="devfs") {
+            # devfs belongs to jail.conf mount.devfs, NEVER the fstab.
+            if ($1!="devfs" || $2!=prefix "dev" || $4!="rw") bad=1
+            devfs++
+            next
+        }
+        if ($3!="nullfs" || $1=="" || ($4!="rw" && $4!="ro")) {
+            bad=1
+            next
+        }
+        print $1, $2, "nullfs", $4, "0 0"
         count++
     }
-    END{if (count==0 || bad) exit 1}
+    END{
+        printf "C1_PROPOSED_NULLFS_COUNT=%d C1_EXISTING_DEVFS_EXCLUDED=%d\\n",count,devfs > "/dev/stderr"
+        if (count!=6 || devfs!=1 || bad) exit 1
+    }
     ' || fail "cannot derive complete original + C1 fstab for $name"
 done
 echo '===== PROPOSED HOST FSTAB RAM ENTRY (NOT WRITTEN) ====='
