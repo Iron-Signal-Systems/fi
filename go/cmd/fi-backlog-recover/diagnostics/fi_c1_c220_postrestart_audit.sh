@@ -38,15 +38,23 @@ bin=/var/tmp/fi-c1-host-preflight
 sh "$native" --verify ||
     fail 'native read-only SoR signed input or tmpfs verification failed'
 echo '===== POSTRESTART CANONICAL SOURCE-OF-TRUTH SAFETY ====='
-jexec -U postgres fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
-    -h /var/db/fi/sor/run -p 5432 -d fi <<'SQL'
-BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
-SELECT 'FI_C1_POSTRESTART_CANONICAL_GENERATIONS='||count(*)
-    FROM fi.recorded_generation;
-SELECT 'FI_C1_POSTRESTART_PRIVATE_STAGE_ABSENT='||
-    (to_regnamespace('fi_recovery') IS NULL AND
-     to_regnamespace('fi_recovery_projection') IS NULL)::text;
-COMMIT;
-SQL
+# At least 6249 canonical generations were observed before the boot
+# configuration changed. A later source may validly add more; a smaller
+# count is a hard stop. Both discarded development schemas must be absent.
+check=$(jexec -U postgres fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
+    -h /var/db/fi/sor/run -p 5432 -d fi \
+    -c "SELECT (SELECT count(*) >= 6249 FROM fi.recorded_generation)
+         AND to_regnamespace('fi_recovery') IS NULL
+         AND to_regnamespace('fi_recovery_projection') IS NULL") ||
+    fail 'cannot read and validate original accepted SoR'
+[ "$check" = t ] ||
+    fail 'authoritative generation baseline regressed or private SQL staging reappeared'
+# A successful mount proof is not sufficient if either development C1
+# worker was inadvertently activated by a jail rc script after reboot.
+for jail in fi-ingest fi-sor; do
+    if jexec "$jail" pgrep -f 'fi-c1-(ingest|sor)-worker' >/dev/null 2>&1; then
+        fail "C1 development worker unexpectedly active in $jail"
+    fi
+done
 echo 'FI C1 C220 POSTRESTART READ-ONLY ACCEPTANCE PASS original_nullfs=18 devfs=3 sor_inputs=ro C1_workers_started=false'
 echo 'C1 CANONICAL APPLICATION INGESTION NOT ACCEPTED by this filesystem/boot proof'
