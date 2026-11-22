@@ -88,8 +88,13 @@ func c1ReadyAccepted(c C1ReadyQueueConfig,want c1ReadyReceiptIdentity,
         signed.Receipt.Descriptor.GenerationID!=want.generationID||
         signed.ReceiptSHA256!=want.receiptSHA||
         result.SourceID!=c.SourceID||result.GenerationID!=want.generationID||
-        result.ReceiptSHA256!=want.receiptSHA{
-        return errors.New("C1 READY: original receipt and mTLS-acknowledged generation identity mismatch")
+        result.ReceiptSHA256!=want.receiptSHA||
+        signed.Receipt.RecordCount==0||
+        signed.Receipt.RecordCount!=uint64(result.NewRecords)||
+        signed.Receipt.BatchCount!=uint64(len(signed.Batches))||
+        len(signed.Batches)!=result.SignedBatches||
+        result.ReportingGroups<1{
+        return errors.New("C1 READY: original receipt and mTLS-acknowledged generation identity/count mismatch")
     }
     if !result.RelationalCommitted||!result.IndependentlyVerified||
         !result.Published {
