@@ -359,4 +359,25 @@ for token in \
     grep -F -- "$token" "$boot_verify" >/dev/null ||
         fail "C220 native startup order validation missing: $token"
 done
+# A future controlled reboot requires independent exact boot/mount
+# verification. This postrestart acceptance MUST stay read-only, prove
+# the original canonical generation baseline and forbid C1 activation.
+postrestart="$root/fi_c1_c220_postrestart_audit.sh"
+sh -n "$postrestart" || fail 'C220 independent postrestart audit shell syntax'
+for token in \
+    'FI C1 C220 POSTRESTART READ-ONLY ACCEPTANCE PASS' \
+    'fi_c1_c220_persist_boot.sh' \
+    'fi_c1_c220_boot_verify.sh' \
+    'fi_c1_c220_native_acceptance.sh' \
+    'count(*) >= 6249' \
+    "to_regnamespace('fi_recovery') IS NULL" \
+    "to_regnamespace('fi_recovery_projection') IS NULL" \
+    'C1 development worker unexpectedly active' \
+    'C1 CANONICAL APPLICATION INGESTION NOT ACCEPTED'; do
+    grep -F -- "$token" "$postrestart" >/dev/null ||
+        fail "C220 postrestart safety requirement missing: $token"
+done
+if grep -Eq '^[[:space:]]*(jail[[:space:]]+(-r|-c)|service[[:space:]]|sysrc[[:space:]]|umount[[:space:]]|mount[[:space:]]+-t|psql[[:space:]]|DROP[[:space:]]|TRUNCATE[[:space:]])' "$postrestart"; then
+    fail 'C220 postrestart audit must not mutate jail, mount, or SQL'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
