@@ -439,6 +439,30 @@ WHERE CASE
         sqlWorkerControlProofInsert||sqlWorkerJournalWrite{
         t.Fatal("C1 governed pending worker could create objects, modify verifier, forge journal or could not write source")
     }
+    // The real fi-sor START gate must also reject a renamed relation,
+    // not merely report that every surviving table retains its ACL.
+    pendingGateTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=c1ReadOnlyGovernedPendingWorkerPrivileges(ctx,pendingGateTx);e!=nil{
+        _=pendingGateTx.Rollback(context.Background())
+        t.Fatalf("C1 pending read-only START privilege gate: %v",e)
+    }
+    if e=pendingGateTx.Commit(ctx);e!=nil{t.Fatal(e)}
+    if _,e=admin.Exec(ctx,`ALTER TABLE fi_c1_pending.file_observation
+        RENAME TO fi_c1_removed_file_observation`);e!=nil{t.Fatal(e)}
+    missingGateTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    missingGateErr:=c1ReadOnlyGovernedPendingWorkerPrivileges(ctx,missingGateTx)
+    _=missingGateTx.Rollback(context.Background())
+    if missingGateErr==nil{
+        t.Fatal("C1 pending START accepted missing signed File projection table")
+    }
+    if _,e=admin.Exec(ctx,`ALTER TABLE fi_c1_pending.fi_c1_removed_file_observation
+        RENAME TO file_observation`);e!=nil{t.Fatal(e)}
     var pendingFKs int64
     if e=admin.QueryRow(ctx,`SELECT count(*) FROM pg_constraint c
         JOIN pg_namespace n ON n.oid=c.connamespace

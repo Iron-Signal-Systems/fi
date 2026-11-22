@@ -4,15 +4,14 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
-// Fi-sor proves the exact original signed generation and existing private
-// source-batch SQL IDs, then runs the real C1 SourceParent and five-family
-// engine on its LOCAL PostgreSQL socket. Canonical fi tables are never
-// writable by this SQL pipeline; privateProjectionTx redirects every COPY.
+// Fi-sor validates the original signed generation against governed pending
+// metadata, then runs the real C1 SourceParent/five-family SQL engine over
+// its LOCAL PostgreSQL socket. Canonical fi tables are never written by
+// these independently committed pending SQL/COPY lanes.
 package recordingest
 
 import (
     "context"
-    "encoding/hex"
     "errors"
     "fmt"
     "sync"
@@ -62,35 +61,27 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     if s.pool!=nil||s.session!=nil||s.failed!=nil {
         return nil,errors.New("C1 fi-sor: generation already started or prior attempt failed; no automatic replay")
     }
-    // Reject incomplete private-schema GRANTs before any signed source
-    // record is read or handed to a SQL worker. This is read-only.
-    if err:=c1PreflightLocalSQLPrivileges(ctx,s.DSN);err!=nil{
+    // The active two-jail worker must use governed pending relational rows,
+    // never the deleted fi_recovery_projection development stage.
+    if err:=c1PreflightLocalGovernedPendingSQL(ctx,s.DSN);err!=nil{
         s.failed=err
-        return nil,fmt.Errorf("C1 fi-sor: local private worker SQL access: %w",err)
+        return nil,fmt.Errorf("C1 fi-sor: governed pending SQL preflight: %w",err)
     }
-    if frame.StartBatchIndex==0{
-        if err:=StageC1SignedPrivateMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
-            s.failed=err
-            return nil,fmt.Errorf("C1 fi-sor: original signed private ledger bootstrap: %w",err)
-        }
-    }
-    ids,err:=s.validateSignedPrivateStage(ctx,frame)
-    if err!=nil{
-        // A partial committed source/family transaction must NEVER be
-        // silently replayed. The read-only audit reports the PostgreSQL
-        // relational prefix while preserving the original rejection.
-        // This does not flush family buffers or authorize restart.
-        audit,auditErr:=AuditC1SoRPrivateRecovery(ctx,s.DSN,frame)
-        if auditErr==nil {
-            fmt.Printf("FI C1 RECOVERY AUDIT source=%s generation=%s complete_parent_batches=%d complete_relational_batches=%d first_unresolved_batch=%d existing_parents=%d dirty_tail=%t automatic_replay=false canonical_unchanged=true\n",
-                audit.SourceID,audit.GenerationID,audit.SourceCompletePrefix,
-                audit.RelationalCompletePrefix,audit.FirstUnresolvedBatch,
-                audit.TotalExistingParents,audit.DirtyTail)
-        }else{
-            fmt.Printf("FI C1 RECOVERY AUDIT BLOCKED read_only=true reason=%v\n",auditErr)
-        }
+    // Dirty pending replay is not yet accepted. Preserve original custody
+    // and READY; never silently fall back to the old SQL ingester.
+    if frame.StartBatchIndex!=0{
+        err:=errors.New("C1 fi-sor: governed pending restart requires read-only reconciliation; no blind replay")
         s.failed=err
         return nil,err
+    }
+    if err:=StageC1SignedPendingMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: original signed Pending bootstrap: %w",err)
+    }
+    ids,err:=s.validateSignedPendingStage(ctx,frame)
+    if err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: signed Pending readback blocked: %w",err)
     }
     counts,err:=s.loadSignedBatchRecordCounts(ctx,ids)
     if err!=nil{s.failed=err;return nil,err}
@@ -129,138 +120,6 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     return append([]int64(nil),ids...),nil
 }
 
-func(s *C1SoRService) validateSignedPrivateStage(ctx context.Context,frame c1handoff.Frame)([]int64,error){
-    conn,_,err:=openC1SoRLocalSQL(ctx,s.DSN,"")
-    if err!=nil{return nil,err}
-    defer conn.Close(context.Background())
-    tx,err:=conn.BeginTx(ctx,pgx.TxOptions{AccessMode:pgx.ReadOnly})
-    if err!=nil{return nil,err}
-    defer tx.Rollback(context.Background())
-    digest,err:=hex.DecodeString(frame.ReceiptSHA256)
-    if err!=nil||len(digest)!=32{return nil,errors.New("C1 fi-sor: original receipt SHA invalid")}
-    var canonicalExists bool
-    err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
-        WHERE source_id=$1 AND generation_id=$2)`,frame.SourceID,frame.GenerationID).
-        Scan(&canonicalExists)
-    if err!=nil{return nil,err}
-    if canonicalExists{return nil,errors.New("C1 fi-sor: signed generation already exists in authoritative SoR")}
-    var generationID,storedRecords,storedBatches int64
-    err=tx.QueryRow(ctx,`SELECT recorded_generation_id,record_count,batch_count
-        FROM fi_recovery_projection.recorded_generation
-        WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3`,
-        frame.SourceID,frame.GenerationID,digest).
-        Scan(&generationID,&storedRecords,&storedBatches)
-    if err!=nil{return nil,fmt.Errorf("C1 fi-sor: original signed shadow generation missing: %w",err)}
-    if generationID<=0||storedRecords<=0||storedBatches!=int64(len(frame.BatchIDs)) {
-        return nil,errors.New("C1 fi-sor: signed batch count or generation identity mismatches private SoR staging")
-    }
-    var sourceBatches int64
-    err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery_projection.source_batch
-        WHERE recorded_generation_id=$1`,generationID).Scan(&sourceBatches)
-    if err!=nil{return nil,err}
-    if sourceBatches!=storedBatches{
-        return nil,errors.New("C1 fi-sor: incomplete or duplicate private source-batch ledger")
-    }
-    // C1 SQL writer must never mix one signed replay with another
-    // relational generation. The immutable seed remains read-only.
-    var generations int64
-    if err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery_projection.recorded_generation`).
-        Scan(&generations);err!=nil{return nil,err}
-    if generations!=1 {
-        return nil,errors.New("C1 fi-sor: multiple private generations require separate isolated staging")
-    }
-    original:=make([]PreparedBatch,len(frame.BatchIDs))
-    for i,name:=range frame.BatchIDs{original[i].BatchID=name}
-    ids,err:=lookupBacklogShadowBatchIDs(ctx,privateProjectionTx{Tx:tx},generationID,original)
-    if err!=nil{return nil,fmt.Errorf("C1 fi-sor: signed name to SQL batch mapping: %w",err)}
-    var existingSeed,otherMarkers int64
-    err=tx.QueryRow(ctx,`SELECT count(*),coalesce(sum(committed_records),0)::bigint
-        FROM fi_recovery.typed_window
-        WHERE receipt_sha256=$1 AND window_index=0`,digest).
-        Scan(&existingSeed,&otherMarkers)
-    if err!=nil{return nil,err}
-    if existingSeed>1{return nil,errors.New("C1 fi-sor: duplicate verified seed marker")}
-    seedRecords:=otherMarkers
-    err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery.typed_window
-        WHERE receipt_sha256=$1 AND window_index>0`,digest).Scan(&otherMarkers)
-    if err!=nil{return nil,err}
-    if otherMarkers!=0{
-        return nil,errors.New("C1 fi-sor: previous partial typed C1 projection exists; requires isolated reconciliation")
-    }
-    if seedRecords<0||seedRecords>=storedRecords||
-        storedRecords-seedRecords!=frame.ExpectedRecords||
-        (seedRecords>0&&frame.StartBatchIndex==0)||
-        (seedRecords==0&&frame.StartBatchIndex!=0) {
-        return nil,errors.New("C1 fi-sor: signed receipt, verified seed and requested record count disagree")
-    }
-    if int(frame.StartBatchIndex)>=len(ids){return nil,errors.New("C1 fi-sor: invalid signed seed boundary")}
-    // Verify seed length against actual PostgreSQL source-batch
-    // manifests, not merely a claimed typed-window counter. The exact
-    // remaining source record count must also agree with the signed START.
-    var totalDeclared int64
-    if err=tx.QueryRow(ctx,`SELECT coalesce(sum(record_count),0)::bigint
-        FROM fi_recovery_projection.source_batch WHERE recorded_generation_id=$1`,
-        generationID).Scan(&totalDeclared);err!=nil{return nil,err}
-    if totalDeclared!=storedRecords{
-        return nil,errors.New("C1 fi-sor: receipt source-record total differs from private signed batch manifests")
-    }
-    if frame.StartBatchIndex>0{
-        var seededDeclared int64
-        if err=tx.QueryRow(ctx,`SELECT coalesce(sum(record_count),0)::bigint
-            FROM fi_recovery_projection.source_batch
-            WHERE source_batch_id=ANY($1::bigint[])`,
-            ids[:frame.StartBatchIndex]).Scan(&seededDeclared);err!=nil{return nil,err}
-        if seededDeclared!=seedRecords {
-            return nil,errors.New("C1 fi-sor: private seed marker does not match original signed batch manifest totals")
-        }
-    }
-    var foreignTyped int64
-    if err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery.typed_window
-        WHERE receipt_sha256<>$1`,digest).Scan(&foreignTyped);err!=nil{return nil,err}
-    if foreignTyped>0{
-        return nil,errors.New("C1 fi-sor: unrelated typed checkpoint exists in private stage")
-    }
-    // Prefix parents must match the verified seed EXACTLY. New C1 batches
-    // must have NO source rows. Never overwrite, truncate or clean them.
-    var committedPrefix,newParents int64
-    if frame.StartBatchIndex>0{
-        err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery_projection.source_record
-            WHERE source_batch_id=ANY($1::bigint[])`,ids[:frame.StartBatchIndex]).
-            Scan(&committedPrefix)
-        if err!=nil{return nil,err}
-    }
-    err=tx.QueryRow(ctx,`SELECT count(*) FROM fi_recovery_projection.source_record
-        WHERE source_batch_id=ANY($1::bigint[])`,ids[frame.StartBatchIndex:]).
-        Scan(&newParents)
-    if err!=nil{return nil,err}
-    if committedPrefix!=seedRecords{
-        return nil,errors.New("C1 fi-sor: immutable verified seed SourceParent prefix changed")
-    }
-    if newParents>0 {
-        if !s.AllowC1Replay{
-            return nil,fmt.Errorf("C1 fi-sor: private stage has %d partially committed C1 parents; recovery opt-in and read-only reconciliation required",newParents)
-        }
-        // Separate READ-ONLY REPEATABLE READ snapshot: source order and
-        // typed roots are surveyed before any new SQL writer is created.
-        // The SQL identity of each skipped record is additionally matched
-        // against original signed custody on each recovered handoff.
-        audit,e:=AuditC1SoRPrivateRecovery(ctx,s.DSN,frame)
-        if e!=nil{return nil,fmt.Errorf("C1 fi-sor: recovery audit failed closed: %w",e)}
-        if audit.TotalExistingParents!=committedPrefix+newParents||
-            audit.SourceCompletePrefix<int(frame.StartBatchIndex)||
-            audit.RelationalCompletePrefix<int(frame.StartBatchIndex)||
-            audit.FirstUnresolvedBatch<int(frame.StartBatchIndex)||
-            audit.AutomaticReplayAuthorized{
-            return nil,errors.New("C1 fi-sor: inconsistent immutable seed or private PostgreSQL recovery evidence")
-        }
-        s.replayMode=true
-        fmt.Printf("FI C1 PRIVATE REPLAY RECONCILED read_only_audit=true signed_batches=%d existing_parents=%d first_unresolved_batch=%d original_custody_replay_required=true no_ram_journal=true canonical_unchanged=true\\n",
-            audit.SignedBatches,newParents,audit.FirstUnresolvedBatch)
-    }
-    if err=tx.Commit(ctx);err!=nil{return nil,err}
-    return ids,nil
-}
-
 // loadSignedBatchRecordCounts uses the fi-sor LOCAL read-only database
 // to bind each network row ordinal to the immutable original signed
 // source_batch manifest. No client-supplied count can enlarge a batch.
@@ -280,7 +139,7 @@ func(s *C1SoRService)loadSignedBatchRecordCounts(ctx context.Context,ids []int64
         index[id]=i
     }
     rows,err:=tx.Query(ctx,`SELECT source_batch_id,record_count
-        FROM fi_recovery_projection.source_batch
+        FROM fi_c1_pending.source_batch
         WHERE source_batch_id=ANY($1::bigint[])`,ids)
     if err!=nil{return nil,err}
     found:=0

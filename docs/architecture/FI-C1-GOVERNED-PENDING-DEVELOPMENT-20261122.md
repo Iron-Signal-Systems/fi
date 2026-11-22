@@ -28,7 +28,15 @@ signed group plan. Its original receiver custody, committed group, typed-root
 and whole-generation relational readbacks can use exactly the same pending
 schema chosen by the SoR writer pool. The isolated benchmark preserves the
 original private schema by default; schema selection never comes from
-fi-ingest network input. Startup metadata, verifier B, recovery and publication are not yet migrated.
+fi-ingest network input. The active `C1SoRService.Bootstrap` now uses a read-only governed pending
+schema/ACL gate, the original signed-custody metadata admission transaction,
+exact pending SQL-ID readback, and the existing C1 SourceParent/five-family
+pool. Verifier B can follow the same schema. This is **application code**,
+not an authorized installation on physical C220.
+
+Automatic restart recovery, the lifecycle BVerified transition, canonical
+publication, pending retention/cleanup, and the final Accepted transaction
+remain unavailable. Existing incomplete generations fail closed.
 
 Control state is `Pending`, `SQLSealed`, `BVerified`,
 `PublicationUncertain`, or `Retired`. None means canonically Accepted.
@@ -52,12 +60,11 @@ authoritative database or revive the deleted private development schemas.
    existing transaction-scoped DDL helper and disposable PostgreSQL 18 tests
    cover rollback, mirrored FKs, writer ACLs and unresolved-generation fence;
    production preflight and a safe state-transition owner are still missing.
-2. Replace the active C1 Bootstrap/private-stage preflight with the new
-   guarded pending metadata transaction, then move signed SQL-ID readback,
-   SourceParent, the existing five-family pool, independent B and crash-prefix
-   recovery to the same pending namespace. The pending metadata primitive
-   and SQL writer target exist, but are not yet invoked as a complete service.
-   Do not introduce a second SQL ingestion algorithm or PostgreSQL access in
+2. Finish governed pending interrupted-generation read-only recovery,
+   committed-prefix reconciliation and safe replay. The active clean START
+   and A/B SQL readback have been routed to the same pending schema; a
+   previous dirty generation is intentionally rejected until replay proof is
+   accepted. No second SQL ingestion algorithm and no PostgreSQL access in
    fi-ingest.
 3. Rework the existing canonical promotion SQL for exact generation-scoped
    pending tables, **not** global copied staging tables. Lock and independently
