@@ -55,6 +55,11 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
     // Own the existing canonical schema before installing C1. Preserve its
     // original data throughout the governed-only DDL and role transaction.
     if _,err=admin.Exec(ctx,"CREATE ROLE fi_owner NOLOGIN");err!=nil{t.Fatal(err)}
+    // Existing canonical FI migrations explicitly grant fi_ingest table
+    // rights, so a populated-SoR fixture must have that preexisting
+    // restricted SQL role before any C1 Pending installer is invoked.
+    if _,err=admin.Exec(ctx,`CREATE ROLE fi_ingest LOGIN NOSUPERUSER
+        NOCREATEDB NOCREATEROLE NOREPLICATION`);err!=nil{t.Fatal(err)}
     migrations,err:=backendinstall.C1CanonicalSchemaMigrations()
     if err!=nil{t.Fatal(err)}
     for _,m:=range migrations{
@@ -93,12 +98,11 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
         t.Fatalf("canonical FI preservation fixture missing: %d/%d %v",generations,accepted,err)
     }
 
-    // Mandatory rollback injection: no Pending table or cluster-scoped
-    // publisher/worker role may escape a failed single SQL transaction.
+    // Mandatory rollback injection: Pending and new publisher must not
+    // escape the failed transaction; the original fi_ingest SQL role and
+    // all preexisting canonical FI history must remain untouched.
     tx,err:=admin.Begin(ctx)
     if err!=nil{t.Fatal(err)}
-    if _,err=tx.Exec(ctx,`CREATE ROLE fi_ingest LOGIN NOSUPERUSER NOCREATEDB
-        NOCREATEROLE NOREPLICATION`);err!=nil{t.Fatal(err)}
     if err=c1InstallGovernedPendingSchemaTx(ctx,tx);err!=nil{
         _=tx.Rollback(context.Background());t.Fatal(err)
     }
@@ -118,8 +122,8 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
         EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_ingest'),
         EXISTS(SELECT 1 FROM pg_roles WHERE rolname='fi_c1_publisher')`).
         Scan(&stage,&worker,&publisher);err!=nil{t.Fatal(err)}
-    if stage||worker||publisher{
-        t.Fatal("failed offline install left a Pending schema or privileged SQL role")
+    if stage||!worker||publisher{
+        t.Fatal("failed offline install left Pending/publisher objects or changed the preexisting canonical SQL role")
     }
     if generations2,accepted2,e:=before();e!=nil||generations2!=generations||accepted2!=accepted{
         t.Fatal("forced offline DDL rollback changed preexisting FI canonical data")
