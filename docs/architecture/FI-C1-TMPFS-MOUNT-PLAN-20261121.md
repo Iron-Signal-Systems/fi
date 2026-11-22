@@ -289,3 +289,58 @@ inside fi-sor-db. The installer only copies it as root-owned mode
 `FI_C1_SCHEMA_INSTALL_APPROVED=OFFLINE_PRIVATE_STAGE_ONLY` guard, a
 local administrative Unix-domain PostgreSQL connection, and an exact
 absent-private-schema preflight before creating any private relations.
+
+
+## Physical C220 full reboot-persistence configuration (2026-11-22)
+
+The operator's **read-only live inventory** established the exact
+restart-sensitive topology:
+
+| Jail | Nullfs mappings | Devfs |
+| --- | ---: | ---: |
+| `fi-receiver` | 6 (receiver config RO, generation/transport/ready/recorded RW) | 1 |
+| `fi-ingest` | 6 (ingest config and signed custody/trust RO, ready and RAM RW) | 1 |
+| `fi-sor` | 6 (PostgreSQL PGDATA RW, RAM and signed custody/receipt/trust/registry RO) | 1 |
+
+The three `devfs` mounts remain under existing `mount.devfs;`
+jail directives and must **not** appear in the three nullfs fstabs.
+Physical C220 `/etc/rc.conf` has `jail_enable="YES"` and
+`jail_parallel_start="NO"`; the 18 original/new FI nullfs mounts
+were not configured for automatic restoration and the C1 host tmpfs
+rc service was absent. Canonical `fi.recorded_generation` still
+had 6249 generations; development SQL staging was absent.
+
+The guarded script
+`go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_persist_boot.sh`
+is a physical C220-only persistence candidate, with **read-only**
+`--audit` and separately authorized `--apply`.
+The apply authorization is
+`FI_C1_BOOT_INSTALL_APPROVED=PRESERVE_ALL_18_ORIGINAL_NULLFS`.
+It preserves an exact six-entry source/mode/target list per jail,
+backs up the original `/etc/fstab` and three jail configs, installs
+three dedicated complete nullfs fstab files, appends **only** the
+`noauto` 4 GiB host RAM entry, installs an `fi_c1_ram` rc service,
+and adds one `mount.fstab` directive to each of the three original
+jail configurations. It never touches the live mount table, restarts
+jails, alters PostgreSQL, removes the original receiver mounts, or
+enables the C1 ingestion/SoR workers.
+
+The host rc service requires `FILESYSTEMS` and is ordered before
+`jail`. It requires `/fast` and `/work` to already be mounted as
+ZFS, rejects unexpected populated mountpoints and foreign tmpfs,
+and does not unmount the RAM source on stop. It validates mounted
+RAM identity UID/GID 4100, mode 0770 and noexec/nosuid.
+
+After a separately authorized install, run the read-only
+`fi_c1_c220_boot_verify.sh --verify`, which verifies the three
+fstabs and devfs directives, uses FreeBSD `jail -e` to parse the
+effective aggregate jail configuration without creating/modifying
+jails, and proves actual `rcorder` places ZFS/filesystem startup
+before C1 host RAM and C1 RAM before automatic jail startup.
+
+**No reboot or jail restart is authorized by either tool.**
+The first controlled restart must still prove all original PGDATA,
+receiver custody, and signed trust mounts return with their exact
+RO/RW modes, and then repeat native 7-mount and cross-jail acceptance
+before C1 workers can be enabled. The C1 canonical SQL publishing path
+remains a separate unreleased engineering requirement.
