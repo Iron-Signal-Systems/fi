@@ -76,7 +76,8 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         }
         endpoint:=&c1handoff.Server{
             Bootstrap:service.Bootstrap,Handler:service.Commit,
-            Dispatch:service.Dispatch,IOTimeout:5*time.Minute,
+            Dispatch:service.Dispatch,FinalProof:service.FinalProof,
+            IOTimeout:5*time.Minute,
         }
         e=endpoint.ServeConn(ctx,conn)
         service.Close()
