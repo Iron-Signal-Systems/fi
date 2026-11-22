@@ -126,7 +126,7 @@ for token in \
     grep -F -- "$token" "$identity" >/dev/null ||
         fail "real C220 SoR identity lost gate: $token"
 done
-if grep -Eq '(^|[[:space:]])(groupadd|groupmod|userdel|service|jail -r|mount -t)([[:space:]]|$)' "$identity"; then
+if grep -E '^[[:space:]]*[^#[:space:]]' "$identity" | grep -Eq '(^|[[:space:]])(groupadd|groupmod|userdel|service|jail -r|mount -t)([[:space:]]|$)'; then
     fail 'C220 account installer contains forbidden group/service/mount mutation'
 fi
 # The actual C220 has no fi-ingest/fi-sor mount.fstab assignments.
