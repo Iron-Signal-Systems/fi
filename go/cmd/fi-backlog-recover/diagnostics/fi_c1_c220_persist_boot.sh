@@ -66,6 +66,10 @@ ram_start()
         }
         END{exit !(n==1&&!bad&&nx&&ns)}
     '; then
+        [ "$(stat -f '%u:%g:%Lp' "$p")" = '4100:4100:770' ] || {
+            echo "FI C1: host RAM identity/mode wrong" >&2
+            return 1
+        }
         return 0
     fi
     if /sbin/mount -p | /usr/bin/awk -v p="$p" '$2==p{n++}END{exit !(n>0)}'; then
@@ -94,6 +98,10 @@ ram_start()
     fi
     /usr/bin/install -d -o 4100 -g 4100 -m 0770 "$p" || return 1
     /sbin/mount "$p" || return 1
+    [ "$(stat -f '%u:%g:%Lp' "$p")" = '4100:4100:770' ] || {
+        echo "FI C1: mounted tmpfs identity/mode unexpected" >&2
+        return 1
+    }
     /sbin/mount -p | /usr/bin/awk -v p="$p" '
        $1=="tmpfs"&&$2==p&&$3=="tmpfs"{
           n=split($4,a,",");for(i=1;i<=n;i++){
