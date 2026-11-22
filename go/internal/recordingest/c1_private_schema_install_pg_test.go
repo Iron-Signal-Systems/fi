@@ -596,6 +596,10 @@ WHERE CASE
     // helper used by the production fi-sor Bootstrap. Synthetic publication
     // cycles below start from an empty pending schema afterward.
     c1TestSignedOriginalPendingPostgres18(t,ctx,admin,worker)
+    // Same signed receiver source and native five-family SQL, now exercised
+    // through TLS1.3 mTLS, producer-owned prepared RAM and separate B readback.
+    // It deliberately returns FinalVerified, never synthetic FinalAccepted.
+    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,1)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,2)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")

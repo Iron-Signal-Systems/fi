@@ -145,8 +145,21 @@ SHA-256 digest, record kind, scope and version remain exact comparisons,
 so changed evidence still fails. Unit tests include real RFC3339Nano
 timestamps, a changed microsecond and modified SHA.
 
-This is **custody-to-Pending-SQL parent/typed and read-only original-data
-proof** coverage, not yet a complete two-jail mTLS/shared-RAM independently
+The next native FreeBSD disposable PostgreSQL 18 test exercises a complete
+**in-process two-endpoint TLS 1.3 mTLS** signed transport: the authentic
+receiver record crosses the same C1 handoff protocol, producer-owned
+prepared shared RAM, real ordered SourceParent and five-family SQL workers
+into `fi_c1_pending`. On Drain a separate read-only PostgreSQL connection
+reconstructs the signed generation and verifies the entire original custody
+before returning only `FinalVerified`, not `FinalAccepted`. A PostgreSQL
+check requires one committed parent and correct typed root, zero canonical
+source rows and zero Accepted journal entries. The fixture explicitly keeps
+both TLS endpoints inside the disposable test process; it is NOT evidence of
+two real jailed workers, an independent B OS process, or canonical
+publication. It uses the same C1 SQL implementation, not a second writer.
+
+This is **custody-to-Pending-SQL parent/typed, mTLS/RAM handoff and read-only
+original-data proof** coverage, not yet a complete two-jail independently
 B-verified Accepted transaction. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
