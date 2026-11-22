@@ -37,6 +37,9 @@ type C1SoRService struct {
     commitReady *privateC1CommitReady
     verifier *c1SoRNativeB
     independentlyVerified bool
+    // Unexported test seam; production always uses the local PostgreSQL
+    // read-only canonical/journal snapshot, never a client status flag.
+    canonicalReadback func(context.Context,string,string,string,string)(c1handoff.FinalStatus,error)
     failed error
 }
 
@@ -364,23 +367,37 @@ func(s *C1SoRService) Commit(ctx context.Context,f c1handoff.Frame)error{
 // after all SQL COMMIT futures and independent B's original signed-custody
 // verification have succeeded. B proof is NOT canonical acceptance.
 // The canonical transaction must be integrated before FinalAccepted exists.
-func(s *C1SoRService)FinalProof(_ context.Context,f c1handoff.Frame)(
+func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
     c1handoff.FinalStatus,error,
 ){
-    if s==nil||f.Kind!=c1handoff.Drain{
+    if s==nil||ctx==nil||f.Kind!=c1handoff.Drain{
         return c1handoff.FinalNone,errors.New("C1 fi-sor: final proof requires signed Drain")
     }
     s.mu.Lock()
-    defer s.mu.Unlock()
-    if s.failed!=nil{return c1handoff.FinalNone,s.failed}
+    if s.failed!=nil{
+        err:=s.failed
+        s.mu.Unlock()
+        return c1handoff.FinalNone,err
+    }
     if !s.independentlyVerified||s.session==nil||!s.session.drained||
         s.pool==nil||s.verifier==nil||
         f.SourceID!=s.session.sourceID||
         f.GenerationID!=s.session.generationID||
         f.ReceiptSHA256!=s.session.receipt{
+        s.mu.Unlock()
         return c1handoff.FinalNone,errors.New("C1 fi-sor: SQL or independent B proof not complete")
     }
-    return c1handoff.FinalVerified,nil
+    dsn,readback:=s.DSN,s.canonicalReadback
+    s.mu.Unlock()
+    // The B proof is true, but that alone does not mean an Accepted
+    // canonical journal transaction exists. Read the real SoR after B.
+    if readback==nil {readback=c1ReadCanonicalAcceptanceAfterB}
+    status,err:=readback(ctx,dsn,f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    if err!=nil{return c1handoff.FinalNone,err}
+    if status!=c1handoff.FinalVerified && status!=c1handoff.FinalAccepted{
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: canonical readback returned unproved status")
+    }
+    return status,nil
 }
 func(s *C1SoRService)Close(){
     if s==nil{return}
