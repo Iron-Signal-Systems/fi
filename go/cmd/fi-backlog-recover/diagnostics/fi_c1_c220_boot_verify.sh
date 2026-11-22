@@ -29,8 +29,16 @@ done
 # -e is the read-only FreeBSD jail parameter exhibition operation.
 # It parses the entire aggregate jail configuration; unlike -c/-m/-r,
 # it does not create, modify, restart or remove a jail.
-jail -f /etc/jail.conf -e '|' >/dev/null ||
+jail_parameters=$(jail -f /etc/jail.conf -e '|') ||
     fail 'actual FreeBSD jail configuration failed parse/read-only exhibition'
+# The effective aggregate config must include the exact fstab for ALL
+# three running FI jails; merely validating individual fragment files
+# would not detect a missing include in the host jail.conf.
+for jailname in fi-receiver fi-ingest fi-sor; do
+    printf '%s\n' "$jail_parameters" | grep -F \
+      "/etc/jail.fstab.d/fi-c1-$jailname.fstab" >/dev/null ||
+        fail "effective jail config omits persistent nullfs mounts for $jailname"
+done
 [ -f /usr/local/etc/rc.d/fi_c1_ram ] &&
 [ -f /etc/rc.conf.d/fi_c1_ram ] &&
 [ "$(cat /etc/rc.conf.d/fi_c1_ram)" = 'fi_c1_ram_enable="YES"' ] ||
