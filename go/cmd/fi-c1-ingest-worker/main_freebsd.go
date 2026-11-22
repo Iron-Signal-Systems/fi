@@ -91,7 +91,7 @@ func main(){
             timer:=time.NewTimer(*pollInterval)
             select{
             case <-ctx.Done():
-                if !timer.Stop(){<-timer.C}
+                timer.Stop()
                 return
             case <-timer.C:
             }
