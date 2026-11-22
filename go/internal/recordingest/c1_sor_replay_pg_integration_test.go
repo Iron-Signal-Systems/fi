@@ -220,9 +220,21 @@ CREATE TABLE fi_recovery_projection.source_record(
     if lockErr=session.pendingLockHealthy(ctx);lockErr==nil{
         t.Fatal("C1 pending failed open after owner SQL connection loss")
     }
-    if lockErr=challenger.QueryRow(ctx,`SELECT pg_try_advisory_lock($1::bigint)`,
-        c1PendingSessionLockKey).Scan(&lockB);lockErr!=nil||!lockB{
-        t.Fatalf("C1 pending restart cannot reacquire lost lock: %t %v",lockB,lockErr)
+    // Connection.Close() can complete before the server backend exits.
+    // A competing fi-sor MUST remain blocked until PostgreSQL releases
+    // the old *session* lock. Poll briefly instead of assuming an immediate
+    // release or forcibly clearing the previous owner's lock.
+    deadline:=time.Now().Add(3*time.Second)
+    for !lockB && time.Now().Before(deadline) {
+        lockErr=challenger.QueryRow(ctx,`SELECT pg_try_advisory_lock($1::bigint)`,
+            c1PendingSessionLockKey).Scan(&lockB)
+        if lockErr!=nil {
+            t.Fatalf("C1 pending competing session lock check: %v",lockErr)
+        }
+        if !lockB {time.Sleep(20*time.Millisecond)}
+    }
+    if !lockB{
+        t.Fatal("C1 pending restart did not regain advisory ownership after terminated PostgreSQL session")
     }
     bad:=original
     bad.prepared.RecordDigest[0]^=1

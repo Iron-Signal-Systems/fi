@@ -71,6 +71,12 @@ failure rollback, exactly one Accepted journal transaction, canonical readback,
 and duplicate retry. That proves SQL transaction mechanics only; it does NOT
 replace independent signed-custody verifier B or full two-jail acceptance.
 
+A native FreeBSD restart test also confirms that the PostgreSQL
+single-generation advisory lock stays unavailable to a competing worker
+until the previous database session actually releases it. A bounded
+test-only poll replaces an unsafe instantaneous-release assumption; no
+production advisory-lock bypass or forced unlock is introduced.
+
 A development-only, explicitly gated **pending replay reconciler** now
 reopens original immutable recorded custody and signed manifest bytes,
 surveys the committed SourceParent/typed prefix read-only, and reuses C1's
