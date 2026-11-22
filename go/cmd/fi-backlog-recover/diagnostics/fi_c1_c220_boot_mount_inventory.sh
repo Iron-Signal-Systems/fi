@@ -77,7 +77,7 @@ for name in fi-receiver fi-ingest fi-sor; do
         count++
     }
     END{
-        printf "C1_PROPOSED_NULLFS_COUNT=%d C1_EXISTING_DEVFS_EXCLUDED=%d\\n",count,devfs > "/dev/stderr"
+        printf "C1_PROPOSED_NULLFS_COUNT=%d C1_EXISTING_DEVFS_EXCLUDED=%d\n",count,devfs > "/dev/stderr"
         if (count!=6 || devfs!=1 || bad) exit 1
     }
     ' || fail "cannot derive complete original + C1 fstab for $name"
