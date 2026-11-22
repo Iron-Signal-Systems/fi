@@ -237,4 +237,26 @@ done
 if grep -Eq '^[[:space:]]*(chmod|chown|setfacl|pw|mount[[:space:]]+-t|install[[:space:]]|mkdir[[:space:]]|rm[[:space:]]|dd[[:space:]])' "$input_audit"; then
     fail 'C220 signed input metadata audit contains a mutation'
 fi
+# C220 fi-sor already has its signed trust and receipt RO nullfs mounts,
+# but three root:wheel 0700 parents block the new unprivileged service
+# account. Only directory search (execute) may be granted to existing GID
+# 4100; never mutate original receiver signed objects or remount them.
+parent_fix="$root/fi_c1_c220_sor_parent_access.sh"
+sh -n "$parent_fix" || fail 'C220 SoR traverse-only correction shell syntax'
+for token in \
+    'THREE_SOR_DIRECTORIES_TRAVERSE_ONLY' \
+    'FI C1 C220 SOR PARENT ACCESS AUDIT COMPLETE read_only=true' \
+    'usr/local/etc/fi usr/local/etc/fi/pki var/db/fi/custody' \
+    "'0:0:drwx------'" \
+    "'0:4100:drwx--x---'" \
+    'chgrp 4100 "$path"' \
+    'chmod 0710 "$path"' \
+    'FI C1 C220 SOR PARENT ACCESS PASS' \
+    'mounts_untouched=true c1_started=false'; do
+    grep -F -- "$token" "$parent_fix" >/dev/null ||
+        fail "C220 SoR traverse-only correction lost guard: $token"
+done
+if grep -Eq '^[[:space:]]*(chmod[[:space:]]+-R|chgrp[[:space:]]+-R|chown[[:space:]]+-R|mount[[:space:]]+-t|jail[[:space:]]+-r|sysrc[[:space:]]|service[[:space:]])' "$parent_fix"; then
+    fail 'C220 traverse-only correction may not change services, mounts, or descendants'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
