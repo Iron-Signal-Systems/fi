@@ -11,6 +11,8 @@ package recordingest
 
 import (
     "context"
+    "bytes"
+    "encoding/hex"
     "os"
     "path/filepath"
     "strings"
@@ -80,6 +82,75 @@ func TestC1PrivateSchemaRealPostgres18AtomicDDL(t *testing.T){
     if finalStatus!=c1handoff.FinalVerified{
         t.Fatal("real canonical SoR falsely declared an unaccepted generation Accepted")
     }
+
+    // This real PostgreSQL18 positive fixture is TRANSACTIONAL AND ROLLED
+    // BACK: it cannot alter the canonical baseline or original C220.
+    txAccepted,e:=admin.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.ReadCommitted})
+    if e!=nil{t.Fatal(e)}
+    sha:=bytes.Repeat([]byte{0x43},32)
+    transfer:=bytes.Repeat([]byte{0x29},32)
+    other:=bytes.Repeat([]byte{0x53},32)
+    src,gen:="fi-c1-positive-ci-source","fi-c1-positive-ci-generation"
+    _,e=txAccepted.Exec(ctx,`INSERT INTO fi.recorded_generation (
+      receipt_version,descriptor_version,source_id,generation_id,
+      canonical_version,data_encoding,artifact_count,source_bytes,
+      canonical_bytes,canonical_sha256,encoded_data_bytes,
+      encoded_data_sha256,metadata_bytes,metadata_sha256,
+      transfer_bytes,transfer_sha256,batch_count,data_bytes,record_count,
+      receipt_bytes,receipt_sha256,ingest_version)
+      VALUES ('fi-generation-recorded/0.1','fi-generation-descriptor/0.1',
+      $1,$2,'fi-canonical/0.1','none',2,128,128,$3,64,$4,32,$5,
+      116,$6,1,64,1,120,$7,'ci-only')`,
+      src,gen,other,other,other,transfer,sha)
+    if e!=nil{
+       _=txAccepted.Rollback(context.Background())
+       t.Fatalf("create disposable canonical generation fixture: %v",e)
+    }
+    if status,e:=c1CanonicalStatusInSnapshot(ctx,txAccepted,src,gen,
+        hex.EncodeToString(sha));e==nil||status!=c1handoff.FinalNone{
+        _=txAccepted.Rollback(context.Background())
+        t.Fatal("canonical generation lacking Accepted journal was accepted")
+    }
+    _,e=txAccepted.Exec(ctx,`INSERT INTO fi.ingest_journal(
+      attempt_id,event_sequence,source_id,generation_id,transfer_sha256,
+      outcome,stage,records_seen,records_committed,ingest_version)
+      VALUES ('c1-fixture',2,$1,$2,$3,'Accepted','GenerationAccepted',1,1,'ci-only')`,
+      src,gen,transfer)
+    if e!=nil{
+       _=txAccepted.Rollback(context.Background())
+       t.Fatalf("create disposable canonical Accepted journal fixture: %v",e)
+    }
+    acceptedStatus,e:=c1CanonicalStatusInSnapshot(ctx,txAccepted,src,gen,
+        hex.EncodeToString(sha))
+    if e!=nil||acceptedStatus!=c1handoff.FinalAccepted{
+       _=txAccepted.Rollback(context.Background())
+       t.Fatalf("C1 exact real canonical Accepted journal rejected: %d %v",acceptedStatus,e)
+    }
+    _,e=txAccepted.Exec(ctx,`INSERT INTO fi.ingest_journal(
+      attempt_id,event_sequence,source_id,generation_id,transfer_sha256,
+      outcome,stage,records_seen,records_committed,ingest_version)
+      VALUES ('c1-fixture-duplicate',2,$1,$2,$3,'Accepted','GenerationAccepted',1,1,'ci-only')`,
+      src,gen,transfer)
+    if e!=nil{
+       _=txAccepted.Rollback(context.Background())
+       t.Fatalf("create duplicate disposable Accepted journal: %v",e)
+    }
+    if status,e:=c1CanonicalStatusInSnapshot(ctx,txAccepted,src,gen,
+        hex.EncodeToString(sha));e==nil||status!=c1handoff.FinalNone{
+        _=txAccepted.Rollback(context.Background())
+        t.Fatal("C1 accepted duplicate canonical Accepted journal")
+    }
+    if e=txAccepted.Rollback(context.Background());e!=nil{t.Fatal(e)}
+    // After rollback, even source metadata must have disappeared.
+    afterRollback,e:=admin.BeginTx(ctx,pgx.TxOptions{AccessMode:pgx.ReadOnly})
+    if e!=nil{t.Fatal(e)}
+    status,e:=c1CanonicalStatusInSnapshot(ctx,afterRollback,src,gen,
+        hex.EncodeToString(sha))
+    if e!=nil||status!=c1handoff.FinalVerified{
+       _=afterRollback.Rollback(context.Background())
+       t.Fatalf("disposable test left canonical Accepted rows after rollback: %d %v",status,e)
+    }
+    if e=afterRollback.Commit(ctx);e!=nil{t.Fatal(e)}
 
     var canonicalBefore int64
     if err=admin.QueryRow(ctx,`SELECT count(*) FROM information_schema.tables
