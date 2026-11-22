@@ -79,8 +79,16 @@ func (s *Server)servePipelined(ctx context.Context,conn net.Conn,
             // transport order; its WaitAll includes pending source/USN
             // dependencies. B continues verification in parallel.
             err=s.Handler(own,frame)
+            // The handler waits for all SQL commit fences and independent
+            // verification B. Only then can it expose a final proof.
+            var proof FinalStatus
+            if err==nil && s.FinalProof!=nil {
+                proof,err=s.FinalProof(own,frame)
+            }
             workers.Wait()
-            acknowledgments<-buildACK(frame,err)
+            ack:=buildACK(frame,err)
+            if err==nil {ack.FinalStatus=proof}
+            acknowledgments<-ack
             <-permits
             return err
         }
