@@ -129,4 +129,23 @@ done
 if grep -Eq '(^|[[:space:]])(groupadd|groupmod|userdel|service|jail -r|mount -t)([[:space:]]|$)' "$identity"; then
     fail 'C220 account installer contains forbidden group/service/mount mutation'
 fi
+# The actual C220 has no fi-ingest/fi-sor mount.fstab assignments.
+# The C1 plan must target these jails, preserve read-only SoR transport
+# and never launch a live mount or jail restart.
+mount_plan="$root/fi_c1_c220_ram_mount_plan.sh"
+sh -n "$mount_plan" || fail 'C220 real RAM mount planner shell syntax'
+for token in \
+    'NOAUTO' \
+    'fi-c1-fi-ingest.fstab' \
+    'fi-c1-fi-sor.fstab' \
+    'nullfs rw 0 0' \
+    'nullfs ro 0 0' \
+    'size=4g,uid=4100,gid=4100,mode=0770' \
+    'read_only=true host_changes=false'; do
+    grep -F -- "$token" "$mount_plan" >/dev/null ||
+        fail "C220 RAM mount plan lost fixed real-jail requirement: $token"
+done
+if grep -Eq '^[[:space:]]*(mount[[:space:]]+-t|jail[[:space:]]+-r|jail[[:space:]]+-c|sysrc[[:space:]]|service[[:space:]]|pw[[:space:]]|mkdir[[:space:]]|install[[:space:]])' "$mount_plan"; then
+    fail 'C220 RAM mount plan must not alter host state'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
