@@ -87,7 +87,7 @@ for dest in "$ram" "$ingest_ram" "$sor_ram" \
 done
 [ "$(jexec -U postgres fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
     -h /var/db/fi/sor/run -p 5432 -d fi \
-    -c "SELECT (to_regnamespace('fi_recovery_projection') IS NULL AND to_regnamespace('fi_recovery') IS NULL)::text")" = t ] ||
+    -c "SELECT (to_regnamespace('fi_recovery_projection') IS NULL AND to_regnamespace('fi_recovery') IS NULL)::text")" = true ] ||
     fail 'C1 private development SQL stage must remain absent before live mount'
 
 echo '===== FI C1 REAL C220 LIVE MOUNT PRECHECK PASS ====='
