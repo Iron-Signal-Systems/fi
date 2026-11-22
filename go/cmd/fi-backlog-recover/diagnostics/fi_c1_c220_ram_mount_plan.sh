@@ -47,11 +47,32 @@ printf '%s\n' '/etc/jail.fstab.d/fi-c1-fi-ingest.fstab:'
 printf '%s %s/var/run/fi-c1-handoff nullfs rw 0 0\n' "$host_ram" "$ingest"
 printf '%s\n' '/etc/jail.fstab.d/fi-c1-fi-sor.fstab:'
 printf '%s %s/var/run/fi-c1-handoff nullfs ro 0 0\n' "$host_ram" "$sor"
+# Independent fi-sor verifier B reopens the ORIGINAL receiver-signed
+# custody object, recorded receipt, pinned trust, and source authorization.
+# None of these are currently mapped into the physical fi-sor jail.
+# The existing receiver/ingest source mounts are immutable inputs.
+host_custody=/work/fi-c220-20261114/custody/generation
+host_recorded=/work/fi-c220-20261114/custody/recorded
+host_trust=/work/fi-c220-20261114/config/receiver/pki/trust
+host_sources=/work/fi-c220-20261114/config/receiver/sources
+printf '%s\n' 'Independent fi-sor verification: required ORIGINAL signed read-only mappings:'
+for original in "$host_custody" "$host_recorded" "$host_trust" "$host_sources"; do
+  if [ ! -d "$original" ] || [ -L "$original" ]; then
+    fail "original receiver trust/custody source path absent or unsafe: $original"
+  fi
+done
+printf '%s %s/var/db/fi/custody/generation nullfs ro 0 0\n' "$host_custody" "$sor"
+printf '%s %s/var/db/fi/custody/recorded nullfs ro 0 0\n' "$host_recorded" "$sor"
+printf '%s %s/usr/local/etc/fi/pki/trust nullfs ro 0 0\n' "$host_trust" "$sor"
+printf '%s %s/usr/local/etc/fi/sources nullfs ro 0 0\n' "$host_sources" "$sor"
+printf '%s\n' 'The above four RO mappings must be in the fi-sor mount plan,'
+printf '%s\n' 'along with its RO RAM view. All original receiver objects remain authoritative.'
 printf '%s\n' 'Insert ONE mount.fstab assignment into each existing config (not performed):'
 printf '%s\n' '  /etc/jail.conf.d/fi-ingest.conf: mount.fstab = "/etc/jail.fstab.d/fi-c1-fi-ingest.fstab";'
 printf '%s\n' '  /etc/jail.conf.d/fi-sor.conf: mount.fstab = "/etc/jail.fstab.d/fi-c1-fi-sor.fstab";'
 printf '%s\n' '===== MANDATORY NON-ACTIVATION GATES ====='
 printf '%s\n' 'Do not restart running jails: original custody/PG nullfs mounts are currently independent.'
+printf '%s\n' 'Before enabling any C1 service, prove the host tmpfs startup ordering, all four signed SoR RO paths,'
 printf '%s\n' 'Before enabling any C1 service, prove the host tmpfs startup ordering, original custody persistence,'
 printf '%s\n' 'numeric fi-sor identity, noexec/nosuid flags and actual ingest-RW/SoR-RO nullfs mounts.'
 printf '%s\n' 'C1 C220 RAM MOUNT PLAN COMPLETE read_only=true host_changes=false'
