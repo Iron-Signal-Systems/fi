@@ -341,4 +341,22 @@ done
 if grep -Eq '^[[:space:]]*(jail[[:space:]]+(-r|-c)|service[[:space:]]|sysrc[[:space:]]|umount[[:space:]]|mount[[:space:]]+-t|psql[[:space:]]|DROP[[:space:]]|TRUNCATE[[:space:]])' "$persist"; then
     fail 'C220 boot persistence must not restart jails, mount, or mutate SQL'
 fi
+# FreeBSD's jail(8) -e is read-only configuration exhibition.
+# Boot validation must parse original aggregate jail.conf and use actual
+# rcorder to ensure ZFS/FILESYSTEMS then C1 RAM, before jail startup.
+boot_verify="$root/fi_c1_c220_boot_verify.sh"
+sh -n "$boot_verify" || fail 'C220 native boot verification shell syntax'
+for token in \
+    'jail -f /etc/jail.conf -e' \
+    'rcorder /etc/rc.d/* /usr/local/etc/rc.d/*' \
+    'line_number /etc/rc.d/zfs' \
+    'line_number /etc/rc.d/mountcritlocal' \
+    'line_number /usr/local/etc/rc.d/fi_c1_ram' \
+    'line_number /etc/rc.d/jail' \
+    'C1_C220_RCORDER_PASS' \
+    'FI C1 C220 BOOT CONFIG VERIFIED' \
+    'FI C1 REBOOT/RESTART NOT AUTHORIZED'; do
+    grep -F -- "$token" "$boot_verify" >/dev/null ||
+        fail "C220 native startup order validation missing: $token"
+done
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
