@@ -180,6 +180,61 @@ WHERE CASE
         t.Fatalf("C1 fi-sor startup SQL role preflight rejected valid schema: %v",e)
     }
     if e=readOnly.Commit(ctx);e!=nil{t.Fatal(e)}
+    // A role can retain every table ACL after a schema table is renamed.
+    // The START gate must reject a missing *specific* projector even when
+    // the total table count and all SQL grants are unchanged.
+    if _,err=admin.Exec(ctx,`ALTER TABLE fi_recovery_projection.collector_identity
+        RENAME TO fi_c1_intentionally_missing_collector_identity`);err!=nil{
+        t.Fatal(err)
+    }
+    mirrorTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    mirrorErr:=c1ReadOnlyWorkerPrivatePrivileges(ctx,mirrorTx)
+    _=mirrorTx.Rollback(context.Background())
+    if mirrorErr==nil||!strings.Contains(mirrorErr.Error(),"incomplete private schema table mirror"){
+        t.Fatalf("C1 START accepted renamed private projector despite valid table ACLs: %v",mirrorErr)
+    }
+    if _,err=admin.Exec(ctx,`ALTER TABLE fi_recovery_projection.fi_c1_intentionally_missing_collector_identity
+        RENAME TO collector_identity`);err!=nil{
+        t.Fatal(err)
+    }
+    restoredMirrorTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=c1ReadOnlyWorkerPrivatePrivileges(ctx,restoredMirrorTx);e!=nil{
+        t.Fatalf("C1 START rejected restored exact projector schema: %v",e)
+    }
+    if e=restoredMirrorTx.Commit(ctx);e!=nil{t.Fatal(e)}
+    // Keep the recovery ledger equally exact. A renamed marker retains all
+    // permissions but must never count as a valid published progress table.
+    if _,err=admin.Exec(ctx,`ALTER TABLE fi_recovery.typed_window
+        RENAME TO fi_c1_intentionally_missing_typed_window`);err!=nil{
+        t.Fatal(err)
+    }
+    ledgerTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    ledgerErr:=c1ReadOnlyWorkerPrivatePrivileges(ctx,ledgerTx)
+    _=ledgerTx.Rollback(context.Background())
+    if ledgerErr==nil||!strings.Contains(ledgerErr.Error(),"incomplete private schema table mirror"){
+        t.Fatalf("C1 START accepted missing recovery ledger marker: %v",ledgerErr)
+    }
+    if _,err=admin.Exec(ctx,`ALTER TABLE fi_recovery.fi_c1_intentionally_missing_typed_window
+        RENAME TO typed_window`);err!=nil{
+        t.Fatal(err)
+    }
+    restoredLedgerTx,e:=worker.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=c1ReadOnlyWorkerPrivatePrivileges(ctx,restoredLedgerTx);e!=nil{
+        t.Fatalf("C1 START rejected restored recovery ledger: %v",e)
+    }
+    if e=restoredLedgerTx.Commit(ctx);e!=nil{t.Fatal(e)}
     if _,err=worker.Exec(ctx,`CREATE TABLE fi_recovery_projection.fi_c1_forbidden_worker_ddl
         (id bigint)`);err==nil{
         t.Fatal("C1 fi-sor runtime SQL role could create private schema objects")
