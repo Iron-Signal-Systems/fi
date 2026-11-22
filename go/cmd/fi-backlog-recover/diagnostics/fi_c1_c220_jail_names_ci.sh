@@ -279,4 +279,23 @@ done
 if grep -Eq '^[[:space:]]*(chmod|chown|chgrp|mount[[:space:]]+-t|umount|sysrc|service|jail[[:space:]]+-r|cp|mv|install|mkdir)' "$boot_audit"; then
     fail 'C220 boot mount inventory is not read only'
 fi
+# Before ANY persistent C1 jail.conf or fstab change, confirm all
+# presently independent original PGDATA/receiver mounts have an
+# accepted reboot-provider plan. This diagnostic changes nothing.
+boot_audit="$root/fi_c1_c220_boot_persistence_audit.sh"
+sh -n "$boot_audit" || fail 'C220 reboot persistence audit shell syntax'
+for token in \
+    'C1_JAIL_RESTART_ALLOWED=false' \
+    'C1_HOST_RAM_REBOOT_PERSISTENT=UNVERIFIED' \
+    'C1_EXISTING_FI_PGDATA_CUSTODY_RESTART_PERSISTENCE=UNVERIFIED' \
+    'fi-c220-20261114/custody' \
+    '/fast/data/fi/sor/pgdata' \
+    '/etc/jail.conf.d/' \
+    'FI C1 C220 BOOT PERSISTENCE AUDIT COMPLETE read_only=true no_restart=true'; do
+    grep -F -- "$token" "$boot_audit" >/dev/null ||
+        fail "C220 boot persistence prerequisite omitted: $token"
+done
+if grep -Eq '^[[:space:]]*(mount[[:space:]]|umount[[:space:]]|sysrc[[:space:]]|jail[[:space:]]+-r|service[[:space:]]|chmod[[:space:]]|chown[[:space:]]|install[[:space:]]|pw[[:space:]])' "$boot_audit"; then
+    fail 'C220 boot audit must not change any mount, file or service'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
