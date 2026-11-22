@@ -187,4 +187,21 @@ done
 if grep -Eq '^[[:space:]]*(sysrc[[:space:]]|service[[:space:]]|jail[[:space:]]+-r|jail[[:space:]]+-c|pw[[:space:]]|psql[[:space:]]|zfs[[:space:]]+destroy)' "$live"; then
     fail 'C220 live mount operation changes unrelated services or SQL'
 fi
+# Statfs acceptance must validate ALL seven physical mounts including
+# original signed trust and source registry, under the actual SoR account.
+native="$root/fi_c1_c220_native_acceptance.sh"
+sh -n "$native" || fail 'native C220 acceptance shell syntax'
+for token in \
+    'FI C1 C220 NATIVE MOUNT ACCEPTANCE COMPLETE' \
+    'C1_SOR_ORIGINAL_SIGNED_INPUTS_ACCESSIBLE=true' \
+    '-host-trust-root' \
+    '-host-sources-root' \
+    '-sor-trust-path' \
+    '-sor-sources-path' \
+    'jexec -U fi-sor fi-sor' \
+    'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;' \
+    'C1_PRIVATE_STAGE_ABSENT='; do
+    grep -F -- "$token" "$native" >/dev/null ||
+        fail "C220 native acceptance lost a required signed verification gate: $token"
+done
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
