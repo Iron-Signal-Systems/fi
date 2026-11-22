@@ -6,13 +6,28 @@ umask 077
 fail(){ echo "FI C1 READINESS STOP: $*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] ||
   fail "root on physical c220 required"
-jls -j fi-sor-db >/dev/null 2>&1 || fail "fi-sor jail unavailable"
+# Require a unique real jail; do not assume old or new logical names.
+sor_jail=''
+for candidate in fi-sor-db fi-sor; do
+  if jls -j "$candidate" jid >/dev/null 2>&1; then
+    [ -z "$sor_jail" ] ||
+      fail 'both SoR candidates are running: PostgreSQL identity ambiguous'
+    sor_jail=$candidate
+  fi
+done
+[ -n "$sor_jail" ] || fail 'no FI SoR PostgreSQL jail running'
+printf 'C1_SOR_JAIL_SELECTED=%s\n' "$sor_jail"
 sock=/var/db/fi/sor/run
-jexec -U postgres fi-sor-db pg_isready -h "$sock" -p 5432 >/dev/null ||
+jexec -U postgres "$sor_jail" pg_isready -h "$sock" -p 5432 >/dev/null ||
   fail "real PostgreSQL unavailable"
 
+actual_pgdata=$(jexec -U postgres "$sor_jail" psql -X -w -h "$sock" -p 5432 \
+  -d fi -At -v ON_ERROR_STOP=1 -c 'SHOW data_directory') ||
+  fail "cannot identify selected SoR PostgreSQL cluster"
+[ "$actual_pgdata" = /var/db/fi/sor/postgres ] ||
+  fail "unexpected SoR PostgreSQL data directory: $actual_pgdata"
 echo "===== C1 TARGET AND PRIVATE STAGING: READ-ONLY ====="
-jexec -U postgres fi-sor-db psql -X -w -h "$sock" -p 5432 -d fi \
+jexec -U postgres "$sor_jail" psql -X -w -h "$sock" -p 5432 -d fi \
   -v ON_ERROR_STOP=1 -A -F '|' <<'SQL'
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='180s';
@@ -74,7 +89,7 @@ COMMIT;
 SQL
 
 echo "===== TELEMETRY FRESHNESS AND DELIVERY: READ-ONLY ====="
-jexec -U postgres fi-sor-db psql -X -w -h "$sock" -p 5432 -d fi_telemetry \
+jexec -U postgres "$sor_jail" psql -X -w -h "$sock" -p 5432 -d fi_telemetry \
   -v ON_ERROR_STOP=1 -A -F '|' <<'SQL'
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout='120s';
