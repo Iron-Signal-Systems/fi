@@ -28,7 +28,20 @@ const (
     maxText = 1024
     maxError = 4096
 )
-var magic = [8]byte{'F','I','C','1','H','N','D','1'}
+// The final-proof marker changes the binary wire format. Reject a mixed
+// build rather than silently reading an old SQL ACK as canonical acceptance.
+var magic = [8]byte{'F','I','C','1','H','N','D','2'}
+
+// FinalStatus differentiates a durable SQL phase ACK from B's independent
+// original-custody proof and a real canonical Accepted transaction.
+// Verified NEVER means published, and only Accepted authorizes a receiver
+// generation-complete acknowledgment.
+type FinalStatus uint8
+const (
+    FinalNone FinalStatus = iota
+    FinalVerified
+    FinalAccepted
+)
 
 type Kind uint8
 const (
@@ -72,6 +85,9 @@ type Frame struct {
     // Acknowledgments are emitted only after durable SQL COMMIT.
     Committed bool
     Error string
+    // Only final Drain ACK may carry an independent B proof or canonical
+    // Accepted result. Every Source/Family/Seal/Start ACK is SQL-only.
+    FinalStatus FinalStatus
 }
 
 func isSQLKind(kind Kind) bool { return kind>=Source && kind<=Other }
@@ -89,6 +105,10 @@ func (f Frame) Validate() error {
         return errors.New("C1 handoff: unknown phase")
     }
     if len(f.Error)>maxError { return errors.New("C1 handoff: oversized error") }
+    if f.FinalStatus>FinalAccepted ||
+        (f.FinalStatus!=FinalNone && (f.Kind!=Ack || !f.Committed)){
+        return errors.New("C1 handoff: forged or invalid final generation proof")
+    }
     if f.Shared != (SharedRAMRef{}) {
         if !isSQLKind(f.Kind) { return errors.New("C1 handoff: control frame cannot reference RAM") }
         if err:=f.Shared.Validate();err!=nil{return err}
@@ -131,6 +151,9 @@ func (f Frame) Validate() error {
         }}
         if len(f.BatchSQLIDs)>0 && !f.Committed {
             return errors.New("C1 handoff: rejected SQL handoff cannot supply batch IDs")
+        }
+        if f.FinalStatus!=FinalNone && len(f.BatchSQLIDs)>0 {
+            return errors.New("C1 handoff: START SQL identity ACK cannot claim final proof")
         }
     }
     if !isSQLKind(f.Kind) {
@@ -217,6 +240,7 @@ func WriteFrame(w io.Writer,f Frame)error{
     if err:=binary.Write(&body,binary.BigEndian,f.Shared.Bytes);err!=nil{return err}
     if err:=binary.Write(&body,binary.BigEndian,f.Shared.Rows);err!=nil{return err}
     if _,err:=body.Write(f.Shared.SHA256[:]);err!=nil{return err}
+    body.WriteByte(byte(f.FinalStatus))
     if body.Len()>MaxPayloadBytes{return errors.New("C1 handoff: payload exceeds ceiling")}
     sum:=sha256.Sum256(body.Bytes())
     var hdr [44]byte
@@ -306,6 +330,9 @@ func ReadFrame(r io.Reader)(Frame,error){
     if err=binary.Read(rd,binary.BigEndian,&f.Shared.Bytes);err!=nil{return empty,err}
     if err=binary.Read(rd,binary.BigEndian,&f.Shared.Rows);err!=nil{return empty,err}
     if _,err=io.ReadFull(rd,f.Shared.SHA256[:]);err!=nil{return empty,err}
+    proof,err:=rd.ReadByte()
+    if err!=nil{return empty,err}
+    f.FinalStatus=FinalStatus(proof)
     if rd.Len()!=0{return empty,errors.New("C1 handoff: trailing unrecognized bytes")}
     if err=f.Validate();err!=nil{return empty,err}
     return f,nil
