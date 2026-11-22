@@ -31,6 +31,17 @@ import (
 
 func c1StreamOriginalSignedManifestPlan(ctx context.Context,source,generation string,
     cfg c1NativeBCustodyConfig)(*PreparedGeneration,error){
+    return c1StreamOriginalSignedManifestPlanWithTrust(ctx,source,generation,
+        cfg,loadInstalledGenerationTrust)
+}
+
+// The production entry point above ALWAYS resolves installed receiver trust.
+// The private test-only helper allows a disposable signed custody fixture
+// without writing trusted CA/CRL files into the host's configured paths.
+func c1StreamOriginalSignedManifestPlanWithTrust(ctx context.Context,
+    source,generation string,cfg c1NativeBCustodyConfig,
+    resolve generationTrustResolver)(*PreparedGeneration,error){
+    if resolve==nil{return nil,errors.New("C1 bootstrap: original trust resolver required")}
     if ctx==nil||source==""||generation==""||cfg.CustodyRoot==""||
         cfg.RecordedRoot==""||!filepath.IsAbs(cfg.CustodyRoot)||
         !filepath.IsAbs(cfg.RecordedRoot)||cfg.MaxCanonicalBytes==0||
@@ -55,7 +66,7 @@ func c1StreamOriginalSignedManifestPlan(ctx context.Context,source,generation st
         return nil,errors.New("C1 bootstrap: recorded receipt signed identity/count invalid")
     }
     receiptSHA:=sha256.Sum256(receiptRaw)
-    trust,err:=loadInstalledGenerationTrust(source)
+    trust,err:=resolve(source)
     if err!=nil{return nil,fmt.Errorf("C1 bootstrap: original receiver trust: %w",err)}
     originalPath:=filepath.Join(cfg.CustodyRoot,
         transportgeneration.DurableCustodyObjectName(source,generation))

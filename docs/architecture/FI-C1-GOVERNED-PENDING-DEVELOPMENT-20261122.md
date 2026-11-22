@@ -105,8 +105,12 @@ not yet establish complete signed two-jail or physical power-loss
 acceptance.
 
 This automatic implementation is **not yet accepted for live deployment**:
-real original signed generation end-to-end, multiple generations,
-power-loss recovery, and throughput acceptance remain mandatory. Pending replay remains explicitly
+a complete real signed generation through the **two-jail** mTLS/RAM/
+SoR writer, unclean power-loss recovery, and throughput acceptance remain
+mandatory. CI now has a FreeBSD test that creates a genuinely signed and
+recorded receiver generation and independently checks C1's original
+signed-custody manifest reader and tampering rejection. This is cryptographic
+bootstrap coverage, not a full two-jail Accepted transaction. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under
