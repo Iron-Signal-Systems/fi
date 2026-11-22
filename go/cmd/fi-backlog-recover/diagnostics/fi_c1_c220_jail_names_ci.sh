@@ -221,4 +221,20 @@ for token in \
     grep -F -- "$token" "$handoff" >/dev/null ||
         fail "C220 volatile proof lost fail-closed guard: $token"
 done
+# Original signed input diagnosis must not reveal cert/registry contents
+# or modify source permissions; distinguish missing paths from EACCES.
+input_audit="$root/fi_c1_c220_sor_input_metadata_audit.sh"
+sh -n "$input_audit" || fail 'SoR signed-input metadata audit syntax'
+for token in \
+    'SOURCE_ABSENT=' \
+    'SOR_ABSENT=' \
+    'SOR_USER_FILE_ACCESS=DENIED' \
+    'SOR_USER_PATH_NOT_VISIBLE_OR_NOT_REGULAR=' \
+    'FI C1 C220 SIGNED INPUT METADATA AUDIT COMPLETE read_only=true'; do
+    grep -F -- "$token" "$input_audit" >/dev/null ||
+        fail "C220 signed-input metadata audit lacks state: $token"
+done
+if grep -Eq '^[[:space:]]*(chmod|chown|setfacl|pw|mount[[:space:]]+-t|install[[:space:]]|mkdir[[:space:]]|rm[[:space:]]|dd[[:space:]])' "$input_audit"; then
+    fail 'C220 signed input metadata audit contains a mutation'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
