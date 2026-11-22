@@ -26,6 +26,10 @@ type ClientPipeline struct {
     writer sync.Mutex
     next uint64
     pending map[uint64]chan error
+    pendingKinds map[uint64]Kind
+    finalStatus FinalStatus
+    finalACK bool
+    drainSent bool
     permits chan struct{}
     firstError error
     readerDone chan struct{}
@@ -44,6 +48,7 @@ func NewClientPipeline(ctx context.Context,c *Client,maxOutstanding int)(*Client
     p:=&ClientPipeline{
         conn:c.conn,source:c.source,generation:c.generation,receipt:c.receipt,
         next:c.next,pending:make(map[uint64]chan error,maxOutstanding),
+        pendingKinds:make(map[uint64]Kind,maxOutstanding),
         permits:make(chan struct{},maxOutstanding),readerDone:make(chan struct{}),
         changed:make(chan struct{},1),
     }
@@ -63,6 +68,7 @@ func (p *ClientPipeline) failAll(err error){
     if p.firstError==nil{p.firstError=err}
     for seq,ch:=range p.pending{
         delete(p.pending,seq)
+        delete(p.pendingKinds,seq)
         ch<-p.firstError
         close(ch)
         select{case <-p.permits:default:}
@@ -83,8 +89,19 @@ func(p *ClientPipeline)read(){
         }
         p.mu.Lock()
         ch,ok:=p.pending[f.Sequence]
+        originalKind:=p.pendingKinds[f.Sequence]
+        if ok && f.FinalStatus!=FinalNone && originalKind!=Drain {
+            p.mu.Unlock()
+            p.failAll(errors.New("C1 pipeline: SQL/Seal ACK forged final independent or canonical proof"))
+            return
+        }
         if ok{
             delete(p.pending,f.Sequence)
+            delete(p.pendingKinds,f.Sequence)
+            if originalKind==Drain && f.Committed {
+                p.finalStatus=f.FinalStatus
+                p.finalACK=true
+            }
             var outcome error
             if !f.Committed{
                 outcome=fmt.Errorf("C1 pipeline: SQL buffer %d rejected: %s",f.Sequence,f.Error)
@@ -131,7 +148,7 @@ func(p *ClientPipeline)Submit(ctx context.Context,f Frame)(<-chan error,error){
     }
     if f.Sequence!=p.next||f.SourceID!=p.source||
         f.GenerationID!=p.generation||f.ReceiptSHA256!=p.receipt||
-        f.Kind==Start||f.Kind==Ack {
+        f.Kind==Start||f.Kind==Ack||p.drainSent {
         p.mu.Unlock()
         <-p.permits
         return nil,errors.New("C1 pipeline: missing, repeated or re-ordered signed handoff")
@@ -143,6 +160,8 @@ func(p *ClientPipeline)Submit(ctx context.Context,f Frame)(<-chan error,error){
     }
     ch:=make(chan error,1)
     p.pending[f.Sequence]=ch
+    p.pendingKinds[f.Sequence]=f.Kind
+    if f.Kind==Drain {p.drainSent=true}
     p.next++
     p.mu.Unlock()
     if err:=WriteFrame(p.conn,f);err!=nil{
@@ -192,6 +211,20 @@ func(p *ClientPipeline)Send(ctx context.Context,f Frame)error{
     case err:=<-ch:return err
     case <-ctx.Done():return ctx.Err()
     }
+}
+// FinalProof is available only after the distinct authenticated Drain
+// ACK has arrived. SQL Source/Family/Seal acknowledgments never authorize
+// generation completion, and an absent final proof fails closed.
+func(p *ClientPipeline)FinalProof()(FinalStatus,error){
+    if p==nil{return FinalNone,errors.New("C1 pipeline: final proof reader missing")}
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    if p.firstError!=nil{return FinalNone,p.firstError}
+    if !p.finalACK{return FinalNone,errors.New("C1 pipeline: no durable final Drain acknowledgment")}
+    if p.finalStatus==FinalNone{
+        return FinalNone,errors.New("C1 pipeline: independent B final proof not supplied by fi-sor")
+    }
+    return p.finalStatus,nil
 }
 func(p *ClientPipeline)Close()error{
     if p==nil{return nil}
