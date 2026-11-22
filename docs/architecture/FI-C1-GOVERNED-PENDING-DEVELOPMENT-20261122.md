@@ -167,7 +167,12 @@ through an in-process two-endpoint TLS 1.3 mTLS transport. The three-record case
 crosses two SourceParent and two typed-family SQL handoffs within one
 original signed batch. The new four-record case contains two Other records, one audited
 Windows Security event and one Security Coverage record, all with
-original signed envelopes. They exercise three distinct SQL family
+original signed envelopes. Native acceptance surfaced the real shared-RAM
+contract: Security must retain P5's selected single-pass event and Coverage
+must retain validated prepared coverage/observation time. The test now uses
+FI's existing `privateFamilyP3Prepare` for every original signed record,
+checks the original SHA remains unchanged, and rejects missing Security
+selection rather than bypassing prepared provenance. They exercise three distinct SQL family
 lanes and must independently prove their actual typed roots before
 canonical Accepted. The five-record case uses FI's actual spool writer
 to create **three independently signed source batches (2+2+1)**, and

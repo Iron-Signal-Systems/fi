@@ -138,16 +138,36 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         ordinal:=int64(0)
         for _,line:=range lines {
             if len(line)==0{continue}
-            prepared,prepErr:=PrepareSourceRecord(line)
+            // Exercise the exact existing P5 Security single-pass,
+            // validated Coverage and general-family preparation. Merely
+            // parsing SourceRecord does not authorize a prepared RAM
+            // handoff for Security/Coverage/File; the transport correctly
+            // rejects missing or mismatched P5 provenance.
+            first,prepErr:=PrepareSourceRecord(line)
             if prepErr!=nil{t.Fatal(prepErr)}
             if recordCount!=4&&
-                prepared.Record.RecordKind!="SupportingSourceCollectionError" {
+                first.Record.RecordKind!="SupportingSourceCollectionError" {
                 t.Fatal("C1 signed multi-batch record changed its typed projector")
+            }
+            lane:=spoolDispatchOther
+            switch first.Record.RecordKind{
+            case "WindowsSecurityEvent":lane=spoolDispatchSecurity
+            case "WindowsSecurityCoverage":lane=spoolDispatchCoverage
+            }
+            prepared,security,selected,prepErr:=privateFamilyP3Prepare(
+                line,first.Record.RecordKind,lane)
+            if prepErr!=nil{t.Fatalf("C1 exact signed P5 preparation: %v",prepErr)}
+            if prepared.RecordDigest!=first.RecordDigest{
+                t.Fatal("C1 P5 preparation changed original signed record SHA-256")
+            }
+            if first.Record.RecordKind=="WindowsSecurityEvent"&&!selected{
+                t.Fatal("C1 signed Security P5 single-pass provenance was not selected")
             }
             ordinal++
             signedRows=append(signedRows,privateP6Record{
                 signedBatchIndex:i,sourceBatchID:batchSQLIDs[i],
                 ordinal:ordinal,prepared:prepared,
+                selectedSinglePass:selected,singlePassSecurity:security,
             })
         }
         if ordinal!=batchCounts[i]{
