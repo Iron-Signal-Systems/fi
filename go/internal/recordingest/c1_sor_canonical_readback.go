@@ -89,7 +89,7 @@ func c1CanonicalStatusInSnapshot(ctx context.Context,tx pgx.Tx,
         return c1handoff.FinalNone,errors.New("C1 canonical: local read-only transaction and identity required")
     }
     evidence:=c1CanonicalEvidence{}
-    err=tx.QueryRow(ctx,`SELECT receipt_sha256,transfer_sha256,
+    err:=tx.QueryRow(ctx,`SELECT receipt_sha256,transfer_sha256,
             record_count,batch_count
         FROM fi.recorded_generation
         WHERE source_id=$1 AND generation_id=$2`,
