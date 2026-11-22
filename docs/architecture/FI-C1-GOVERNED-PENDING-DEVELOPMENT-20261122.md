@@ -55,9 +55,12 @@ would violate the SQL-worker isolation requirement.
 
 The canonical publisher therefore now uses **a distinct fi-sor-only role**
 `fi_c1_publisher` and a separate Unix-domain PostgreSQL connection/
-credential. A dedicated, offline administrator-reviewed role plan grants the
-publisher the canonical locking/INSERT/UPDATE authority required by the
-existing remapper, without increasing fi_ingest permissions. The active
+credential. PostgreSQL 18's MAINTAIN privilege grants the necessary strong table
+lock authority without allowing UPDATE/DELETE/TRUNCATE of canonical FI
+records. The dedicated, offline administrator-reviewed role plan therefore
+grants canonical SELECT/INSERT/MAINTAIN and pending SELECT/MAINTAIN
+(also on the governing control row), never canonical UPDATE. This isolates
+the publisher's locking authority without increasing fi_ingest permissions. The active
 fi-sor server requires an explicit publisher DSN and checks its role before
 accepting connections. No publisher role or secret has been installed on
 physical C220.

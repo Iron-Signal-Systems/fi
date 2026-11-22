@@ -17,14 +17,14 @@ func C1CanonicalPublisherRolePlan()[]string{
   "CREATE ROLE fi_c1_publisher LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION",
   "GRANT CONNECT ON DATABASE fi TO fi_c1_publisher",
   "GRANT USAGE ON SCHEMA fi,fi_c1_pending TO fi_c1_publisher",
-  // SHARE ROW EXCLUSIVE locking requires an UPDATE-capable publisher role.
-  // Unlike fi_ingest, this account is opened only for the final transaction.
-  "GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher",
+  // PostgreSQL 18 MAINTAIN permits strong locks without SQL UPDATE/DELETE.
+  // Unlike fi_ingest, this account is opened only for final publication.
+  "GRANT SELECT,INSERT,MAINTAIN ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher",
   "GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA fi TO fi_c1_publisher",
-  "GRANT SELECT ON ALL TABLES IN SCHEMA fi_c1_pending TO fi_c1_publisher",
+  "GRANT SELECT,MAINTAIN ON ALL TABLES IN SCHEMA fi_c1_pending TO fi_c1_publisher",
   "REVOKE ALL ON fi_c1_pending.generation_control FROM fi_c1_publisher",
-  "GRANT SELECT ON fi_c1_pending.generation_control TO fi_c1_publisher",
-  "ALTER DEFAULT PRIVILEGES FOR ROLE fi_owner IN SCHEMA fi GRANT SELECT,INSERT,UPDATE ON TABLES TO fi_c1_publisher",
+  "GRANT SELECT,MAINTAIN ON fi_c1_pending.generation_control TO fi_c1_publisher",
+  "ALTER DEFAULT PRIVILEGES FOR ROLE fi_owner IN SCHEMA fi GRANT SELECT,INSERT,MAINTAIN ON TABLES TO fi_c1_publisher",
   "ALTER DEFAULT PRIVILEGES FOR ROLE fi_owner IN SCHEMA fi GRANT USAGE,SELECT ON SEQUENCES TO fi_c1_publisher",
  }
 }

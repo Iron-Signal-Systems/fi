@@ -36,12 +36,13 @@ func TestC1PublisherRolePlanDoesNotIncreaseIngestWorkerAuthority(t *testing.T){
         if strings.Contains(ddl,"TO fi_ingest")||
             strings.Contains(ddl,"TRUNCATE")||
             strings.Contains(ddl,"DELETE")||
+            strings.Contains(ddl,"UPDATE")||
             strings.Contains(ddl,"SUPERUSER")&&!strings.Contains(ddl,"NOSUPERUSER"){
             t.Fatalf("C1 canonical publisher plan grants unsafe authority: %s",ddl)
         }
     }
     if !strings.Contains(strings.Join(statements,"\n"),
-        "GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher"){
+        "GRANT SELECT,INSERT,MAINTAIN ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher"){
         t.Fatal("C1 canonical publisher lacks lock permission on populated FI schema")
     }
 }
