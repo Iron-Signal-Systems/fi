@@ -10,6 +10,10 @@ on:
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh'
       - 'go/internal/recordingest/c1_*.go'
       - 'go/internal/recordingest/private_c1_*.go'
+      # Signed C1 uses the shared P6 SourceParent/Security/Coverage/
+      # File/USN SQL routines. Their changes MUST re-run native PG18.
+      - 'go/internal/recordingest/private_p6_*.go'
+      - 'go/internal/recordingest/security_bulk*.go'
       - 'go/internal/recordingest/backlog_incremental_promote*.go'
       - 'go/internal/recordingest/backlog_bootstrap_promote*.go'
       - 'go/internal/recordingest/backlog_private_projection_tx.go'
