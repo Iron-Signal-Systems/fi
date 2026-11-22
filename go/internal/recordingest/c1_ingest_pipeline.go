@@ -162,8 +162,10 @@ func RunC1IngestGeneration(ctx context.Context,g *PreparedGeneration,
     if err:=remote.Drain(ctx);err!=nil{return result,err}
     result.NewRecords=newRows
     result.RelationalCommitted=true
-    result.IndependentlyVerified=false
-    result.Published=false
+    // The authenticated Drain ACK distinguishes original-custody verifier
+    // B completion from the later atomic canonical Accepted transaction.
+    result.IndependentlyVerified=remote.finalStatus>=c1handoff.FinalVerified
+    result.Published=remote.finalStatus==c1handoff.FinalAccepted
     return result,nil
 }
 
