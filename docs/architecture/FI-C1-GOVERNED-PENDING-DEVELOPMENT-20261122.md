@@ -168,9 +168,13 @@ crosses two SourceParent and two typed-family SQL handoffs within one
 original signed batch. The five-record case uses FI's actual spool writer
 to create **three independently signed source batches (2+2+1)**, and
 SourceParent handoffs intentionally cross the boundary between those
-batches; typed SQL handoffs divide the ordinals differently. Every signed
-source batch ID, per-batch ordinal and original full SHA-256 must match
-the canonical PostgreSQL record after one atomic publication. The test
+batches; typed SQL handoffs divide the ordinals differently. Before three-batch admission a swapped batch roster must fail without
+writing any pending SQL rows. In the separate FreeBSD B process the test
+also modifies the committed digest in source batch two and requires B to
+reject it; only restoring the exact original signed digest permits
+publication. Every signed source batch ID, per-batch ordinal and original
+full SHA-256 must match the canonical PostgreSQL record after one atomic
+publication. The test
 uses the same producer-owned prepared shared RAM, C1 handoff protocol,
 ordered SourceParent writer and five-family-capable SQL pool. These
 small signed fixtures exercise the Other family, not yet a mixed

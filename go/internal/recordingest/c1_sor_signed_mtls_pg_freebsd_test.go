@@ -103,6 +103,21 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         BatchIDs:batchNames,
     }
     if e=start.Validate();e!=nil{t.Fatal(e)}
+    // Before admission a three-batch sender cannot swap batches in an
+    // otherwise genuine receipt. No signed roster mismatch may reach SQL.
+    if recordCount==5 {
+        forged:=start
+        forged.BatchIDs=append([]string(nil),start.BatchIDs...)
+        forged.BatchIDs[0],forged.BatchIDs[1]=forged.BatchIDs[1],forged.BatchIDs[0]
+        if bad:=c1StageVerifiedPendingMetadata(ctx,worker,forged,original);bad==nil{
+            t.Fatal("C1 admitted swapped original signed batch order")
+        }
+        var prematurelyStaged int64
+        if bad:=admin.QueryRow(ctx,`SELECT count(*) FROM fi_c1_pending.recorded_generation`).
+            Scan(&prematurelyStaged);bad!=nil||prematurelyStaged!=0{
+            t.Fatal("C1 swapped signed roster mutated PostgreSQL before valid admission")
+        }
+    }
     // Admission is the exact production fi-sor PostgreSQL transaction,
     // but the trust resolver is injected only in this signed fixture.
     if e=c1StageVerifiedPendingMetadata(ctx,worker,start,original);e!=nil{
@@ -300,10 +315,14 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e!=nil{t.Fatalf("C1 real signed canonical promotion plan: %v",e)}
     // The separately executing B process must reject a SQL digest which
     // differs from immutable signed custody before publication is allowed.
-    // Mutation and restoration are limited to this disposable CI database.
+    // With three real source batches, corrupt the SECOND batch to prove
+    // B checks the complete original transfer, not only its first batch.
+    tamperBatch:=0
+    tamperRow:=0
+    if recordCount==5{tamperBatch=1;tamperRow=2}
     if _,e=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
         SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
-        bytes.Repeat([]byte{0x5e},32),batchSQLIDs[0]);e!=nil{t.Fatal(e)}
+        bytes.Repeat([]byte{0x5e},32),batchSQLIDs[tamperBatch]);e!=nil{t.Fatal(e)}
     corrupted:=c1TestRunIndependentSignedBProcess(ctx,t,worker,
         promotionPlan,custody,signed.Trust)
     if corrupted==nil||!strings.Contains(corrupted.Error(),"CONFLICTS"){
@@ -311,7 +330,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     }
     if _,e=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
         SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
-        signedRows[0].prepared.RecordDigest[:],batchSQLIDs[0]);e!=nil{t.Fatal(e)}
+        signedRows[tamperRow].prepared.RecordDigest[:],
+        batchSQLIDs[tamperBatch]);e!=nil{t.Fatal(e)}
     // This is a REAL distinct FreeBSD OS process, not the same Go goroutine
     // as the C1 writer. Its own SQL session is fi_ingest, read-only, and
     // its input is only the original verified receiver trust/custody and

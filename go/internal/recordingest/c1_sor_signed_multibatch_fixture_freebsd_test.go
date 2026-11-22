@@ -19,6 +19,7 @@ import (
     "fmt"
     "os"
     "path/filepath"
+    "strings"
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/generationrecorder"
@@ -38,8 +39,7 @@ func c1WriteReceivedThreeBatchGeneration(t *testing.T,root,source string)m1Signe
     }
     collector:=spool.CollectorIdentity{
         ExecutablePath:`C:\Program Files\FI\fi.exe`,
-        ExecutableSHA256:"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"+
-            "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        ExecutableSHA256:strings.Repeat("1a",32),
     }
     writer,err:=spool.NewWriter(frozen,2,collector)
     if err!=nil{t.Fatal(err)}
