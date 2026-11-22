@@ -65,13 +65,18 @@ func main(){
                 PrivateKey:*tlsKey,TrustCA:*tlsCA},
         })
     if err!=nil{fatal(err)}
-    fmt.Printf("FI C1 SOR STAGE COMMITTED source=%s generation=%s records=%d batches=%d groups=%d independently_verified=%t accepted=%t\n",
+    fmt.Printf("FI C1 SQL AND INDEPENDENT B source=%s generation=%s records=%d batches=%d groups=%d independently_verified=%t canonical_accepted=%t\n",
         result.SourceID,result.GenerationID,result.NewRecords,
         result.SignedBatches,result.ReportingGroups,
         result.IndependentlyVerified,result.Published)
-    // SQL commit is NOT generation acceptance. Independently verified B
-    // must prove every signed group and final generation before publication.
-    fatal(errors.New("FI C1: private stage is committed; independent B proof and SoR promotion are not yet wired"))
+    if !result.IndependentlyVerified{
+        fatal(errors.New("FI C1: signed generation lacks independent original-custody verifier B final proof"))
+    }
+    if !result.Published{
+        fatal(errors.New("FI C1: independent B verified SQL stage, but canonical Accepted transaction is not yet integrated; receiver acknowledgment withheld"))
+    }
+    fmt.Printf("FI C1 CANONICAL ACCEPTED source=%s generation=%s records=%d\n",
+        result.SourceID,result.GenerationID,result.NewRecords)
 }
 func fatal(err error){
     fmt.Fprintln(os.Stderr,"FI C1 INGEST STOP:",err)
