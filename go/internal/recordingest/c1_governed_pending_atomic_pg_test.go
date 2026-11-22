@@ -12,6 +12,7 @@ package recordingest
 import (
     "context"
     "encoding/hex"
+    "fmt"
     "strings"
     "testing"
 
@@ -20,14 +21,16 @@ import (
 )
 
 func c1TestPendingRelationalPromotionPostgres18(t *testing.T,ctx context.Context,
-    admin,publisher *pgx.Conn){
+    admin,publisher *pgx.Conn,cycle int){
     t.Helper()
     if admin==nil||publisher==nil||admin==publisher{
         t.Fatal("C1 pending remapper fixture needs two isolated PostgreSQL sessions")
     }
-    source,generation:="ci-pending-remap-source","ci-pending-remap-generation"
-    receipt:=strings.Repeat("4",64)
-    transfer:=strings.Repeat("7",64)
+    if cycle<1||cycle>3{t.Fatalf("invalid disposable canonical cycle %d",cycle)}
+    source:=fmt.Sprintf("ci-pending-remap-source-%d",cycle)
+    generation:=fmt.Sprintf("ci-pending-remap-generation-%d",cycle)
+    receipt:=strings.Repeat(fmt.Sprintf("%x",3+cycle),64)
+    transfer:=strings.Repeat(fmt.Sprintf("%x",6+cycle),64)
     d,_:=hex.DecodeString(receipt)
     x,_:=hex.DecodeString(transfer)
     hash:=[]byte(strings.Repeat("x",32))
@@ -92,7 +95,7 @@ func c1TestPendingRelationalPromotionPostgres18(t *testing.T,ctx context.Context
     if _,err=admin.Exec(ctx,`ALTER TABLE fi.source_record ADD CONSTRAINT
         ci_pending_forced_rollback CHECK (false) NOT VALID`);err!=nil{t.Fatal(err)}
     if _,err=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,admin,publisher,
-        g,BacklogWindowLimits{},"ci-pending-forced-rollback",proof,
+        g,BacklogWindowLimits{},fmt.Sprintf("ci-pending-forced-rollback-%d",cycle),proof,
         c1GovernedPendingSchema);err==nil{
         t.Fatal("C1 pending remap committed despite late canonical CHECK failure")
     }
@@ -103,11 +106,11 @@ func c1TestPendingRelationalPromotionPostgres18(t *testing.T,ctx context.Context
         (SELECT count(*) FROM fi.source_record),
         (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')`).
         Scan(&before,&accepted);err!=nil{t.Fatal(err)}
-    if before!=0||accepted!=0{
+    if before!=int64(cycle-1)||accepted!=int64(cycle-1){
         t.Fatal("C1 pending failed transaction left canonical rows or Accepted journal")
     }
     published,err:=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,admin,publisher,
-        g,BacklogWindowLimits{},"ci-pending-atomic-acceptance",proof,
+        g,BacklogWindowLimits{},fmt.Sprintf("ci-pending-atomic-acceptance-%d",cycle),proof,
         c1GovernedPendingSchema)
     if err!=nil{t.Fatalf("C1 pending canonical remapper failed: %v",err)}
     if published.Outcome!="Accepted"||published.RecordsCommitted!=1{
@@ -134,7 +137,7 @@ func c1TestPendingRelationalPromotionPostgres18(t *testing.T,ctx context.Context
         (SELECT count(*) FROM fi.ingest_journal
          WHERE source_id=$1 AND generation_id=$2 AND outcome='Accepted')`,
         source,generation).Scan(&nrecords,&naccepted);err!=nil{t.Fatal(err)}
-    if nrecords!=1||naccepted!=1{
+    if nrecords!=int64(cycle)||naccepted!=1{
         t.Fatalf("C1 pending canonical duplicate after retry source=%d accepted=%d",nrecords,naccepted)
     }
     // Wrong custody digest can never retire the verified pending SQL rows.

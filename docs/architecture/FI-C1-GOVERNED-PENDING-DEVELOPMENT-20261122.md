@@ -97,7 +97,10 @@ An unaccepted or unrelated pending generation is retained for replay.
 
 Synthetic PostgreSQL18 tests include refusal before Accepted, late
 canonical rollback, forged/mismatched receipt, foreign pending metadata,
-one Accepted journal, successful retirement, and exact retry. They do
+one Accepted journal, successful retirement, and exact retry. The updated
+fixture repeats this process for **two distinct generations in the same
+populated canonical database**, with pending retirement between them; it
+never reclones or resets the canonical 49-table history. They do
 not yet establish complete signed two-jail or physical power-loss
 acceptance.
 

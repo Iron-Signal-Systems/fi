@@ -572,7 +572,11 @@ WHERE CASE
         t.Fatalf("C1 dedicated SQL locking publisher privilege preflight: %v",e)
     }
     if e=publisherTx.Commit(ctx);e!=nil{t.Fatal(e)}
-    c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher)
+    // The same existing populated canonical PostgreSQL must accept two
+    // separate generations, with verified pending retirement in between.
+    // Neither cycle resets, reclones, or replaces authoritative FI data.
+    c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,1)
+    c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,2)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
