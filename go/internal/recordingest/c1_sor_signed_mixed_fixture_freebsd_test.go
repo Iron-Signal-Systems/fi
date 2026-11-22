@@ -22,7 +22,9 @@ import (
 
 func c1SignedThreeFamilyRecords(t *testing.T,source string)[]spool.Record{
     t.Helper()
-    observed:=time.Now().UTC().Format(time.RFC3339Nano)
+    // FI record timestamps require all NINE fractional digits. RFC3339Nano
+    // trims trailing zeros and is intentionally rejected by the validator.
+    observed:=time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
     policy:=records.WindowsSecurityAuditPolicyObservation{
         SubcategoryGUID:"{11111111-1111-1111-1111-111111111111}",
         AuditingInformation:"Success and Failure",
