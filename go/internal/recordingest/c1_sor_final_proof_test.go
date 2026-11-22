@@ -34,6 +34,15 @@ func TestC1SoRFinalProofRequiresCommittedDrainAndVerifierB(t *testing.T){
         t.Fatalf("missing B completion claimed verified: %d %v",proof,err)
     }
     s.independentlyVerified=true
+    s.canonicalReadback=func(_ context.Context,dsn,source,generation,receipt string)(
+        c1handoff.FinalStatus,error,
+    ){
+        if source!=frame.SourceID||generation!=frame.GenerationID||
+            receipt!=frame.ReceiptSHA256{
+            return c1handoff.FinalNone,errors.New("wrong original generation")
+        }
+        return c1handoff.FinalVerified,nil
+    }
     if proof,err:=s.FinalProof(context.Background(),frame);err!=nil||proof!=c1handoff.FinalVerified{
         t.Fatalf("completed independent B proof lost: %d %v",proof,err)
     }
