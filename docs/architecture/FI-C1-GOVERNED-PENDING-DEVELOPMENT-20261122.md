@@ -431,3 +431,31 @@ The actual one-shot installer must also pass a fresh disposable
 PostgreSQL 18 success/rollback/idempotence test, and the physical C220
 read-only preflight must verify its existing roles, socket and canonical
 data state before any authorized deployment.
+
+
+### Actual jailed binary pre-activation checks (2026-11-22)
+
+The C220 offline `--ready` gate now invokes the **exact installed C1
+executables under their real unprivileged fi-ingest and fi-sor identities**
+through their respective generated rc runners with `--verify`. The runners
+preserve the production CLI arguments and append only `-preflight`.
+This makes the gate check *the binary that will actually start*, not just
+the presence of an executable and a readable rc.conf.
+
+The `fi-c1-ingest-worker -preflight` checks its existing host-backed
+tmpfs/nullfs mount and exact mTLS client/server identity. In explicit
+generation mode it reopens original signed recorded custody; in continuous
+READY mode it checks the original READY directory. It never connects to
+fi-sor, transmits records, opens PostgreSQL or retires a READY marker.
+
+The `fi-c1-sor-worker -preflight` uses the **same startup validation as
+the live fi-sor listener**: private bind and bounded SQL-worker count,
+read-only original signed custody and shared RAM validation, pinned mTLS
+server/allowed client identities, read-only PostgreSQL 18 governed Pending
+worker permissions and the distinct local canonical publisher role. It
+never binds a TCP listener, starts a B child, acquires ingestion work or
+writes to canonical/pending tables.
+
+Both services remain installed OFF. A successful C220 `--ready` audit
+is **pre-activation**, not a claim that the two-jail live generation,
+interrupted-jail restart or C1 throughput acceptance has already passed.

@@ -30,6 +30,7 @@ func main(){
         return
     }
     flags:=flag.NewFlagSet("fi-c1-sor-worker",flag.ExitOnError)
+    preflight:=flags.Bool("preflight",false,"READ ONLY: validate real jail C1 startup without listener, B child, or SQL writes")
     bind:=flags.String("bind","","private fi-sor workload address for mTLS handoff")
     db:=flags.String("postgres-local","","fi-sor SQL worker local DSN, dbname=fi user=fi_ingest")
     publisherDB:=flags.String("postgres-publisher-local","","separate fi-sor-only Unix-domain canonical publisher DSN, user=fi_c1_publisher")
@@ -62,6 +63,9 @@ func main(){
         CustodyRoot:*custodyRoot,RecordedRoot:*recordedRoot,
         SourceNamespaces:*namespaces,MaxCanonicalBytes:*canonicalMax,
         MaxEncodedBytes:*encodedMax,MaxManifestBytes:*manifestMax,
+    }
+    if *preflight && *publish{
+        fatal(errors.New("FI C1 SoR: preflight cannot publish or modify canonical PostgreSQL"))
     }
     if *publish{
         if os.Getenv("FI_C1_CANONICAL_PUBLISH_APPROVED")!="I_HAVE_VERIFIED_ISOLATED_CLONE"{
@@ -103,6 +107,11 @@ func main(){
     }
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
     defer stop()
+    if *preflight{
+        if err:=recordingest.PreflightC1SoRWorker(ctx,cfg);err!=nil{fatal(err)}
+        fmt.Println("FI C1 SOR READ-ONLY PREFLIGHT PASS local_pg18_roles_verified=true original_custody_readonly=true shared_ram_readonly=true mTLS_validated=true listener_started=false")
+        return
+    }
     if err:=recordingest.RunC1SoRWorker(ctx,cfg);err!=nil{
         fatal(err)
     }

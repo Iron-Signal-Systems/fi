@@ -150,8 +150,24 @@ if [ "$ready_rc" -eq 1 ];then
   fi
 fi
 echo "C1_NATIVE_RC_STAGING_READY=$ready_rc"
+
+# An installed binary and valid-looking rc.conf are NOT a startup proof.
+# Invoke BOTH actual unprivileged workers through their exact installed
+# rc runners in read-only verification mode. Their Go preflight verifies
+# the original receiver input/TLS/tmpfs and local PG18 worker/publisher roles,
+# without a TCP listener, SQL write, B process or READY retirement.
+verified_workers=0
+if [ "$ready_rc" -eq 1 ] && [ "$ready_sql" -eq 1 ];then
+  jexec -U fi-ingest fi-ingest /usr/local/libexec/fi-c1-ingest-run --verify ||
+    fail 'actual jailed fi-ingest worker failed read-only C1 startup preflight'
+  jexec -U fi-sor fi-sor /usr/local/libexec/fi-c1-sor-run --verify ||
+    fail 'actual jailed fi-sor worker failed read-only C1 startup preflight'
+  verified_workers=1
+fi
+echo "C1_NATIVE_UNPRIVILEGED_WORKER_PREFLIGHT=$verified_workers"
 if [ "$strict" -eq 1 ];then
-  [ "$ready_sql" -eq 1 ] && [ "$ready_rc" -eq 1 ] ||
-    fail 'required offline Pending/role installation or disabled C1 service staging incomplete'
+  [ "$ready_sql" -eq 1 ] && [ "$ready_rc" -eq 1 ] &&
+  [ "$verified_workers" -eq 1 ] ||
+    fail 'C1 worker startup, offline Pending/role installation or disabled service staging incomplete'
 fi
 echo "FI C1 C220 GOVERNED DEPLOY GATE COMPLETE mode=$1 read_only=true canonical_unchanged=true services_started=false"

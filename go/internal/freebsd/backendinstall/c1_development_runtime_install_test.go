@@ -2,6 +2,7 @@ package backendinstall
 
 import (
     "os"
+    "os/exec"
     "path/filepath"
     "strings"
     "testing"
@@ -116,5 +117,36 @@ func TestC1DevelopmentRuntimeSupportsContinuousSignedREADYQueue(t *testing.T){
     if strings.Contains(c1IngestRuntimeRunner,"-postgres-local")||
         strings.Contains(c1IngestRuntimeRunner,"fi_c1_sor_postgres_local"){
         t.Fatal("C1 ingest READY runner acquired SQL authority")
+    }
+}
+
+func TestC1DevelopmentRunnersVerifyActualBinariesReadOnly(t *testing.T){
+    // --verify runs the SAME generated rc arguments under the real jailed
+    // service account, but appends the Go binary's -preflight flag. It
+    // never changes rc.conf, enables C1, starts a listener or SQL writer.
+    for name,runner:=range map[string]string{
+        "fi-ingest":c1IngestRuntimeRunner,
+        "fi-sor":c1SoRRuntimeRunner,
+    }{
+        if !strings.Contains(runner,"--verify")||
+            !strings.Contains(runner,"-preflight")||
+            !strings.Contains(runner,`verify_mode=NO`)||
+            !strings.Contains(runner,`[ "$verify_mode" = YES ]`)||
+            !strings.Contains(runner,`exec "$BINARY" "$@"`){
+            t.Fatalf("%s C1 rc runner does not execute its exact worker in read-only preflight mode",name)
+        }
+        if strings.Contains(runner,"service fi_c1")||
+            strings.Contains(runner,"-publish-verified-private")||
+            strings.Contains(runner,"psql ")||
+            strings.Contains(runner,"pg_ctl ") {
+            t.Fatalf("%s C1 read-only runner can mutate or activate PostgreSQL/C1",name)
+        }
+        // Validate actual POSIX shell syntax, not just quoted Go string
+        // fragments. No worker binary or host fixture is executed here.
+        command:=exec.Command("sh","-n")
+        command.Stdin=strings.NewReader(runner)
+        if out,err:=command.CombinedOutput();err!=nil{
+            t.Fatalf("%s C1 generated FreeBSD runner shell syntax invalid: %v %s",name,err,out)
+        }
     }
 }

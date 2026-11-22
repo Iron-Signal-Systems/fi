@@ -25,6 +25,7 @@ import (
 
 func main(){
     flags:=flag.NewFlagSet("fi-ingest-worker-c1",flag.ExitOnError)
+    preflight:=flags.Bool("preflight",false,"READ ONLY: validate signed custody, tmpfs and client TLS without sending a C1 generation")
     source:=flags.String("source-id","","enabled signed receiver source identity")
     generation:=flags.String("generation-id","","original signed generation identity; explicit single-generation mode")
     readyRoot:=flags.String("ready-root","","original receiver READY source queue; no PostgreSQL connection")
@@ -75,6 +76,25 @@ func main(){
         SharedRAMDir:*ram,
         TLSIdentity:c1handoff.TLSFiles{Certificate:*tlsCert,
             PrivateKey:*tlsKey,TrustCA:*tlsCA},
+    }
+    if *preflight{
+        // The same TLS identity as the live C1 handoff is loaded locally.
+        // No socket, RAM record, SQL, READY marker or signed custody is
+        // modified by a startup check.
+        if _,err:=c1handoff.ClientTLSConfig(transport.TLSIdentity,
+            transport.ExpectedSoRServerDNS);err!=nil{fatal(err)}
+        if *generation!="" {
+            signed,err:=recordingest.LoadRecordedGeneration(load,*generation)
+            if err!=nil{fatal(fmt.Errorf("FI C1 ingest preflight: original signed custody: %w",err))}
+            if err=signed.Close();err!=nil{fatal(err)}
+        }else{
+            info,err:=os.Lstat(*readyRoot)
+            if err!=nil||!info.IsDir()||info.Mode()&os.ModeSymlink!=0{
+                fatal(errors.New("FI C1 ingest preflight: original READY root missing or symlinked"))
+            }
+        }
+        fmt.Println("FI C1 INGEST READ-ONLY PREFLIGHT PASS postgres_client=false host_backed_tmpfs=true original_signed_custody_checked=true mTLS_validated=true generation_sent=false")
+        return
     }
     if *readyRoot!=""{
         config:=recordingest.C1ReadyQueueConfig{

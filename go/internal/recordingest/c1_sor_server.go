@@ -33,26 +33,46 @@ type C1SoRServerConfig struct {
     TransportCert c1handoff.TLSFiles
     ExpectedIngestClientDNS string
 }
-func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
-    if ctx==nil{return errors.New("C1 fi-sor: context required")}
+// PreflightC1SoRWorker checks the EXACT production startup prerequisites
+// without listening, writing PostgreSQL, starting verifier B, or accepting
+// a generation. The live worker uses the same validation routine.
+func PreflightC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
+    _,err:=c1SoRStartupTLS(ctx,cfg)
+    return err
+}
+func c1SoRStartupTLS(ctx context.Context,cfg C1SoRServerConfig)(*tls.Config,error){
+    if ctx==nil{return nil,errors.New("C1 fi-sor: context required")}
+    if cfg.SQLWorkersMax<1||cfg.SQLWorkersMax>32{
+        return nil,errors.New("C1 fi-sor: native SQL worker count must be 1..32")
+    }
+    if cfg.CustodyRoot==""||cfg.RecordedRoot==""||cfg.SharedRAMDir==""{
+        return nil,errors.New("C1 fi-sor: original signed custody and shared RAM required")
+    }
     host,port,err:=net.SplitHostPort(cfg.Bind)
     if err!=nil||host==""||port==""||strings.HasPrefix(cfg.Bind,":"){
-        return errors.New("C1 fi-sor: explicit private jail bind IP and port required")
+        return nil,errors.New("C1 fi-sor: explicit private jail bind IP and port required")
     }
     address:=net.ParseIP(host)
     if address==nil||address.IsUnspecified()||address.IsLoopback()||address.IsMulticast(){
-        return errors.New("C1 fi-sor: private jail address must be explicit and nonlocal")
+        return nil,errors.New("C1 fi-sor: private jail address must be explicit and nonlocal")
     }
-    if _,err=c1SoRLocalConnectionConfig(cfg.LocalPostgresDSN);err!=nil{return err}
-    if _,err=c1SoRLocalPublisherConfig(cfg.PublisherPostgresDSN);err!=nil{return err}
-    // Both local roles and the entire canonical/pending permission boundary
-    // must pass before the mTLS listener admits any signed generation.
+    if _,err=c1SoRLocalConnectionConfig(cfg.LocalPostgresDSN);err!=nil{return nil,err}
+    if _,err=c1SoRLocalPublisherConfig(cfg.PublisherPostgresDSN);err!=nil{return nil,err}
+    // Both SQL roles and the governed Pending ACL graph are checked
+    // READ ONLY against the existing local socket before any TLS listener.
+    if err=c1PreflightLocalGovernedPendingSQL(ctx,cfg.LocalPostgresDSN);err!=nil{
+        return nil,fmt.Errorf("C1 fi-sor: SQL worker/Pending admission not ready: %w",err)
+    }
     if err=c1PreflightLocalPublisher(ctx,cfg.PublisherPostgresDSN);err!=nil{
-        return fmt.Errorf("C1 fi-sor: canonical publisher not ready: %w",err)
+        return nil,fmt.Errorf("C1 fi-sor: canonical publisher not ready: %w",err)
     }
-    // mTLS requires the fi-ingest identity and the fi-sor dedicated server
-    // certificate, independently issued under the configured C1 trust CA.
+    // Pin the real server certificate and allowed fi-ingest client identity.
     tlsConfig,err:=c1handoff.ServerTLSConfig(cfg.TransportCert,cfg.ExpectedIngestClientDNS)
+    if err!=nil{return nil,err}
+    return tlsConfig,nil
+}
+func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
+    tlsConfig,err:=c1SoRStartupTLS(ctx,cfg)
     if err!=nil{return err}
     listen,err:=tls.Listen("tcp4",cfg.Bind,tlsConfig)
     if err!=nil{return fmt.Errorf("C1 fi-sor: bind private handoff listener: %w",err)}
