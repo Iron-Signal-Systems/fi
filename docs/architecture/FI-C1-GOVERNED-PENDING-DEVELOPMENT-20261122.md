@@ -161,11 +161,16 @@ SHA-256 digest, record kind, scope and version remain exact comparisons,
 so changed evidence still fails. Unit tests include real RFC3339Nano
 timestamps, a changed microsecond and modified SHA.
 
-The next native FreeBSD disposable PostgreSQL 18 test exercises a complete
-**in-process two-endpoint TLS 1.3 mTLS** signed transport: the authentic
-receiver record crosses the same C1 handoff protocol, producer-owned
-prepared shared RAM, real ordered SourceParent and five-family SQL workers
-into `fi_c1_pending`. On Drain a separate read-only PostgreSQL connection
+The native FreeBSD disposable PostgreSQL 18 test now runs with both
+**one and three distinct originally signed JSONL records** through an
+in-process two-endpoint TLS 1.3 mTLS transport. In the three-record case
+the original signed ordinals cross two independent SourceParent handoffs
+and two typed-family handoffs, all through the same C1 protocol,
+producer-owned prepared shared RAM, ordered SourceParent writer and
+five-family-capable SQL pool into `fi_c1_pending`. This exercises the Other
+family, not yet a mixed five-family signed generation. Every canonical
+record ordinal and original full SHA-256 is read back after publication,
+so counts alone cannot conceal an identity mismatch. On Drain a separate read-only PostgreSQL connection
 reconstructs the signed generation and verifies the entire original custody
 before returning only `FinalVerified`, not `FinalAccepted`. A PostgreSQL
 check requires one committed parent and correct typed root, zero canonical
@@ -182,7 +187,8 @@ relational completeness, promotes the complete parent/typed rows,
 inserts a single matching Accepted journal, independently reads back
 that canonical status, rejects duplicate publication, and retires
 the Pending rows only afterward. The fixture preserves the two previous
-synthetic canonical generations and adds one genuinely signed generation.
+synthetic canonical generations and adds two genuinely signed generations,
+without resetting canonical history between them.
 The production publisher wrapper still resolves only installed receiver
 trust; the fixture-only resolver remains private and cannot be supplied
 over C1 transport.

@@ -15,6 +15,7 @@ import (
     "context"
     "bytes"
     "crypto/tls"
+    "encoding/json"
     "errors"
     "fmt"
     "net"
@@ -25,11 +26,12 @@ import (
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
+    "github.com/Iron-Signal-Systems/fi/go/internal/spool"
     "github.com/jackc/pgx/v5"
 )
 
 func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
-    admin,worker,publisher *pgx.Conn){
+    admin,worker,publisher *pgx.Conn,recordCount int){
     t.Helper()
     if os.Getenv("GITHUB_ACTIONS")!="true"||
         os.Getenv("FI_C1_SCHEMA_CI_ALLOW_DISPOSABLE")!="1"{
@@ -39,13 +41,34 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         admin==worker||admin==publisher||worker==publisher{
         t.Fatal("C1 signed RAM SQL requires distinct administrative and worker identities")
     }
+    if recordCount!=1&&recordCount!=3 {
+        t.Fatal("C1 signed mTLS fixture supports only 1 or 3 original records")
+    }
     root:=t.TempDir()
-    source:="c1-signed-mtls-fixture.iss.local"
+    source:=fmt.Sprintf("c1-signed-mtls-%d-fixture.iss.local",recordCount)
     for _,dir:=range []string{"custody","recorded","ready",
         filepath.Join("recorded","sources",source)} {
         if e:=os.MkdirAll(filepath.Join(root,dir),0700);e!=nil{t.Fatal(e)}
     }
-    signed:=m1WriteSignedGeneration(t,root,source)
+    var signed m1SignedSource
+    if recordCount==1 {
+        signed=m1WriteSignedGeneration(t,root,source)
+    }else{
+        // These are real receiver-signed JSONL records, not duplicate
+        // SQL-only rows. Different payloads guarantee distinct hashes.
+        records:=make([]spool.Record,0,recordCount)
+        for i:=0;i<recordCount;i++ {
+            records=append(records,spool.Record{
+                Version:spool.RecordVersion,
+                RecordKind:"SupportingSourceCollectionError",
+                ScopeID:"m1-"+source,
+                WrittenAt:time.Now().UTC().Format(time.RFC3339Nano),
+                Payload:json.RawMessage(fmt.Sprintf(
+                    `{"source":"C1-Multi-Handoff","error":"distinct-test-row-%d"}`,i)),
+            })
+        }
+        signed=m1WriteSignedGenerationRecords(t,root,source,records)
+    }
     custody:=c1NativeBCustodyConfig{
         CustodyRoot:filepath.Join(root,"custody"),
         RecordedRoot:filepath.Join(root,"recorded"),
@@ -59,7 +82,7 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     original,e:=c1StreamOriginalSignedManifestPlanWithTrust(ctx,
         source,signed.GenerationID,custody,trust)
     if e!=nil{t.Fatal(e)}
-    if len(original.Batches)!=1||original.Receipt.RecordCount!=1{
+    if len(original.Batches)!=1||original.Receipt.RecordCount!=uint64(recordCount){
         t.Fatal("C1 mTLS fixture original signed batch cardinality changed")
     }
     start:=c1handoff.Frame{
@@ -80,13 +103,28 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     raw,e:=os.ReadFile(filepath.Join(root,source,"frozen",
         original.Batches[0].DataArtifactName))
     if e!=nil{t.Fatal(e)}
-    prepared,e:=PrepareSourceRecord(raw)
-    if e!=nil{t.Fatal(e)}
-    family,e:=privateP6KindFamily(prepared.Record.RecordKind)
-    if e!=nil{t.Fatal(e)}
-    signedRow:=privateP6Record{
-        signedBatchIndex:0,sourceBatchID:batchID,ordinal:1,prepared:prepared,
+    // Each line remains separately signed by the original generation
+    // manifest. Enqueue source ordinals in TWO independent handoffs when
+    // recordCount=3, rather than stuffing one frame with three rows.
+    lines:=bytes.SplitAfter(raw,[]byte{'\n'})
+    signedRows:=make([]privateP6Record,0,recordCount)
+    for _,line:=range lines {
+        if len(line)==0{continue}
+        prepared,e:=PrepareSourceRecord(line)
+        if e!=nil{t.Fatal(e)}
+        if prepared.Record.RecordKind!="SupportingSourceCollectionError" {
+            t.Fatal("C1 multi-record signed fixture changed typed family")
+        }
+        signedRows=append(signedRows,privateP6Record{
+            signedBatchIndex:0,sourceBatchID:batchID,
+            ordinal:int64(len(signedRows)+1),prepared:prepared,
+        })
     }
+    if len(signedRows)!=recordCount {
+        t.Fatalf("C1 signed source JSONL ordinals=%d expected=%d",len(signedRows),recordCount)
+    }
+    family,e:=privateP6KindFamily(signedRows[0].prepared.Record.RecordKind)
+    if e!=nil{t.Fatal(e)}
     opener:=func(ctx context.Context,_,_ string)(*pgx.Conn,int64,error){
         conn,err:=pgx.ConnectConfig(ctx,worker.Config().Copy())
         if err!=nil{return nil,0,err}
@@ -176,8 +214,15 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e!=nil{t.Fatal(e)}
     remote.next=2
     if e=remote.EnableSharedRAM(store);e!=nil{t.Fatal(e)}
-    if e=remote.Source(ctx,[]privateP6Record{signedRow});e!=nil{t.Fatal(e)}
-    if e=remote.Family(ctx,family,[]privateP6Record{signedRow});e!=nil{t.Fatal(e)}
+    if recordCount==1 {
+        if e=remote.Source(ctx,signedRows);e!=nil{t.Fatal(e)}
+        if e=remote.Family(ctx,family,signedRows);e!=nil{t.Fatal(e)}
+    }else{
+        if e=remote.Source(ctx,signedRows[:2]);e!=nil{t.Fatal(e)}
+        if e=remote.Source(ctx,signedRows[2:]);e!=nil{t.Fatal(e)}
+        if e=remote.Family(ctx,family,signedRows[:1]);e!=nil{t.Fatal(e)}
+        if e=remote.Family(ctx,family,signedRows[1:]);e!=nil{t.Fatal(e)}
+    }
     if e=remote.WaitAll(ctx);e!=nil{t.Fatal(e)}
     if e=remote.Drain(ctx);e!=nil{t.Fatalf("C1 actual signed SQL + independent B Drain: %v",e)}
     if remote.finalStatus!=c1handoff.FinalVerified{
@@ -201,7 +246,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
            WHERE source_id=$1 AND generation_id=$2 AND outcome='Accepted')`,
         source,signed.GenerationID).
         Scan(&pendingParents,&pendingTyped,&canonicalParents,&accepted);e!=nil{t.Fatal(e)}
-    if pendingParents!=1||pendingTyped!=1||canonicalParents!=0||accepted!=0{
+    if pendingParents!=int64(recordCount)||pendingTyped!=int64(recordCount)||
+        canonicalParents!=0||accepted!=0{
         t.Fatalf("C1 signed mTLS SQL escaped pending before canonical publication parent=%d typed=%d canonical=%d accepted=%d",
             pendingParents,pendingTyped,canonicalParents,accepted)
     }
@@ -233,7 +279,7 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     }
     if _,e=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
         SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
-        prepared.RecordDigest[:],batchID);e!=nil{t.Fatal(e)}
+        signedRows[0].prepared.RecordDigest[:],batchID);e!=nil{t.Fatal(e)}
     // This is a REAL distinct FreeBSD OS process, not the same Go goroutine
     // as the C1 writer. Its own SQL session is fi_ingest, read-only, and
     // its input is only the original verified receiver trust/custody and
@@ -254,7 +300,7 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         verifier,publisher,generation,BacklogWindowLimits{},attempt,fullProof,
         c1GovernedPendingSchema)
     if e!=nil{t.Fatalf("C1 actual receiver-signed canonical transaction: %v",e)}
-    if result.Outcome!="Accepted"||result.RecordsCommitted!=1{
+    if result.Outcome!="Accepted"||result.RecordsCommitted!=int64(recordCount){
         t.Fatalf("C1 actual signed generation failed canonical Accepted transaction: %+v",result)
     }
     check,e:=verifier.BeginTx(ctx,pgx.TxOptions{
@@ -281,9 +327,36 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
          WHERE g.source_id=$1 AND g.generation_id=$2)`,
         source,signed.GenerationID).
         Scan(&committedSource,&committedTyped);e!=nil{t.Fatal(e)}
-    if committedSource!=1||committedTyped!=1{
+    if committedSource!=int64(recordCount)||committedTyped!=int64(recordCount){
         t.Fatalf("C1 real signed canonical typed projection lost parent/child: %d/%d",
             committedSource,committedTyped)
+    }
+    // Verify every original signed ordinal and full SHA-256 in canonical
+    // FI. A source/typed row count alone could miss reordered or duplicated
+    // identities when consecutive RAM handoffs cross SQL transaction cuts.
+    canonicalRows,e:=admin.Query(ctx,`SELECT r.record_ordinal,r.record_sha256
+        FROM fi.source_record r
+        JOIN fi.source_batch b USING(source_batch_id)
+        JOIN fi.recorded_generation g USING(recorded_generation_id)
+        WHERE g.source_id=$1 AND g.generation_id=$2
+        ORDER BY r.record_ordinal`,source,signed.GenerationID)
+    if e!=nil{t.Fatal(e)}
+    ordinalCount:=0
+    for canonicalRows.Next(){
+        var ordinal int64
+        var digest []byte
+        if e=canonicalRows.Scan(&ordinal,&digest);e!=nil{break}
+        if ordinalCount>=len(signedRows)||ordinal!=int64(ordinalCount+1)||
+            !bytes.Equal(digest,signedRows[ordinalCount].prepared.RecordDigest[:]){
+            e=errors.New("C1 canonical SourceParent ordinal or original signed SHA-256 changed across RAM/SQL transactions")
+            break
+        }
+        ordinalCount++
+    }
+    if e==nil{e=canonicalRows.Err()}
+    canonicalRows.Close()
+    if e!=nil||ordinalCount!=recordCount{
+        t.Fatalf("C1 canonical exact signed ordinal/digest mapping: rows=%d expected=%d err=%v",ordinalCount,recordCount,e)
     }
     again,e:=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,
         verifier,publisher,generation,BacklogWindowLimits{},attempt+"-retry",
@@ -305,5 +378,5 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e=admin.QueryRow(ctx,`SELECT count(*) FROM fi_c1_pending.recorded_generation`).
         Scan(&remaining);e!=nil{t.Fatal(e)}
     if remaining!=0{t.Fatal("C1 signed canonical retirement did not clear Pending")}
-    t.Log("PASS: original receiver signed custody -> mTLS1.3/RAM -> real C1 SourceParent/typed SQL -> original signed independent B -> atomic populated FI Accepted + exactly one journal -> Pending retired")
+    t.Logf("PASS: %d original signed records across %d SQL source handoffs, independent typed transactions, separate FreeBSD B child and one atomic canonical Accepted + Pending retirement",recordCount,func()int{if recordCount==1{return 1};return 2}())
 }

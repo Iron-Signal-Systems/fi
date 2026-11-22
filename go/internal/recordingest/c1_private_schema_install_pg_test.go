@@ -606,7 +606,10 @@ WHERE CASE
     // The TLS Drain only promises FinalVerified; the actual canonical
     // publisher then independently verifies original signed custody under
     // locks and commits Accepted before Pending retirement.
-    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher)
+    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,1)
+    // Same full signed mTLS/RAM/B/canonical path but multiple original
+    // ordinals split across independent SourceParent and typed SQL handoffs.
+    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,3)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
