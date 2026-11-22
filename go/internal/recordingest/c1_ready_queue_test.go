@@ -37,6 +37,12 @@ func c1ReadyTest(t *testing.T)(C1ReadyQueueConfig,string,c1ReadyQueueOps,func()b
     }
     want:=c1ReadyReceiptIdentity{generationID:gen,receiptSHA:strings.Repeat("a",64)}
     ops:=c1ReadyQueueOpsDefault()
+    ops.probe=func(_ context.Context,_ C1IngestTransport,src,id,digest string)(bool,error){
+        if src!=source||id!=gen||digest!=want.receiptSHA{
+            return false,errors.New("wrong original signed probe identity")
+        }
+        return false,nil
+    }
     ops.identity=func(c C1ReadyQueueConfig,name string)(c1ReadyReceiptIdentity,error){
         if name!=marker||c.SourceID!=source{return want,errors.New("wrong READY identity")}
         return want,nil
@@ -105,6 +111,41 @@ func TestC1ReadyQueuePreservesMarkerForUncertainOrBOnlyStage(t *testing.T){
                     count,err,present())
             }
         })
+    }
+}
+func TestC1ReadyQueueCrashAfterAcceptedRetiresMarkerWithoutReplay(t *testing.T){
+    cfg,_,ops,present:=c1ReadyTest(t)
+    ops.probe=func(_ context.Context,_ C1IngestTransport,_,_,_ string)(bool,error){
+        return true,nil
+    }
+    ops.load=func(GenerationLoadConfig,string)(*PreparedGeneration,error){
+        t.Fatal("already-accepted generation must never decompress/stage signed custody")
+        return nil,errors.New("must not load")
+    }
+    ops.ingest=func(context.Context,*PreparedGeneration,C1IngestTransport)(
+        C1IngestStageResult,error,
+    ){
+        t.Fatal("already-accepted generation must never create a second SoR SQL attempt")
+        return C1IngestStageResult{},errors.New("must not ingest")
+    }
+    count,err:=runC1ReadyQueuePass(context.Background(),cfg,ops)
+    if count!=1||err!=nil||present(){
+        t.Fatalf("idempotent canonical Accepted recovery lost READY marker retirement: count=%d err=%v still_present=%t",
+            count,err,present())
+    }
+}
+func TestC1ReadyQueueUncertainCanonicalProbeNeverStartsSQLOrRetiresMarker(t *testing.T){
+    cfg,_,ops,present:=c1ReadyTest(t)
+    ops.probe=func(_ context.Context,_ C1IngestTransport,_,_,_ string)(bool,error){
+        return false,errors.New("fi-sor TLS disconnected after canonical status")
+    }
+    ops.load=func(GenerationLoadConfig,string)(*PreparedGeneration,error){
+        t.Fatal("uncertain canonical status must never start signed-custody stage")
+        return nil,errors.New("must not load")
+    }
+    count,err:=runC1ReadyQueuePass(context.Background(),cfg,ops)
+    if count!=0||err==nil||!present(){
+        t.Fatalf("uncertain canonical status lost READY marker: count=%d err=%v",count,err)
     }
 }
 func TestC1ReadyQueueMissingSignedReceiptDoesNotRetireMarker(t *testing.T){
