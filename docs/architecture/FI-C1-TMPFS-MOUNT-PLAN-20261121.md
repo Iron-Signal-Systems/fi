@@ -28,6 +28,40 @@ service enablement, run `fi-c1-host-preflight` with actual C220 paths.
 Require that its mount sources/targets match the plan exactly. No
 code in this planner enables a jail or canonical ingestion.
 
+## Physical C220 reconciliation — observed 2026-11-22
+
+Read-only host and PostgreSQL inventory established the **existing**
+running jail names/roots as `fi-ingest` at
+`/fast/jails/roots/fi-ingest` and **`fi-sor`** at
+`/fast/jails/roots/fi-sor`; the live SoR PostgreSQL socket is
+`/var/db/fi/sor/run` and its data directory is
+`/var/db/fi/sor/postgres`. There was no C1 handoff tmpfs/nullfs mount
+or `fi-c1-handoff` entry in the inspected host/candidate jail fstabs.
+Existing signed-custody read-only nullfs mounts in fi-ingest must remain
+unchanged.
+
+**STOP:** The installer configuration names `FI_SOR_DB_ROOT` and
+`FI_SOR_DB_FSTAB` are logical compatibility keys and MUST NOT be
+interpreted as proof that a jail called `fi-sor-db` is deployed, or
+that `/etc/fstab.fi-sor-db` is used by the running `fi-sor` jail.
+Before `apply-c1-ram-fstab`, independently identify the actual
+jail.conf `mount.fstab` linkage or jail-start mount mechanism and
+reconcile it with the exact paths returned by the planner. Creating an
+unused fstab entry does not install a working mount; changing an active
+jail's fstab without that mapping can break existing services. Do not
+rename, replace, or restart the current `fi-sor` jail merely to match a
+development installer identifier.
+
+Existing private SoR staging is **not empty**: the target generation
+has 89 verified artifact markers, 88 source-window markers, and 88
+typed-window markers summing 2,770,101 committed records. This must be
+independently reconciled with original signed custody and durable SQL
+state before a replay-enabled worker can start. Preserve all private
+rows and recovery ledgers; do not reinstall, truncate, or reset.
+Telemetry delivery last observed 2026-10-30 must be restored/verified
+as a separate acceptance prerequisite. None of these read-only
+observations constitutes authority to publish or enable live ingestion.
+
 ## Read-only installer invocation
 
 On the FreeBSD host, with the existing validated FI backend configuration:
