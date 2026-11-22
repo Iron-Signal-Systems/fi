@@ -17,6 +17,7 @@ import (
     "testing"
     "time"
 
+    "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
     "github.com/jackc/pgx/v5"
 )
@@ -61,6 +62,25 @@ func TestC1PrivateSchemaRealPostgres18AtomicDDL(t *testing.T){
             t.Fatalf("canonical fixture migration %s: %v",m.Name,err)
         }
     }
+    // A signed generation that has not been published must remain
+    // FinalVerified, not FinalAccepted. Exercise the SAME read-only SQL
+    // and columns against the actual 49-table FI PostgreSQL18 DDL.
+    canonicalRead,err:=admin.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if err!=nil{t.Fatal(err)}
+    finalStatus,finalErr:=c1CanonicalStatusInSnapshot(ctx,canonicalRead,
+        "fi-c1-disposable-no-source","no-canonical-generation",
+        strings.Repeat("a",64))
+    if finalErr!=nil{
+        _=canonicalRead.Rollback(context.Background())
+        t.Fatalf("real PostgreSQL18 canonical Accepted readback query invalid: %v",finalErr)
+    }
+    if err=canonicalRead.Commit(ctx);err!=nil{t.Fatal(err)}
+    if finalStatus!=c1handoff.FinalVerified{
+        t.Fatal("real canonical SoR falsely declared an unaccepted generation Accepted")
+    }
+
     var canonicalBefore int64
     if err=admin.QueryRow(ctx,`SELECT count(*) FROM information_schema.tables
         WHERE table_schema='fi'`).Scan(&canonicalBefore);err!=nil{t.Fatal(err)}
