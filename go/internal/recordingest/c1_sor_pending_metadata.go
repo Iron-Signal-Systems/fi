@@ -38,6 +38,24 @@ func StageC1SignedPendingMetadata(ctx context.Context, dsn string,
 	if err != nil {
 		return fmt.Errorf("C1 pending: original signed custody preflight: %w", err)
 	}
+	conn, _, err := openC1SoRLocalSQL(ctx, dsn, "")
+	if err != nil { return err }
+	defer conn.Close(context.Background())
+	return c1StageVerifiedPendingMetadata(ctx, conn, start, original)
+}
+
+// c1StageVerifiedPendingMetadata owns only the same signed-identity check
+// and atomic SQL admission as the live fi-sor path. The production caller
+// MUST first reauthenticate original receiver custody; an untrusted caller
+// cannot reach this unexported primitive from the inter-jail protocol.
+// Disposable PostgreSQL 18 tests invoke it with a separately authenticated
+// original signed receiver fixture.
+func c1StageVerifiedPendingMetadata(ctx context.Context, conn *pgx.Conn,
+	start c1handoff.Frame, original *PreparedGeneration) error {
+	if ctx == nil || conn == nil || start.Kind != c1handoff.Start || start.StartBatchIndex != 0 {
+		return errors.New("C1 pending: only a new signed generation can enter a local SQL transaction")
+	}
+	if err := start.Validate(); err != nil { return err }
 	if original == nil ||
 		original.Receipt.Descriptor.SourceID != start.SourceID ||
 		original.Receipt.Descriptor.GenerationID != start.GenerationID ||
@@ -55,11 +73,6 @@ func StageC1SignedPendingMetadata(ctx context.Context, dsn string,
 	if err != nil || len(receiptDigest) != 32 {
 		return errors.New("C1 pending: invalid exact recorded receipt digest")
 	}
-	conn, _, err := openC1SoRLocalSQL(ctx, dsn, "")
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err

@@ -575,6 +575,11 @@ WHERE CASE
     // The same existing populated canonical PostgreSQL must accept two
     // separate generations, with verified pending retirement in between.
     // Neither cycle resets, reclones, or replaces authoritative FI data.
+    // Native FreeBSD only: genuinely signed receiver custody must become
+    // exact original Pending metadata through the SAME atomic SQL admission
+    // helper used by the production fi-sor Bootstrap. Synthetic publication
+    // cycles below start from an empty pending schema afterward.
+    c1TestSignedOriginalPendingPostgres18(t,ctx,admin,worker)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,1)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,2)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")

@@ -109,8 +109,17 @@ a complete real signed generation through the **two-jail** mTLS/RAM/
 SoR writer, unclean power-loss recovery, and throughput acceptance remain
 mandatory. CI now has a FreeBSD test that creates a genuinely signed and
 recorded receiver generation and independently checks C1's original
-signed-custody manifest reader and tampering rejection. This is cryptographic
-bootstrap coverage, not a full two-jail Accepted transaction. Pending replay remains explicitly
+signed-custody manifest reader and tampering rejection. In native FreeBSD disposable PostgreSQL 18 CI, the next gate now
+passes that genuinely signed and receiver-recorded custody receipt and
+per-batch manifest into the **same fi-sor atomic pending metadata and
+generation_control transaction** as C1 Bootstrap. It must commit the exact
+receipt/transfer/manifest/data SHA and immutable counts, reject forged
+rosters and repeated admission, and leave canonical fi unchanged.
+The test trust resolver is confined to an unexported authenticated-fixture
+helper; production continues to use installed receiver trust.
+
+This is cryptographic **custody-to-Pending-SQL admission** coverage, not
+yet a full two-jail independently B-verified Accepted transaction. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under
