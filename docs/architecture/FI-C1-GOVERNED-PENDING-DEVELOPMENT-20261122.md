@@ -332,3 +332,28 @@ forty-column Security event/scope/field SQL remain intact. Without the
 key, the non-C1 Security bulk routine continues its ordinary parent COPY,
 preserving the other ingestion workflows. The signed mixed-family
 FreeBSD/PostgreSQL18 acceptance fixture is the integration regression gate.
+
+
+### Native PostgreSQL 18 crash/WAL recovery gate (2026-11-22)
+
+The **disposable FreeBSD 15.1 CI VM only** now runs
+`TestC1SignedPostgres18ImmediateCrashRecovery` in two independent Go
+processes around `pg_ctl -m immediate -w stop` and restart of the same
+freshly initialized PostgreSQL 18 cluster. It requires
+`fsync=on`, `synchronous_commit=on`, and `full_page_writes=on`.
+
+Before the forced database crash, the original signed receiver custody
+and governed Pending metadata are committed, and exactly one original
+SourceParent is committed without its typed root. After WAL recovery
+the test must reopen the original receiver-signed receipt, manifest and
+data, compare the committed signed parent read-only, *reject* B while its
+typed root is missing, use the existing `EnqueueReplay` to credit only
+the durable parent and write the missing typed family, then reauthenticate
+all original signed custody and atomically publish exactly one Accepted
+journal with parent and typed projection. Only then may the test retire
+the pending generation. No SQL from fi-ingest or C220 host is accessed.
+
+This test **does not** simulate an actual C220 chassis power cut or
+exercise live FreeBSD jail restarts. It closes the disposable database
+WAL/recovery gate only if CI actually passes; service-level deployment
+acceptance and representative C1 throughput are separate requirements.

@@ -85,7 +85,40 @@ unset FI_C1_REPLAY_CI_ALLOW_ISOLATED_WRITES FI_C1_REPLAY_PG_DSN
 export FI_C1_SCHEMA_CI_ALLOW_DISPOSABLE=1
 export FI_C1_SCHEMA_CI_ADMIN_DSN='host=127.0.0.1 port=5432 user=fi_c1_schema_test dbname=fi sslmode=disable'
 go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
-  -run '^TestC1PrivateSchemaRealPostgres18AtomicDDL$' \
+  -run '^TestC1PrivateSchemaRealPostgres18AtomicDDL
+ \
   -v ./internal/recordingest ||
   fail "actual FreeBSD PostgreSQL 18 atomic private DDL/rollback proof"
-echo "FI C1 NATIVE FREEBSD PG18 PASS partial_powerloss_reconciliation=true private_schema_atomic_rollback=true fsync=true synchronous_commit=true full_page_writes=true C220_untouched=true"
+
+# A completely separate Go process writes a REAL receiver-signed generation
+# and commits its SourceParent, leaving typed SQL and canonical Accepted
+# absent. The shell then kills THIS DISPOSABLE CLUSTER with pg_ctl immediate;
+# the next Go process cannot use any in-memory worker state.
+export FI_C1_CI_CRASH_ROOT="$base/signed-crash"
+export FI_C1_CI_CRASH_PHASE=before
+go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
+  -run '^TestC1SignedPostgres18ImmediateCrashRecovery
+ \
+  -v ./internal/recordingest ||
+  fail "original signed SourceParent failed before actual PostgreSQL crash"
+unset FI_C1_CI_CRASH_PHASE
+su -m postgres -c "/usr/local/bin/pg_ctl -D '$data' -m immediate -w stop" ||
+  fail "disposable PostgreSQL 18 immediate-stop failed"
+started=0
+su -m postgres -c "/usr/local/bin/pg_ctl -D '$data' -l '$log' -o '-h 127.0.0.1 -p 5432 -c fsync=on -c synchronous_commit=on -c full_page_writes=on' -w start" ||
+  { cat "$log" >&2 || :; fail "disposable PostgreSQL18 WAL crash recovery failed"; }
+started=1
+for setting in fsync synchronous_commit full_page_writes;do
+  value=$(psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d fi -At -v ON_ERROR_STOP=1 -c "SHOW $setting") ||
+    fail "read $setting after PostgreSQL crash recovery"
+  [ "$value" = on ] || fail "recovered PostgreSQL durability setting $setting not on"
+done
+export FI_C1_CI_CRASH_PHASE=after
+go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
+  -run '^TestC1SignedPostgres18ImmediateCrashRecovery
+ \
+  -v ./internal/recordingest ||
+  fail "real signed C1 PostgreSQL WAL crash recovery, typed replay and exact Accepted"
+unset FI_C1_CI_CRASH_ROOT FI_C1_CI_CRASH_PHASE
+
+echo "FI C1 NATIVE FREEBSD PG18 PASS partial_powerloss_reconciliation=true real_postgresql_immediate_stop=true signed_crash_typed_replay=true accepted_exactly_once=true private_schema_atomic_rollback=true fsync=true synchronous_commit=true full_page_writes=true C220_untouched=true"
