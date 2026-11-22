@@ -381,3 +381,39 @@ Both services remain `_enable="NO"` until the complete test and host
 preflight gates are accepted. Existing installed managed rc assets may
 need an authorized controlled replacement; the installer correctly
 rejects silent rewrites of a previously staged managed service file.
+
+
+### Existing-SoR governed Pending + publisher offline installer
+
+The existing FreeBSD one-shot `fi-c1-private-schema` administrative
+executable now has an explicit `-governed-pending` mode. This is the
+install path for the active C1 architecture; the default old private
+benchmark installer remains a separate disabled-by-default mode.
+
+The new mode requires `FI_C1_GOVERNED_PENDING_INSTALL_APPROVED=
+OFFLINE_EXISTING_FI_PENDING_AND_SQL_ROLES`, an existing populated
+PostgreSQL 18 `fi` database, a **local Unix-domain socket**, a
+non-standby SUPERUSER administrator, exactly 49 existing canonical FI
+relations, no existing governed Pending or private recovery schema,
+and no `fi_c1_publisher` role. It performs no action without
+explicit operator authorization. The command rejects password
+strings/URLs in command-line DSNs; use a protected administrator passfile.
+
+Within one SERIALIZABLE PostgreSQL transaction, after acquiring a
+dedicated installer advisory lock and canonical journal read lock, it
+creates only the governed Pending 49-table mirror plus control,
+creates/reuses restricted `fi_owner` and `fi_ingest` SQL roles,
+and creates the distinct `fi_c1_publisher` role with canonical
+SELECT/INSERT/MAINTAIN and pending-only SELECT/MAINTAIN/TRUNCATE.
+It does not grant canonical UPDATE/DELETE/TRUNCATE, create a database,
+change any canonical records, acknowledge a generation, alter
+PostgreSQL configuration or start a service. Uncertain commits require
+read-only inspection before retry. Socket authentication/passfile and
+disabled rc service configuration remain separate operator-controlled
+activation steps.
+
+**A compiled install command and a DDL plan are not acceptance.**
+The actual one-shot installer must also pass a fresh disposable
+PostgreSQL 18 success/rollback/idempotence test, and the physical C220
+read-only preflight must verify its existing roles, socket and canonical
+data state before any authorized deployment.

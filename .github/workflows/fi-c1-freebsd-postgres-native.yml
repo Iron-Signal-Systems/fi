@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout FI C1 development branch
         uses: actions/checkout@v4
+      - name: Reject malformed disposable FreeBSD PostgreSQL harness syntax
+        run: sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh
       - name: Build and test disposable PG18 recovery/DDL on real FreeBSD 15.1
         uses: vmactions/freebsd-vm@v1
         with:

@@ -85,8 +85,7 @@ unset FI_C1_REPLAY_CI_ALLOW_ISOLATED_WRITES FI_C1_REPLAY_PG_DSN
 export FI_C1_SCHEMA_CI_ALLOW_DISPOSABLE=1
 export FI_C1_SCHEMA_CI_ADMIN_DSN='host=127.0.0.1 port=5432 user=fi_c1_schema_test dbname=fi sslmode=disable'
 go test -tags 'fi_c1_sor_dev fi_c1_schema_pg_integration' -count=1 \
-  -run '^TestC1PrivateSchemaRealPostgres18AtomicDDL
- \
+  -run '^TestC1PrivateSchemaRealPostgres18AtomicDDL$' \
   -v ./internal/recordingest ||
   fail "actual FreeBSD PostgreSQL 18 atomic private DDL/rollback proof"
 
