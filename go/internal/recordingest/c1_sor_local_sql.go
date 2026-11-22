@@ -59,6 +59,10 @@ func newC1SoRSQLPool(ctx context.Context,dsn,sourceID string,maxWorkers int)(*pr
         return nil,errors.New("C1 fi-sor: original source and SQL worker limit required")
     }
     if _,err:=c1SoRLocalConnectionConfig(dsn);err!=nil{return nil,err}
+    // The fi-sor C1 worker must never write partially committed rows into
+    // the canonical fi schema or the discarded fi_recovery_projection stage.
+    // The full signed-generation Bootstrap/verification path is still gated
+    // until it is moved to this governed pending target.
     return newC1SQLWithOpener(ctx,dsn,"",sourceID,maxWorkers,false,
-        openC1SoRLocalSQL,false)
+        openC1SoRLocalSQL,false,c1GovernedPendingSchema)
 }

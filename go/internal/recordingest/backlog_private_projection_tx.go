@@ -25,24 +25,38 @@ import (
 type privateProjectionTx struct {
 	pgx.Tx
 	fieldPartition string // empty unless the isolated, opt-in W128 experiment is active
+	schema string // empty defaults to the unchanged private benchmark target
+}
+
+// Only these two compile-time-known schemas are permitted. Never accept
+// schema names from a network frame, user input, or dynamic SQL identifier.
+func (p privateProjectionTx) destinationSchema() (string, error) {
+	schema := p.schema
+	if schema == "" {
+		schema = privateProjectionSchema
+	}
+	if schema != privateProjectionSchema && schema != "fi_c1_pending" {
+		return "", errors.New("FI C1: unapproved relational projection schema")
+	}
+	return schema, nil
 }
 
 func (p privateProjectionTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	rewritten, err := rewritePrivateProjectionStatement(sql)
+	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema)
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
 	return p.Tx.Exec(ctx, rewritten, args...)
 }
 func (p privateProjectionTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	rewritten, err := rewritePrivateProjectionStatement(sql)
+	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema)
 	if err != nil {
 		return nil, err
 	}
 	return p.Tx.Query(ctx, rewritten, args...)
 }
 func (p privateProjectionTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	rewritten, err := rewritePrivateProjectionStatement(sql)
+	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema)
 	if err != nil {
 		return privateProjectionErrorRow{err: err}
 	}
@@ -52,10 +66,17 @@ func (p privateProjectionTx) CopyFrom(ctx context.Context, table pgx.Identifier,
 	if len(table) != 2 || table[0] != "fi" || table[1] == "" {
 		return 0, errors.New("FI private projector: COPY target must be explicitly qualified fi table")
 	}
-	if table[1] == "windows_security_event_field" && p.fieldPartition != "" {
-		return p.Tx.CopyFrom(ctx, pgx.Identifier{privateProjectionSchema, p.fieldPartition}, cols, src)
+	schema, err := p.destinationSchema()
+	if err != nil {
+		return 0, err
 	}
-	return p.Tx.CopyFrom(ctx, pgx.Identifier{privateProjectionSchema, table[1]}, cols, src)
+	if table[1] == "windows_security_event_field" && p.fieldPartition != "" {
+		if schema != privateProjectionSchema {
+			return 0, errors.New("FI C1: experimental field partitions are forbidden in governed pending")
+		}
+		return p.Tx.CopyFrom(ctx, pgx.Identifier{schema, p.fieldPartition}, cols, src)
+	}
+	return p.Tx.CopyFrom(ctx, pgx.Identifier{schema, table[1]}, cols, src)
 }
 
 // Prevent alternate access paths from bypassing the qualified SQL rewrite.
@@ -96,6 +117,18 @@ func (privateProjectionFailedBatch) Close() error {
 // statement, multiple statements, dollar-quote or unterminated literal
 // fails closed. All projector statements must be statically authored.
 func rewritePrivateProjectionStatement(sql string) (string, error) {
+	return rewritePrivateProjectionStatementTo(sql, privateProjectionSchema)
+}
+
+// This SQL parser accepts only static qualified FI projector SQL. It changes
+// the destination namespace without changing the original typed projection.
+func rewritePrivateProjectionStatementTo(sql, targetSchema string) (string, error) {
+	if targetSchema == "" {
+		targetSchema = privateProjectionSchema
+	}
+	if targetSchema != privateProjectionSchema && targetSchema != "fi_c1_pending" {
+		return "", errors.New("FI C1: unapproved relational projection schema")
+	}
 	words := strings.Fields(sql)
 	if len(words) == 0 {
 		return "", errors.New("FI private projector: empty SQL")
@@ -104,7 +137,7 @@ func rewritePrivateProjectionStatement(sql string) (string, error) {
 	if verb != "SELECT" && verb != "INSERT" && verb != "WITH" {
 		return "", errors.New("FI private projector: only SELECT/INSERT/WITH are allowed")
 	}
-	if strings.Contains(sql, privateProjectionSchema+".") {
+	if strings.Contains(sql, privateProjectionSchema+".") || strings.Contains(sql, "fi_c1_pending.") {
 		return "", errors.New("FI private projector: already-qualified private reference prohibited")
 	}
 	var out strings.Builder
@@ -177,7 +210,7 @@ func rewritePrivateProjectionStatement(sql string) (string, error) {
 		case i+3 <= len(sql) && sql[i:i+3] == "fi." &&
 			(i == 0 || !sqlIdentifierCharacter(rune(sql[i-1]))) &&
 			i+3 < len(sql) && sqlIdentifierCharacter(rune(sql[i+3])):
-			out.WriteString(privateProjectionSchema + ".")
+			out.WriteString(targetSchema + ".")
 			i += 3
 			refs++
 		default:

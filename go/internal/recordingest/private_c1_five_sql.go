@@ -81,6 +81,7 @@ type privateC1FiveSQL struct {
     // execute this same verified C1 source and five-family SQL engine.
     openSQL func(context.Context,string,string)(*pgx.Conn,int64,error)
     cloneOnly bool
+    projectionSchema string // exact authorized destination for all P6 SQL/COPY
     parent *pgx.Conn
     sourceProfile bool // explicit 8GiB-only profiling, never a production setting
     parentBackendPID int64
@@ -216,15 +217,22 @@ func newPrivateC1FiveSQL(ctx context.Context,dsn,pgdata,sourceID string)(*privat
 func newC1SQLWithOpener(ctx context.Context,dsn,pgdata,sourceID string,
     max int,sourceProfile bool,
     open func(context.Context,string,string)(*pgx.Conn,int64,error),
-    cloneOnly bool,
+    cloneOnly bool, targetSchema ...string,
 )(*privateC1FiveSQL,error){
     if ctx==nil||sourceID==""||open==nil||max<1||max>privateC1HardSQLWorkersMax{
         return nil,errors.New("FI C1: incomplete or unbounded fi-sor SQL pool parameters")
     }
+    schema:=privateProjectionSchema
+    if len(targetSchema)>0 {
+        if len(targetSchema)!=1||targetSchema[0]!="fi_c1_pending"||cloneOnly {
+            return nil,errors.New("FI C1: private clone cannot redirect to governed pending or arbitrary schema")
+        }
+        schema=targetSchema[0]
+    }
     owner,cancel:=context.WithCancel(ctx)
     w:=&privateC1FiveSQL{
         ctx:owner,cancel:cancel,sourceID:sourceID,dsn:dsn,pgdata:pgdata,
-        openSQL:open,cloneOnly:cloneOnly,
+        openSQL:open,cloneOnly:cloneOnly,projectionSchema:schema,
         maxWorkers:max,sourceProfile:sourceProfile,sourceJobs:make(chan privateC1SourceJob,2),
         jobs:make(chan privateC1SQLJob,max*2),
         usnPending:make(chan privateC1SQLJob,privateC1MaxPendingUSNHandoffs),
@@ -494,7 +502,7 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
     profile:=&ingestStageProfile{}
-    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx},
+    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx,schema:w.projectionSchema},
         w.sourceID,profile)
     if err!=nil{return err}
     writeCtx,hashCopy,aceCopy,usnCopy:=privateC1BoundedProjectorContext(ctx)
@@ -541,7 +549,7 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
     // The same privateProjectionTx rewrites all five family's COPY
     // targets into fi_recovery_projection. Drain *before* SQL COMMIT:
     // pending hashes/ACEs/USN changes and reasons are real FK children.
-    projector:=privateProjectionTx{Tx:tx}
+    projector:=privateProjectionTx{Tx:tx,schema:w.projectionSchema}
     if err=usnCopy.flushAll(writeCtx,projector);err!=nil{
         return fmt.Errorf("FI C1: USN/reason child COPY: %w",err)
     }
@@ -596,7 +604,7 @@ func(w *privateC1FiveSQL) writeSource(ctx context.Context,rows []privateP6Record
     if w.sourceProfile {
         sourceTx=&privateC1TimedSourceTx{Tx:tx,timing:&sourceCopyTiming}
     }
-    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:sourceTx},
+    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:sourceTx,schema:w.projectionSchema},
         w.sourceID,profile)
     sourceStarted:=time.Now()
     if err==nil{err=coordinator.Source(ctx,rows)}
