@@ -158,9 +158,24 @@ both TLS endpoints inside the disposable test process; it is NOT evidence of
 two real jailed workers, an independent B OS process, or canonical
 publication. It uses the same C1 SQL implementation, not a second writer.
 
-This is **custody-to-Pending-SQL parent/typed, mTLS/RAM handoff and read-only
-original-data proof** coverage, not yet a complete two-jail independently
-B-verified Accepted transaction. Pending replay remains explicitly
+The same disposable native FreeBSD fixture then exercises the exact
+**atomic populated-SoR publisher** with that genuine signed generation,
+not a fabricated proof callback: it rereads the receiver's signed
+custody under canonical and pending locks, verifies committed typed
+relational completeness, promotes the complete parent/typed rows,
+inserts a single matching Accepted journal, independently reads back
+that canonical status, rejects duplicate publication, and retires
+the Pending rows only afterward. The fixture preserves the two previous
+synthetic canonical generations and adds one genuinely signed generation.
+The production publisher wrapper still resolves only installed receiver
+trust; the fixture-only resolver remains private and cannot be supplied
+over C1 transport.
+
+The fixture uses the actual C1 SQL and canonical publisher primitives
+but invokes final publication as a **separate test step**, not as a live
+`C1SoRService.FinalProof` process in two jails. It is not yet evidence
+of distinct fi-ingest/fi-sor jail services, an independent B OS process,
+power-loss recovery, or performance acceptance. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under

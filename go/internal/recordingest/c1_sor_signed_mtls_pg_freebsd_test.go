@@ -19,7 +19,6 @@ import (
     "net"
     "os"
     "path/filepath"
-    "strings"
     "testing"
     "time"
 
@@ -28,13 +27,14 @@ import (
 )
 
 func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
-    admin,worker *pgx.Conn){
+    admin,worker,publisher *pgx.Conn){
     t.Helper()
     if os.Getenv("GITHUB_ACTIONS")!="true"||
         os.Getenv("FI_C1_SCHEMA_CI_ALLOW_DISPOSABLE")!="1"{
         t.Fatal("STOP: signed SQL handoff allowed only in disposable FreeBSD CI")
     }
-    if admin==nil||worker==nil||admin==worker{
+    if admin==nil||worker==nil||publisher==nil||
+        admin==worker||admin==publisher||worker==publisher{
         t.Fatal("C1 signed RAM SQL requires distinct administrative and worker identities")
     }
     root:=t.TempDir()
@@ -191,18 +191,95 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     if e=admin.QueryRow(ctx,`SELECT
         (SELECT count(*) FROM fi_c1_pending.source_record),
         (SELECT count(*) FROM fi_c1_pending.supporting_source_collection_error),
-        (SELECT count(*) FROM fi.source_record),
-        (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')`).
+        (SELECT count(*) FROM fi.source_record WHERE source_batch_id IN (
+           SELECT b.source_batch_id FROM fi.source_batch b
+           JOIN fi.recorded_generation g USING(recorded_generation_id)
+           WHERE g.source_id=$1 AND g.generation_id=$2)),
+        (SELECT count(*) FROM fi.ingest_journal
+           WHERE source_id=$1 AND generation_id=$2 AND outcome='Accepted')`,
+        source,signed.GenerationID).
         Scan(&pendingParents,&pendingTyped,&canonicalParents,&accepted);e!=nil{t.Fatal(e)}
     if pendingParents!=1||pendingTyped!=1||canonicalParents!=0||accepted!=0{
         t.Fatalf("C1 signed mTLS SQL escaped pending before canonical publication parent=%d typed=%d canonical=%d accepted=%d",
             pendingParents,pendingTyped,canonicalParents,accepted)
     }
-    targets,e:=c1PendingRetireTables()
+
+    // The handoff has returned only FinalVerified. Separately exercise the
+    // SAME atomic populated-SoR remapper using the actual receiver-signed
+    // generation, not a synthetic callback that assumes evidence exists.
+    // Native B proof is repeated under publisher table locks and is bound
+    // to the independently reopened original custody and all typed roots.
+    verifier,e:=pgx.ConnectConfig(ctx,worker.Config().Copy())
     if e!=nil{t.Fatal(e)}
-    if _,e=admin.Exec(ctx,"TRUNCATE TABLE "+strings.Join(targets,", ")+
-        " CONTINUE IDENTITY RESTRICT");e!=nil{
-        t.Fatalf("C1 disposable signed mTLS fixture cleanup: %v",e)
+    defer verifier.Close(context.Background())
+    if _,e=verifier.Exec(ctx,"SET default_transaction_read_only = on");e!=nil{
+        t.Fatal(e)
     }
-    t.Log("PASS: real signed custody -> mTLS1.3 -> prepared RAM -> original C1 SQL parent/typed -> separate read-only signed B; canonical FI untouched")
+    promotionPlan,e:=LoadC1NativePromotionPlan(ctx,verifier,source,
+        signed.GenerationID,custody,c1GovernedPendingSchema)
+    if e!=nil{t.Fatalf("C1 real signed canonical promotion plan: %v",e)}
+    generation,e:=c1NativePromotionGeneration(promotionPlan)
+    if e!=nil{t.Fatal(e)}
+    attempt:="c1-genuine-signed-"+signed.GenerationID
+    fullProof:=func(ctx context.Context,conn *pgx.Conn,g *PreparedGeneration,
+        _ BacklogWindowLimits)(BacklogGenerationVerification,error){
+        return c1NativeFullPromotionProofWithTrust(ctx,conn,g,
+            promotionPlan,custody,trust)
+    }
+    result,e:=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,
+        verifier,publisher,generation,BacklogWindowLimits{},attempt,fullProof,
+        c1GovernedPendingSchema)
+    if e!=nil{t.Fatalf("C1 actual receiver-signed canonical transaction: %v",e)}
+    if result.Outcome!="Accepted"||result.RecordsCommitted!=1{
+        t.Fatalf("C1 actual signed generation failed canonical Accepted transaction: %+v",result)
+    }
+    check,e:=verifier.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    canonical,e:=c1CanonicalStatusInSnapshot(ctx,check,source,
+        signed.GenerationID,original.ReceiptSHA256)
+    if e!=nil||canonical!=c1handoff.FinalAccepted{
+        _=check.Rollback(context.Background())
+        t.Fatalf("C1 actual signed canonical Accepted readback failed: %v %v",canonical,e)
+    }
+    if e=check.Commit(ctx);e!=nil{t.Fatal(e)}
+    var committedSource,committedTyped int64
+    if e=admin.QueryRow(ctx,`SELECT
+       (SELECT count(*) FROM fi.source_record r
+         JOIN fi.source_batch b USING(source_batch_id)
+         JOIN fi.recorded_generation g USING(recorded_generation_id)
+         WHERE g.source_id=$1 AND g.generation_id=$2),
+       (SELECT count(*) FROM fi.supporting_source_collection_error x
+         JOIN fi.source_record r USING(source_record_id)
+         JOIN fi.source_batch b USING(source_batch_id)
+         JOIN fi.recorded_generation g USING(recorded_generation_id)
+         WHERE g.source_id=$1 AND g.generation_id=$2)`,
+        source,signed.GenerationID).
+        Scan(&committedSource,&committedTyped);e!=nil{t.Fatal(e)}
+    if committedSource!=1||committedTyped!=1{
+        t.Fatalf("C1 real signed canonical typed projection lost parent/child: %d/%d",
+            committedSource,committedTyped)
+    }
+    again,e:=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,
+        verifier,publisher,generation,BacklogWindowLimits{},attempt+"-retry",
+        fullProof,c1GovernedPendingSchema)
+    if e!=nil||again.Outcome!="AlreadyAccepted"{
+        t.Fatalf("C1 genuine signed duplicate canonical retry: %+v %v",again,e)
+    }
+    // Only AFTER independent canonical Accepted may this test invoke the
+    // production retirement transaction. Real custody remains immutable.
+    retire,e:=publisher.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    if e=c1RetireAcceptedPendingTx(ctx,retire,source,
+        signed.GenerationID,original.ReceiptSHA256);e!=nil{
+        _=retire.Rollback(context.Background())
+        t.Fatalf("C1 signed canonical Accepted pending retirement: %v",e)
+    }
+    if e=retire.Commit(ctx);e!=nil{t.Fatal(e)}
+    var remaining int64
+    if e=admin.QueryRow(ctx,`SELECT count(*) FROM fi_c1_pending.recorded_generation`).
+        Scan(&remaining);e!=nil{t.Fatal(e)}
+    if remaining!=0{t.Fatal("C1 signed canonical retirement did not clear Pending")}
+    t.Log("PASS: original receiver signed custody -> mTLS1.3/RAM -> real C1 SourceParent/typed SQL -> original signed independent B -> atomic populated FI Accepted + exactly one journal -> Pending retired")
 }

@@ -61,7 +61,19 @@ func c1NativeFullPromotionProof(ctx context.Context,conn *pgx.Conn,
     g *PreparedGeneration,p c1NativeBPlan,custody c1NativeBCustodyConfig)(
     BacklogGenerationVerification,error,
 ){
+    return c1NativeFullPromotionProofWithTrust(ctx,conn,g,p,custody,
+        loadInstalledGenerationTrust)
+}
+
+// The production publisher always runs the wrapper above with installed
+// receiver trust. In disposable FreeBSD/PostgreSQL CI, this internal helper
+// can independently authenticate a genuine locally signed receiver fixture
+// without modifying global installed trust or replacing the SQL remapper.
+func c1NativeFullPromotionProofWithTrust(ctx context.Context,conn *pgx.Conn,
+    g *PreparedGeneration,p c1NativeBPlan,custody c1NativeBCustodyConfig,
+    resolve generationTrustResolver)(BacklogGenerationVerification,error){
     var result BacklogGenerationVerification
+    if resolve==nil{return result,errors.New("C1 promotion: receiver trust cannot be absent")}
     if ctx==nil||conn==nil||g==nil{
         return result,errors.New("C1 promotion: missing independent original proof inputs")
     }
@@ -83,7 +95,7 @@ func c1NativeFullPromotionProof(ctx context.Context,conn *pgx.Conn,
     // Re-read the true receiver-custody signed bundle INSIDE canonical
     // publication lock. Already-passed parallel B is not enough if rows
     // can change between its independent readback and publication.
-    if err:=c1NativeBVerifySignedCustody(ctx,conn,p,custody);err!=nil{
+    if err:=c1NativeBVerifySignedCustodyWithTrust(ctx,conn,p,custody,resolve);err!=nil{
         return result,fmt.Errorf("C1 promotion: signed original record digest/typed proof: %w",err)
     }
     tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})

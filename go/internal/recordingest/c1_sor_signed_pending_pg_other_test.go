@@ -19,4 +19,4 @@ func c1TestSignedOriginalPendingPostgres18(_ *testing.T,_ context.Context,
     _,_ *pgx.Conn) {}
 
 func c1TestSignedMTLSRAMPostgres18(_ *testing.T,_ context.Context,
-    _,_ *pgx.Conn) {}
+    _,_,_ *pgx.Conn) {}

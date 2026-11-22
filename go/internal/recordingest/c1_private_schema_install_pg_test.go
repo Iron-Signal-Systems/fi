@@ -596,12 +596,14 @@ WHERE CASE
     // helper used by the production fi-sor Bootstrap. Synthetic publication
     // cycles below start from an empty pending schema afterward.
     c1TestSignedOriginalPendingPostgres18(t,ctx,admin,worker)
-    // Same signed receiver source and native five-family SQL, now exercised
-    // through TLS1.3 mTLS, producer-owned prepared RAM and separate B readback.
-    // It deliberately returns FinalVerified, never synthetic FinalAccepted.
-    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,1)
     c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher,2)
+    // The real receiver-signed mTLS case runs LAST: it adds a third
+    // canonical Accepted generation without changing the two existing ones.
+    // The TLS Drain only promises FinalVerified; the actual canonical
+    // publisher then independently verifies original signed custody under
+    // locks and commits Accepted before Pending retirement.
+    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
