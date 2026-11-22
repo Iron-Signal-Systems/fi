@@ -41,8 +41,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         admin==worker||admin==publisher||worker==publisher{
         t.Fatal("C1 signed RAM SQL requires distinct administrative and worker identities")
     }
-    if recordCount!=1&&recordCount!=3&&recordCount!=5 {
-        t.Fatal("C1 signed mTLS fixture supports only 1, 3 or 5 original records")
+    if recordCount!=1&&recordCount!=3&&recordCount!=4&&recordCount!=5 {
+        t.Fatal("C1 signed mTLS fixture supports only 1, 3, 4 or 5 original records")
     }
     root:=t.TempDir()
     source:=fmt.Sprintf("c1-signed-mtls-%d-fixture.iss.local",recordCount)
@@ -55,6 +55,9 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         signed=m1WriteSignedGeneration(t,root,source)
     }else if recordCount==5 {
         signed=c1WriteReceivedThreeBatchGeneration(t,root,source)
+    }else if recordCount==4 {
+        signed=m1WriteSignedGenerationRecords(t,root,source,
+            c1SignedThreeFamilyRecords(t,source))
     }else{
         // These are real receiver-signed JSONL records, not duplicate
         // SQL-only rows. Different payloads guarantee distinct hashes.
@@ -137,7 +140,8 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
             if len(line)==0{continue}
             prepared,prepErr:=PrepareSourceRecord(line)
             if prepErr!=nil{t.Fatal(prepErr)}
-            if prepared.Record.RecordKind!="SupportingSourceCollectionError" {
+            if recordCount!=4&&
+                prepared.Record.RecordKind!="SupportingSourceCollectionError" {
                 t.Fatal("C1 signed multi-batch record changed its typed projector")
             }
             ordinal++
@@ -261,6 +265,23 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
         if e=remote.Source(ctx,signedRows[2:]);e!=nil{t.Fatal(e)}
         if e=remote.Family(ctx,family,signedRows[:1]);e!=nil{t.Fatal(e)}
         if e=remote.Family(ctx,family,signedRows[1:]);e!=nil{t.Fatal(e)}
+    }else if recordCount==4{
+        // Three independent typed SQL families share the same exact
+        // original signed Parent identity and mTLS/RAM transport.
+        if e=remote.Source(ctx,signedRows[:2]);e!=nil{t.Fatal(e)}
+        if e=remote.Source(ctx,signedRows[2:]);e!=nil{t.Fatal(e)}
+        byFamily:=make(map[privateP6Family][]privateP6Record)
+        for _,row:=range signedRows {
+            target,kindErr:=privateP6KindFamily(row.prepared.Record.RecordKind)
+            if kindErr!=nil{t.Fatal(kindErr)}
+            byFamily[target]=append(byFamily[target],row)
+        }
+        for _,target:=range []privateP6Family{
+            privateP6Security,privateP6Coverage,privateP6Other,
+        }{
+            if len(byFamily[target])==0{t.Fatal("C1 mixed signed family missing")}
+            if e=remote.Family(ctx,target,byFamily[target]);e!=nil{t.Fatal(e)}
+        }
     }else{
         // Source spans batch 0 and 1 in its first handoff; the second
         // handoff completes batch 1 and begins batch 2. Typed SQL cuts
@@ -293,10 +314,24 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
            WHERE source_id=$1 AND generation_id=$2 AND outcome='Accepted')`,
         source,signed.GenerationID).
         Scan(&pendingParents,&pendingTyped,&canonicalParents,&accepted);e!=nil{t.Fatal(e)}
-    if pendingParents!=int64(recordCount)||pendingTyped!=int64(recordCount)||
+    expectedOther:=int64(recordCount)
+    if recordCount==4{expectedOther=2}
+    if pendingParents!=int64(recordCount)||pendingTyped!=expectedOther||
         canonicalParents!=0||accepted!=0{
         t.Fatalf("C1 signed mTLS SQL escaped pending before canonical publication parent=%d typed=%d canonical=%d accepted=%d",
             pendingParents,pendingTyped,canonicalParents,accepted)
+    }
+
+    if recordCount==4{
+        var securityEvents,coverageRows int64
+        if e=admin.QueryRow(ctx,`SELECT
+            (SELECT count(*) FROM fi_c1_pending.windows_security_event),
+            (SELECT count(*) FROM fi_c1_pending.windows_security_coverage)`).
+            Scan(&securityEvents,&coverageRows);e!=nil{t.Fatal(e)}
+        if securityEvents!=1||coverageRows!=1{
+            t.Fatalf("C1 signed mixed pending Security/Coverage SQL rows incomplete: %d/%d",
+                securityEvents,coverageRows)
+        }
     }
 
     // The handoff has returned only FinalVerified. Separately exercise the
@@ -384,9 +419,28 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
          WHERE g.source_id=$1 AND g.generation_id=$2)`,
         source,signed.GenerationID).
         Scan(&committedSource,&committedTyped);e!=nil{t.Fatal(e)}
-    if committedSource!=int64(recordCount)||committedTyped!=int64(recordCount){
+    if committedSource!=int64(recordCount)||committedTyped!=expectedOther{
         t.Fatalf("C1 real signed canonical typed projection lost parent/child: %d/%d",
             committedSource,committedTyped)
+    }
+    if recordCount==4 {
+        var securityEvents,coverageRows int64
+        if e=admin.QueryRow(ctx,`SELECT
+            (SELECT count(*) FROM fi.windows_security_event x
+             JOIN fi.source_record r USING(source_record_id)
+             JOIN fi.source_batch b USING(source_batch_id)
+             JOIN fi.recorded_generation g USING(recorded_generation_id)
+             WHERE g.source_id=$1 AND g.generation_id=$2),
+            (SELECT count(*) FROM fi.windows_security_coverage x
+             JOIN fi.source_record r USING(source_record_id)
+             JOIN fi.source_batch b USING(source_batch_id)
+             JOIN fi.recorded_generation g USING(recorded_generation_id)
+             WHERE g.source_id=$1 AND g.generation_id=$2)`,
+            source,signed.GenerationID).Scan(&securityEvents,&coverageRows);e!=nil{t.Fatal(e)}
+        if securityEvents!=1||coverageRows!=1{
+            t.Fatalf("C1 signed mixed canonical Security/Coverage rows incomplete: %d/%d",
+                securityEvents,coverageRows)
+        }
     }
     // Verify every original signed ordinal and full SHA-256 in canonical
     // FI. A source/typed row count alone could miss reordered or duplicated

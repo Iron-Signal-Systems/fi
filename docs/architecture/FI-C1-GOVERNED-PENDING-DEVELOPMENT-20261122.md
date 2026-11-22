@@ -162,10 +162,14 @@ so changed evidence still fails. Unit tests include real RFC3339Nano
 timestamps, a changed microsecond and modified SHA.
 
 The native FreeBSD disposable PostgreSQL 18 test now runs **one,
-three, and five distinct genuinely receiver-signed JSONL records** through
-an in-process two-endpoint TLS 1.3 mTLS transport. The three-record case
+three, four, and five distinct genuinely receiver-signed JSONL records**
+through an in-process two-endpoint TLS 1.3 mTLS transport. The three-record case
 crosses two SourceParent and two typed-family SQL handoffs within one
-original signed batch. The five-record case uses FI's actual spool writer
+original signed batch. The new four-record case contains two Other records, one audited
+Windows Security event and one Security Coverage record, all with
+original signed envelopes. They exercise three distinct SQL family
+lanes and must independently prove their actual typed roots before
+canonical Accepted. The five-record case uses FI's actual spool writer
 to create **three independently signed source batches (2+2+1)**, and
 SourceParent handoffs intentionally cross the boundary between those
 batches; typed SQL handoffs divide the ordinals differently. Before three-batch admission a swapped batch roster must fail without
@@ -176,9 +180,9 @@ publication. Every signed source batch ID, per-batch ordinal and original
 full SHA-256 must match the canonical PostgreSQL record after one atomic
 publication. The test
 uses the same producer-owned prepared shared RAM, C1 handoff protocol,
-ordered SourceParent writer and five-family-capable SQL pool. These
-small signed fixtures exercise the Other family, not yet a mixed
-five-family signed generation. On Drain a separate read-only PostgreSQL connection
+ordered SourceParent writer and five-family-capable SQL pool. The scenarios exercise Security, Coverage and Other families,
+but do not yet constitute a single five-family signed generation
+with NTFS File and USN dependencies. On Drain a separate read-only PostgreSQL connection
 reconstructs the signed generation and verifies the entire original custody
 before returning only `FinalVerified`, not `FinalAccepted`. A PostgreSQL
 check requires one committed parent and correct typed root, zero canonical
@@ -195,7 +199,7 @@ relational completeness, promotes the complete parent/typed rows,
 inserts a single matching Accepted journal, independently reads back
 that canonical status, rejects duplicate publication, and retires
 the Pending rows only afterward. The fixture preserves the two previous synthetic canonical
-generations and adds three genuinely signed generations, without resetting
+generations and adds four genuinely signed generations, without resetting
 canonical history between them.
 The production publisher wrapper still resolves only installed receiver
 trust; the fixture-only resolver remains private and cannot be supplied

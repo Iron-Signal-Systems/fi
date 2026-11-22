@@ -610,6 +610,9 @@ WHERE CASE
     // Same full signed mTLS/RAM/B/canonical path but multiple original
     // ordinals split across independent SourceParent and typed SQL handoffs.
     c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,3)
+    // Four original signed records exercise three independent typed SQL
+    // families (Security, Coverage, Other) in the same canonical generation.
+    c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,4)
     // Genuine three source batches (2+2+1) cross both independent
     // SourceParent handoffs and separate typed-family SQL transactions.
     c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,5)
