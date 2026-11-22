@@ -8,7 +8,19 @@ umask 077
 fail() { echo "FI C1 CRL PREFLIGHT STOP: $*" >&2; exit 1; }
 [ "$(id -un)" = root ] && [ "$(hostname -s)" = c220 ] ||
   fail "requires root on C220"
-for j in fi-receiver fi-ingest fi-sor-db;do
+# Trust must be surveyed against the same unambiguous running SoR
+# database jail selected by the PostgreSQL read-only preflights.
+sor_jail=''
+for candidate in fi-sor-db fi-sor; do
+  if jls -j "$candidate" jid >/dev/null 2>&1; then
+    [ -z "$sor_jail" ] ||
+      fail 'both FI SoR jail candidates are running: ambiguous trust boundary'
+    sor_jail=$candidate
+  fi
+done
+[ -n "$sor_jail" ] || fail 'FI SoR PostgreSQL jail not running'
+printf 'C1_SOR_JAIL_SELECTED=%s\n' "$sor_jail"
+for j in fi-receiver fi-ingest;do
   jls -j "$j" >/dev/null 2>&1 || fail "required jail not running: $j"
 done
 
