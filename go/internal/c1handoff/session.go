@@ -85,6 +85,10 @@ type Server struct {
     // fi-sor C1 pool without blocking the network reader. Each future
     // resolves only after its own PostgreSQL transaction commits.
     Dispatch func(context.Context,Frame)(<-chan error,error)
+    // Called ONLY after Drain's SQL and independent verifier handler
+    // succeeded. A real canonical Accepted transaction must complete
+    // before this callback can return FinalAccepted. Nil is SQL-only.
+    FinalProof func(context.Context,Frame)(FinalStatus,error)
     IOTimeout time.Duration
 }
 func ensureAuthenticated(conn net.Conn)error{
@@ -136,8 +140,13 @@ func (s *Server) ServeConn(ctx context.Context,conn net.Conn)error{
             // ACK is emitted only after THIS buffer is durably committed.
             commitErr=s.Handler(ctx,f)
         }
+        var finalStatus FinalStatus
+        if f.Kind==Drain && commitErr==nil && s.FinalProof!=nil {
+            finalStatus,commitErr=s.FinalProof(ctx,f)
+        }
         ack:=Frame{Kind:Ack,SourceID:source,GenerationID:generation,
-            ReceiptSHA256:receipt,Sequence:sequence,Committed:commitErr==nil}
+            ReceiptSHA256:receipt,Sequence:sequence,Committed:commitErr==nil,
+            FinalStatus:finalStatus}
         if commitErr!=nil {ack.Error="C1 fi-sor SQL processing rejected handoff"
         }else if f.Kind==Start {ack.BatchSQLIDs=sourceBatchIDs}
         if err:=conn.SetWriteDeadline(time.Now().Add(idle));err!=nil{return err}
@@ -178,7 +187,8 @@ func (c *Client)Send(ctx context.Context,f Frame)error{
     if err!=nil{return fmt.Errorf("C1 handoff: SQL commit uncertain; reconcile before retry: %w",err)}
     if reply.Kind!=Ack||reply.Sequence!=f.Sequence||
         reply.ReceiptSHA256!=f.ReceiptSHA256||reply.SourceID!=f.SourceID||
-        reply.GenerationID!=f.GenerationID {
+        reply.GenerationID!=f.GenerationID ||
+        (reply.FinalStatus!=FinalNone && f.Kind!=Drain) {
         return errors.New("C1 handoff: wrong signed generation/sequence ACK")
     }
     if !reply.Committed{return fmt.Errorf("C1 handoff: fi-sor rejected signed buffer: %s",reply.Error)}
