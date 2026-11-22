@@ -118,8 +118,17 @@ rosters and repeated admission, and leave canonical fi unchanged.
 The test trust resolver is confined to an unexported authenticated-fixture
 helper; production continues to use installed receiver trust.
 
-This is cryptographic **custody-to-Pending-SQL admission** coverage, not
-yet a full two-jail independently B-verified Accepted transaction. Pending replay remains explicitly
+The same native FreeBSD fixture now also sends a genuine signed JSONL
+SourceParent through the **existing C1 ordered SQL writer and five-family
+worker pool**. A separate read-only PostgreSQL B session compares original
+signed data against committed parent and typed-root rows; modified committed
+SQL digests must be rejected. This avoids inventing any replacement SQL
+ingestion code. The full B independent OS-process lifecycle is still a
+separate acceptance gate.
+
+This is **custody-to-Pending-SQL parent/typed and read-only original-data
+proof** coverage, not yet a complete two-jail mTLS/shared-RAM independently
+B-verified Accepted transaction. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under

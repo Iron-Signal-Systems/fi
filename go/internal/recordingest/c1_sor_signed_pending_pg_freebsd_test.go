@@ -123,6 +123,91 @@ func c1TestSignedOriginalPendingPostgres18(t *testing.T,ctx context.Context,
     if err=c1StageVerifiedPendingMetadata(ctx,worker,f,original);err==nil{
         t.Fatal("C1 signed Pending unexpectedly overwrote an unresolved generation on retry")
     }
+    // Now use the *actual* C1 ordered SourceParent writer and its five-family
+    // shared SQL pool on the immutable signed receiver record. This is not
+    // synthetic INSERT SQL; it exercises the projector already used by fi-sor.
+    var batchID int64
+    if err=admin.QueryRow(ctx,`SELECT source_batch_id
+        FROM fi_c1_pending.source_batch WHERE batch_id=$1`,
+        original.Batches[0].BatchID).Scan(&batchID);err!=nil{
+        t.Fatalf("C1 signed Pending SQL batch identity lookup: %v",err)
+    }
+    signedRaw,err:=os.ReadFile(filepath.Join(root,source,"frozen",
+        original.Batches[0].DataArtifactName))
+    if err!=nil{t.Fatal(err)}
+    prepared,err:=PrepareSourceRecord(signedRaw)
+    if err!=nil{t.Fatalf("C1 signed original record preparation: %v",err)}
+    family,err:=privateP6KindFamily(prepared.Record.RecordKind)
+    if err!=nil{t.Fatalf("C1 original signed record typed family: %v",err)}
+    signedRecord:=privateP6Record{
+        signedBatchIndex:0,sourceBatchID:batchID,ordinal:1,prepared:prepared,
+    }
+    opener:=func(ctx context.Context,_,_ string)(*pgx.Conn,int64,error){
+        conn,e:=pgx.ConnectConfig(ctx,worker.Config().Copy())
+        if e!=nil{return nil,0,e}
+        var pid int64
+        if e=conn.QueryRow(ctx,"SELECT pg_backend_pid()::bigint").Scan(&pid);e!=nil{
+            _=conn.Close(context.Background())
+            return nil,0,e
+        }
+        return conn,pid,nil
+    }
+    pool,err:=newC1SQLWithOpener(ctx,"","","c1-signed-pending",2,false,
+        opener,false,c1GovernedPendingSchema)
+    if err!=nil{t.Fatalf("C1 genuine signed 5-family SQL pool: %v",err)}
+    if err=pool.Source(ctx,[]privateP6Record{signedRecord});err!=nil{
+        pool.Close();t.Fatalf("C1 signed SourceParent SQL handoff: %v",err)
+    }
+    if err=pool.WaitSource(ctx);err!=nil{
+        pool.Close();t.Fatalf("C1 signed SourceParent SQL COMMIT: %v",err)
+    }
+    if err=pool.Family(ctx,family,[]privateP6Record{signedRecord});err!=nil{
+        pool.Close();t.Fatalf("C1 signed typed-family SQL handoff: %v",err)
+    }
+    if err=pool.WaitFamily(ctx,family);err!=nil{
+        pool.Close();t.Fatalf("C1 signed typed-family SQL COMMIT: %v",err)
+    }
+    if err=pool.WaitAll(ctx);err!=nil{
+        pool.Close();t.Fatalf("C1 signed 5-family SQL drain: %v",err)
+    }
+    pool.Close()
+    auditor,err:=pgx.ConnectConfig(ctx,worker.Config().Copy())
+    if err!=nil{t.Fatal(err)}
+    defer auditor.Close(context.Background())
+    if _,err=auditor.Exec(ctx,"SET default_transaction_read_only = on");err!=nil{
+        t.Fatal(err)
+    }
+    if err=c1NativeBVerifyData(ctx,auditor,bytes.NewReader(signedRaw),
+        0,batchID,original.Batches[0],c1GovernedPendingSchema);err!=nil{
+        t.Fatalf("C1 separate readonly B original signed SourceParent/typed proof: %v",err)
+    }
+    var parentCount,canonicalParents int64
+    if err=admin.QueryRow(ctx,`SELECT
+        (SELECT count(*) FROM fi_c1_pending.source_record),
+        (SELECT count(*) FROM fi.source_record)`).
+        Scan(&parentCount,&canonicalParents);err!=nil{t.Fatal(err)}
+    if parentCount!=1||canonicalParents!=0{
+        t.Fatalf("C1 signed SQL writer escaped Pending or omitted SourceParent: pending=%d canonical=%d",
+            parentCount,canonicalParents)
+    }
+    // SQL tampering must be detected from a separate session comparing
+    // the unmodified original signed record. Restore only inside CI.
+    if _,err=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
+        SET record_sha256=$1`,bytes.Repeat([]byte{0x22},32));err!=nil{
+        t.Fatal(err)
+    }
+    if e:=c1NativeBVerifyData(ctx,auditor,bytes.NewReader(signedRaw),
+        0,batchID,original.Batches[0],c1GovernedPendingSchema);e==nil{
+        t.Fatal("C1 independent B accepted modified committed SourceParent digest")
+    }
+    if _,err=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
+        SET record_sha256=$1`,prepared.RecordDigest[:]);err!=nil{
+        t.Fatal(err)
+    }
+    if err=c1NativeBVerifyData(ctx,auditor,bytes.NewReader(signedRaw),
+        0,batchID,original.Batches[0],c1GovernedPendingSchema);err!=nil{
+        t.Fatalf("C1 independent B did not recover after exact restored signed record: %v",err)
+    }
     // This cleanup is permitted ONLY in the disposable, synthetic CI database.
     // No production path may clear unresolved original signed metadata.
     targets,err:=c1PendingRetireTables()
