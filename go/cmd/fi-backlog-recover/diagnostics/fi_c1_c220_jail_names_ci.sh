@@ -54,4 +54,19 @@ for basename in \
         fail "missing fail-closed offline SoR guard: $file" ;;
     esac
 done
+# Existing private C1 work is a restart constraint, not a clean-stage
+# assumption. The same read-only C220 readiness script must retain the
+# catalog mirror and all three persisted marker-linkage checks.
+readiness="$root/fi_c1_populated_sor_readiness_c220.sh"
+for required in \
+    'C1_PRIVATE_SCHEMA_MIRROR' \
+    'C1_PRIVATE_MARKER_CONSISTENCY' \
+    'sources_without_artifact' \
+    'typed_without_source' \
+    'source_descriptor_mismatches' \
+    'typed_marker_mismatches' \
+    'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'; do
+    grep -F "$required" "$readiness" >/dev/null ||
+        fail "C220 partial replay audit lost required read-only evidence: $required"
+done
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
