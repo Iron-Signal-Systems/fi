@@ -171,11 +171,22 @@ The production publisher wrapper still resolves only installed receiver
 trust; the fixture-only resolver remains private and cannot be supplied
 over C1 transport.
 
+The fixture also launches a **distinct FreeBSD B operating-system test
+process** before canonical publication. The child receives only a
+serialized signed plan and isolated fixture receiver trust, opens its own
+`fi_ingest` PostgreSQL session with `default_transaction_read_only=on`,
+independently verifies original recorded receipt and custody bytes,
+all signed manifests/JSONL, SQL SourceParent/typed roots, and complete
+relational coverage. A failed child blocks the test publisher. This is
+the real B verification code inside a disposable test child, but the
+test does not yet run the actual `fi-c1-sor-worker --c1-b-child` process
+or its asynchronous group notification protocol.
+
 The fixture uses the actual C1 SQL and canonical publisher primitives
 but invokes final publication as a **separate test step**, not as a live
 `C1SoRService.FinalProof` process in two jails. It is not yet evidence
-of distinct fi-ingest/fi-sor jail services, an independent B OS process,
-power-loss recovery, or performance acceptance. Pending replay remains explicitly
+of distinct fi-ingest/fi-sor jail services, accepted parallel B child
+scheduling, power-loss recovery, or performance acceptance. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under

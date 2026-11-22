@@ -218,6 +218,14 @@ func c1TestSignedMTLSRAMPostgres18(t *testing.T,ctx context.Context,
     promotionPlan,e:=LoadC1NativePromotionPlan(ctx,verifier,source,
         signed.GenerationID,custody,c1GovernedPendingSchema)
     if e!=nil{t.Fatalf("C1 real signed canonical promotion plan: %v",e)}
+    // This is a REAL distinct FreeBSD OS process, not the same Go goroutine
+    // as the C1 writer. Its own SQL session is fi_ingest, read-only, and
+    // its input is only the original verified receiver trust/custody and
+    // committed Pending SQL metadata. No synthetic completion boolean.
+    if e=c1TestRunIndependentSignedBProcess(ctx,t,worker,
+        promotionPlan,custody,signed.Trust);e!=nil{
+        t.Fatalf("C1 independent B OS process before canonical publication: %v",e)
+    }
     generation,e:=c1NativePromotionGeneration(promotionPlan)
     if e!=nil{t.Fatal(e)}
     attempt:="c1-genuine-signed-"+signed.GenerationID
