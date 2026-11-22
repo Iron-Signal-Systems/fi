@@ -65,3 +65,56 @@ func TestC1DevelopmentRuntimeRejectsSameJailAndSymlink(t *testing.T){
         t.Fatal("C1 rc accepted a symlinked SoR jail")
     }
 }
+
+
+func TestC1DevelopmentRuntimePassesActualPublisherAuthority(t *testing.T) {
+    // The active fi-sor service refuses START without this *separate*
+    // canonical PostgreSQL identity. Every generated config+runner must
+    // carry the exact CLI argument; never silently reuse fi_ingest.
+    for _,fragment:=range []string{
+        "fi_c1_sor_postgres_publisher_local=\\\"\\\"",
+        "required C1 parameter absent: fi_c1_sor_postgres_publisher_local",
+        "-postgres-publisher-local",
+    }{
+        if !strings.Contains(c1SoRRuntimeConfig+c1SoRRuntimeRunner,fragment){
+            t.Fatalf("FI C1 rc omitted mandatory SoR canonical publisher config/argument: %q",fragment)
+        }
+    }
+    if strings.Contains(c1IngestRuntimeConfig+c1IngestRuntimeRunner,
+        "postgres_publisher")||strings.Contains(c1IngestRuntimeRunner,"-postgres"){
+        t.Fatal("FI C1 fi-ingest runner was given a PostgreSQL publisher")
+    }
+    if !strings.Contains(c1SoRRuntimeConfig,"fi_c1_sor_enable=\\\"NO\\\"") {
+        t.Fatal("SoR runtime service must remain disabled until accepted")
+    }
+}
+
+func TestC1DevelopmentRuntimeSupportsContinuousSignedREADYQueue(t *testing.T){
+    expected:=[]string{
+        "fi_c1_ingest_ready_root=\\\"\\\"",
+        "fi_c1_ingest_ready_batch_size=\\\"16\\\"",
+        "fi_c1_ingest_poll_interval=\\\"5s\\\"",
+        "choose generation-id OR continuous signed READY queue, not both",
+        "missing original signed generation-id or READY queue root",
+        "-ready-root",
+        "-ready-batch-size",
+        "-poll-interval",
+        "-generation-id",
+    }
+    for _,fragment:=range expected{
+        if !strings.Contains(c1IngestRuntimeConfig+c1IngestRuntimeRunner,fragment){
+            t.Fatalf("C1 rc cannot run continuous original receiver READY queue: %q",fragment)
+        }
+    }
+    if !strings.Contains(c1IngestRuntimeRunner,
+        "READY queue must start at original signed batch zero") {
+        t.Fatal("C1 rc may bypass signed START zero on continuous READY queue")
+    }
+    if !strings.Contains(c1IngestRuntimeConfig,"fi_c1_ingest_enable=\\\"NO\\\""){
+        t.Fatal("continuous receiver queue must be installed disabled")
+    }
+    if strings.Contains(c1IngestRuntimeRunner,"-postgres-local")||
+        strings.Contains(c1IngestRuntimeRunner,"fi_c1_sor_postgres_local"){
+        t.Fatal("C1 ingest READY runner acquired SQL authority")
+    }
+}

@@ -357,3 +357,27 @@ This test **does not** simulate an actual C220 chassis power cut or
 exercise live FreeBSD jail restarts. It closes the disposable database
 WAL/recovery gate only if CI actually passes; service-level deployment
 acceptance and representative C1 throughput are separate requirements.
+
+
+### FreeBSD C220 service-runner completion gate
+
+The generated disabled-by-default `fi_c1_sor` rc runner must supply both
+its ordinary `fi_ingest` local SQL DSN **and** its distinct fi-sor-only
+`fi_c1_publisher` local Unix-socket DSN via
+`-postgres-publisher-local`. Without the latter, the real C1 SoR service
+fails before TLS listening or canonical publication. The publisher
+credential is never present in fi-ingest; the optional fi-sor-owned
+PostgreSQL passfile holds matching entries for these separate roles.
+
+The generated disabled-by-default `fi_c1_ingest` rc runner must support
+**exactly one** of an explicit `generation-id` or an original signed
+receiver `ready-root`, forwarding the bounded READY-pass and poll
+parameters to the existing ingestion executable. An empty or conflicting
+selection fails closed, and the READY mode requires an original batch-zero
+start. This is the existing worker implementation wired into the already
+managed FreeBSD rc assets, not a new ingestion algorithm.
+
+Both services remain `_enable="NO"` until the complete test and host
+preflight gates are accepted. Existing installed managed rc assets may
+need an authorized controlled replacement; the installer correctly
+rejects silent rewrites of a previously staged managed service file.
