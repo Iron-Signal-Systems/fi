@@ -130,6 +130,36 @@ restart or reboot these jails expecting mounts to survive before that
 persistent step is complete. On a partial live mount failure, inspect
 `mount -p` rather than blindly rerunning or trying a CASCADE unmount.
 
+## Physical C220 observed live state, 2026-11-22
+
+The operator executed `fi_c1_c220_live_mounts.sh --audit` and the
+explicitly authorized `--apply`, using exact committed revision
+`32ec45fdc47ea09105115b69fd37465e7afa412b`. The host reported
+**all seven live mount checks successful**:
+
+- `/var/run/fi-c1-handoff`: host tmpfs, RW
+- `fi-ingest:/var/run/fi-c1-handoff`: RW nullfs
+- `fi-sor:/var/run/fi-c1-handoff`: RO nullfs
+- `fi-sor:/var/db/fi/custody/generation`: RO original generation
+- `fi-sor:/var/db/fi/custody/recorded`: RO original receipt
+- `fi-sor:/usr/local/etc/fi/pki/trust`: RO original signing trust
+- `fi-sor:/usr/local/etc/fi/sources`: RO original source registry
+
+The installer reported `host_persistence=false jail_restarts=0
+c1_services_started=false`. This establishes only live mount entries
+from `mount -p`; **native `statfs` and unprivileged signed-file
+visibility verification remain required** before accepting the
+environment. The native verifier was extended to cover all four
+original receiver read-only sources. The one-file cross-jail test is
+separate and writes only a disposable object on volatile tmpfs.
+
+The abandoned `fi_recovery` and `fi_recovery_projection`
+development schemas were explicitly dropped and the actual fi-sor
+service user now has numeric UID 4100 and primary GID 4100 via the
+existing `fi-ingest-socket` group. The populated `fi` SoR and
+receiver custody remain present. No automatic replay, SQL stage
+installation, rc service enablement or canonical promotion is authorized.
+
 ## Read-only installer invocation
 
 On the FreeBSD host, with the existing validated FI backend configuration:
