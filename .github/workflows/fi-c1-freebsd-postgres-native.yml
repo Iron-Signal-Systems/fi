@@ -9,6 +9,7 @@ on:
       - '.github/workflows/fi-c1-freebsd-postgres-native.yml'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh'
+      - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
       - 'go/internal/recordingest/c1_*.go'
       - 'go/internal/recordingest/private_c1_*.go'
       # Signed C1 uses the shared P6 SourceParent/Security/Coverage/
@@ -34,6 +35,7 @@ jobs:
         run: |
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh
+          sh -n tools/deployment/freebsd/build-fi-c1-dev.sh
       - name: Build and test disposable PG18 recovery/DDL on real FreeBSD 15.1
         uses: vmactions/freebsd-vm@v1
         with:

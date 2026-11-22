@@ -12,6 +12,7 @@ on:
       - 'go/cmd/fi-ingest-worker/**'
       - 'go/cmd/fi-c1-sor-worker/**'
       - 'go/cmd/fi-c1-ingest-worker/**'
+      - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
       - 'go/cmd/fi-c1-host-preflight/**'
       - 'go/cmd/fi-c1-private-schema/**'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_*_c220.sh'
@@ -58,6 +59,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Validate exact FreeBSD C1 native binary stage shell
+        working-directory: .
+        run: sh -n tools/deployment/freebsd/build-fi-c1-dev.sh
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
