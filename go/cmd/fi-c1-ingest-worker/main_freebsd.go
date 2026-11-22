@@ -17,6 +17,7 @@ import (
     "os"
     "os/signal"
     "syscall"
+    "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
@@ -25,7 +26,11 @@ import (
 func main(){
     flags:=flag.NewFlagSet("fi-ingest-worker-c1",flag.ExitOnError)
     source:=flags.String("source-id","","enabled signed receiver source identity")
-    generation:=flags.String("generation-id","","original signed generation identity")
+    generation:=flags.String("generation-id","","original signed generation identity; explicit single-generation mode")
+    readyRoot:=flags.String("ready-root","","original receiver READY source queue; no PostgreSQL connection")
+    readyBatchSize:=flags.Uint64("ready-batch-size",16,"maximum original READY markers per source pass")
+    pollInterval:=flags.Duration("poll-interval",5*time.Second,"idle READY queue poll interval")
+    once:=flags.Bool("once",false,"inspect one bounded READY pass and exit; only with ready-root")
     custody:=flags.String("custody-root","","read-only receiver generation custody")
     recorded:=flags.String("recorded-root","","read-only durable recorded-receipt custody")
     ns:=flags.Bool("source-namespaces",false,"use installed per-source recorded custody namespaces")
@@ -42,28 +47,60 @@ func main(){
     if err:=flags.Parse(os.Args[1:]);err!=nil{fatal(err)}
     if flags.NArg()!=0{fatal(errors.New("FI C1 ingest: no positional arguments allowed"))}
     if os.Geteuid()==0{fatal(errors.New("FI C1 ingest: refuse root execution"))}
-    if *source==""||*generation==""||*custody==""||*recorded==""||*ram==""{
-        fatal(errors.New("FI C1 ingest: signed source, generation, and both custody roots required"))
+    if *source==""||*custody==""||*recorded==""||*ram==""||
+        *target==""||*tlsCert==""||*tlsKey==""||*tlsCA==""||*sorDNS==""{
+        fatal(errors.New("FI C1 ingest: registered source, both original custody roots, RAM and authenticated SoR required"))
+    }
+    if (*generation=="")==(*readyRoot==""){
+        fatal(errors.New("FI C1 ingest: select either one generation-id OR continuous source READY queue"))
+    }
+    if *readyRoot!="" && (*startBatch!=0||*readyBatchSize==0||*pollInterval<=0){
+        fatal(errors.New("FI C1 ingest: READY queue requires a fresh signed batch, bounded pass, and positive polling"))
+    }
+    if *generation!="" && (*once||*startBatch!=0){
+        fatal(errors.New("FI C1 ingest: explicit generation does not accept READY mode or partial automatic replay"))
     }
     ramMount,e:=c1handoff.NewRAMStore(*ram)
     if e!=nil{fatal(e)}
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,false);e!=nil{fatal(e)}
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
     defer stop()
-    signed,err:=recordingest.LoadRecordedGeneration(recordingest.GenerationLoadConfig{
+    load:=recordingest.GenerationLoadConfig{
         CustodyRoot:*custody,RecordedRoot:*recorded,SourceID:*source,
         SourceNamespaces:*ns,MaxCanonicalBytes:*canonical,
         MaxEncodedBytes:*encoded,MaxManifestBytes:*manifest,
-    },*generation)
+    }
+    transport:=recordingest.C1IngestTransport{
+        SoRAddress:*target,ExpectedSoRServerDNS:*sorDNS,StartBatch:*startBatch,
+        SharedRAMDir:*ram,
+        TLSIdentity:c1handoff.TLSFiles{Certificate:*tlsCert,
+            PrivateKey:*tlsKey,TrustCA:*tlsCA},
+    }
+    if *readyRoot!=""{
+        config:=recordingest.C1ReadyQueueConfig{
+            ReadyRoot:*readyRoot,SourceID:*source,BatchSize:*readyBatchSize,
+            GenerationLoad:load,Transport:transport,
+        }
+        for{
+            count,e:=recordingest.RunC1ReadyQueuePass(ctx,config)
+            if e!=nil{fatal(fmt.Errorf("FI C1 READY queue stopped fail-closed: %w",e))}
+            if count>0{
+                fmt.Printf("FI C1 READY PASS source=%s canonical_accepted=%d original_custody_preserved=true\n",*source,count)
+            }
+            if *once{return}
+            timer:=time.NewTimer(*pollInterval)
+            select{
+            case <-ctx.Done():
+                if !timer.Stop(){<-timer.C}
+                return
+            case <-timer.C:
+            }
+        }
+    }
+    signed,err:=recordingest.LoadRecordedGeneration(load,*generation)
     if err!=nil{fatal(fmt.Errorf("FI C1 ingest: original receiver custody validation: %w",err))}
     defer signed.Close()
-    result,err:=recordingest.RunC1IngestGeneration(ctx,signed,
-        recordingest.C1IngestTransport{
-            SoRAddress:*target,ExpectedSoRServerDNS:*sorDNS,StartBatch:*startBatch,
-            SharedRAMDir:*ram,
-            TLSIdentity:c1handoff.TLSFiles{Certificate:*tlsCert,
-                PrivateKey:*tlsKey,TrustCA:*tlsCA},
-        })
+    result,err:=recordingest.RunC1IngestGeneration(ctx,signed,transport)
     if err!=nil{fatal(err)}
     fmt.Printf("FI C1 SQL AND INDEPENDENT B source=%s generation=%s records=%d batches=%d groups=%d independently_verified=%t canonical_accepted=%t\n",
         result.SourceID,result.GenerationID,result.NewRecords,
