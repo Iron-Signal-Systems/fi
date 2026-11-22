@@ -46,6 +46,9 @@ func c1ReadyTest(t *testing.T)(C1ReadyQueueConfig,string,c1ReadyQueueOps,func()b
         g:=&PreparedGeneration{ReceiptSHA256:want.receiptSHA}
         g.Receipt.Descriptor.SourceID=source
         g.Receipt.Descriptor.GenerationID=gen
+        g.Receipt.RecordCount=1
+        g.Receipt.BatchCount=1
+        g.Batches=[]PreparedBatch{{BatchID:"signed-batch-1"}}
         return g,nil
     }
     ops.ingest=func(_ context.Context,g *PreparedGeneration,_ C1IngestTransport)(
@@ -54,7 +57,7 @@ func c1ReadyTest(t *testing.T)(C1ReadyQueueConfig,string,c1ReadyQueueOps,func()b
         return C1IngestStageResult{
             SourceID:source,GenerationID:gen,ReceiptSHA256:want.receiptSHA,
             RelationalCommitted:true,IndependentlyVerified:true,
-            Published:true,
+            Published:true,NewRecords:1,SignedBatches:1,ReportingGroups:1,
         },nil
     }
     present:=func()bool{
@@ -82,6 +85,8 @@ func TestC1ReadyQueuePreservesMarkerForUncertainOrBOnlyStage(t *testing.T){
         {"wrong-signed-receipt",func(r *C1IngestStageResult){r.ReceiptSHA256=strings.Repeat("f",64)},nil},
         {"wrong-source",func(r *C1IngestStageResult){r.SourceID="attacker"},nil},
         {"wrong-generation",func(r *C1IngestStageResult){r.GenerationID="foreign"},nil},
+        {"mismatched-record-total",func(r *C1IngestStageResult){r.NewRecords=2},nil},
+        {"mismatched-batch-total",func(r *C1IngestStageResult){r.SignedBatches=2},nil},
         {"uncertain-commit",func(_ *C1IngestStageResult){},errors.New("network ACK unknown")},
     }{
         t.Run(tc.name,func(t *testing.T){
