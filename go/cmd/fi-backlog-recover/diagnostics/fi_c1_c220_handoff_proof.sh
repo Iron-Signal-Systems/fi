@@ -44,9 +44,9 @@ jexec -U fi-ingest fi-ingest /bin/sh -c '
     printf "C1-FREEBSD-VOLATILE-CROSS-JAIL-PROOF\n" > "$1"
     chmod 0600 "$1"
 ' sh "$path" || fail 'producer could not write volatile RAM as fi-ingest'
-expected=$(jexec -U fi-ingest fi-ingest /sbin/sha256 -q "$path") ||
+expected=$(jexec -U fi-ingest fi-ingest /usr/bin/cksum "$path") ||
     fail 'producer could not hash created ephemeral file'
-observed=$(jexec -U fi-sor fi-sor /sbin/sha256 -q "$path") ||
+observed=$(jexec -U fi-sor fi-sor /usr/bin/cksum "$path") ||
     fail 'SoR cannot read the identical source RAM object'
 [ -n "$expected" ] && [ "$expected" = "$observed" ] ||
     fail 'producer/consumer RAM object hashes differ'
@@ -57,8 +57,8 @@ if jexec -U fi-sor fi-sor /bin/sh -c '
 ' sh "$path" 2>/dev/null; then
     fail 'fi-sor RO mount unexpectedly allowed modifying ingest RAM'
 fi
-after=$(jexec -U fi-ingest fi-ingest /sbin/sha256 -q "$path") ||
+after=$(jexec -U fi-ingest fi-ingest /usr/bin/cksum "$path") ||
     fail 'producer could not rehash ephemeral RAM object'
 [ "$expected" = "$after" ] ||
     fail 'failed fi-sor write modified original volatile RAM content'
-echo 'C1_C220_VOLATILE_HANDOFF_PROOF_PASS producer=fi-ingest consumer=fi-sor identical_hash=true sor_write_denied=true cleanup_on_exit=true'
+echo 'C1_C220_VOLATILE_HANDOFF_PROOF_PASS producer=fi-ingest consumer=fi-sor identical_cksum=true sor_write_denied=true cleanup_on_exit=true'
