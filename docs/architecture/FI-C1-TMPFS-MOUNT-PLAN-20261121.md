@@ -98,6 +98,38 @@ A permanent C1 mount plan must explicitly reconcile and link the actual
 jail.conf `mount.fstab` files. It must not assume the old
 `/etc/fstab.fi-sor-db` convention or restart the running jails.
 
+## Physical C220 live mount acceptance (without a jail restart)
+
+The physical jail layout has been confirmed on 2026-11-22, and the
+`fi-sor` service account is now installed as UID 4100 with primary GID
+4100 (`fi-ingest-socket`), without changing PostgreSQL's existing group.
+
+The **real C220-only** shell installer
+`go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_live_mounts.sh` has
+two distinct operator actions:
+
+1. `--audit` checks the existing running jail identities, actual roots,
+   source custody/trust directories, expected unmounted and empty target
+   directories, the absence of private SQL staging, and disabled C1
+   workers. It changes nothing.
+2. `--apply` requires the exact
+   `FI_C1_LIVE_MOUNTS_APPROVED=ONLY_C1_TMPFS_AND_FIVE_SOR_RO_VIEWS`
+   environment authorization. It creates **only empty C1 mountpoints**,
+   mounts one 4 GiB noexec/nosuid tmpfs on the host, presents that
+   tmpfs RW to `fi-ingest` and RO to `fi-sor`, and adds the four
+   original receiver generation/receipt/trust/registry paths as RO
+   nullfs views **only inside fi-sor**. Existing receiver and ingest
+   mounts are not changed. No jail or C1 service is restarted or enabled.
+
+This phase deliberately does **not** edit `/etc/fstab`,
+`/etc/jail.conf.d`, or an rc boot service. The live mounts are
+**not boot persistent**. After successful native host `statfs`
+acceptance and read-only custody accessibility checks, implement and
+accept boot-order-safe persistent settings **separately**. Do not
+restart or reboot these jails expecting mounts to survive before that
+persistent step is complete. On a partial live mount failure, inspect
+`mount -p` rather than blindly rerunning or trying a CASCADE unmount.
+
 ## Read-only installer invocation
 
 On the FreeBSD host, with the existing validated FI backend configuration:
