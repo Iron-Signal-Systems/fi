@@ -114,7 +114,29 @@ func c1TestNativeBReadyProtocol(t *testing.T,ctx context.Context,
         !strings.Contains(output,"FINAL PASS") {
         t.Fatalf("C1 actual B OS child failed signed post-COMMIT READY/final protocol: err=%v output=%s",err,output)
     }
-    t.Log("PASS: actual C1 native B child accepted exactly one post-COMMIT group through Unix SQL socket and rejected premature/duplicate proof")
+    // Drive the REAL B parent launcher/sender/scanner goroutines too.
+    // The test binary child calls the same B proof engine, then exits
+    // without the go-test PASS trailer (the production parent accepts
+    // only strict "PASS n" and "FINAL PASS" protocol lines).
+    ready:=make(chan int,1)
+    verifier,err:=c1StartNativeBWithLauncher(ctx,dsn,p,ready,custody,
+        func(own context.Context)(*exec.Cmd,error){
+            child:=exec.CommandContext(own,exe,
+                "-test.run=^TestC1ActualNativeBReadyProtocolChild$")
+            child.Env=append(os.Environ(),
+                "FI_C1_TEST_B_PROTOCOL_CHILD=1",
+                "FI_C1_TEST_B_PROTOCOL_FIXTURE="+trustFile,
+                "FI_C1_TEST_B_DIRECT_IO=1")
+            return child,nil
+        })
+    if err!=nil{t.Fatalf("C1 B real parent worker process could not start: %v",err)}
+    ready<-1
+    close(ready)
+    if err=verifier.Finish(ctx);err!=nil{
+        verifier.Stop()
+        t.Fatalf("C1 real parent/child post-COMMIT notification/ACK protocol failed: %v",err)
+    }
+    t.Log("PASS: actual C1 B child and its parent launcher/notification goroutines completed the strict signed post-COMMIT READY/PASS/FINAL protocol")
 }
 
 // Invoked only with the exact name above in a separate FreeBSD test OS
@@ -157,6 +179,15 @@ func TestC1ActualNativeBReadyProtocolChild(t *testing.T){
     ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
     defer cancel()
     if err:=c1RunNativeBChildWithTrust(ctx,os.Stdin,os.Stdout,trust);err!=nil{
+        if os.Getenv("FI_C1_TEST_B_DIRECT_IO")=="1"{
+            fmt.Fprintln(os.Stderr,err)
+            os.Exit(1)
+        }
         t.Fatal(err)
+    }
+    if os.Getenv("FI_C1_TEST_B_DIRECT_IO")=="1" {
+        // Suppress the test runner's unconditional PASS output. The actual
+        // production parent rejects any unrecognized child stdout line.
+        os.Exit(0)
     }
 }

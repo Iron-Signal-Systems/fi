@@ -103,6 +103,24 @@ func c1ValidateNativeBPlan(p c1NativeBPlan)error{
 // for every original reporting group. Failure blocks ONLY final acceptance.
 func startC1SoRNativeB(ctx context.Context,dsn string,p c1NativeBPlan,
     ready <-chan int,custody c1NativeBCustodyConfig)(*c1SoRNativeB,error){
+    // The live fi-sor service ALWAYS execs its own installed worker with
+    // exactly --c1-b-child. No transport-supplied command is permitted.
+    return c1StartNativeBWithLauncher(ctx,dsn,p,ready,custody,
+        func(own context.Context)(*exec.Cmd,error){
+            exe,err:=os.Executable()
+            if err!=nil{return nil,err}
+            return exec.CommandContext(own,exe,"--c1-b-child"),nil
+        })
+}
+
+// Private native FreeBSD CI seam: launch the same B parent IPC/scheduling
+// engine with a test-binary child instead of the installed worker binary.
+// Production calls ONLY the pinned launcher above. All input/READY/PASS/
+// FINAL validation and independent B process checks are shared verbatim.
+func c1StartNativeBWithLauncher(ctx context.Context,dsn string,p c1NativeBPlan,
+    ready <-chan int,custody c1NativeBCustodyConfig,
+    launch func(context.Context)(*exec.Cmd,error))(*c1SoRNativeB,error){
+    if launch==nil{return nil,errors.New("C1 B: missing local child launcher")}
     if ctx==nil||dsn==""||ready==nil||custody.CustodyRoot==""||
         custody.RecordedRoot==""||custody.MaxCanonicalBytes==0||
         custody.MaxEncodedBytes==0||custody.MaxManifestBytes==0{
@@ -113,11 +131,12 @@ func startC1SoRNativeB(ctx context.Context,dsn string,p c1NativeBPlan,
     if err!=nil||len(data)==0||len(data)>c1NativeBPlanLimit{
         return nil,errors.New("C1 B: oversized signed plan IPC")
     }
-    exe,err:=os.Executable()
-    if err!=nil{return nil,err}
     own,cancel:=context.WithCancel(ctx)
-    cmd:=exec.CommandContext(own,exe,"--c1-b-child")
-    cmd.Env=append(os.Environ(),
+    cmd,err:=launch(own)
+    if err!=nil{cancel();return nil,err}
+    if cmd==nil{cancel();return nil,errors.New("C1 B: local child launcher returned no command")}
+    if cmd.Env==nil{cmd.Env=os.Environ()}
+    cmd.Env=append(cmd.Env,
         "FI_C1_B_CHILD=1","FI_C1_B_DSN="+dsn,
         "FI_C1_B_CUSTODY_ROOT="+custody.CustodyRoot,
         "FI_C1_B_RECORDED_ROOT="+custody.RecordedRoot,

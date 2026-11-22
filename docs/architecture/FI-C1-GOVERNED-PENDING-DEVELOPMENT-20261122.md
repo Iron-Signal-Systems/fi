@@ -222,9 +222,19 @@ trust; the unexported in-package test entrypoint alone uses ephemeral
 signed CI fixture trust. No arbitrary trust resolver can be selected
 by fi-ingest or over the authenticated transport.
 
-The fixture thus exercises the real B child protocol, but not yet
-the complete `fi-c1-sor-worker` executable lifecycle and its
-concurrent notification scheduling alongside live SQL traffic.
+The disposable test also starts the SAME production B parent launcher,
+notification-channel writer, strict PASS response scanner, process-lifetime
+management and final `Finish` barrier, with the test binary substituted
+for the installed worker executable. The test child exits without Go's
+extra PASS footer, so the real parent parser accepts only exact C1 proof
+protocol messages. The production launcher remains pinned to its own
+`--c1-b-child` executable; the substitute is injectable only from
+in-package tests.
+
+The fixture now exercises both real parent and child B IPC mechanisms
+in independent OS processes. It does not yet establish the full
+`fi-c1-sor-worker` installed service lifecycle, concurrent notifications
+while SQL families are still processing, or actual two-jail deployment.
 
 The fixture uses the actual C1 SQL and canonical publisher primitives
 but invokes final publication as a **separate test step**, not as a live
