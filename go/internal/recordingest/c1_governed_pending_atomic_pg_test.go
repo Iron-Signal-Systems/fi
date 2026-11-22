@@ -82,6 +82,13 @@ func c1TestPendingRelationalPromotionPostgres18(t *testing.T,ctx context.Context
         return BacklogGenerationVerification{SourceID:source,GenerationID:generation,
             ReceiptSHA256:receipt,Records:1,DataBytes:128},nil
     }
+    // Retirement before canonical Accepted is FORBIDDEN. Its rejected
+    // transaction must preserve all original pending SourceParent rows.
+    negativeRetire,negErr:=publisher.Begin(ctx)
+    if negErr!=nil{t.Fatal(negErr)}
+    negErr=c1RetireAcceptedPendingTx(ctx,negativeRetire,source,generation,receipt)
+    _=negativeRetire.Rollback(context.Background())
+    if negErr==nil{t.Fatal("C1 retired unaccepted pending generation")}
     if _,err=admin.Exec(ctx,`ALTER TABLE fi.source_record ADD CONSTRAINT
         ci_pending_forced_rollback CHECK (false) NOT VALID`);err!=nil{t.Fatal(err)}
     if _,err=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,admin,publisher,
@@ -130,4 +137,59 @@ func c1TestPendingRelationalPromotionPostgres18(t *testing.T,ctx context.Context
     if nrecords!=1||naccepted!=1{
         t.Fatalf("C1 pending canonical duplicate after retry source=%d accepted=%d",nrecords,naccepted)
     }
+    // Wrong custody digest can never retire the verified pending SQL rows.
+    wrongTx,e:=publisher.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    wrongErr:=c1RetireAcceptedPendingTx(ctx,wrongTx,source,generation,strings.Repeat("8",64))
+    _=wrongTx.Rollback(context.Background())
+    if wrongErr==nil{t.Fatal("C1 pending retirement accepted wrong signed receipt")}
+    // An extra foreign control/recorded generation must fail closed.
+    foreignTx,e:=admin.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    if _,e=foreignTx.Exec(ctx,`INSERT INTO fi_c1_pending.recorded_generation(
+        receipt_version,descriptor_version,source_id,generation_id,
+        canonical_version,data_encoding,artifact_count,source_bytes,
+        canonical_bytes,canonical_sha256,encoded_data_bytes,encoded_data_sha256,
+        metadata_bytes,metadata_sha256,transfer_bytes,transfer_sha256,
+        batch_count,data_bytes,record_count,receipt_bytes,receipt_sha256,ingest_version)
+        VALUES ('ci','ci','foreign-ci','foreign-gen','ci','none',2,128,128,
+          decode(repeat('33',32),'hex'),64,decode(repeat('33',32),'hex'),
+          32,decode(repeat('33',32),'hex'),116,decode(repeat('33',32),'hex'),
+          1,128,1,120,decode(repeat('33',32),'hex'),'ci-only')`);e!=nil{t.Fatal(e)}
+    if e=foreignTx.Commit(ctx);e!=nil{t.Fatal(e)}
+    foreignRetire,e:=publisher.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    foreignErr:=c1RetireAcceptedPendingTx(ctx,foreignRetire,source,generation,receipt)
+    _=foreignRetire.Rollback(context.Background())
+    if foreignErr==nil{t.Fatal("C1 retired unrelated pending source")}
+    if _,e=admin.Exec(ctx,`DELETE FROM fi_c1_pending.recorded_generation
+       WHERE source_id='foreign-ci' AND generation_id='foreign-gen'`);e!=nil{t.Fatal(e)}
+    // Only a verified canonical Accepted may authorize this one atomic
+    // pending retirement. Canonical FI and original custody are untouched.
+    retire,e:=publisher.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    if e=c1RetireAcceptedPendingTx(ctx,retire,source,generation,receipt);e!=nil{
+        _=retire.Rollback(context.Background())
+        t.Fatalf("C1 canonical Accepted failed pending retirement: %v",e)
+    }
+    if e=retire.Commit(ctx);e!=nil{t.Fatal(e)}
+    var pendingRows int64
+    if e=admin.QueryRow(ctx,`SELECT
+      (SELECT count(*) FROM fi_c1_pending.source_record)+
+      (SELECT count(*) FROM fi_c1_pending.recorded_generation)+
+      (SELECT count(*) FROM fi_c1_pending.generation_control)`).Scan(&pendingRows);e!=nil{t.Fatal(e)}
+    if pendingRows!=0{t.Fatalf("C1 pending post-Accepted retirement left rows: %d",pendingRows)}
+    // Idempotent recovery after ambiguous cleanup commit must not damage
+    // the already accepted canonical generation or its journal.
+    retryRetire,e:=publisher.Begin(ctx)
+    if e!=nil{t.Fatal(e)}
+    if e=c1RetireAcceptedPendingTx(ctx,retryRetire,source,generation,receipt);e!=nil{
+        _=retryRetire.Rollback(context.Background())
+        t.Fatalf("C1 retirement ambiguous-commit retry blocked: %v",e)
+    }
+    if e=retryRetire.Commit(ctx);e!=nil{t.Fatal(e)}
+    if e=admin.QueryRow(ctx,`SELECT count(*) FROM fi.ingest_journal WHERE
+       source_id=$1 AND generation_id=$2 AND outcome='Accepted'`,
+       source,generation).Scan(&naccepted);e!=nil{t.Fatal(e)}
+    if naccepted!=1{t.Fatal("C1 retirement destroyed or duplicated canonical Accepted")}
 }

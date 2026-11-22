@@ -81,9 +81,29 @@ requires that same lock before publication. This is not blind replay:
 unavailable original receipt, foreign pending source, inconsistent ordinal,
 missing typed proof, or uncertain canonical state fail closed.
 
+An **Accepted-only pending retirement** step now uses the dedicated
+fi_c1_publisher PostgreSQL identity. Only that role receives TRUNCATE on
+the 50 governed `fi_c1_pending` tables; it receives **no TRUNCATE on
+canonical `fi`**. The retirement transaction locks canonical journal
+evidence and every pending relation, proves the exact original
+source/generation/receipt/transfer/counts against one durable Accepted,
+and atomically TRUNCATEs only the pending relational tables with
+`CONTINUE IDENTITY RESTRICT`. The original receiver custody and all
+canonical FI rows remain unchanged. An uncertain cleanup commit is
+read back, never presumed successful. After a server restart, Bootstrap
+checks the prior original receiver receipt and canonical Accepted status
+before automatically retiring a previously accepted pending generation.
+An unaccepted or unrelated pending generation is retained for replay.
+
+Synthetic PostgreSQL18 tests include refusal before Accepted, late
+canonical rollback, forged/mismatched receipt, foreign pending metadata,
+one Accepted journal, successful retirement, and exact retry. They do
+not yet establish complete signed two-jail or physical power-loss
+acceptance.
+
 This automatic implementation is **not yet accepted for live deployment**:
-pending retention/cleanup, loss-of-power recovery and full two-jail signed
-generation tests remain incomplete. Pending replay remains explicitly
+real original signed generation end-to-end, multiple generations,
+power-loss recovery, and throughput acceptance remain mandatory. Pending replay remains explicitly
 opt-in until real original signed-custody interruption acceptance passes. The optional
 `BVerified` lifecycle transition is not yet made durable: publication
 instead requires independent B completion and repeats the full proof under

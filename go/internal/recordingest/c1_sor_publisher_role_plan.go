@@ -21,9 +21,9 @@ func C1CanonicalPublisherRolePlan()[]string{
   // Unlike fi_ingest, this account is opened only for final publication.
   "GRANT SELECT,INSERT,MAINTAIN ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher",
   "GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA fi TO fi_c1_publisher",
-  "GRANT SELECT,MAINTAIN ON ALL TABLES IN SCHEMA fi_c1_pending TO fi_c1_publisher",
+  "GRANT SELECT,MAINTAIN,TRUNCATE ON ALL TABLES IN SCHEMA fi_c1_pending TO fi_c1_publisher",
   "REVOKE ALL ON fi_c1_pending.generation_control FROM fi_c1_publisher",
-  "GRANT SELECT,MAINTAIN ON fi_c1_pending.generation_control TO fi_c1_publisher",
+  "GRANT SELECT,MAINTAIN,TRUNCATE ON fi_c1_pending.generation_control TO fi_c1_publisher",
   "ALTER DEFAULT PRIVILEGES FOR ROLE fi_owner IN SCHEMA fi GRANT SELECT,INSERT,MAINTAIN ON TABLES TO fi_c1_publisher",
   "ALTER DEFAULT PRIVILEGES FOR ROLE fi_owner IN SCHEMA fi GRANT USAGE,SELECT ON SEQUENCES TO fi_c1_publisher",
  }

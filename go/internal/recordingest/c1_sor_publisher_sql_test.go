@@ -41,8 +41,21 @@ func TestC1PublisherRolePlanDoesNotIncreaseIngestWorkerAuthority(t *testing.T){
             t.Fatalf("C1 canonical publisher plan grants unsafe authority: %s",ddl)
         }
     }
-    if !strings.Contains(strings.Join(statements,"\n"),
+    combined:=strings.Join(statements,"\n")
+    if !strings.Contains(combined,
         "GRANT SELECT,INSERT,MAINTAIN ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher"){
         t.Fatal("C1 canonical publisher lacks lock permission on populated FI schema")
+    }
+    if !strings.Contains(combined,
+        "GRANT SELECT,MAINTAIN,TRUNCATE ON ALL TABLES IN SCHEMA fi_c1_pending TO fi_c1_publisher")||
+        !strings.Contains(combined,
+        "GRANT SELECT,MAINTAIN,TRUNCATE ON fi_c1_pending.generation_control TO fi_c1_publisher"){
+        t.Fatal("C1 publisher needs TRUNCATE only on governed pending for post-Accepted retirement")
+    }
+    if strings.Contains(combined,
+        "GRANT TRUNCATE ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher")||
+        strings.Contains(combined,
+        "GRANT SELECT,INSERT,MAINTAIN,TRUNCATE ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher"){
+        t.Fatal("C1 publisher can truncate authoritative history")
     }
 }

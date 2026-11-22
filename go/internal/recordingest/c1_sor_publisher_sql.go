@@ -63,21 +63,23 @@ func openC1SoRLocalPublisherSQL(ctx context.Context,dsn string)(*pgx.Conn,error)
 func c1ReadOnlyPublisherPrivileges(ctx context.Context,tx pgx.Tx)error{
     if ctx==nil||tx==nil{return errors.New("C1 canonical: read-only publisher privilege preflight required")}
     var role string
-    var lock,insertJournal,pendingRead,pendingLock,pendingWrite,canonicalUpdate,seqUsage bool
+    var lock,insertJournal,pendingRead,pendingLock,pendingTruncate,pendingWrite,canonicalUpdate,canonicalTruncate,seqUsage bool
     err:=tx.QueryRow(ctx,`SELECT current_user,
        has_table_privilege(current_user,'fi.source_record','MAINTAIN'),
        has_table_privilege(current_user,'fi.ingest_journal','INSERT'),
        has_table_privilege(current_user,'fi_c1_pending.generation_control','SELECT'),
        has_table_privilege(current_user,'fi_c1_pending.generation_control','MAINTAIN'),
+       has_table_privilege(current_user,'fi_c1_pending.generation_control','TRUNCATE'),
        has_table_privilege(current_user,'fi_c1_pending.generation_control','UPDATE'),
        has_table_privilege(current_user,'fi.source_record','UPDATE'),
+       has_table_privilege(current_user,'fi.source_record','TRUNCATE'),
        has_sequence_privilege(current_user,
          pg_get_serial_sequence('fi.recorded_generation','recorded_generation_id')::regclass,'USAGE')`).
-       Scan(&role,&lock,&insertJournal,&pendingRead,&pendingLock,&pendingWrite,
-           &canonicalUpdate,&seqUsage)
+       Scan(&role,&lock,&insertJournal,&pendingRead,&pendingLock,&pendingTruncate,&pendingWrite,
+           &canonicalUpdate,&canonicalTruncate,&seqUsage)
     if err!=nil{return err}
     if role!=c1PublisherRole||!lock||!insertJournal||!pendingRead||
-        !pendingLock||pendingWrite||canonicalUpdate||!seqUsage{
+        !pendingLock||!pendingTruncate||pendingWrite||canonicalUpdate||canonicalTruncate||!seqUsage{
         return errors.New("C1 canonical: absent/wrong privilege for dedicated locking publisher")
     }
     return nil

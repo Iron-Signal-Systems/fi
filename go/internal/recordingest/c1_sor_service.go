@@ -79,6 +79,14 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         s.failed=err
         return nil,err
     }
+    // An earlier canonical Accepted may have committed immediately before
+    // a lost Drain ACK or power failure. Retire ONLY after rechecking
+    // ORIGINAL custody and the actual canonical Accepted journal; otherwise
+    // retain every pending row for signed replay.
+    if err:=s.c1RetirePreviouslyAcceptedPending(ctx);err!=nil{
+        s.failed=err
+        return nil,err
+    }
     // Reopen signed custody and inspect the exact existing pending SQL
     // generation before any replay. A zero-byte READY marker alone has no
     // authority to skip previously committed SourceParent or typed roots.
@@ -296,6 +304,14 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
     var status c1handoff.FinalStatus
     if err==nil {
         status,err=c1PostPublicationReadback(ctx,dsn,
+            f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    }
+    if err==nil&&status==c1handoff.FinalAccepted{
+        // Pending retirement cannot elevate a SQL stage into acceptance.
+        // After canonical acceptance is independently proven, retire all
+        // pending rows atomically; if retirement is uncertain, retain READY
+        // and reconcile the already-Accepted generation on next Bootstrap.
+        err=C1RetireAcceptedPending(ctx,publisherDSN,
             f.SourceID,f.GenerationID,f.ReceiptSHA256)
     }
     s.mu.Lock()
