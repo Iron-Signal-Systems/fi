@@ -162,4 +162,28 @@ done
 if grep -Eq '^[[:space:]]*(mount[[:space:]]+-t|jail[[:space:]]+-r|jail[[:space:]]+-c|sysrc[[:space:]]|service[[:space:]]|pw[[:space:]]|mkdir[[:space:]]|install[[:space:]])' "$mount_plan"; then
     fail 'C220 RAM mount plan must not alter host state'
 fi
+# The explicit real-jail C1 live mount action must always audit before
+# applying. The CI only parses and checks source, never mounts anything.
+live="$root/fi_c1_c220_live_mounts.sh"
+sh -n "$live" || fail 'C220 live mount installer syntax'
+for token in \
+    'FI_C1_LIVE_MOUNTS_APPROVED' \
+    'ONLY_C1_TMPFS_AND_FIVE_SOR_RO_VIEWS' \
+    'FI C1 LIVE MOUNT AUDIT COMPLETE read_only=true' \
+    "to_regnamespace('fi_recovery_projection') IS NULL" \
+    'mount -t tmpfs -o' \
+    "size=4g,uid=4100,gid=4100,mode=0770,nosuid,noexec" \
+    'mount -t nullfs -o rw "$ram" "$ingest_ram"' \
+    'mount -t nullfs -o ro "$ram" "$sor_ram"' \
+    'mount -t nullfs -o ro "$host_generation" "$sor_generation"' \
+    'mount -t nullfs -o ro "$host_recorded" "$sor_recorded"' \
+    'mount -t nullfs -o ro "$host_trust" "$sor_trust"' \
+    'mount -t nullfs -o ro "$host_sources" "$sor_sources"' \
+    'host_persistence=false jail_restarts=0 c1_services_started=false'; do
+    grep -F -- "$token" "$live" >/dev/null ||
+        fail "C220 live mount operation lost fail-closed condition: $token"
+done
+if grep -Eq '^[[:space:]]*(sysrc[[:space:]]|service[[:space:]]|jail[[:space:]]+-r|jail[[:space:]]+-c|pw[[:space:]]|psql[[:space:]]|zfs[[:space:]]+destroy)' "$live"; then
+    fail 'C220 live mount operation changes unrelated services or SQL'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
