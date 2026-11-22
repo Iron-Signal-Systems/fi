@@ -360,6 +360,28 @@ func(s *C1SoRService) Commit(ctx context.Context,f c1handoff.Frame)error{
     }
     return nil
 }
+// FinalProof is bound to the authenticated Drain ACK and invoked ONLY
+// after all SQL COMMIT futures and independent B's original signed-custody
+// verification have succeeded. B proof is NOT canonical acceptance.
+// The canonical transaction must be integrated before FinalAccepted exists.
+func(s *C1SoRService)FinalProof(_ context.Context,f c1handoff.Frame)(
+    c1handoff.FinalStatus,error,
+){
+    if s==nil||f.Kind!=c1handoff.Drain{
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: final proof requires signed Drain")
+    }
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.failed!=nil{return c1handoff.FinalNone,s.failed}
+    if !s.independentlyVerified||s.session==nil||!s.session.drained||
+        s.pool==nil||s.verifier==nil||
+        f.SourceID!=s.session.sourceID||
+        f.GenerationID!=s.session.generationID||
+        f.ReceiptSHA256!=s.session.receipt{
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: SQL or independent B proof not complete")
+    }
+    return c1handoff.FinalVerified,nil
+}
 func(s *C1SoRService)Close(){
     if s==nil{return}
     s.mu.Lock()
