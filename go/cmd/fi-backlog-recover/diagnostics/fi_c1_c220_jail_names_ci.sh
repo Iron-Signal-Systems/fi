@@ -109,4 +109,24 @@ done
 if grep -Eq '^[[:space:]]*(mount[[:space:]]+-t|jail[[:space:]]+-c|jail[[:space:]]+-r|sysrc[[:space:]]|service[[:space:]]|pw[[:space:]]+useradd|DROP[[:space:]]|DELETE[[:space:]]|TRUNCATE[[:space:]])' "$contract"; then
     fail 'C220 jail runtime inventory includes state mutation'
 fi
+# Real C220 fi-sor already owns fi-ingest-socket GID 4100. The only
+# approved service-identity operation is a single jailed useradd reusing
+# that group, never a host groupadd or PostgreSQL identity alteration.
+identity="$root/fi_c1_c220_sor_service_identity.sh"
+sh -n "$identity" || fail 'real SoR identity script shell syntax'
+for token in \
+    'C1_SOR_IDENTITY_AUDIT_COMPLETE read_only=true' \
+    'FI_C1_SOR_IDENTITY_APPROVED' \
+    'ADD_FI_SOR_USER_REUSE_SOCKET_GID' \
+    'uid_collisions' \
+    'gid_groups' \
+    'jexec fi-sor /usr/sbin/pw useradd fi-sor' \
+    '-u 4100 -g fi-ingest-socket' \
+    'existing_socket_group_preserved=true'; do
+    grep -F -- "$token" "$identity" >/dev/null ||
+        fail "real C220 SoR identity lost gate: $token"
+done
+if grep -Eq '(^|[[:space:]])(groupadd|groupmod|userdel|service|jail -r|mount -t)([[:space:]]|$)' "$identity"; then
+    fail 'C220 account installer contains forbidden group/service/mount mutation'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
