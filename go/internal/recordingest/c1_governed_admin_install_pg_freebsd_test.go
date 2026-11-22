@@ -129,8 +129,25 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
         t.Fatal("forced offline DDL rollback changed preexisting FI canonical data")
     }
 
-    // Positive path invokes the exact real offline installer, using the
-    // preexisting canonical FI 49-table schema and local Unix socket.
+    // A connected original FI SQL worker is a hard offline-cutover STOP.
+    // This protects even inactive legacy sessions from having canonical
+    // INSERT rights revoked underneath their running backend.
+    workerConfig:=cfg.Copy()
+    workerConfig.User="fi_ingest"
+    activeWorker,activeErr:=pgx.ConnectConfig(ctx,workerConfig)
+    if activeErr!=nil{t.Fatal(activeErr)}
+    blocked:=InstallC1GovernedPendingOnExistingSoR(ctx,admin)
+    _=activeWorker.Close(context.Background())
+    if blocked==nil||!strings.Contains(blocked.Error(),"SQL sessions still connected"){
+        t.Fatalf("offline C1 governed cutover accepted a connected old FI SQL worker: %v",blocked)
+    }
+    var notInstalled bool
+    if err=admin.QueryRow(ctx,"SELECT to_regnamespace('fi_c1_pending') IS NULL").Scan(&notInstalled);err!=nil||!notInstalled{
+        t.Fatal("rejected active SQL cutover left a partial governed schema")
+    }
+
+    // Positive path invokes the exact real offline installer only after
+    // every prior FI SQL worker has disconnected from canonical fi.
     if err=InstallC1GovernedPendingOnExistingSoR(ctx,admin);err!=nil{
         t.Fatalf("governed C1 Pending/role install failed: %v",err)
     }

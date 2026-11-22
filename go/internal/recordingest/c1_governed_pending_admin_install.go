@@ -94,6 +94,17 @@ func InstallC1GovernedPendingOnExistingSoR(ctx context.Context,admin *pgx.Conn)e
             }
         }
     }
+    // Canonical FI migrations granted fi_ingest INSERT on existing
+    // authoritative tables. Revoking those legacy writes during Pending
+    // cutover is an intentional PostgreSQL ACL change; it must happen
+    // OFFLINE, not while a legacy ingest writer is still connected.
+    var connectedWorkers int64
+    if err=tx.QueryRow(ctx,`SELECT count(*) FROM pg_stat_activity
+        WHERE datname=current_database() AND usename='fi_ingest'
+          AND pid<>pg_backend_pid()`).Scan(&connectedWorkers);err!=nil{return err}
+    if connectedWorkers!=0{
+        return fmt.Errorf("C1 governed install: %d original fi_ingest SQL sessions still connected; require isolated offline cutover",connectedWorkers)
+    }
     if _,err=tx.Exec(ctx,"GRANT CONNECT ON DATABASE fi TO fi_ingest");err!=nil{return err}
     if err=c1InstallGovernedPendingSchemaTx(ctx,tx);err!=nil{return err}
     for _,ddl:=range C1CanonicalPublisherRolePlan(){

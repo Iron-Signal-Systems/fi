@@ -77,7 +77,8 @@ WHERE n.nspname='fi_c1_pending'`).Scan(&tableDenied, &sequenceDenied); err != ni
 		return errors.New("C1 pending: incomplete SQL worker table/sequence permissions")
 	}
 	var readControl, insertIdentity, insertState, insertProof, writeControl bool
-	var readJournal, writeJournal, updateJournal, deleteJournal, truncateJournal, writeCanonical bool
+	var readJournal, writeJournal, updateJournal, deleteJournal, truncateJournal bool
+    var canWriteCanonicalInsert,canWriteCanonicalUpdate,canWriteCanonicalDelete,canWriteCanonicalTruncate,canMaintainCanonical,canCreateCanonical bool
 	if err := tx.QueryRow(ctx, `SELECT
  has_table_privilege(current_user,'fi_c1_pending.generation_control','SELECT'),
  has_column_privilege(current_user,'fi_c1_pending.generation_control','source_id','INSERT'),
@@ -89,17 +90,44 @@ WHERE n.nspname='fi_c1_pending'`).Scan(&tableDenied, &sequenceDenied); err != ni
  has_table_privilege(current_user,'fi_c1_pending.ingest_journal','UPDATE'),
  has_table_privilege(current_user,'fi_c1_pending.ingest_journal','DELETE'),
  has_table_privilege(current_user,'fi_c1_pending.ingest_journal','TRUNCATE'),
- has_table_privilege(current_user,'fi.source_record','UPDATE')`).
+ has_table_privilege(current_user,'fi.source_record','INSERT'),
+ has_table_privilege(current_user,'fi.source_record','UPDATE'),
+ has_table_privilege(current_user,'fi.source_record','DELETE'),
+ has_table_privilege(current_user,'fi.source_record','TRUNCATE'),
+ has_table_privilege(current_user,'fi.source_record','MAINTAIN'),
+ has_schema_privilege(current_user,'fi','CREATE')`).
 		Scan(&readControl,&insertIdentity,&insertState,&insertProof,
 			&writeControl,&readJournal,&writeJournal,&updateJournal,&deleteJournal,
-            &truncateJournal,&writeCanonical); err != nil {
+            &truncateJournal,&canWriteCanonicalInsert,&canWriteCanonicalUpdate,
+            &canWriteCanonicalDelete,&canWriteCanonicalTruncate,
+            &canMaintainCanonical,&canCreateCanonical); err != nil {
 		return err
 	}
 	if !readControl || !insertIdentity || insertState || insertProof ||
 		writeControl || !readJournal || writeJournal || updateJournal ||
-        deleteJournal || truncateJournal || writeCanonical {
+        deleteJournal || truncateJournal ||
+        canWriteCanonicalInsert || canWriteCanonicalUpdate ||
+        canWriteCanonicalDelete || canWriteCanonicalTruncate ||
+        canMaintainCanonical || canCreateCanonical {
 		return errors.New("C1 pending: writer could forge B, Accepted, or mutate canonical history")
 	}
+    // Do not only audit the SourceParent table: legacy FI migrations
+    // previously granted INSERT across every canonical typed relation.
+    // A later role grant or membership must never re-enable writes to any
+    // authoritative FI table after the explicit offline C1 cutover.
+    var writableCanonicalTables int64
+    if err:=tx.QueryRow(ctx,`SELECT count(*) FROM pg_class c
+       JOIN pg_namespace n ON n.oid=c.relnamespace
+       WHERE n.nspname='fi' AND c.relkind IN ('r','p') AND
+        (has_table_privilege(current_user,c.oid,'INSERT')
+        OR has_table_privilege(current_user,c.oid,'UPDATE')
+        OR has_table_privilege(current_user,c.oid,'DELETE')
+        OR has_table_privilege(current_user,c.oid,'TRUNCATE')
+        OR has_table_privilege(current_user,c.oid,'MAINTAIN'))`).
+        Scan(&writableCanonicalTables);err!=nil{return err}
+    if writableCanonicalTables!=0{
+        return fmt.Errorf("C1 pending: fi_ingest can still mutate %d authoritative FI relations",writableCanonicalTables)
+    }
 	return nil
 }
 

@@ -401,13 +401,27 @@ strings/URLs in command-line DSNs; use a protected administrator passfile.
 
 Within one SERIALIZABLE PostgreSQL transaction, after acquiring a
 dedicated installer advisory lock and canonical journal read lock, it
-creates only the governed Pending 49-table mirror plus control,
+refuses **any existing fi_ingest PostgreSQL session** because the original
+FI schema migrations granted that account INSERT rights on every
+canonical table. The explicit offline C1 cutover removes old
+canonical INSERT/UPDATE/DELETE/TRUNCATE/MAINTAIN rights and future
+fi_owner default table grants from that database role; this changes
+SQL *privileges*, not canonical data or schema. The installer verifies
+that no canonical FI relation remains writable through fi_ingest,
+including inherited and PUBLIC grants. C1 SQL-worker START independently
+rechecks the same authority boundary for all 49 relations and refuses
+service activation on privilege drift. The operator must stop every old
+FI SQL worker before approving the offline installation.
+
+It then creates only the governed Pending 49-table mirror plus control,
 creates/reuses restricted `fi_owner` and `fi_ingest` SQL roles,
 and creates the distinct `fi_c1_publisher` role with canonical
 SELECT/INSERT/MAINTAIN and pending-only SELECT/MAINTAIN/TRUNCATE.
 It does not grant canonical UPDATE/DELETE/TRUNCATE, create a database,
-change any canonical records, acknowledge a generation, alter
-PostgreSQL configuration or start a service. Uncertain commits require
+change any canonical records, acknowledge a generation, alter PostgreSQL
+configuration or start a service. It **does** intentionally revoke
+pre-C1 canonical INSERT rights from the old fi_ingest database role
+during this explicit offline cutover. Uncertain commits require
 read-only inspection before retry. Socket authentication/passfile and
 disabled rc service configuration remain separate operator-controlled
 activation steps.

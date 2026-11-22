@@ -93,6 +93,17 @@ if [ "$flags" = '1|1|1' ];then
     fail 'read C1 local SQL-role authority'
   [ "$privileges" = '1|1|0|0|1|1|0|0|1' ] ||
     fail "unsafe C1 PostgreSQL-role separation: $privileges"
+  canonical_writes=$(sql "SELECT count(*) FROM pg_class c
+      JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='fi' AND c.relkind IN ('r','p') AND
+        (has_table_privilege('fi_ingest',c.oid,'INSERT')
+         OR has_table_privilege('fi_ingest',c.oid,'UPDATE')
+         OR has_table_privilege('fi_ingest',c.oid,'DELETE')
+         OR has_table_privilege('fi_ingest',c.oid,'TRUNCATE')
+         OR has_table_privilege('fi_ingest',c.oid,'MAINTAIN'))") ||
+    fail 'cannot verify fi_ingest canonical 49-table isolation'
+  [ "$canonical_writes" = 0 ] ||
+    fail "fi_ingest retains canonical insert/mutation authority on $canonical_writes FI tables"
   unresolved=$(sql "SELECT
     (SELECT count(*) FROM fi_c1_pending.recorded_generation)+
     (SELECT count(*) FROM fi_c1_pending.generation_control)+
