@@ -288,9 +288,12 @@ func bootstrapReadColumns(ctx context.Context,tx pgx.Tx,schema,table string)([]b
 	}
 	return cols,rows.Err()
 }
-func bootstrapCompareColumns(ctx context.Context,tx pgx.Tx,table string)error{
+func bootstrapCompareColumns(ctx context.Context,tx pgx.Tx,table string,
+    sourceSchema ...string)error{
+    schema,err:=sorPromotionSourceSchema(sourceSchema...)
+    if err!=nil{return err}
 	a,err:=bootstrapReadColumns(ctx,tx,"fi",table);if err!=nil{return err}
-	b,err:=bootstrapReadColumns(ctx,tx,privateProjectionSchema,table);if err!=nil{return err}
+	b,err:=bootstrapReadColumns(ctx,tx,schema,table);if err!=nil{return err}
 	if len(a)==0 || len(a)!=len(b) {return fmt.Errorf("FI SoR bootstrap: %s column-count mismatch",table)}
 	for i:=range a {if a[i]!=b[i] {return fmt.Errorf("FI SoR bootstrap: %s column %d differs from canonical schema",table,i)}}
 	return nil

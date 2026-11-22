@@ -468,6 +468,35 @@ WHERE CASE
         JOIN pg_namespace n ON n.oid=c.connamespace
         WHERE n.nspname='fi_c1_pending' AND c.contype='f'`).Scan(&pendingFKs);e!=nil{t.Fatal(e)}
     if pendingFKs<20{t.Fatalf("C1 pending relational FK graph incomplete: %d",pendingFKs)}
+    // The *actual set-based canonical remapper* must recognize all pending
+    // columns and the full FK graph. Only the extra control FK is excluded;
+    // a real FI relation/family FK drift must fail this read-only preflight.
+    remapTx,e:=admin.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=verifySoRPromotionForeignKeys(ctx,remapTx,c1GovernedPendingSchema);e!=nil{
+        _=remapTx.Rollback(context.Background())
+        t.Fatalf("C1 governed pending 49-table FK remapper cannot admit actual PostgreSQL18 graph: %v",e)
+    }
+    canonicalNames,e:=bootstrapListTables(ctx,remapTx,"fi")
+    if e!=nil{t.Fatal(e)}
+    for _,name:=range canonicalNames{
+        if e=bootstrapCompareColumns(ctx,remapTx,name,c1GovernedPendingSchema);e!=nil{
+            _=remapTx.Rollback(context.Background())
+            t.Fatalf("C1 pending typed remapper column mismatch in %s: %v",name,e)
+        }
+        if name=="ingest_journal"{continue}
+        if sorPromotionNaturalTables[name]{continue}
+        cols,readErr:=bootstrapReadColumns(ctx,remapTx,"fi",name)
+        if readErr!=nil{t.Fatal(readErr)}
+        q,compileErr:=compileSoRRemapSelect(name,cols,c1GovernedPendingSchema)
+        if compileErr!=nil||!strings.Contains(q,pgx.Identifier{c1GovernedPendingSchema,name}.Sanitize()){
+            _=remapTx.Rollback(context.Background())
+            t.Fatalf("C1 pending SQL remap not compiled for %s: %v",name,compileErr)
+        }
+    }
+    if e=remapTx.Commit(ctx);e!=nil{t.Fatal(e)}
     // Create two independently signed-looking metadata fixtures in a
     // transaction, then prove the unique unresolved-generation fence.
     // The entire fixture is rolled back: no caller can treat it as custody.

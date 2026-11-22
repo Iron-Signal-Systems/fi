@@ -36,6 +36,7 @@ type C1SoRService struct {
     commitReady *privateC1CommitReady
     verifier *c1SoRNativeB
     independentlyVerified bool
+    publishing bool // serialize FinalProof publication in this SoR session
     // Unexported test seam; production always uses the local PostgreSQL
     // read-only canonical/journal snapshot, never a client status flag.
     canonicalReadback func(context.Context,string,string,string,string)(c1handoff.FinalStatus,error)
@@ -224,8 +225,8 @@ func(s *C1SoRService) Commit(ctx context.Context,f c1handoff.Frame)error{
 }
 // FinalProof is bound to the authenticated Drain ACK and invoked ONLY
 // after all SQL COMMIT futures and independent B's original signed-custody
-// verification have succeeded. B proof is NOT canonical acceptance.
-// The canonical transaction must be integrated before FinalAccepted exists.
+// verification have succeeded. Canonical Accepted still requires one
+// atomic publication transaction and an independent read-only readback.
 func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
     c1handoff.FinalStatus,error,
 ){
@@ -246,16 +247,40 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
         s.mu.Unlock()
         return c1handoff.FinalNone,errors.New("C1 fi-sor: SQL or independent B proof not complete")
     }
-    dsn,readback:=s.DSN,s.canonicalReadback
-    s.mu.Unlock()
-    // The B proof is true, but that alone does not mean an Accepted
-    // canonical journal transaction exists. Read the real SoR after B.
-    if readback==nil {readback=c1ReadCanonicalAcceptanceAfterB}
-    status,err:=readback(ctx,dsn,f.SourceID,f.GenerationID,f.ReceiptSHA256)
-    if err!=nil{return c1handoff.FinalNone,err}
-    if status!=c1handoff.FinalVerified && status!=c1handoff.FinalAccepted{
-        return c1handoff.FinalNone,errors.New("C1 fi-sor: canonical readback returned unproved status")
+    if s.publishing {
+        s.mu.Unlock()
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: canonical publication already in progress")
     }
+    dsn,readback,custody:=s.DSN,s.canonicalReadback,s.NativeBCustody
+    // The controlled test seam cannot publish, and preserves original
+    // unit tests; production has no callback and always uses real SQL.
+    if readback!=nil {
+        s.mu.Unlock()
+        status,err:=readback(ctx,dsn,f.SourceID,f.GenerationID,f.ReceiptSHA256)
+        if err!=nil{return c1handoff.FinalNone,err}
+        if status!=c1handoff.FinalVerified&&status!=c1handoff.FinalAccepted{
+            return c1handoff.FinalNone,errors.New("C1 fi-sor: invalid test readback state")
+        }
+        return status,nil
+    }
+    s.publishing=true
+    s.mu.Unlock()
+    // The independently completed B process is a prerequisite, never an
+    // authority to accept. The remapper repeats complete signed proof
+    // under table locks, commits all canonical rows + Accepted atomically,
+    // then a fresh read-only snapshot proves the actual journal.
+    _,err:=PublishC1VerifiedPendingGeneration(ctx,dsn,custody,
+        f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    var status c1handoff.FinalStatus
+    if err==nil {
+        status,err=c1PostPublicationReadback(ctx,dsn,
+            f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    }
+    s.mu.Lock()
+    s.publishing=false
+    if err!=nil{s.failed=err}
+    s.mu.Unlock()
+    if err!=nil{return c1handoff.FinalNone,fmt.Errorf("C1 fi-sor: canonical publication/Accepted readback: %w",err)}
     return status,nil
 }
 func(s *C1SoRService)Close(){

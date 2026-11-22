@@ -26,7 +26,9 @@ import (
 )
 
 func c1BuildFullNativePromotionPlan(source,generation,receipt,transfer string,
-    ids []int64,batches []PreparedBatch)(c1NativeBPlan,error){
+    ids []int64,batches []PreparedBatch,sourceSchema ...string)(c1NativeBPlan,error){
+    schema,err:=sorPromotionSourceSchema(sourceSchema...)
+    if err!=nil{return c1NativeBPlan{},err}
     var p c1NativeBPlan
     if source==""||generation==""||!canonicalDigest(receipt)||
         !canonicalDigest(transfer)||len(ids)==0||len(ids)!=len(batches){
@@ -53,6 +55,7 @@ func c1BuildFullNativePromotionPlan(source,generation,receipt,transfer string,
     p.SQLIDs=append([]int64(nil),ids...)
     p.Batches=append([]PreparedBatch(nil),batches...)
     p.Transfer=transfer
+    if schema==c1GovernedPendingSchema{p.SQLSchema=schema}
     groups,err:=c1SoRGroupPlan(batches,0)
     if err!=nil{return c1NativeBPlan{},err}
     p.Descriptors=make([]BacklogCheckpointDescriptor,len(groups)+1)
@@ -79,8 +82,11 @@ func c1BuildFullNativePromotionPlan(source,generation,receipt,transfer string,
 // publication. Independently compute receipt hash from the immutable
 // recorder file, then look up the exact private source_batch SQL ledger.
 func LoadC1NativePromotionPlan(ctx context.Context,conn *pgx.Conn,
-    source,generation string,custody c1NativeBCustodyConfig)(c1NativeBPlan,error){
+    source,generation string,custody c1NativeBCustodyConfig,
+    sourceSchema ...string)(c1NativeBPlan,error){
     var empty c1NativeBPlan
+    schema,err:=sorPromotionSourceSchema(sourceSchema...)
+    if err!=nil{return empty,err}
     if ctx==nil||conn==nil||source==""||generation==""||
         custody.RecordedRoot==""||!filepath.IsAbs(custody.RecordedRoot){
         return empty,errors.New("C1 promotion: original receiver source and signed receipt required")
@@ -106,9 +112,9 @@ func LoadC1NativePromotionPlan(ctx context.Context,conn *pgx.Conn,
     defer tx.Rollback(context.Background())
     var recordedID,storedRecords,storedBatches int64
     var transfer []byte
-    err=tx.QueryRow(ctx,`SELECT recorded_generation_id,record_count,batch_count,transfer_sha256
-        FROM fi_recovery_projection.recorded_generation
-        WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3`,
+    err=tx.QueryRow(ctx,"SELECT recorded_generation_id,record_count,batch_count,transfer_sha256 FROM "+
+        pgx.Identifier{schema,"recorded_generation"}.Sanitize()+
+        " WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3",
         source,generation,receiptSHA[:]).
         Scan(&recordedID,&storedRecords,&storedBatches,&transfer)
     if err!=nil{return empty,fmt.Errorf("C1 promotion: missing exact private signed generation: %w",err)}
@@ -116,10 +122,10 @@ func LoadC1NativePromotionPlan(ctx context.Context,conn *pgx.Conn,
         storedBatches>65535||len(transfer)!=32{
         return empty,errors.New("C1 promotion: invalid original private generation metadata")
     }
-    rows,err:=tx.Query(ctx,`SELECT source_batch_id,batch_id,record_count,
-         data_bytes,manifest_sha256,data_sha256
-         FROM fi_recovery_projection.source_batch
-         WHERE recorded_generation_id=$1 ORDER BY batch_id`,recordedID)
+    rows,err:=tx.Query(ctx,"SELECT source_batch_id,batch_id,record_count,data_bytes,"+
+         "manifest_sha256,data_sha256 FROM "+
+         pgx.Identifier{schema,"source_batch"}.Sanitize()+
+         " WHERE recorded_generation_id=$1 ORDER BY batch_id",recordedID)
     if err!=nil{return empty,err}
     ids:=make([]int64,0,storedBatches)
     batches:=make([]PreparedBatch,0,storedBatches)
@@ -157,7 +163,7 @@ func LoadC1NativePromotionPlan(ctx context.Context,conn *pgx.Conn,
     }
     if err=tx.Commit(ctx);err!=nil{return empty,err}
     return c1BuildFullNativePromotionPlan(source,generation,
-        hex.EncodeToString(receiptSHA[:]),hex.EncodeToString(transfer),ids,batches)
+        hex.EncodeToString(receiptSHA[:]),hex.EncodeToString(transfer),ids,batches,schema)
 }
 
 // PublishC1VerifiedPrivateGeneration is a distinct, OFFLINE fi-sor command

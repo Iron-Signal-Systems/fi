@@ -34,9 +34,26 @@ exact pending SQL-ID readback, and the existing C1 SourceParent/five-family
 pool. Verifier B can follow the same schema. This is **application code**,
 not an authorized installation on physical C220.
 
-Automatic restart recovery, the lifecycle BVerified transition, canonical
-publication, pending retention/cleanup, and the final Accepted transaction
-remain unavailable. Existing incomplete generations fail closed.
+The existing 49-table canonical remapper has now been parameterized to
+consume precisely the single governed pending generation. Its natural NTFS
+identity reconciliation, generated-ID mapping, FK audit, and all-or-nothing
+Accepted journal transaction remain the SAME SQL implementation as the
+previous isolated benchmark. It holds pending table and control locks,
+rechecks original signed custody and relational proof under those locks,
+and refuses foreign or uncertain control state.
+
+The development `FinalProof` continuation now invokes pending publication
+only after independent process B fully completes, then checks the *actual*
+canonical recorded_generation + Accepted journal in a fresh read-only
+PostgreSQL transaction before returning `FinalAccepted`. An uncertain SQL
+outcome leaves fi-ingest READY intact and requires read-only reconciliation.
+
+This automatic implementation is **not yet accepted for live deployment**:
+pending retention/cleanup, interrupted-generation recovery, power-loss and
+full two-jail signed-generation acceptance remain incomplete. The optional
+`BVerified` lifecycle transition is not yet made durable: publication
+instead requires independent B completion and repeats the full proof under
+locks before committing Accepted. Existing incomplete generations fail closed.
 
 Control state is `Pending`, `SQLSealed`, `BVerified`,
 `PublicationUncertain`, or `Retired`. None means canonically Accepted.
@@ -66,13 +83,15 @@ authoritative database or revive the deleted private development schemas.
    previous dirty generation is intentionally rejected until replay proof is
    accepted. No second SQL ingestion algorithm and no PostgreSQL access in
    fi-ingest.
-3. Rework the existing canonical promotion SQL for exact generation-scoped
-   pending tables, **not** global copied staging tables. Lock and independently
-   re-verify original immutable custody, hashes, relational completeness,
-   USN dependencies and FK maps under publication locks.
-4. In a single PostgreSQL transaction map all typed rows into existing
-   populated canonical `fi` tables and insert **one** matching
-   `fi.ingest_journal` Accepted event. An error or uncertain commit
+3. Validate the reused canonical promotion SQL against a fully populated
+   disposable PostgreSQL 18 database and a genuine original signed C1
+   generation, including NTFS natural-key remaps and each five-family table.
+   The current one-unresolved-generation admission model intentionally
+   prohibits unrelated pending source rows; future concurrency requires a
+   separate accepted isolation design.
+4. Prove the wired final Drain publisher in full disposable acceptance:
+   all typed rows and the one canonical `fi.ingest_journal` Accepted event
+   must commit in the same SQL transaction. An error or uncertain commit
    must never become an accepted Drain ACK.
 5. Re-read canonical generation and journal after publication before sending
    `FinalAccepted`. Preserve original custody and READY marker on all

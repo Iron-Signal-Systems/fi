@@ -64,10 +64,22 @@ func checkSoRPromotionFKColumns(canonical,private []sorPromotionFKColumn)error{
  }
  return nil
 }
-func verifySoRPromotionForeignKeys(ctx context.Context,tx pgx.Tx)error{
+func verifySoRPromotionForeignKeys(ctx context.Context,tx pgx.Tx,
+ sourceSchema ...string)error{
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return err}
  canonical,err:=readSoRPromotionFKColumns(ctx,tx,"fi")
  if err!=nil{return err}
- private,err:=readSoRPromotionFKColumns(ctx,tx,privateProjectionSchema)
+ private,err:=readSoRPromotionFKColumns(ctx,tx,schema)
  if err!=nil{return err}
+ if schema==c1GovernedPendingSchema{
+  // The one extra control->recorded_generation FK is an admission gate,
+  // not an FI relational FK to be remapped into canonical history.
+  filtered:=private[:0]
+  for _,edge:=range private{
+   if edge.child!="generation_control"{filtered=append(filtered,edge)}
+  }
+  private=filtered
+ }
  return checkSoRPromotionFKColumns(canonical,private)
 }

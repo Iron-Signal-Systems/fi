@@ -47,7 +47,20 @@ func promoteVerifiedBacklogToPopulatedSoRWithProof(
  g *PreparedGeneration,limits BacklogWindowLimits,attemptID string,
  proof backlogFullGenerationProof,
 )(IngestResult,error){
+ return promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,verifier,publisher,
+  g,limits,attemptID,proof,privateProjectionSchema)
+}
+
+// Governed C1 pending publication reuses the proven mapped single-transaction
+// SQL algorithm, with a fixed schema allowlist and independent full proof.
+func promoteVerifiedBacklogToPopulatedSoRWithProofSchema(
+ ctx context.Context,verifier,publisher *pgx.Conn,
+ g *PreparedGeneration,limits BacklogWindowLimits,attemptID string,
+ proof backlogFullGenerationProof,sourceSchema string,
+)(IngestResult,error){
  var zero IngestResult
+ schema,err:=sorPromotionSourceSchema(sourceSchema)
+ if err!=nil{return zero,err}
  if proof==nil{return zero,errors.New("FI SoR promotion: missing full-generation proof callback")}
  if ctx==nil || verifier==nil || publisher==nil || verifier==publisher ||
    g==nil || attemptID=="" {
@@ -105,47 +118,94 @@ func promoteVerifiedBacklogToPopulatedSoRWithProof(
  if database!="fi" || who=="" {return zero,errors.New("FI SoR promotion: unexpected PostgreSQL identity")}
  canonical,err:=bootstrapListTables(ctx,tx,"fi")
  if err!=nil{return zero,err}
- private,err:=bootstrapListTables(ctx,tx,privateProjectionSchema)
+ private,err:=bootstrapListTables(ctx,tx,schema)
  if err!=nil{return zero,err}
+ if schema==c1GovernedPendingSchema{
+  if len(private)!=len(canonical)+1{
+   return zero,errors.New("C1 pending publication: missing or extra governed relations")
+  }
+  filtered:=make([]string,0,len(private)-1)
+  var controls int
+  for _,t:=range private{
+   if t=="generation_control"{controls++;continue}
+   filtered=append(filtered,t)
+  }
+  if controls!=1{return zero,errors.New("C1 pending publication: missing generation_control")}
+  private=filtered
+ }
  if _,err=bootstrapSoRPromotionOrder(canonical,nil);err!=nil{return zero,err}
  if _,err=bootstrapSoRPromotionOrder(private,nil);err!=nil{return zero,err}
  edges,err:=bootstrapForeignKeys(ctx,tx)
  if err!=nil{return zero,err}
  order,err:=bootstrapSoRPromotionOrder(canonical,edges)
  if err!=nil{return zero,err}
- if err=verifySoRPromotionForeignKeys(ctx,tx);err!=nil{
+ if err=verifySoRPromotionForeignKeys(ctx,tx,schema);err!=nil{
   return zero,fmt.Errorf("FI SoR promotion: FK preflight: %w",err)
  }
  for _,table:=range canonical{
   canonicalTable:=pgx.Identifier{"fi",table}.Sanitize()
-  privateTable:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+  privateTable:=pgx.Identifier{schema,table}.Sanitize()
   if _,err=tx.Exec(ctx,"LOCK TABLE "+canonicalTable+" IN SHARE ROW EXCLUSIVE MODE");err!=nil{
    return zero,fmt.Errorf("FI SoR promotion: canonical lock %s: %w",table,err)
   }
   if _,err=tx.Exec(ctx,"LOCK TABLE "+privateTable+" IN SHARE MODE");err!=nil{
    return zero,fmt.Errorf("FI SoR promotion: private lock %s: %w",table,err)
   }
-  if err=bootstrapCompareColumns(ctx,tx,table);err!=nil{return zero,err}
+  if err=bootstrapCompareColumns(ctx,tx,table,schema);err!=nil{return zero,err}
  }
- for _,table:=range []string{"verified_artifact_window","source_window","typed_window","pending_source_record"}{
-  if _,err=tx.Exec(ctx,"LOCK TABLE "+pgx.Identifier{"fi_recovery",table}.Sanitize()+" IN SHARE MODE");err!=nil{return zero,err}
+ if schema==privateProjectionSchema{
+  for _,t:=range []string{"verified_artifact_window","source_window","typed_window","pending_source_record"}{
+   if _,err=tx.Exec(ctx,"LOCK TABLE "+pgx.Identifier{"fi_recovery",t}.Sanitize()+" IN SHARE MODE");err!=nil{return zero,err}
+  }
+ }else{
+  if _,err=tx.Exec(ctx,"LOCK TABLE fi_c1_pending.generation_control IN SHARE MODE");err!=nil{return zero,err}
  }
  var privateGenerations int64
  var matches bool
- err=tx.QueryRow(ctx,`SELECT count(*),
-   coalesce(bool_and(source_id=$1 AND generation_id=$2),false)
-   FROM fi_recovery_projection.recorded_generation`,d.SourceID,d.GenerationID).Scan(&privateGenerations,&matches)
+ err=tx.QueryRow(ctx,"SELECT count(*),coalesce(bool_and(source_id=$1 AND generation_id=$2),false) FROM "+
+   pgx.Identifier{schema,"recorded_generation"}.Sanitize(),d.SourceID,d.GenerationID).Scan(&privateGenerations,&matches)
  if err!=nil{return zero,err}
  if privateGenerations!=1 || !matches{return zero,errors.New("FI SoR promotion: private relational tables contain a different generation")}
  for _,table:=range []string{"ntfs_volume","governed_root"}{
-  src:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+  src:=pgx.Identifier{schema,table}.Sanitize()
   var unrelated bool
   if err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM "+src+" WHERE source_id<>$1)",d.SourceID).Scan(&unrelated);err!=nil{return zero,err}
   if unrelated{return zero,fmt.Errorf("FI SoR promotion: unrelated private %s",table)}
  }
  var privateJournal bool
- if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM fi_recovery_projection.ingest_journal)`).Scan(&privateJournal);err!=nil{return zero,err}
- if privateJournal{return zero,errors.New("FI SoR promotion: unexpected private journal")}
+ if err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM "+
+  pgx.Identifier{schema,"ingest_journal"}.Sanitize()+")").Scan(&privateJournal);err!=nil{return zero,err}
+ if privateJournal{return zero,errors.New("FI SoR promotion: unexpected staging journal")}
+ if schema==c1GovernedPendingSchema{
+  receiptBytes,e:=decodeHex(g.ReceiptSHA256,32,true,"C1 pending receipt")
+  if e!=nil{return zero,e}
+  transferBytes,e:=decodeHex(g.Receipt.TransferSHA256,32,true,"C1 pending transfer")
+  if e!=nil{return zero,e}
+  var controls int64
+  e=tx.QueryRow(ctx,"SELECT count(*) FROM fi_c1_pending.generation_control").
+   Scan(&controls)
+  if e!=nil{return zero,e}
+  if controls!=1{return zero,errors.New("C1 pending publication: unresolved or foreign control remains")}
+  var state string
+  var proofSHA []byte
+  var proofAt *string
+  e=tx.QueryRow(ctx,`SELECT state,verifier_b_receipt_sha256,
+   verifier_b_at::text FROM fi_c1_pending.generation_control
+   WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3
+   AND transfer_sha256=$4 AND record_count=$5 AND batch_count=$6`,
+   d.SourceID,d.GenerationID,receiptBytes,transferBytes,
+   int64(g.Receipt.RecordCount),int64(len(g.Batches))).
+   Scan(&state,&proofSHA,&proofAt)
+  if e!=nil{return zero,fmt.Errorf("C1 pending publication: exact signed control unavailable: %w",e)}
+  switch state{
+  case "Pending","SQLSealed":
+   if len(proofSHA)!=0||proofAt!=nil{return zero,errors.New("C1 pending publication: invalid pre-verifier state")}
+  case "BVerified":
+   if !bytesEqual(proofSHA,receiptBytes)||proofAt==nil{return zero,errors.New("C1 pending publication: invalid B receipt proof")}
+  default:
+   return zero,errors.New("C1 pending publication: uncertain or retired stage cannot publish")
+  }
+ }
  var already bool
  if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM fi.recorded_generation
   WHERE source_id=$1 AND generation_id=$2)`,d.SourceID,d.GenerationID).Scan(&already);err!=nil{return zero,err}
@@ -175,18 +235,18 @@ func promoteVerifiedBacklogToPopulatedSoRWithProof(
  sqlStarted:=time.Now()
  for _,table:=range order{
   if sorPromotionNaturalTables[table] {
-   added,mergeErr:=mergePrivateNaturalIdentity(ctx,tx,table)
+   added,mergeErr:=mergePrivateNaturalIdentity(ctx,tx,table,schema)
    if mergeErr!=nil{return zero,mergeErr}
    copied+=added
    continue
   }
   if col,isIdentity:=bootstrapIdentityColumns[table];isIdentity{
-   if err=allocateSoRIdentityMap(ctx,tx,table,col);err!=nil{return zero,err}
+   if err=allocateSoRIdentityMap(ctx,tx,table,col,schema);err!=nil{return zero,err}
   }
   cols,colErr:=bootstrapReadColumns(ctx,tx,"fi",table)
   if colErr!=nil{return zero,colErr}
-  if err=checkSoROptionalFKMaps(ctx,tx,table,cols);err!=nil{return zero,err}
-  q,planErr:=compileSoRRemapSelect(table,cols)
+  if err=checkSoROptionalFKMaps(ctx,tx,table,cols,schema);err!=nil{return zero,err}
+  q,planErr:=compileSoRRemapSelect(table,cols,schema)
   if planErr!=nil{return zero,planErr}
   var tag pgconnCommandTag
   if strings.Contains(q,"$1::timestamptz"){
@@ -196,7 +256,7 @@ func promoteVerifiedBacklogToPopulatedSoRWithProof(
   }
   if err!=nil{return zero,fmt.Errorf("FI SoR promotion: %s: %w",table,err)}
   var privateCount int64
-  src:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+  src:=pgx.Identifier{schema,table}.Sanitize()
   if err=tx.QueryRow(ctx,"SELECT count(*) FROM "+src).Scan(&privateCount);err!=nil{return zero,err}
   if tag.RowsAffected()!=privateCount{
    return zero,fmt.Errorf("FI SoR promotion: mapped %s lost rows copied=%d original=%d",table,tag.RowsAffected(),privateCount)
@@ -244,14 +304,16 @@ type pgconnCommandTag interface{RowsAffected() int64}
 func execSoRPromotion(ctx context.Context,tx pgx.Tx,sql string,args ...any)(pgconnCommandTag,error){
  return tx.Exec(ctx,sql,args...)
 }
-func allocateSoRIdentityMap(ctx context.Context,tx pgx.Tx,table,col string)error{
+func allocateSoRIdentityMap(ctx context.Context,tx pgx.Tx,table,col string,sourceSchema ...string)error{
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return err}
  var seq *string
  if err:=tx.QueryRow(ctx,"SELECT pg_get_serial_sequence($1,$2)","fi."+table,col).Scan(&seq);err!=nil{return err}
  if seq==nil || *seq==""{return fmt.Errorf("FI SoR promotion: missing canonical sequence %s.%s",table,col)}
  var permitted bool
  if err:=tx.QueryRow(ctx,"SELECT has_sequence_privilege(current_user,$1::regclass,'USAGE')",*seq).Scan(&permitted);err!=nil{return err}
  if !permitted{return fmt.Errorf("FI SoR promotion: sequence USAGE denied for %s",table)}
- src:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+ src:=pgx.Identifier{schema,table}.Sanitize()
  colID:=pgx.Identifier{col}.Sanitize()
  q:="INSERT INTO "+sorPromotionMapSQL(table)+
   " (old_id,new_id) SELECT src."+colID+",nextval($1::regclass) FROM "+src+
@@ -260,8 +322,10 @@ func allocateSoRIdentityMap(ctx context.Context,tx pgx.Tx,table,col string)error
  return nil
 }
 
-func checkSoROptionalFKMaps(ctx context.Context,tx pgx.Tx,table string,cols []bootstrapColumn)error{
- src:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+func checkSoROptionalFKMaps(ctx context.Context,tx pgx.Tx,table string,cols []bootstrapColumn,sourceSchema ...string)error{
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return err}
+ src:=pgx.Identifier{schema,table}.Sanitize()
  for _,c:=range cols{
   family,found:=sorPromotionFKMap[c.name]
   if !found || c.notNull{continue}
@@ -279,29 +343,33 @@ func checkSoROptionalFKMaps(ctx context.Context,tx pgx.Tx,table string,cols []bo
 // The only three cross-generation shared identity tables. Integrity requires
 // equality on their genuine natural keys AND their identity method versions.
 // Canonical and private records remain immutable; ON CONFLICT never UPDATEs.
-func mergePrivateNaturalIdentity(ctx context.Context,tx pgx.Tx,table string)(int64,error){
+func mergePrivateNaturalIdentity(ctx context.Context,tx pgx.Tx,table string,sourceSchema ...string)(int64,error){
  switch table {
- case "ntfs_volume":return mergePrivateVolume(ctx,tx)
- case "ntfs_object":return mergePrivateObject(ctx,tx)
- case "governed_root":return mergePrivateRoot(ctx,tx)
+ case "ntfs_volume":return mergePrivateVolume(ctx,tx,sourceSchema...)
+ case "ntfs_object":return mergePrivateObject(ctx,tx,sourceSchema...)
+ case "governed_root":return mergePrivateRoot(ctx,tx,sourceSchema...)
  default:return 0,fmt.Errorf("FI SoR promotion: unexpected natural identity %q",table)
  }
 }
-func checkNaturalMapComplete(ctx context.Context,tx pgx.Tx,table string)(error){
+func checkNaturalMapComplete(ctx context.Context,tx pgx.Tx,table string,sourceSchema ...string)(error){
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return err}
  var sourceN,mappedN int64
- src:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+ src:=pgx.Identifier{schema,table}.Sanitize()
  if err:=tx.QueryRow(ctx,"SELECT count(*) FROM "+src).Scan(&sourceN);err!=nil{return err}
  if err:=tx.QueryRow(ctx,"SELECT count(*) FROM "+sorPromotionMapSQL(table)).Scan(&mappedN);err!=nil{return err}
  if sourceN!=mappedN{return fmt.Errorf("FI SoR promotion: incomplete natural identity map %s: %d/%d",table,mappedN,sourceN)}
  return nil
 }
-func mergePrivateVolume(ctx context.Context,tx pgx.Tx)(int64,error){
+func mergePrivateVolume(ctx context.Context,tx pgx.Tx,sourceSchema ...string)(int64,error){
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return 0,err}
  sql:=`INSERT INTO fi.ntfs_volume(source_id,identity_method_version,volume_guid,volume_serial)
  SELECT source_id,identity_method_version,volume_guid,volume_serial
  FROM fi_recovery_projection.ntfs_volume
  WHERE true
  ON CONFLICT ON CONSTRAINT ntfs_volume_identity_uq DO NOTHING`
- tag,err:=tx.Exec(ctx,sql)
+ tag,err:=tx.Exec(ctx,strings.ReplaceAll(sql,privateProjectionSchema+".",schema+"."))
  if err!=nil{return 0,err}
  mapSQL:=`INSERT INTO pg_temp.fi_promote_map_ntfs_volume(old_id,new_id)
  SELECT src.ntfs_volume_id,canon.ntfs_volume_id
@@ -309,10 +377,12 @@ func mergePrivateVolume(ctx context.Context,tx pgx.Tx)(int64,error){
  ON src.source_id=canon.source_id AND src.volume_guid=canon.volume_guid
  AND src.volume_serial=canon.volume_serial
  WHERE src.identity_method_version=canon.identity_method_version`
- if _,err=tx.Exec(ctx,mapSQL);err!=nil{return 0,err}
- return tag.RowsAffected(),checkNaturalMapComplete(ctx,tx,"ntfs_volume")
+ if _,err=tx.Exec(ctx,strings.ReplaceAll(mapSQL,privateProjectionSchema+".",schema+"."));err!=nil{return 0,err}
+ return tag.RowsAffected(),checkNaturalMapComplete(ctx,tx,"ntfs_volume",schema)
 }
-func mergePrivateObject(ctx context.Context,tx pgx.Tx)(int64,error){
+func mergePrivateObject(ctx context.Context,tx pgx.Tx,sourceSchema ...string)(int64,error){
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return 0,err}
  sql:=`INSERT INTO fi.ntfs_object(ntfs_volume_id,identity_method_version,
   file_reference_number,sequence_number)
  SELECT mv.new_id,src.identity_method_version,src.file_reference_number,src.sequence_number
@@ -320,7 +390,7 @@ func mergePrivateObject(ctx context.Context,tx pgx.Tx)(int64,error){
  JOIN pg_temp.fi_promote_map_ntfs_volume mv ON mv.old_id=src.ntfs_volume_id
  WHERE true
  ON CONFLICT ON CONSTRAINT ntfs_object_identity_uq DO NOTHING`
- tag,err:=tx.Exec(ctx,sql);if err!=nil{return 0,err}
+ tag,err:=tx.Exec(ctx,strings.ReplaceAll(sql,privateProjectionSchema+".",schema+"."));if err!=nil{return 0,err}
  mapSQL:=`INSERT INTO pg_temp.fi_promote_map_ntfs_object(old_id,new_id)
  SELECT src.ntfs_object_id,canon.ntfs_object_id
  FROM fi_recovery_projection.ntfs_object src
@@ -329,10 +399,12 @@ func mergePrivateObject(ctx context.Context,tx pgx.Tx)(int64,error){
  AND canon.file_reference_number=src.file_reference_number
  AND canon.sequence_number=src.sequence_number
  WHERE src.identity_method_version=canon.identity_method_version`
- if _,err=tx.Exec(ctx,mapSQL);err!=nil{return 0,err}
- return tag.RowsAffected(),checkNaturalMapComplete(ctx,tx,"ntfs_object")
+ if _,err=tx.Exec(ctx,strings.ReplaceAll(mapSQL,privateProjectionSchema+".",schema+"."));err!=nil{return 0,err}
+ return tag.RowsAffected(),checkNaturalMapComplete(ctx,tx,"ntfs_object",schema)
 }
-func mergePrivateRoot(ctx context.Context,tx pgx.Tx)(int64,error){
+func mergePrivateRoot(ctx context.Context,tx pgx.Tx,sourceSchema ...string)(int64,error){
+ schema,err:=sorPromotionSourceSchema(sourceSchema...)
+ if err!=nil{return 0,err}
  sql:=`INSERT INTO fi.governed_root(source_id,scope_id,containment_method_version,
   ntfs_volume_id,ntfs_object_id,requested_path_utf16le,resolved_path_utf16le)
  SELECT src.source_id,src.scope_id,src.containment_method_version,
@@ -342,7 +414,7 @@ func mergePrivateRoot(ctx context.Context,tx pgx.Tx)(int64,error){
  JOIN pg_temp.fi_promote_map_ntfs_object mo ON mo.old_id=src.ntfs_object_id
  WHERE true
  ON CONFLICT ON CONSTRAINT governed_root_identity_uq DO NOTHING`
- tag,err:=tx.Exec(ctx,sql);if err!=nil{return 0,err}
+ tag,err:=tx.Exec(ctx,strings.ReplaceAll(sql,privateProjectionSchema+".",schema+"."));if err!=nil{return 0,err}
  mapSQL:=`INSERT INTO pg_temp.fi_promote_map_governed_root(old_id,new_id)
  SELECT src.governed_root_id,canon.governed_root_id
  FROM fi_recovery_projection.governed_root src
@@ -354,6 +426,6 @@ func mergePrivateRoot(ctx context.Context,tx pgx.Tx)(int64,error){
   AND canon.requested_path_utf16le=src.requested_path_utf16le
   AND canon.resolved_path_utf16le=src.resolved_path_utf16le
  WHERE src.containment_method_version=canon.containment_method_version`
- if _,err=tx.Exec(ctx,mapSQL);err!=nil{return 0,err}
- return tag.RowsAffected(),checkNaturalMapComplete(ctx,tx,"governed_root")
+ if _,err=tx.Exec(ctx,strings.ReplaceAll(mapSQL,privateProjectionSchema+".",schema+"."));err!=nil{return 0,err}
+ return tag.RowsAffected(),checkNaturalMapComplete(ctx,tx,"governed_root",schema)
 }

@@ -117,12 +117,14 @@ func PromoteC1VerifiedToPopulatedSoR(ctx context.Context,
         attemptID==""{
         return empty,errors.New("C1 promotion: two distinct local PostgreSQL connections and attempt required")
     }
+    schema,err:=c1NativeBSchema(p)
+    if err!=nil{return empty,err}
     g,err:=c1NativePromotionGeneration(p)
     if err!=nil{return empty,err}
-    return promoteVerifiedBacklogToPopulatedSoRWithProof(ctx,verifier,publisher,g,
+    return promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,verifier,publisher,g,
         BacklogWindowLimits{},attemptID,
         func(ctx context.Context,conn *pgx.Conn,g *PreparedGeneration,_ BacklogWindowLimits)(
             BacklogGenerationVerification,error){
             return c1NativeFullPromotionProof(ctx,conn,g,p,custody)
-        })
+        },schema)
 }

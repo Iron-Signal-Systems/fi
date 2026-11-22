@@ -26,6 +26,21 @@ var sorPromotionFKMap = map[string]string{
  "usn_read_boundary_source_record_id":"source_record",
 }
 
+// Only frozen FI staging namespaces are approved for remapped publication.
+// Untrusted input never becomes an SQL identifier.
+func sorPromotionSourceSchema(selected ...string)(string,error){
+ if len(selected)==0||len(selected)==1&&selected[0]==""{
+  return privateProjectionSchema,nil
+ }
+ if len(selected)!=1{
+  return "",fmt.Errorf("FI SoR promotion: exactly one optional source schema permitted")
+ }
+ if selected[0]!=privateProjectionSchema&&selected[0]!=c1GovernedPendingSchema{
+  return "",fmt.Errorf("FI SoR promotion: unapproved source schema %q",selected[0])
+ }
+ return selected[0],nil
+}
+
 var sorPromotionNaturalTables=map[string]bool{
  "ntfs_volume":true,"ntfs_object":true,"governed_root":true,
 }
@@ -42,7 +57,10 @@ func sorPromotionMapSQL(table string) string {
 // source values, replaces only database IDs, and gives canonical ingested_at
 // one consistent acceptance timestamp. Quoted identifiers come from pg_catalog
 // and are preflighted against the exact governed schema.
-func compileSoRRemapSelect(table string,cols []bootstrapColumn)(string,error){
+func compileSoRRemapSelect(table string,cols []bootstrapColumn,
+    sourceSchema ...string)(string,error){
+  schema,err:=sorPromotionSourceSchema(sourceSchema...)
+  if err!=nil{return "",err}
  if table=="ingest_journal" || sorPromotionNaturalTables[table]{
   return "",fmt.Errorf("FI SoR promotion: table %q needs dedicated handling",table)
  }
@@ -82,7 +100,7 @@ func compileSoRRemapSelect(table string,cols []bootstrapColumn)(string,error){
   return "",fmt.Errorf("FI SoR promotion: identity column absent in %q",table)
  }
  target:=pgx.Identifier{"fi",table}.Sanitize()
- private:=pgx.Identifier{privateProjectionSchema,table}.Sanitize()
+ private:=pgx.Identifier{schema,table}.Sanitize()
  return "INSERT INTO "+target+" ("+strings.Join(names,",")+
   ") OVERRIDING SYSTEM VALUE SELECT "+strings.Join(values,",")+
   " FROM "+private+" AS src"+strings.Join(joins,""),nil
