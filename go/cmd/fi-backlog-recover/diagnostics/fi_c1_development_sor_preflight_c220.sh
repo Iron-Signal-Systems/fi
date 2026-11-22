@@ -20,7 +20,7 @@ for candidate in fi-sor-db fi-sor; do
   fi
 done
 [ -n "$sor_jail" ] || fail 'neither FI SoR PostgreSQL jail is running'
-printf 'C1_SOR_JAIL_SELECTED=%s\\n' "$sor_jail"
+printf 'C1_SOR_JAIL_SELECTED=%s\n' "$sor_jail"
 command -v jexec >/dev/null 2>&1 || fail 'missing jexec'
 # C220 PostgreSQL 18 uses a dedicated Unix-domain socket directory.
 pgsocket=/var/db/fi/sor/run
