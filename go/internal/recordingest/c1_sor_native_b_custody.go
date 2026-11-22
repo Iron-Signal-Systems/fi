@@ -123,6 +123,18 @@ func c1NativeBVerifyData(ctx context.Context,conn *pgx.Conn,raw io.Reader,
 // It is fail-closed, read-only for SQL, and never copies custody to disk.
 func c1NativeBVerifySignedCustody(ctx context.Context,conn *pgx.Conn,
     p c1NativeBPlan,cfg c1NativeBCustodyConfig)error{
+    return c1NativeBVerifySignedCustodyWithTrust(ctx,conn,p,cfg,
+        loadInstalledGenerationTrust)
+}
+
+// The independent B child always uses the production resolver above.
+// This internal test-only seam permits a disposable *genuinely signed*
+// receiver fixture without replacing system trust files or granting
+// the B database reader any write authority.
+func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
+    p c1NativeBPlan,cfg c1NativeBCustodyConfig,
+    resolve generationTrustResolver)error{
+    if resolve==nil{return errors.New("C1 B custody: original receiver trust required")}
     if ctx==nil||conn==nil||cfg.CustodyRoot==""||cfg.RecordedRoot==""||
         !filepath.IsAbs(cfg.CustodyRoot)||!filepath.IsAbs(cfg.RecordedRoot)||
         cfg.MaxCanonicalBytes==0||cfg.MaxEncodedBytes==0||
@@ -159,7 +171,7 @@ func c1NativeBVerifySignedCustody(ctx context.Context,conn *pgx.Conn,
         return errors.New("C1 B custody: original recorder receipt totals mismatch verified manifest plan")
     }
 
-    trust,err:=loadInstalledGenerationTrust(p.Start.SourceID)
+    trust,err:=resolve(p.Start.SourceID)
     if err!=nil{return fmt.Errorf("C1 B custody: installed receiver trust validation: %w",err)}
     originalPath:=filepath.Join(cfg.CustodyRoot,
         transportgeneration.DurableCustodyObjectName(p.Start.SourceID,p.Start.GenerationID))

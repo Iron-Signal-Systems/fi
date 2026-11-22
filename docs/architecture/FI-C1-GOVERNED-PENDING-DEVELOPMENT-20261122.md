@@ -120,9 +120,13 @@ helper; production continues to use installed receiver trust.
 
 The same native FreeBSD fixture now also sends a genuine signed JSONL
 SourceParent through the **existing C1 ordered SQL writer and five-family
-worker pool**. A separate read-only PostgreSQL B session compares original
-signed data against committed parent and typed-root rows; modified committed
-SQL digests must be rejected. This avoids inventing any replacement SQL
+worker pool**. A separate read-only PostgreSQL B session now reconstructs the
+signed generation from committed Pending SQL, then streams the **complete
+original receiver-signed transfer** again, independently checking every
+artifact, manifest and SourceParent/typed-root digest. Modified committed
+SQL digests or absent fixture trust must be rejected. The fixture's
+trust resolver is unexported; the independent production B process always
+uses the installed receiver trust path. This avoids inventing any replacement SQL
 ingestion code. The full B independent OS-process lifecycle is still a
 separate acceptance gate.
 

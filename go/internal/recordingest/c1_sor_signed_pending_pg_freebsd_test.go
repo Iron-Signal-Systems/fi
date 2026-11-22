@@ -181,6 +181,19 @@ func c1TestSignedOriginalPendingPostgres18(t *testing.T,ctx context.Context,
         0,batchID,original.Batches[0],c1GovernedPendingSchema);err!=nil{
         t.Fatalf("C1 separate readonly B original signed SourceParent/typed proof: %v",err)
     }
+    // B's entire immutable receiver transfer proof reads the original
+    // custody again and reconstructs its independent SQL plan from
+    // committed Pending rows. This must not trust prepared RAM contents,
+    // a client acknowledgement or the earlier Bootstrap manifest reader.
+    plan,err:=LoadC1NativePromotionPlan(ctx,auditor,source,
+        signed.GenerationID,cfg,c1GovernedPendingSchema)
+    if err!=nil{t.Fatalf("C1 independent B promotion plan from signed Pending: %v",err)}
+    if err=c1NativeBVerifySignedCustodyWithTrust(ctx,auditor,plan,cfg,trust);err!=nil{
+        t.Fatalf("C1 independent B full original signed transfer/SQL proof: %v",err)
+    }
+    if e:=c1NativeBVerifySignedCustodyWithTrust(ctx,auditor,plan,cfg,nil);e==nil{
+        t.Fatal("C1 B accepted missing original receiver trust")
+    }
     var parentCount,canonicalParents int64
     if err=admin.QueryRow(ctx,`SELECT
         (SELECT count(*) FROM fi_c1_pending.source_record),
@@ -200,6 +213,9 @@ func c1TestSignedOriginalPendingPostgres18(t *testing.T,ctx context.Context,
         0,batchID,original.Batches[0],c1GovernedPendingSchema);e==nil{
         t.Fatal("C1 independent B accepted modified committed SourceParent digest")
     }
+    if e:=c1NativeBVerifySignedCustodyWithTrust(ctx,auditor,plan,cfg,trust);e==nil{
+        t.Fatal("C1 independent B full original signed custody proof accepted tampered PostgreSQL row")
+    }
     if _,err=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
         SET record_sha256=$1`,prepared.RecordDigest[:]);err!=nil{
         t.Fatal(err)
@@ -207,6 +223,9 @@ func c1TestSignedOriginalPendingPostgres18(t *testing.T,ctx context.Context,
     if err=c1NativeBVerifyData(ctx,auditor,bytes.NewReader(signedRaw),
         0,batchID,original.Batches[0],c1GovernedPendingSchema);err!=nil{
         t.Fatalf("C1 independent B did not recover after exact restored signed record: %v",err)
+    }
+    if err=c1NativeBVerifySignedCustodyWithTrust(ctx,auditor,plan,cfg,trust);err!=nil{
+        t.Fatalf("C1 independent B full signed transfer proof did not recover: %v",err)
     }
     // This cleanup is permitted ONLY in the disposable, synthetic CI database.
     // No production path may clear unresolved original signed metadata.
