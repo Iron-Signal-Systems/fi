@@ -17,6 +17,7 @@ import (
     "fmt"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
+    "github.com/jackc/pgx/v5"
 )
 
 // PublishC1VerifiedPendingGeneration is the SoR-local continuation of a
@@ -25,19 +26,29 @@ import (
 // atomic, FK-remapping publisher (which repeats full custody proof under
 // publication locks). Callers cannot fabricate FinalAccepted from its return;
 // the canonical generation + Accepted journal must be read back separately.
-func PublishC1VerifiedPendingGeneration(ctx context.Context, dsn string,
-    custody c1NativeBCustodyConfig, source,generation,receiptSHA string)(
+func PublishC1VerifiedPendingGeneration(ctx context.Context,
+    workerDSN,publisherDSN string,custody c1NativeBCustodyConfig,
+    source,generation,receiptSHA string)(
     IngestResult,error){
     var empty IngestResult
     if ctx==nil||source==""||generation==""||!canonicalDigest(receiptSHA){
         return empty,errors.New("C1 canonical: original signed generation identity required")
     }
-    verifier,_,err:=openC1SoRLocalSQL(ctx,dsn,"")
+    verifier,_,err:=openC1SoRLocalSQL(ctx,workerDSN,"")
     if err!=nil{return empty,fmt.Errorf("C1 canonical: independent local SQL proof: %w",err)}
     defer verifier.Close(context.Background())
-    publisher,_,err:=openC1SoRLocalSQL(ctx,dsn,"")
+    publisher,err:=openC1SoRLocalPublisherSQL(ctx,publisherDSN)
     if err!=nil{return empty,fmt.Errorf("C1 canonical: local SQL publisher: %w",err)}
     defer publisher.Close(context.Background())
+    tx,err:=publisher.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if err!=nil{return empty,err}
+    if err=c1ReadOnlyPublisherPrivileges(ctx,tx);err!=nil{
+        _=tx.Rollback(context.Background())
+        return empty,err
+    }
+    if err=tx.Commit(ctx);err!=nil{return empty,err}
     if verifier.PgConn().PID()==publisher.PgConn().PID(){
         return empty,errors.New("C1 canonical: verifier and publisher must be separate PostgreSQL backends")
     }

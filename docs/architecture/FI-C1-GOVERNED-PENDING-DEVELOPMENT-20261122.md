@@ -48,7 +48,21 @@ canonical recorded_generation + Accepted journal in a fresh read-only
 PostgreSQL transaction before returning `FinalAccepted`. An uncertain SQL
 outcome leaves fi-ingest READY intact and requires read-only reconciliation.
 
-Disposable PostgreSQL 18 tests now also exercise the real pending-to-canonical
+Disposable PostgreSQL 18 exposed an essential SQL privilege boundary:
+the normal `fi_ingest` role cannot obtain SHARE ROW EXCLUSIVE table locks on
+canonical `fi`. Granting broad canonical UPDATE privileges to fi_ingest
+would violate the SQL-worker isolation requirement.
+
+The canonical publisher therefore now uses **a distinct fi-sor-only role**
+`fi_c1_publisher` and a separate Unix-domain PostgreSQL connection/
+credential. A dedicated, offline administrator-reviewed role plan grants the
+publisher the canonical locking/INSERT/UPDATE authority required by the
+existing remapper, without increasing fi_ingest permissions. The active
+fi-sor server requires an explicit publisher DSN and checks its role before
+accepting connections. No publisher role or secret has been installed on
+physical C220.
+
+Disposable PostgreSQL 18 tests exercise the real pending-to-canonical
 remapper with a **synthetic relational test-only proof callback**, late CHECK
 failure rollback, exactly one Accepted journal transaction, canonical readback,
 and duplicate retry. That proves SQL transaction mechanics only; it does NOT

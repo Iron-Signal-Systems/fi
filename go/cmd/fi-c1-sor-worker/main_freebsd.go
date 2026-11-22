@@ -31,7 +31,8 @@ func main(){
     }
     flags:=flag.NewFlagSet("fi-c1-sor-worker",flag.ExitOnError)
     bind:=flags.String("bind","","private fi-sor workload address for mTLS handoff")
-    db:=flags.String("postgres-local","","PostgreSQL Unix-domain DSN inside fi-sor, dbname=fi user=fi_ingest")
+    db:=flags.String("postgres-local","","fi-sor SQL worker local DSN, dbname=fi user=fi_ingest")
+    publisherDB:=flags.String("postgres-publisher-local","","separate fi-sor-only Unix-domain canonical publisher DSN, user=fi_c1_publisher")
     ram:=flags.String("shared-ram-dir","","fi-sor read-only nullfs view of C1 host tmpfs")
     custodyRoot:=flags.String("custody-root","","fi-sor read-only view of original signed receiver generation custody")
     recordedRoot:=flags.String("recorded-root","","fi-sor read-only original recorded-receipt custody")
@@ -88,7 +89,8 @@ func main(){
     if e!=nil{fatal(e)}
     if e=c1handoff.RequireFreeBSDRAMMount(ramMount,true);e!=nil{fatal(e)}
     cfg:=recordingest.C1SoRServerConfig{
-        Bind:*bind,LocalPostgresDSN:*db,SQLWorkersMax:*max,
+        Bind:*bind,LocalPostgresDSN:*db,PublisherPostgresDSN:*publisherDB,
+        SQLWorkersMax:*max,
         SharedRAMDir:*ram,AllowC1Replay:*recoverPrivate,
         CustodyRoot:*custodyRoot,RecordedRoot:*recordedRoot,
         CustodySourceNamespaces:*namespaces,

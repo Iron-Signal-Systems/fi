@@ -22,6 +22,7 @@ import (
 
 type C1SoRService struct {
     DSN string
+    PublisherDSN string // fi-sor-only privileged canonical publisher; never the SQL worker
     MaxSQLWorkers int
     SharedRAMDir string // fi-sor read-only nullfs mount path
     // DEVELOPMENT ONLY: explicit opt-in to replay dirty private SQL state
@@ -251,7 +252,7 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
         s.mu.Unlock()
         return c1handoff.FinalNone,errors.New("C1 fi-sor: canonical publication already in progress")
     }
-    dsn,readback,custody:=s.DSN,s.canonicalReadback,s.NativeBCustody
+    dsn,publisherDSN,readback,custody:=s.DSN,s.PublisherDSN,s.canonicalReadback,s.NativeBCustody
     // The controlled test seam cannot publish, and preserves original
     // unit tests; production has no callback and always uses real SQL.
     if readback!=nil {
@@ -269,7 +270,7 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
     // authority to accept. The remapper repeats complete signed proof
     // under table locks, commits all canonical rows + Accepted atomically,
     // then a fresh read-only snapshot proves the actual journal.
-    _,err:=PublishC1VerifiedPendingGeneration(ctx,dsn,custody,
+    _,err:=PublishC1VerifiedPendingGeneration(ctx,dsn,publisherDSN,custody,
         f.SourceID,f.GenerationID,f.ReceiptSHA256)
     var status c1handoff.FinalStatus
     if err==nil {

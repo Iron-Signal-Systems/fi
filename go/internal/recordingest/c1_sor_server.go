@@ -20,6 +20,7 @@ import (
 type C1SoRServerConfig struct {
     Bind string
     LocalPostgresDSN string
+    PublisherPostgresDSN string // separate canonical locking authority, Unix socket only
     SQLWorkersMax int
     SharedRAMDir string // read-only fi-sor nullfs mount
     AllowC1Replay bool // development-only private SQL recovery opt-in
@@ -43,6 +44,12 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         return errors.New("C1 fi-sor: private jail address must be explicit and nonlocal")
     }
     if _,err=c1SoRLocalConnectionConfig(cfg.LocalPostgresDSN);err!=nil{return err}
+    if _,err=c1SoRLocalPublisherConfig(cfg.PublisherPostgresDSN);err!=nil{return err}
+    // Both local roles and the entire canonical/pending permission boundary
+    // must pass before the mTLS listener admits any signed generation.
+    if err=c1PreflightLocalPublisher(ctx,cfg.PublisherPostgresDSN);err!=nil{
+        return fmt.Errorf("C1 fi-sor: canonical publisher not ready: %w",err)
+    }
     // mTLS requires the fi-ingest identity and the fi-sor dedicated server
     // certificate, independently issued under the configured C1 trust CA.
     tlsConfig,err:=c1handoff.ServerTLSConfig(cfg.TransportCert,cfg.ExpectedIngestClientDNS)
@@ -66,6 +73,7 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         service,e:=NewC1SoRService(cfg.LocalPostgresDSN,cfg.SQLWorkersMax)
         if e!=nil{conn.Close();return e}
         service.SharedRAMDir=cfg.SharedRAMDir
+        service.PublisherDSN=cfg.PublisherPostgresDSN
         service.AllowC1Replay=cfg.AllowC1Replay
         service.NativeBCustody=c1NativeBCustodyConfig{
             CustodyRoot:cfg.CustodyRoot,RecordedRoot:cfg.RecordedRoot,

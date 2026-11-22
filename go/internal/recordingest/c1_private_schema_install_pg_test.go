@@ -548,7 +548,31 @@ WHERE CASE
     // Validate the REAL one-transaction canonical remapper under a
     // disposable, populated-shape PostgreSQL18 schema. This is synthetic
     // relational evidence only, not a substitute for full signed B proof.
-    c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,worker)
+    // Canonical locks cannot be granted to the fi_ingest SQL worker.
+    // Provision the distinct publisher role only in disposable PostgreSQL;
+    // the physical C220 role is deliberately NOT installed by this test.
+    for _,ddl:=range C1CanonicalPublisherRolePlan(){
+        if _,e=admin.Exec(ctx,ddl);e!=nil{
+            t.Fatalf("C1 disposable publisher role DDL: %v",e)
+        }
+    }
+    if _,e=admin.Exec(ctx,"ALTER ROLE fi_c1_publisher PASSWORD 'isolated-only-test'");e!=nil{t.Fatal(e)}
+    publisherCfg:=worker.Config().Copy()
+    publisherCfg.User=c1PublisherRole
+    publisherCfg.Password="isolated-only-test"
+    publisher,e:=pgx.ConnectConfig(ctx,publisherCfg)
+    if e!=nil{t.Fatalf("C1 disposable canonical publisher connection: %v",e)}
+    defer publisher.Close(context.Background())
+    publisherTx,e:=publisher.BeginTx(ctx,pgx.TxOptions{
+        IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly,
+    })
+    if e!=nil{t.Fatal(e)}
+    if e=c1ReadOnlyPublisherPrivileges(ctx,publisherTx);e!=nil{
+        _=publisherTx.Rollback(context.Background())
+        t.Fatalf("C1 dedicated SQL locking publisher privilege preflight: %v",e)
+    }
+    if e=publisherTx.Commit(ctx);e!=nil{t.Fatal(e)}
+    c1TestPendingRelationalPromotionPostgres18(t,ctx,admin,publisher)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
