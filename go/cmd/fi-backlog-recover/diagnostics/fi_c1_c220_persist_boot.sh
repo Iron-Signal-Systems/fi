@@ -57,7 +57,15 @@ ram_start()
 {
     p=/var/run/fi-c1-handoff
     # Never mount over a foreign filesystem or a nonempty directory.
-    if /sbin/mount -p | /usr/bin/awk -v p="$p" '$2==p{n++;if($1!="tmpfs"||$3!="tmpfs")bad=1}END{exit !(n==1&&!bad)}'; then
+    if /sbin/mount -p | /usr/bin/awk -v p="$p" '
+        $2==p {
+            n++
+            if($1!="tmpfs" || $3!="tmpfs")bad=1
+            k=split($4,flags,",")
+            for(i=1;i<=k;i++){if(flags[i]=="noexec")nx=1;if(flags[i]=="nosuid")ns=1}
+        }
+        END{exit !(n==1&&!bad&&nx&&ns)}
+    '; then
         return 0
     fi
     if /sbin/mount -p | /usr/bin/awk -v p="$p" '$2==p{n++}END{exit !(n>0)}'; then
@@ -110,7 +118,7 @@ for jail in fi-receiver fi-ingest fi-sor; do
     [ "$(grep -Ec '^[[:space:]]*mount[.]devfs[[:space:]]*;' "/etc/jail.conf.d/$jail.conf")" = 1 ] ||
         die "devfs configuration drift: $jail"
     mounts "$jail" | while read -r src dest typ opts zeroa zerob; do
-        [ "$typ:$zeroa:$zerob" = nullfs:0:0 ] && [ -d "$src" ] && [ -d "$dest" ] ||
+        [ "$typ:$zeroa:$zerob" = nullfs:0:0 ] && [ -d "$src" ] && [ -d "$dest" ] && [ ! -L "$src" ] && [ ! -L "$dest" ] ||
             die "invalid original source or destination: $dest"
         mount -p | awk -v s="$src" -v d="$dest" -v o="$opts" \
            '$1==s&&$2==d&&$3=="nullfs"&&$4==o{n++}END{exit !(n==1)}' ||
