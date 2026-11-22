@@ -263,6 +263,30 @@ the live populated canonical fi database yet.
 - `go/cmd/fi-c1-ingest-worker`, `go/cmd/fi-c1-sor-worker` — FreeBSD
   service candidates; neither is authorized for live ingestion yet.
 
+## C220 read-only SoR identity reconciliation (November 21)
+
+The observed populated-SoR baseline calls its jail `fi-sor`, while later
+C220 diagnostic/installer code expected `fi-sor-db`. **GitHub CI cannot
+determine the installed C220 runtime name.** The C1 host diagnostics now
+probe both exact candidates with `jls`, select a uniquely running jail,
+and fail on dual matches rather than guessing. The two SQL diagnostics
+additionally verify `data_directory=/var/db/fi/sor/postgres` through
+the existing local socket before issuing inventory queries. No diagnostic
+mounts, starts or changes a jail or creates a database object.
+
+The FI SoR startup privilege gate now also verifies each required
+canonical-to-private projector table name/kind plus the **five** exact
+`fi_recovery` recovery-ledger tables. Matching SQL grants and aggregate
+table counts alone are insufficient for a signed START. A disposable
+PostgreSQL 18 integration test renames a projector and a typed-window marker
+with privileges otherwise intact; both must block startup and succeed
+only after the original table names are restored.
+
+**These safeguards are not C220 acceptance.** The real jail identity,
+actual host tmpfs/nullfs mounts, existing signed custody, private
+PostgreSQL state and integrated restart/promotion remain to be validated
+on C220 before enabling the C1 service or modifying canonical FI.
+
 ## PostgreSQL 18 private schema SQL role grants (offline installation)
 
 The C1 private-schema installer now applies a **single-transaction**
