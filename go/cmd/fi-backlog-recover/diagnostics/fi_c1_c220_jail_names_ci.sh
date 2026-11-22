@@ -69,4 +69,28 @@ for required in \
     grep -F "$required" "$readiness" >/dev/null ||
         fail "C220 partial replay audit lost required read-only evidence: $required"
 done
+# Abandoned C1 private state is disposable development data. Regression
+# guards for the operator-approved C220 deletion path. This test never
+# invokes the deletion script; it only parses and checks the source.
+discard="$root/fi_c1_discard_private_stage_c220.sh"
+sh -n "$discard" || fail "private-stage discard syntax error"
+for required in \
+  'FI_C1_DISCARD_PRIVATE_STAGE_APPROVED' \
+  "current_database()<>'fi'" \
+  'r_count<>54114023' \
+  'g_count<>6249' \
+  'p_tables<>49' \
+  'l_tables<>4' \
+  'own_gen_count<>1' \
+  'typed_total<>2770101' \
+  "EXECUTE 'DROP TABLE ' || tables || ' RESTRICT'" \
+  'DROP SCHEMA fi_recovery_projection RESTRICT;' \
+  'DROP SCHEMA fi_recovery RESTRICT;' \
+  "current_setting('data_directory')"; do
+    grep -F "$required" "$discard" >/dev/null ||
+      fail "C220 private-stage discard lost critical safety gate: $required"
+done
+if grep -Eq '^[[:space:]]*(DROP|TRUNCATE|DELETE|UPDATE|ALTER)[[:space:]]+(TABLE[[:space:]]+)?fi\.' "$discard"; then
+  fail 'C220 private-stage discard touches canonical fi SQL'
+fi
 echo "FI C1 C220 READ ONLY JAIL SELECTOR PASS standalone=4 single_jail_names=2 ambiguous_jails=rejected PG_and_trust_gates=fail_closed"
