@@ -267,6 +267,14 @@ sh -n "$boot_audit" || fail 'C220 boot mount inventory shell syntax'
 for token in \
     'fi-receiver fi-ingest fi-sor' \
     'C1_EXISTING_FI_JAIL_MOUNT_COUNT=' \
+    'C1_EXISTING_FI_NULLFS_MOUNT_COUNT=' \
+    'C1_EXISTING_FI_DEVFS_MOUNT_COUNT=' \
+    'C1_EXISTING_FI_JAIL_MOUNT_TYPES=' \
+    'nullfs_total!=18 || devfs_total!=3' \
+    'nullfs[jail]!=6 || devfs[jail]!=1' \
+    'C1_EXISTING_DEVFS_EXCLUDED=' \
+    'if ($3=="devfs") {' \
+    'print $1, $2, "nullfs", $4, "0 0"' \
     '/var/run/fi-c1-handoff' \
     'C1_BOOT_FSTAB_RELATED_EXISTING_LINES=' \
     'C1_CANONICAL_GENERATIONS=' \
