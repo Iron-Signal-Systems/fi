@@ -160,6 +160,39 @@ existing `fi-ingest-socket` group. The populated `fi` SoR and
 receiver custody remain present. No automatic replay, SQL stage
 installation, rc service enablement or canonical promotion is authorized.
 
+## Observed C220 cross-jail proof, 2026-11-22
+
+The operator completed native FreeBSD statfs acceptance with all
+**seven** live mounts, including the original signed custody, receipt,
+trust and source-registry views. The unprivileged `fi-sor` account
+successfully read original receiver signing inputs without changing
+the receiver objects. SoR had `6249` canonical recorded generations
+and both discarded private SQL schemas were absent.
+
+The explicit one-file volatile test reported:
+
+`C1_C220_VOLATILE_HANDOFF_PROOF_PASS producer=fi-ingest consumer=fi-sor identical_cksum=true sor_write_denied=true cleanup_on_exit=true`
+
+This establishes the **actual** `fi-ingest` RW to `fi-sor` RO
+tmpfs transport and cleanup behavior on the running FreeBSD C220
+jails. It does **not** establish C1 application-level ACK semantics,
+transactional generation acceptance, crash replay, automatic canonical
+publication or reboot persistence.
+
+Crucially, C1 SoR worker code still targets the isolated private
+`fi_recovery_projection` path, and the C1 ingest CLI deliberately
+returns an error after that development staging path completes.
+Neither development worker is accepted for live automatic ingestion.
+Do not recreate the discarded private staging schemas as a shortcut
+to release.
+
+Boot persistence must preserve **every** existing
+`fi-receiver`, `fi-ingest`, and `fi-sor` original nullfs mount,
+especially PostgreSQL PGDATA and the original receiver signed custody.
+The read-only C220 boot mount inventory outputs a candidate fstab
+including existing mounts; no jail restart is authorized until the
+whole mount lifecycle is reconciled and exercised safely.
+
 ## Read-only installer invocation
 
 On the FreeBSD host, with the existing validated FI backend configuration:
