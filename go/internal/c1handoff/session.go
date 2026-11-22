@@ -89,6 +89,9 @@ type Server struct {
     // succeeded. A real canonical Accepted transaction must complete
     // before this callback can return FinalAccepted. Nil is SQL-only.
     FinalProof func(context.Context,Frame)(FinalStatus,error)
+    // Status is an initial authenticated read-only canonical/journal
+    // inspection. It never invokes Bootstrap, SQL staging or a writer.
+    Status func(context.Context,Frame)(FinalStatus,error)
     IOTimeout time.Duration
 }
 func ensureAuthenticated(conn net.Conn)error{
@@ -116,6 +119,23 @@ func (s *Server) ServeConn(ctx context.Context,conn net.Conn)error{
         f,err:=ReadFrame(conn)
         if err!=nil{return err}
         if f.Kind==Ack{return errors.New("C1 handoff: client sent server-only acknowledgment")}
+        if f.Kind==Status {
+            if sequence!=1||f.Sequence!=1||s.Status==nil{
+                return errors.New("C1 handoff: canonical status probe only permitted as first authenticated frame")
+            }
+            status,probeErr:=s.Status(ctx,f)
+            if probeErr==nil && status!=FinalNone && status!=FinalAccepted{
+                probeErr=errors.New("C1 handoff: status probe cannot claim independent B without canonical acceptance")
+            }
+            if probeErr!=nil {status=FinalNone}
+            ack:=Frame{Kind:Ack,SourceID:f.SourceID,
+                GenerationID:f.GenerationID,ReceiptSHA256:f.ReceiptSHA256,
+                Sequence:1,Committed:probeErr==nil,FinalStatus:status}
+            if probeErr!=nil{ack.Error="C1 fi-sor canonical status probe rejected"}
+            if err:=conn.SetWriteDeadline(time.Now().Add(idle));err!=nil{return err}
+            if err:=WriteFrame(conn,ack);err!=nil{return err}
+            return probeErr
+        }
         if sequence==1 {
             if f.Kind!=Start{return errors.New("C1 handoff: signed generation Start must precede SQL handoffs")}
             source,generation,receipt=f.SourceID,f.GenerationID,f.ReceiptSHA256
@@ -204,6 +224,33 @@ func (c *Client)Send(ctx context.Context,f Frame)error{
     if c.next==1 {c.source,c.generation,c.receipt=f.SourceID,f.GenerationID,f.ReceiptSHA256}
     c.next++
     return nil
+}
+// QueryStatus uses a separate authenticated one-frame C1 session.
+// It is intentionally not permitted after START or any SQL handoff.
+// FinalNone means not canonical yet. Only a complete matching canonical
+// RecordedGeneration and Accepted journal can produce FinalAccepted.
+func(c *Client)QueryStatus(ctx context.Context,f Frame)(bool,error){
+    if c==nil||c.conn==nil||ctx==nil||c.next!=1||
+        f.Kind!=Status||f.Sequence!=1{
+        return false,errors.New("C1 status: new authenticated connection and original source/generation required")
+    }
+    if err:=ctx.Err();err!=nil{return false,err}
+    if err:=WriteFrame(c.conn,f);err!=nil{return false,err}
+    ack,err:=ReadFrame(c.conn)
+    if err!=nil{return false,fmt.Errorf("C1 status: read-only canonical probe uncertain: %w",err)}
+    if ack.Kind!=Ack||ack.Sequence!=1||ack.SourceID!=f.SourceID||
+        ack.GenerationID!=f.GenerationID||ack.ReceiptSHA256!=f.ReceiptSHA256||
+        len(ack.BatchSQLIDs)!=0{
+        return false,errors.New("C1 status: wrong signed generation identity or status ACK")
+    }
+    if !ack.Committed{
+        return false,fmt.Errorf("C1 status: fi-sor canonical readback rejected: %s",ack.Error)
+    }
+    switch ack.FinalStatus {
+    case FinalAccepted:return true,nil
+    case FinalNone:return false,nil
+    default:return false,errors.New("C1 status: B-only proof is not canonical Accepted")
+    }
 }
 // BatchSQLIDs is available only after fi-sor proved the Start manifest
 // list against its local private relational source-batch records.
