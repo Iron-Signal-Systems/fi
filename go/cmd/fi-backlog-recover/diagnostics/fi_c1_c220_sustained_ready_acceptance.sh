@@ -17,6 +17,7 @@ ingest_conf=/fast/jails/roots/fi-ingest/etc/rc.conf.d/fi_c1_ingest
 sor_conf=/fast/jails/roots/fi-sor/etc/rc.conf.d/fi_c1_sor
 gate=/fast/jails/roots/fi-dev/home/jwood/fi-c1-two-process-2a449f1a/go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh
 sor_started=0
+logdir=NOT_CREATED
 new_total=0
 old_total=0
 records_total=0
