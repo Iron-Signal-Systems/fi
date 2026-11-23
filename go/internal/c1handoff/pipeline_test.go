@@ -149,3 +149,22 @@ func TestC1PipelineRejectsFailedSQLCommit(t *testing.T){
         t.Fatalf("C1 accepted failed SQL buffer as committed: %v",outcome)
     }
 }
+
+func TestC1SoRRejectedSQLHandoffRetainsExactLocalCause(t *testing.T){
+    frame:=Frame{Kind:Security,Sequence:92}
+    detail:=c1SQLRejectionDiagnostic(
+        "iss-fs-22a.iss.local","signed-generation",frame,
+        errors.New("FI C1: SQL unique/typed identity conflict"),
+    )
+    for _,want:=range []string{
+        "FI C1 SOR SQL HANDOFF REJECTED",
+        "source=iss-fs-22a.iss.local",
+        "generation=signed-generation",
+        "sequence=92",
+        "cause=FI C1: SQL unique/typed identity conflict",
+    }{
+        if !strings.Contains(detail,want){
+            t.Fatalf("C1 error diagnostic lost signed handoff context %q: %s",want,detail)
+        }
+    }
+}

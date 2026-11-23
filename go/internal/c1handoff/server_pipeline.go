@@ -11,6 +11,7 @@ import (
     "context"
     "errors"
     "fmt"
+    "log"
     "net"
     "sync"
     "time"
@@ -19,6 +20,15 @@ import (
 type c1AckResult struct {
     frame Frame
     err error
+}
+
+// c1SQLRejectionDiagnostic is local-only. Never put this message or any
+// underlying PostgreSQL text into the signed ACK's untrusted error field.
+func c1SQLRejectionDiagnostic(source,generation string,f Frame,err error)string{
+    return fmt.Sprintf(
+        "FI C1 SOR SQL HANDOFF REJECTED source=%s generation=%s sequence=%d kind=%d cause=%v",
+        source,generation,f.Sequence,f.Kind,err,
+    )
 }
 func (s *Server)servePipelined(ctx context.Context,conn net.Conn,
     source,generation,receipt string,next uint64,idle time.Duration)(runErr error){
@@ -54,7 +64,15 @@ func (s *Server)servePipelined(ctx context.Context,conn net.Conn,
     buildACK:=func(f Frame,err error)Frame{
         ack:=Frame{Kind:Ack,SourceID:source,GenerationID:generation,
             ReceiptSHA256:receipt,Sequence:f.Sequence,Committed:err==nil}
-        if err!=nil{ack.Error="FI C1 fi-sor SQL phase rejected this handoff"}
+        if err!=nil{
+            // The mTLS peer gets only a fixed rejection string. Preserve the
+            // precise failure in the local fi-sor daemon log BEFORE sending
+            // the NACK; the peer may immediately close the connection and
+            // operators must never have to guess whether SQL or in-memory
+            // admission rejected a high-volume signed buffer.
+            log.Print(c1SQLRejectionDiagnostic(source,generation,f,err))
+            ack.Error="FI C1 fi-sor SQL phase rejected this handoff"
+        }
         return ack
     }
     for{
