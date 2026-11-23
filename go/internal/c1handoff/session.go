@@ -10,6 +10,7 @@ import (
     "errors"
     "fmt"
     "net"
+    "log"
     "os"
     "time"
 )
@@ -168,7 +169,15 @@ func (s *Server) ServeConn(ctx context.Context,conn net.Conn)error{
         ack:=Frame{Kind:Ack,SourceID:source,GenerationID:generation,
             ReceiptSHA256:receipt,Sequence:sequence,Committed:commitErr==nil,
             FinalStatus:finalStatus}
-        if commitErr!=nil {ack.Error="C1 fi-sor SQL processing rejected handoff"
+        if commitErr!=nil {
+            if f.Kind==Start {
+                // START predates the pipelined SQL handler. Keep its exact
+                // fail-closed read-only Pending/custody admission error in
+                // the local fi-sor log, never in the network ACK.
+                log.Printf("FI C1 SOR START REJECTED source=%s generation=%s cause=%v",
+                    source,generation,commitErr)
+            }
+            ack.Error="C1 fi-sor SQL processing rejected handoff"
         }else if f.Kind==Start {ack.BatchSQLIDs=sourceBatchIDs}
         if err:=conn.SetWriteDeadline(time.Now().Add(idle));err!=nil{return err}
         if err:=WriteFrame(conn,ack);err!=nil{return err}
