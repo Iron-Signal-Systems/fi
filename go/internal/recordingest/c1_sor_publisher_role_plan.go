@@ -16,6 +16,10 @@ func C1CanonicalPublisherRolePlan()[]string{
  return []string{
   "CREATE ROLE fi_c1_publisher LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION",
   "GRANT CONNECT ON DATABASE fi TO fi_c1_publisher",
+  // The existing populated-SoR FK remapper uses session-local temporary ID
+  // maps; only the publisher needs CREATE TEMP TABLE on this database.
+  // Do not grant TEMP to fi_ingest or PUBLIC.
+  "GRANT TEMPORARY ON DATABASE fi TO fi_c1_publisher",
   "GRANT USAGE ON SCHEMA fi,fi_c1_pending TO fi_c1_publisher",
   // PostgreSQL 18 MAINTAIN permits strong locks without SQL UPDATE/DELETE.
   // Unlike fi_ingest, this account is opened only for final publication.

@@ -52,6 +52,10 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
         version<180000||version>=190000{
         t.Fatal("STOP: offline installer positive test not on fresh local PostgreSQL18")
     }
+    // Simulate a hardened existing SoR which has removed the default
+    // database TEMP grant from PUBLIC. The canonical publisher must receive
+    // its own narrow TEMP privilege for the existing FK-remap temporary maps.
+    if _,err=admin.Exec(ctx,"REVOKE TEMPORARY ON DATABASE fi FROM PUBLIC");err!=nil{t.Fatal(err)}
     // Own the existing canonical schema before installing C1. Preserve its
     // original data throughout the governed-only DDL and role transaction.
     if _,err=admin.Exec(ctx,"CREATE ROLE fi_owner NOLOGIN");err!=nil{t.Fatal(err)}
@@ -165,6 +169,14 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
     if generations2,accepted2,e:=before();e!=nil||generations2!=1||accepted2!=1{
         t.Fatal("offline C1 governed installation modified canonical original Accepted history")
     }
+    var publisherTemp,workerTemp bool
+    if err=admin.QueryRow(ctx,`SELECT
+       has_database_privilege('fi_c1_publisher','fi','TEMPORARY'),
+       has_database_privilege('fi_ingest','fi','TEMPORARY')`).
+       Scan(&publisherTemp,&workerTemp);err!=nil{t.Fatal(err)}
+    if !publisherTemp||workerTemp{
+        t.Fatal("C1 governed install did not isolate PostgreSQL TEMP maps to publisher")
+    }
     var workerSourceInsert,workerJournalRead,workerJournalWrite,workerCanonicalWrite,
         publisherCanonicalLock,publisherCanonicalWrite,publisherCanonicalTruncate,
         publisherPendingTruncate bool
@@ -200,6 +212,16 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
         t.Fatalf("actual offline publisher role cannot pass canonical SQL preflight: %v",err)
     }
     if err=read.Commit(ctx);err!=nil{t.Fatal(err)}
+    // A read-only ACL check is insufficient: actually create the ephemeral
+    // mapping relation the canonical publisher requires, then roll it back.
+    probe,err:=publisherConn.Begin(ctx)
+    if err!=nil{t.Fatal(err)}
+    if _,err=probe.Exec(ctx,
+        "CREATE TEMP TABLE fi_c1_publisher_fk_map_probe (old_id bigint, new_id bigint) ON COMMIT DROP");err!=nil{
+        _=probe.Rollback(context.Background())
+        t.Fatalf("C1 publisher cannot create temporary FK remap table: %v",err)
+    }
+    if err=probe.Rollback(ctx);err!=nil{t.Fatal(err)}
     if err=InstallC1GovernedPendingOnExistingSoR(ctx,admin);err==nil{
         t.Fatal("second offline C1 governed install tried to overwrite the existing schema/roles")
     }

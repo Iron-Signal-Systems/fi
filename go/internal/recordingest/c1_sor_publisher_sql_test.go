@@ -52,6 +52,12 @@ func TestC1PublisherRolePlanDoesNotIncreaseIngestWorkerAuthority(t *testing.T){
         "GRANT SELECT,MAINTAIN,TRUNCATE ON fi_c1_pending.generation_control TO fi_c1_publisher"){
         t.Fatal("C1 publisher needs TRUNCATE only on governed pending for post-Accepted retirement")
     }
+    if !strings.Contains(combined,
+        "GRANT TEMPORARY ON DATABASE fi TO fi_c1_publisher")||
+        strings.Contains(combined,"GRANT TEMPORARY ON DATABASE fi TO fi_ingest")||
+        strings.Contains(combined,"GRANT TEMPORARY ON DATABASE fi TO PUBLIC"){
+        t.Fatal("C1 publisher needs private database TEMP for existing FK remap, never worker or PUBLIC")
+    }
     if strings.Contains(combined,
         "GRANT TRUNCATE ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher")||
         strings.Contains(combined,
