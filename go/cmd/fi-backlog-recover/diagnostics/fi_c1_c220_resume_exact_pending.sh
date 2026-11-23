@@ -13,6 +13,10 @@ fail(){ echo "FI C1 EXACT RECOVERY STOP: $*" >&2; exit 1; }
     [ "$(id -u)" -eq 0 ] || fail "C220 root only"
 
 source=iss-fs-22a.iss.local
+# The fix is pinned separately from the operator script commit. Never use
+# whatever Go source happens to be checked out in fi-dev.
+worker_commit=c4eef9e84d9df9c4acfe0151ebc8beb3f6d4cb4a
+worker_path=/fast/jails/roots/fi-sor/usr/local/sbin/fi-c1-sor-worker
 generation=20261030T000032.061323100Z-3e38b2210771462c
 receipt_sha=29891703eea7bef6e21b84374c49193a9b1d58666665d418267e418e3414c7ed
 marker=generation-67ef0182b7803049344fafb4a693c0fa559abc603a15a4157fc982548b249c38.record.json
@@ -84,16 +88,85 @@ pending=$(sql "SELECT source_id||'|'||generation_id||'|'||state||'|'||
      record_count||'|'||batch_count FROM fi_c1_pending.generation_control")
 [ "$pending" = "$source|$generation|Pending|15140785|8399" ] ||
     fail "Pending control is not the exact interrupted signed generation"
-[ "$(sql "SELECT count(*) FROM fi_c1_pending.source_record")" = 334323 ] ||
-    fail "committed SourceParent count differs from audited interrupted prefix"
+# SourceParent transactions may have committed during the prior failed
+# attempt, even if the client did not receive their SQL ACKs. The exact
+# original signed ledger is authoritative; never hardcode an earlier count.
+pending_snapshot=$(sql "SELECT
+    (SELECT count(*) FROM fi_c1_pending.recorded_generation)::text||'|'||
+    (SELECT count(*) FROM fi_c1_pending.source_batch)::text||'|'||
+    (SELECT count(*) FROM fi_c1_pending.source_record)::text")
+pending_gen=$(printf '%s\n' "$pending_snapshot" | cut -d '|' -f 1)
+pending_batches=$(printf '%s\n' "$pending_snapshot" | cut -d '|' -f 2)
+pending_rows=$(printf '%s\n' "$pending_snapshot" | cut -d '|' -f 3)
+[ "$pending_gen" = 1 ] && [ "$pending_batches" = 8399 ] ||
+    fail "Pending signed metadata or batch ledger changed"
+[ "$pending_rows" -ge 334323 ] && [ "$pending_rows" -lt 15140785 ] ||
+    fail "committed source prefix outside previously verified bounds"
+echo "PENDING_COMMITTED_SOURCE_RECORDS_BEFORE=$pending_rows"
+# Authoritative per-batch identity, ordinal continuity and byte sums must
+# remain internally valid. This is a read-only audit, never an auto-repair.
+broken=$(sql "WITH per_batch AS (
+    SELECT sb.source_batch_id,sb.record_count AS expected,
+      sb.data_bytes AS expected_bytes,
+      count(sr.source_record_id) AS committed,
+      coalesce(min(sr.record_ordinal),0) AS first_ordinal,
+      coalesce(max(sr.record_ordinal),0) AS last_ordinal,
+      coalesce(sum(sr.record_bytes),0) AS committed_bytes
+    FROM fi_c1_pending.source_batch sb
+    LEFT JOIN fi_c1_pending.source_record sr
+      ON sr.source_batch_id=sb.source_batch_id
+    GROUP BY sb.source_batch_id,sb.record_count,sb.data_bytes
+)
+SELECT count(*) FROM per_batch WHERE
+  committed>expected OR committed_bytes>expected_bytes OR
+  (committed>0 AND (first_ordinal<>1 OR last_ordinal<>committed)) OR
+  (committed=expected AND committed_bytes<>expected_bytes)")
+[ "$broken" = 0 ] ||
+    fail "Pending SourceParent ordinals, counts or bytes are inconsistent"
 [ "$(sql "SELECT count(*) FROM fi.recorded_generation
     WHERE source_id='$source' AND generation_id='$generation'")" = 0 ] ||
     fail "generation is already canonical"
 [ "$(sql "SELECT has_database_privilege(
     'fi_c1_publisher','fi','TEMPORARY')")" = t ] ||
     fail "publisher TEMP privilege absent"
-jexec -U fi-sor fi-sor /usr/local/libexec/fi-c1-sor-run --verify ||
-    fail "installed fi-sor read-only preflight failed"
+echo "===== BUILD AND INSTALL TESTED USN-CAPTURE FIX ====="
+repo=/home/jwood/fi-c1-two-process-2a449f1a
+jexec -U jwood fi-dev git -C "$repo" fetch origin \
+  refs/heads/dev/c1-two-process-20261120:refs/remotes/origin/dev/c1-two-process-20261120
+jexec -U jwood fi-dev git -C "$repo" cat-file -e "$worker_commit^{commit}" ||
+    fail "pinned USN capture fix not in authenticated fi-dev checkout"
+build=$(jexec -U jwood fi-dev mktemp -d \
+    /home/jwood/fi-c1-usn-fix-build.XXXXXXXX)
+jexec -U jwood fi-dev /bin/sh -c '
+    set -eu
+    repo=$1
+    pin=$2
+    dir=$3
+    git -C "$repo" archive "$pin" | tar -xf - -C "$dir"
+    cd "$dir/go"
+    go test -tags fi_c1_sor_dev -count=1 ./internal/c1handoff ./internal/recordingest
+    go build -tags fi_c1_sor_dev -o "$dir/fi-c1-sor-worker" \
+        ./cmd/fi-c1-sor-worker
+    test -s "$dir/fi-c1-sor-worker"
+' sh "$repo" "$worker_commit" "$build" ||
+    fail "pinned FreeBSD C1 worker build/tests failed"
+candidate=/fast/jails/roots/fi-dev$build/fi-c1-sor-worker
+[ -s "$candidate" ] && [ ! -L "$candidate" ] ||
+    fail "built FI SoR binary absent or unsafe"
+[ -f "$worker_path" ] && [ ! -L "$worker_path" ] ||
+    fail "currently installed FI SoR binary absent or unsafe"
+backup_worker=$(mktemp /root/fi-c1-sor-usn-original.XXXXXXXX)
+cp -p "$worker_path" "$backup_worker"
+echo "FI_SOR_WORKER_OLD_SHA256=$(sha256 -q "$worker_path")"
+install -o root -g wheel -m 0755 "$candidate" "$worker_path" ||
+    fail "cannot install pinned SoR worker"
+echo "FI_SOR_WORKER_NEW_SHA256=$(sha256 -q "$worker_path")"
+if ! jexec -U fi-sor fi-sor /usr/local/libexec/fi-c1-sor-run --verify; then
+    install -o root -g wheel -m 0755 "$backup_worker" "$worker_path" || :
+    fail "updated fi-sor worker failed read-only preflight"
+fi
+echo "FI_SOR_USN_CAPTURE_FIX_PIN=$worker_commit"
+echo "FI_SOR_ORIGINAL_BINARY_BACKUP=$backup_worker"
 
 echo "===== SET REPLAY MODE ONLY FOR EXACT INTERRUPTED GENERATION ====="
 logdir=$(mktemp -d /root/fi-c1-exact-recovery-20261123.XXXXXXXX)
