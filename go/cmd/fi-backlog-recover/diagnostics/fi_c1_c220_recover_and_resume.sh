@@ -26,11 +26,11 @@ sql(){
     -h /var/db/fi/sor/run -p 5432 -d fi -c "$1"
 }
 postmortem(){
-  echo "===== EXACT SOR SQL REJECTIONS ====="
+  echo "===== EXACT SOR SESSION / START / SQL ERRORS ====="
   jexec fi-sor /bin/sh -c '
     for f in /var/log/daemon.log /var/log/messages; do
       [ -f "$f" ] || continue
-      grep -F "FI C1 SOR SQL HANDOFF REJECTED" "$f" | tail -12 || :
+      grep -E 'FI C1 SOR SESSION STOP|FI C1 SOR START REJECTED|FI C1 SOR SQL HANDOFF REJECTED|FI C1 NATIVE B FAILED' "$f" | tail -24 || :
     done
   ' || :
   echo "===== CURRENT PENDING SQL ====="
