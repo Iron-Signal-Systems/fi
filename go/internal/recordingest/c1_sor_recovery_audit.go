@@ -154,7 +154,27 @@ func AuditC1SoRPrivateRecovery(ctx context.Context,dsn string,plan c1handoff.Fra
         FROM `+pgx.Identifier{schema,"recorded_generation"}.Sanitize()+`
         WHERE source_id=$1 AND generation_id=$2 AND receipt_sha256=$3`,
         plan.SourceID,plan.GenerationID,digest).
-        Scan(&generationID,&storedRecords,&storedBatches);err!=nil{return report,err}
+        Scan(&generationID,&storedRecords,&storedBatches);err!=nil{
+        // The PostgreSQL role, row visibility and receipt selection need
+        // their own read-only evidence. Avoid flattening SQL ErrNoRows into
+        // a misleading implication that the original signed receipt changed.
+        if errors.Is(err,pgx.ErrNoRows){
+            var visible,exact int64
+            var role string
+            auditErr:=tx.QueryRow(ctx,
+                "SELECT current_user, count(*)::bigint, "+
+                "count(*) FILTER (WHERE receipt_sha256=$3)::bigint FROM "+
+                pgx.Identifier{schema,"recorded_generation"}.Sanitize()+
+                " WHERE source_id=$1 AND generation_id=$2",
+                plan.SourceID,plan.GenerationID,digest).Scan(&role,&visible,&exact)
+            if auditErr!=nil{
+                return report,fmt.Errorf("C1 recovery: exact Pending generation lookup failed; visibility audit: %w (initial: %v)",auditErr,err)
+            }
+            return report,fmt.Errorf("C1 recovery: signed Pending row not visible to role=%s schema=%s source_generation_matches=%d receipt_matches=%d: %w",
+                role,schema,visible,exact,err)
+        }
+        return report,fmt.Errorf("C1 recovery: exact signed Pending generation metadata query: %w",err)
+    }
     if generationID<=0||storedBatches!=int64(len(plan.BatchIDs))||storedRecords<=0{
         return report,errors.New("C1 recovery: original signed generation size/identity differs from private stage")
     }
@@ -218,7 +238,7 @@ ORDER BY sb.batch_id`,privateProjectionSchema+".",schema+"."),generationID)
     typedPrefix,err:=c1FindReadOnlyTypedPrefix(sourcePrefix,func(mid int)error{
         originals:=make([]PreparedBatch,mid)
         for i:=0;i<mid;i++{originals[i].BatchID=evidence[i].BatchID}
-        return verifyBacklogWindowProjectionCoverage(ctx,shadow,generationID,originals)
+        return verifyBacklogWindowProjectionCoverage(ctx,shadow,generationID,originals,schema)
     })
     if err!=nil{return report,err}
     if err=tx.Commit(ctx);err!=nil{return report,err}

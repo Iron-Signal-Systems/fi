@@ -7,28 +7,31 @@ package recordingest
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// At each bounded private commit check only source rows from THIS window.
-// The complete-generation verifier performs one full coverage scan at the end.
-// Scanning all previous windows after every commit would grow quadratically
-// for the 8,399-batch real signed backlog.
-func verifyBacklogWindowProjectionCoverage(ctx context.Context, tx pgx.Tx,
-	generationID int64, batches []PreparedBatch) error {
-	if generationID <= 0 || len(batches) == 0 {
-		return fmt.Errorf("FI backlog window coverage: missing generation or batches")
-	}
-	ids := make([]string, len(batches))
-	for i, b := range batches {
-		if b.BatchID == "" {
-			return fmt.Errorf("FI backlog window coverage: empty batch identity")
-		}
-		ids[i] = b.BatchID
-	}
-	var missing int64
-	err := tx.QueryRow(ctx, `
+// This SQL covers either the populated canonical SoR or one explicitly
+// approved FI staging schema. A source-provided name can never select SQL
+// identifiers. In particular, the C1 Pending restart audit MUST NOT check
+// the canonical fi schema when the durable parent rows live in fi_c1_pending.
+func backlogWindowCoverageSQL(targetSchema ...string)(string,error){
+    schema:="fi"
+    if len(targetSchema)>1{return "",fmt.Errorf("FI backlog window coverage: exactly one approved schema allowed")}
+    if len(targetSchema)==1 {
+        schema=targetSchema[0]
+    }
+    switch schema {
+    case "fi","fi_recovery_projection","fi_c1_pending":
+    default:
+        return "",fmt.Errorf("FI backlog window coverage: unapproved source schema %q",schema)
+    }
+    return strings.ReplaceAll(backlogWindowCoverageTemplate,"fi.",
+        pgx.Identifier{schema}.Sanitize()+"."),nil
+}
+
+const backlogWindowCoverageTemplate = `
 SELECT count(*)
 FROM fi.source_record sr
 JOIN fi.source_batch sb ON sb.source_batch_id=sr.source_batch_id
@@ -49,7 +52,28 @@ WHERE sb.recorded_generation_id=$1 AND sb.batch_id=ANY($2::text[])
     WHEN 'WindowsSecurityEvent' THEN NOT EXISTS (SELECT 1 FROM fi.windows_security_event x WHERE x.source_record_id=sr.source_record_id)
     ELSE true
  END
-`, generationID, ids).Scan(&missing)
+`
+
+// At each bounded private commit check only source rows from THIS window.
+// The complete-generation verifier performs one full coverage scan at the end.
+// Scanning all previous windows after every commit would grow quadratically
+// for the 8,399-batch real signed backlog.
+func verifyBacklogWindowProjectionCoverage(ctx context.Context, tx pgx.Tx,
+	generationID int64, batches []PreparedBatch, targetSchema ...string) error {
+	if generationID <= 0 || len(batches) == 0 {
+		return fmt.Errorf("FI backlog window coverage: missing generation or batches")
+	}
+	ids := make([]string, len(batches))
+	for i, b := range batches {
+		if b.BatchID == "" {
+			return fmt.Errorf("FI backlog window coverage: empty batch identity")
+		}
+		ids[i] = b.BatchID
+	}
+	query,err:=backlogWindowCoverageSQL(targetSchema...)
+	if err!=nil{return err}
+	var missing int64
+	err = tx.QueryRow(ctx,query, generationID, ids).Scan(&missing)
 	if err != nil {
 		return fmt.Errorf("FI backlog window coverage: %w", err)
 	}
