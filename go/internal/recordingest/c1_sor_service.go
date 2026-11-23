@@ -106,7 +106,7 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
     s.replayMode=replay
     counts,err:=s.loadSignedBatchRecordCounts(ctx,ids)
     if err!=nil{s.failed=err;return nil,err}
-    pool,err:=newC1SoRSQLPool(ctx,s.DSN,frame.SourceID,s.MaxSQLWorkers)
+    pool,err:=newC1SoRSQLPool(ctx,s.DSN,frame.SourceID,frame.GenerationID,s.MaxSQLWorkers)
     if err!=nil{s.failed=err;return nil,err}
     handler,err:=newC1SoRCommitHandler(pool,frame.SourceID,frame.GenerationID,
         frame.ReceiptSHA256,ids,counts,frame.ExpectedRecords)

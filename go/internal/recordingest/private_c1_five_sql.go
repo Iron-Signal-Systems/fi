@@ -119,6 +119,11 @@ type privateC1FiveSQL struct {
     scaleDowns int
     pids map[int64]bool // live PostgreSQL connections, including ordered parent
     sourceID string
+    // Only the authenticated fi-sor Bootstrap binds this immutable signed
+    // generation identity. Every USN SQL handoff creates a fresh bounded
+    // capture state and restores prior committed boundaries from Pending SQL.
+    // Never share a mutable USN capture map between SQL transactions.
+    usnGenerationID string
     ctx context.Context
     cancel context.CancelFunc
     wg sync.WaitGroup
@@ -506,6 +511,14 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
         w.sourceID,profile)
     if err!=nil{return err}
     writeCtx,hashCopy,aceCopy,usnCopy:=privateC1BoundedProjectorContext(ctx)
+    if lane.family==privateP6USN && !w.cloneOnly {
+        // The C1 fi-sor worker reuses the original P6 USN projector, which
+        // requires signed generation-scoped M6.1 capture state. The ordered
+        // USN dispatcher persists each handoff independently; a fresh context
+        // must restore earlier captures from the same Pending generation.
+        writeCtx,err=c1SoRUSNCaptureContext(writeCtx,w.sourceID,w.usnGenerationID)
+        if err!=nil{return err}
+    }
     if !w.cloneOnly{
         // The constructor that sets cloneOnly=false is confined to the
         // authenticated local-socket fi-sor runtime. Retain the exact
