@@ -238,7 +238,7 @@ ORDER BY sb.batch_id`,privateProjectionSchema+".",schema+"."),generationID)
     typedPrefix,err:=c1FindReadOnlyTypedPrefix(sourcePrefix,func(mid int)error{
         originals:=make([]PreparedBatch,mid)
         for i:=0;i<mid;i++{originals[i].BatchID=evidence[i].BatchID}
-        return verifyBacklogWindowProjectionCoverage(ctx,shadow,generationID,originals,schema)
+        return verifyBacklogWindowProjectionCoverage(ctx,shadow,generationID,originals)
     })
     if err!=nil{return report,err}
     if err=tx.Commit(ctx);err!=nil{return report,err}
