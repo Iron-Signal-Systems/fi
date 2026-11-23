@@ -87,11 +87,17 @@ echo "===== BUILD EXACT CI-PASSED FI-SOR DIAGNOSTIC WORKER ====="
 repo=
 for path in /home/jwood/fi-c1-two-process-2a449f1a \
             /home/jwood/fi-w512-c220-stage; do
-  if jexec -U jwood fi-dev git -C "$path" cat-file \
-      -e "$code_commit^{commit}" 2>/dev/null; then
+  if jexec -U jwood fi-dev git -C "$path" rev-parse \
+      --is-inside-work-tree >/dev/null 2>&1; then
     repo=$path;break
   fi
 done
+[ -n "$repo" ] || die "fi-dev repository checkout unavailable"
+jexec -U jwood fi-dev git -C "$repo" fetch origin \
+  refs/heads/dev/c1-two-process-20261120:refs/remotes/origin/dev/c1-two-process-20261120
+jexec -U jwood fi-dev git -C "$repo" cat-file \
+  -e "$code_commit^{commit}" ||
+  die "the tested diagnostic commit was not fetched"
 [ -n "$repo" ] || die "pinned diagnostic commit absent in fi-dev Git checkout"
 build=$(jexec -U jwood fi-dev mktemp -d \
   /home/jwood/fi-c1-sor-diagnostic.XXXXXXXX)
