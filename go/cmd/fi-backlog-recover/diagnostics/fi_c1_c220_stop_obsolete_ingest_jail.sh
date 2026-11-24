@@ -17,7 +17,13 @@ case "$1" in --audit|--stop) mode=$1;; *) fail 'unknown mode';; esac
 echo "===== OBSOLETE FI-INGEST JAIL STATUS ====="
 if jls -j fi-ingest >/dev/null 2>&1; then
     jls -j fi-ingest
-    if jexec fi-ingest /usr/bin/pgrep -fl 'fi-c1-ingest-worker|fi-ingest-worker' 2>/dev/null;then
+    pgrep=
+    for name in /bin/pgrep /usr/bin/pgrep;do
+        if jexec fi-ingest /bin/test -x "$name";then pgrep=$name;break;fi
+    done
+    [ -n "$pgrep" ] ||
+        fail 'cannot verify inactive workers without FreeBSD pgrep'
+    if jexec fi-ingest "$pgrep" -fl 'fi-c1-ingest-worker|fi-ingest-worker';then
         fail 'an FI ingest worker is still running; do not interrupt signed work'
     fi
     if [ "$mode" = --stop ];then

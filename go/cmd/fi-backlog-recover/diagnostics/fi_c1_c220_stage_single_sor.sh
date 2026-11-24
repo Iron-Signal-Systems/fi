@@ -26,8 +26,15 @@ if jls -j fi-ingest >/dev/null 2>&1;then
 fi
 jexec fi-sor /usr/sbin/service fi_c1_sor onestatus >/dev/null 2>&1 &&
     fail 'old inter-jail fi-sor service still running'
-jexec fi-sor /usr/bin/pgrep -f 'fi-c1-sor-local|fi-c1-ingest-worker' >/dev/null 2>&1 &&
+pgrep=
+for name in /bin/pgrep /usr/bin/pgrep;do
+    if jexec fi-sor /bin/test -x "$name";then pgrep=$name;break;fi
+done
+[ -n "$pgrep" ] ||
+    fail 'cannot verify absence of workers without FreeBSD pgrep'
+if jexec fi-sor "$pgrep" -fl 'fi-c1-sor-local|fi-c1-ingest-worker';then
     fail 'FI native C1 worker already running'
+fi
 for dir in /work/fi-c220-20261114/custody/generation \
            /work/fi-c220-20261114/custody/recorded;do
     [ -d "$dir" ] || fail "original receiver custody absent: $dir"
@@ -81,7 +88,7 @@ stage=$fi_sor/var/tmp/fi-c1-sor-local-scratch
 if [ -e "$stage" ] || [ -L "$stage" ];then
     [ -d "$stage" ] && [ ! -L "$stage" ] ||
         fail 'staging path exists but is not a real directory'
-    [ -z "$(find "$stage" -mindepth 1 -maxdepth 1 -print -quit)" ] ||
+    [ -z "$(ls -A "$stage")" ] ||
         fail 'existing fi-sor scratch is not empty; never delete it'
 else
     install -d -o 4100 -g 4100 -m 0700 "$stage" ||

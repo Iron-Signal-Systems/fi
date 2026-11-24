@@ -18,6 +18,8 @@ on:
       - 'go/cmd/fi-c1-host-preflight/**'
       - 'go/cmd/fi-c1-private-schema/**'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_*_c220.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stop_obsolete_ingest_jail.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_jail_names_ci.sh'
       - 'go/internal/freebsd/backendinstall/c1_private_projection_migration_sources.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_security.go'
@@ -64,6 +66,11 @@ jobs:
       - name: Validate exact FreeBSD C1 native binary stage shell
         working-directory: .
         run: sh -n tools/deployment/freebsd/build-fi-c1-dev.sh
+      - name: Verify single-jail host scripts are syntactically valid
+        working-directory: .
+        run: |
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stop_obsolete_ingest_jail.sh
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
