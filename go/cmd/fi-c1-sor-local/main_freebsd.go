@@ -17,6 +17,7 @@ import (
     "os/signal"
     "path/filepath"
     "syscall"
+    "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
@@ -35,6 +36,8 @@ func main() {
     gen:=f.String("generation-id","","one original signed generation")
     ready:=f.String("ready-root","","original receiver READY queue (single finite pass)")
     batch:=f.Uint64("ready-batch-size",16,"max READY markers per pass")
+    continuous:=f.Bool("continuous",false,"run governed READY passes until interrupted; disabled by default")
+    poll:=f.Duration("poll-interval",5*time.Second,"interval between finite READY passes; only with continuous")
     custody:=f.String("custody-root","","receiver original generation custody mounted read-only in fi-sor")
     recorded:=f.String("recorded-root","","receiver original recorded receipts mounted read-only in fi-sor")
     namespaces:=f.Bool("source-namespaces",false,"original per-source receipt namespaces")
@@ -55,6 +58,9 @@ func main() {
         fatal(errors.New("FI C1 local: select exact source, one generation OR READY queue, signed custody and both local SQL roles"))
     }
     if *ready!="" && *batch==0{fatal(errors.New("FI C1 local: READY pass must be bounded"))}
+    if *continuous && (*ready==""||*poll<=0){
+        fatal(errors.New("FI C1 local: continuous mode requires READY and a positive poll interval"))
+    }
     if *replay && *ready!=""{
         fatal(errors.New("FI C1 local: automatic READY ingestion cannot enable Pending replay"))
     }
@@ -90,10 +96,19 @@ func main() {
     // This modifies no original receiver custody or canonical PostgreSQL.
     if e=os.Setenv("TMPDIR",*staging);e!=nil{fatal(e)}
     if *ready!=""{
-        accepted,e:=recordingest.RunC1SoRLocalReadyPass(ctx,config,*ready,*batch)
-        if e!=nil{fatal(e)}
-        fmt.Printf("FI C1 SOR LOCAL FINITE READY PASS accepted=%d original_custody_preserved=true continuous=false\n",accepted)
-        return
+        for {
+            accepted,e:=recordingest.RunC1SoRLocalReadyPass(ctx,config,*ready,*batch)
+            if e!=nil{fatal(e)}
+            fmt.Printf("FI C1 SOR LOCAL READY PASS accepted=%d original_custody_preserved=true continuous=%t\n",accepted,*continuous)
+            if !*continuous{return}
+            timer:=time.NewTimer(*poll)
+            select {
+            case <-ctx.Done():
+                timer.Stop()
+                return
+            case <-timer.C:
+            }
+        }
     }
     receipt,e:=recordingest.C1SoRLocalRecordedReceipt(config,*gen)
     if e!=nil{fatal(e)}
