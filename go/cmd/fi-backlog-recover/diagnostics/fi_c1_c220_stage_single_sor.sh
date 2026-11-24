@@ -13,7 +13,7 @@ fail(){ echo "FI C1 SINGLE-JAIL STAGE STOP: $*" >&2; exit 1; }
     fail 'pinned physical C220 host required'
 repo=/home/jwood/fi-c1-two-process-2a449f1a
 branch=dev/c1-sor-single-jail-20261124
-pin=4fe5c21c9badd7884f9eea9f574ddd37e580f29f
+pin=b559a22ae6b0c0e8e571e81a40154c5cac84f457
 fi_dev=/fast/jails/roots/fi-dev
 fi_sor=/fast/jails/roots/fi-sor
 target=$fi_sor/usr/local/sbin/fi-c1-sor-local
@@ -83,6 +83,35 @@ else
     install -o root -g wheel -m 0555 "$candidate" "$target" ||
         fail 'unable to stage new fi-sor binary'
 fi
+echo "===== INSTALL DISABLED BY DEFAULT SINGLE-JAIL SERVICE ASSETS ====="
+stage_asset(){
+    original=$1
+    destination=$2
+    mode=$3
+    tmp=$(mktemp /root/fi-c1-local-asset.XXXXXXXX) ||
+        fail 'cannot allocate atomic service artifact'
+    jexec -U jwood fi-dev git -C "$repo" show "$pin:$original" > "$tmp" ||
+        fail "cannot fetch pinned service asset $original"
+    [ -s "$tmp" ] || fail "empty service asset $original"
+    case "$original" in
+        *.sh) sh -n "$tmp" || fail "invalid service runner $original" ;;
+    esac
+    if [ -e "$destination" ] || [ -L "$destination" ];then
+        [ -f "$destination" ] && [ ! -L "$destination" ] &&
+            cmp -s "$tmp" "$destination" ||
+            fail "different service asset already installed: $destination"
+    else
+        install -o root -g wheel -m "$mode" "$tmp" "$destination" ||
+            fail "cannot stage service asset $destination"
+    fi
+    rm -f "$tmp"
+}
+stage_asset tools/deployment/freebsd/fi-c1-sor-local-run.sh \
+    "$fi_sor/usr/local/libexec/fi-c1-sor-local-run" 0555
+stage_asset tools/deployment/freebsd/fi-c1-sor-local-rc.sh \
+    "$fi_sor/usr/local/etc/rc.d/fi_c1_sor_local" 0555
+stage_asset tools/deployment/freebsd/fi-c1-sor-local.conf \
+    "$fi_sor/etc/rc.conf.d/fi_c1_sor_local" 0644
 echo "===== CREATE EMPTY DISPOSABLE FI-SOR CACHE DIRECTORY ====="
 stage=$fi_sor/var/tmp/fi-c1-sor-local-scratch
 if [ -e "$stage" ] || [ -L "$stage" ];then
@@ -119,6 +148,8 @@ jexec -U fi-sor fi-sor /bin/sh -c '
         -sql-workers-max 32 \
         -staging-root /var/tmp/fi-c1-sor-local-scratch
 ' || fail 'new native C1 direct fi-sor read-only preflight failed'
+jexec -U fi-sor fi-sor /usr/local/libexec/fi-c1-sor-local-run --verify ||
+    fail 'disabled single-jail dual-source service runner preflight failed'
 after=$(sql "BEGIN READ ONLY; SELECT count(*) FROM fi.recorded_generation; COMMIT;" |
     grep -E '^[0-9]+$' | tail -1)
 [ "$after" = "$before" ] ||
