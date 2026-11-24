@@ -230,7 +230,7 @@ func RunC1SoRLocalGeneration(ctx context.Context,c C1SoRLocalConfig,
     ingestStart:=time.Now()
     var totals privateC1PrepTotals
     groupRows,groupSizes,err:=privateC1ConsumeContinuousSigned(
-        ctx,prep,signed,buffers,&totals,groups+1,privateFamilyP3Prepare,
+        ctx,prep,signed,buffers,&totals,groups+1,privateHeaderFirstPrepare,
         func(group int)error{
             return service.Commit(ctx,c1handoff.Frame{
                 Kind:c1handoff.Seal,Sequence:uint64(group+1),
