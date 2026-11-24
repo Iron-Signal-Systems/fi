@@ -6,11 +6,13 @@ on:
   push:
     branches:
       - dev/c1-two-process-20261120
+      - dev/c1-sor-single-jail-20261124
     paths:
       - 'go/internal/recordingest/**'
       - 'go/internal/c1handoff/**'
       - 'go/cmd/fi-ingest-worker/**'
       - 'go/cmd/fi-c1-sor-worker/**'
+      - 'go/cmd/fi-c1-sor-local/**'
       - 'go/cmd/fi-c1-ingest-worker/**'
       - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
       - 'go/cmd/fi-c1-host-preflight/**'
@@ -81,6 +83,10 @@ jobs:
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-ingest-worker ./cmd/fi-c1-ingest-worker
       - name: Cross-compile fi-sor native C1 SQL worker for FreeBSD
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-worker ./cmd/fi-c1-sor-worker
+      - name: Cross-compile fi-sor single-jail native C1 worker (no fi-ingest jail)
+        run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-local ./cmd/fi-c1-sor-local
+      - name: Run single-jail signed planning and direct-SQL safety tests
+        run: go test -race -tags fi_c1_sor_dev ./internal/recordingest -run '^TestC1SoRLocal' -count=1
       - name: Test mounted tmpfs FreeBSD noexec nosuid owner/GID
         run: go test ./internal/freebsd/backendinstall -run '^TestC1RAMMountSecurity' -count=1
       - name: Test mounted tmpfs actual block limit
