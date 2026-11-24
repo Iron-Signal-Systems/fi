@@ -5,6 +5,7 @@ package recordingest
 import (
     "context"
     "fmt"
+    "reflect"
     "strings"
     "testing"
 
@@ -94,5 +95,26 @@ func TestC1SoRLocalNeverAdmitsWithoutAnActiveNativeSQLPool(t *testing.T){
     }
     if err:=s.Family(context.Background(),privateP6Security,[]privateP6Record{{}});err==nil{
         t.Fatal("missing original native SQL pool accepted Security SQL")
+    }
+}
+
+type c1SoRLocalNoopSink struct{}
+func(c1SoRLocalNoopSink)Source(context.Context,[]privateP6Record)error{return nil}
+func(c1SoRLocalNoopSink)Family(context.Context,privateP6Family,[]privateP6Record)error{return nil}
+
+func TestC1SoRLocalMatchesProvenHeaderFirstSecurityBuffer(t *testing.T){
+    if reflect.ValueOf(c1SoRLocalBenchmarkedPrepare()).Pointer()!=
+       reflect.ValueOf(privateHeaderFirstPrepare).Pointer(){
+        t.Fatal("single-jail C1 substituted a non-benchmark P5 preparation function")
+    }
+    // The 20,482 records/sec C1 candidate used 8192/32MiB Security
+    // buffering and 32 possible SQL workers; this is not the old 4096/16MiB.
+    t.Setenv("FI_C1_SECURITY_8G_EXPERIMENT","0")
+    t.Setenv("FI_C1_SECURITY_FULL_BACKLOG_CANDIDATE","0")
+    buffers,err:=newC1NativeP6Buffers(1,c1SoRLocalNoopSink{})
+    if err!=nil{t.Fatal(err)}
+    limit:=buffers.lanes[privateP6Security].limit
+    if limit.rows!=8192||limit.bytes!=32<<20{
+        t.Fatalf("C1 native Security buffer regressed: %+v",limit)
     }
 }
