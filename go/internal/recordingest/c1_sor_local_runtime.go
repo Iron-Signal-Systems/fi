@@ -181,6 +181,13 @@ func(s *c1LocalDirectSQLSink) WaitAll(ctx context.Context)error{
 }
 func(s *c1LocalDirectSQLSink) AsyncUSNDependencies()bool{return s.valid()}
 
+// Locked to the exact header-first preparation path used by the successful
+// November 21 C220 C1 full-backlog benchmark (20,482.34 rec/s).
+// Never substitute the older generic P3 parser during jail integration.
+func c1SoRLocalBenchmarkedPrepare()privateHeaderPrepareFunc{
+    return privateHeaderFirstPrepare
+}
+
 func RunC1SoRLocalGeneration(ctx context.Context,c C1SoRLocalConfig,
     g *PreparedGeneration)(C1SoRLocalResult,error){
     var result C1SoRLocalResult
@@ -230,7 +237,7 @@ func RunC1SoRLocalGeneration(ctx context.Context,c C1SoRLocalConfig,
     ingestStart:=time.Now()
     var totals privateC1PrepTotals
     groupRows,groupSizes,err:=privateC1ConsumeContinuousSigned(
-        ctx,prep,signed,buffers,&totals,groups+1,privateHeaderFirstPrepare,
+        ctx,prep,signed,buffers,&totals,groups+1,c1SoRLocalBenchmarkedPrepare(),
         func(group int)error{
             return service.Commit(ctx,c1handoff.Frame{
                 Kind:c1handoff.Seal,Sequence:uint64(group+1),
