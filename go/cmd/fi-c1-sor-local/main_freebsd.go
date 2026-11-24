@@ -144,13 +144,18 @@ func main() {
         fmt.Printf("FI C1 SOR LOCAL ALREADY ACCEPTED source=%s generation=%s no_replay=true\n",*source,*gen)
         return
     }
+    totalStarted:=time.Now()
     signed,e:=recordingest.LoadRecordedGeneration(recordingest.C1SoRLocalGenerationLoad(config),*gen)
     if e!=nil{fatal(e)}
+    extractionElapsed:=time.Since(totalStarted)
     result,runErr:=recordingest.RunC1SoRLocalGeneration(ctx,config,signed)
     closeErr:=signed.Close()
+    totalElapsed:=time.Since(totalStarted)
     if e=errors.Join(runErr,closeErr);e!=nil{fatal(e)}
     if !result.CanonicalAccepted{fatal(errors.New("FI C1 local: canonical acceptance withheld"))}
-    fmt.Printf("FI C1 SOR LOCAL COMPLETE source=%s generation=%s records=%d ingest_rec_s=%.2f accepted=true\n",
-        result.SourceID,result.GenerationID,result.Records,result.IngestRecordsPerSecond)
+    fmt.Printf("FI C1 SOR LOCAL COMPLETE source=%s generation=%s records=%d verify_extract_seconds=%.3f ingestion_seconds=%.3f ingestion_rec_s=%.2f full_wall_seconds=%.3f effective_rec_s=%.2f independently_verified=true canonical_accepted=true\n",
+        result.SourceID,result.GenerationID,result.Records,
+        extractionElapsed.Seconds(),result.IngestElapsed.Seconds(),result.IngestRecordsPerSecond,
+        totalElapsed.Seconds(),float64(result.Records)/totalElapsed.Seconds())
 }
 func fatal(err error){fmt.Fprintln(os.Stderr,"FI C1 SOR LOCAL STOP:",err);os.Exit(1)}

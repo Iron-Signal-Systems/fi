@@ -13,6 +13,7 @@ import (
     "errors"
     "fmt"
     "path/filepath"
+    "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/generationready"
@@ -42,10 +43,13 @@ func RunC1SoRLocalReadyPass(ctx context.Context,c C1SoRLocalConfig,
             if status!=c1handoff.FinalVerified{
                 return accepted,errors.New("FI C1 local READY: unsafe canonical status")
             }
+            overallStart:=time.Now()
             g,e:=LoadRecordedGeneration(load,want.generationID)
             if e!=nil{return accepted,fmt.Errorf("FI C1 local READY: original signed custody: %w",e)}
+            extractionElapsed:=time.Since(overallStart)
             result,runErr:=RunC1SoRLocalGeneration(ctx,c,g)
             closeErr:=g.Close()
+            completeElapsed:=time.Since(overallStart)
             if runErr!=nil||closeErr!=nil{
                 return accepted,errors.Join(runErr,closeErr)
             }
@@ -54,6 +58,10 @@ func RunC1SoRLocalReadyPass(ctx context.Context,c C1SoRLocalConfig,
                result.GenerationID!=want.generationID{
                 return accepted,errors.New("FI C1 local READY: signed Accepted proof did not match original receipt")
             }
+            fmt.Printf("FI C1 SOR LOCAL END TO END source=%s generation=%s records=%d verify_extract_seconds=%.3f ingestion_seconds=%.3f entire_wall_seconds=%.3f effective_rec_s=%.2f canonical_accepted=true signed_custody_preserved=true\n",
+                c.SourceID,want.generationID,result.Records,
+                extractionElapsed.Seconds(),result.IngestElapsed.Seconds(),
+                completeElapsed.Seconds(),float64(result.Records)/completeElapsed.Seconds())
         }
         // Only scheduling marker retirement is authorized. Original
         // signed custody, recorded receipts and generation remain immutable.
