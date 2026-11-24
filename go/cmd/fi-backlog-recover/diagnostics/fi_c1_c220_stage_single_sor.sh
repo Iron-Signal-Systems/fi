@@ -13,7 +13,7 @@ fail(){ echo "FI C1 SINGLE-JAIL STAGE STOP: $*" >&2; exit 1; }
     fail 'pinned physical C220 host required'
 repo=/home/jwood/fi-c1-two-process-2a449f1a
 branch=dev/c1-sor-single-jail-20261124
-pin=b559a22ae6b0c0e8e571e81a40154c5cac84f457
+pin=6473fafbbf0e952842b7009ae726b79ec4f370d3
 fi_dev=/fast/jails/roots/fi-dev
 fi_sor=/fast/jails/roots/fi-sor
 target=$fi_sor/usr/local/sbin/fi-c1-sor-local
