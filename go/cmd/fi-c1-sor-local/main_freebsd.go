@@ -80,6 +80,9 @@ func main() {
     defer stop()
     if *preflight{
         if e:=recordingest.PreflightC1SoRLocal(ctx,config);e!=nil{fatal(e)}
+        if *gen!=""{
+            if _,e:=recordingest.C1SoRLocalRecordedReceipt(config,*gen);e!=nil{fatal(e)}
+        }
         fmt.Println("FI C1 SOR SINGLE-JAIL READ-ONLY PREFLIGHT PASS fi_ingest_jail_unused=true signed_receiver_custody_readonly=true postgres_local=true services_started=false")
         return
     }

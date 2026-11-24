@@ -100,6 +100,13 @@ jexec -U fi-sor fi-sor /bin/sh -c '
     . /etc/rc.conf.d/fi_c1_sor
     : "${fi_c1_sor_postgres_local:?}"
     : "${fi_c1_sor_postgres_publisher_local:?}"
+    if [ -n "${fi_c1_sor_pgpass:-}" ];then
+        [ -f "$fi_c1_sor_pgpass" ] && [ ! -L "$fi_c1_sor_pgpass" ] &&
+            [ -r "$fi_c1_sor_pgpass" ] ||
+            exit 1
+        PGPASSFILE=$fi_c1_sor_pgpass
+        export PGPASSFILE
+    fi
     exec /usr/local/sbin/fi-c1-sor-local \
         -preflight \
         -source-id iss-fs-22a.iss.local \
