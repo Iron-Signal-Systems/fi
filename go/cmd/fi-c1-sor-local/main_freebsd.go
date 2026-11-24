@@ -1,0 +1,112 @@
+//go:build freebsd && fi_c1_sor_dev
+
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+//
+// One-jail C1. Nothing uses fi-ingest, an inter-jail socket, or host RAM.
+// This executable also hosts its own independent B child OS process.
+package main
+
+import (
+    "context"
+    "errors"
+    "flag"
+    "fmt"
+    "os"
+    "os/signal"
+    "path/filepath"
+    "syscall"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
+    "github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
+)
+
+func main() {
+    if len(os.Args)==2&&os.Args[1]=="--c1-b-child"{
+        if os.Geteuid()==0{fatal(errors.New("FI C1 B: refuse root execution"))}
+        ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
+        defer stop()
+        if err:=recordingest.RunC1SoRNativeBChild(ctx,os.Stdin,os.Stdout);err!=nil{fatal(err)}
+        return
+    }
+    f:=flag.NewFlagSet("fi-c1-sor-local",flag.ExitOnError)
+    source:=f.String("source-id","","original registered sender identity")
+    gen:=f.String("generation-id","","one original signed generation")
+    ready:=f.String("ready-root","","original receiver READY queue (single finite pass)")
+    batch:=f.Uint64("ready-batch-size",16,"max READY markers per pass")
+    custody:=f.String("custody-root","","receiver original generation custody mounted read-only in fi-sor")
+    recorded:=f.String("recorded-root","","receiver original recorded receipts mounted read-only in fi-sor")
+    namespaces:=f.Bool("source-namespaces",false,"original per-source receipt namespaces")
+    db:=f.String("postgres-local","","fi-sor local Unix socket DSN, fi_ingest")
+    publisher:=f.String("postgres-publisher-local","","fi-sor local canonical publisher Unix socket DSN")
+    max:=f.Int("sql-workers-max",32,"tested adaptive shared SQL pool maximum")
+    replay:=f.Bool("reconcile-private-replay",false,"EXPLICIT recovery only, requires intact original custody + read-only PostgreSQL audit")
+    staging:=f.String("staging-root","","disposable local fast-pool scratch for receiver-verified batch extraction; never receiver custody")
+    preflight:=f.Bool("preflight",false,"read-only: verify local mode, custody mounts and DB without staging or ingestion")
+    canonical:=f.Uint64("max-canonical-bytes",75161927680,"receiver canonical limit")
+    encoded:=f.Uint64("max-encoded-bytes",68719476736,"receiver encoded limit")
+    manifest:=f.Uint64("max-manifest-bytes",1048576,"original manifest byte limit")
+    if err:=f.Parse(os.Args[1:]);err!=nil{fatal(err)}
+    if f.NArg()!=0{fatal(errors.New("FI C1 local: positional arguments forbidden"))}
+    if os.Geteuid()==0{fatal(errors.New("FI C1 local: refuse root; run as fi-sor service account"))}
+    if *source==""||(*gen=="")==(*ready=="")||*staging==""||
+       *custody==""||*recorded==""||*db==""||*publisher==""{
+        fatal(errors.New("FI C1 local: select exact source, one generation OR READY queue, signed custody and both local SQL roles"))
+    }
+    if *ready!="" && *batch==0{fatal(errors.New("FI C1 local: READY pass must be bounded"))}
+    if *replay && *ready!=""{
+        fatal(errors.New("FI C1 local: automatic READY ingestion cannot enable Pending replay"))
+    }
+    if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*custody);e!=nil{fatal(e)}
+    if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*recorded);e!=nil{fatal(e)}
+    // The only writable source staging lives on fi-sor's local fast pool.
+    // It is disposable, never a second receiver custody authority.
+    stageInfo,e:=os.Lstat(*staging)
+    if e!=nil||!stageInfo.IsDir()||stageInfo.Mode()&os.ModeSymlink!=0||
+        !filepath.IsAbs(*staging){
+        fatal(errors.New("FI C1 local: explicit existing non-symlink local staging directory required"))
+    }
+    config:=recordingest.C1SoRLocalConfig{
+        SourceID:*source,WorkerDSN:*db,PublisherDSN:*publisher,
+        SQLWorkersMax:*max,AllowReplay:*replay,
+        Custody:recordingest.C1NativeBCustodyConfig{
+            CustodyRoot:*custody,RecordedRoot:*recorded,
+            SourceNamespaces:*namespaces,MaxCanonicalBytes:*canonical,
+            MaxEncodedBytes:*encoded,MaxManifestBytes:*manifest,
+        },
+    }
+    ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
+    defer stop()
+    if *preflight{
+        if e:=recordingest.PreflightC1SoRLocal(ctx,config);e!=nil{fatal(e)}
+        fmt.Println("FI C1 SOR SINGLE-JAIL READ-ONLY PREFLIGHT PASS fi_ingest_jail_unused=true signed_receiver_custody_readonly=true postgres_local=true services_started=false")
+        return
+    }
+    // Generation extraction is confined to this explicit fast-pool scratch.
+    // This modifies no original receiver custody or canonical PostgreSQL.
+    if e=os.Setenv("TMPDIR",*staging);e!=nil{fatal(e)}
+    if *ready!=""{
+        accepted,e:=recordingest.RunC1SoRLocalReadyPass(ctx,config,*ready,*batch)
+        if e!=nil{fatal(e)}
+        fmt.Printf("FI C1 SOR LOCAL FINITE READY PASS accepted=%d original_custody_preserved=true continuous=false\n",accepted)
+        return
+    }
+    receipt,e:=recordingest.C1SoRLocalRecordedReceipt(config,*gen)
+    if e!=nil{fatal(e)}
+    status,e:=recordingest.C1SoRLocalCanonicalStatus(ctx,config,*gen,receipt)
+    if e!=nil{fatal(e)}
+    if status==c1handoff.FinalAccepted{
+        fmt.Printf("FI C1 SOR LOCAL ALREADY ACCEPTED source=%s generation=%s no_replay=true\n",*source,*gen)
+        return
+    }
+    signed,e:=recordingest.LoadRecordedGeneration(recordingest.C1SoRLocalGenerationLoad(config),*gen)
+    if e!=nil{fatal(e)}
+    result,runErr:=recordingest.RunC1SoRLocalGeneration(ctx,config,signed)
+    closeErr:=signed.Close()
+    if e=errors.Join(runErr,closeErr);e!=nil{fatal(e)}
+    if !result.CanonicalAccepted{fatal(errors.New("FI C1 local: canonical acceptance withheld"))}
+    fmt.Printf("FI C1 SOR LOCAL COMPLETE source=%s generation=%s records=%d ingest_rec_s=%.2f accepted=true\n",
+        result.SourceID,result.GenerationID,result.Records,result.IngestRecordsPerSecond)
+}
+func fatal(err error){fmt.Fprintln(os.Stderr,"FI C1 SOR LOCAL STOP:",err);os.Exit(1)}
