@@ -13,6 +13,7 @@ on:
       - 'go/cmd/fi-ingest-worker/**'
       - 'go/cmd/fi-c1-sor-worker/**'
       - 'go/cmd/fi-c1-sor-local/**'
+      - 'tools/deployment/freebsd/fi-c1-sor-local-*'
       - 'go/cmd/fi-c1-ingest-worker/**'
       - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
       - 'go/cmd/fi-c1-host-preflight/**'
@@ -71,6 +72,8 @@ jobs:
         run: |
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stop_obsolete_ingest_jail.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh
+          sh -n tools/deployment/freebsd/fi-c1-sor-local-run.sh
+          sh -n tools/deployment/freebsd/fi-c1-sor-local-rc.sh
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
