@@ -18,6 +18,7 @@ import (
     "path/filepath"
     "syscall"
     "time"
+    "strings"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/recordingest"
@@ -32,7 +33,8 @@ func main() {
         return
     }
     f:=flag.NewFlagSet("fi-c1-sor-local",flag.ExitOnError)
-    source:=f.String("source-id","","original registered sender identity")
+    source:=f.String("source-id","","one original sender: explicit generation or single-source READY")
+    sources:=f.String("sources","","ordered, comma-separated registered senders for one sequential READY processor")
     gen:=f.String("generation-id","","one original signed generation")
     ready:=f.String("ready-root","","original receiver READY queue (single finite pass)")
     batch:=f.Uint64("ready-batch-size",16,"max READY markers per pass")
@@ -53,9 +55,29 @@ func main() {
     if err:=f.Parse(os.Args[1:]);err!=nil{fatal(err)}
     if f.NArg()!=0{fatal(errors.New("FI C1 local: positional arguments forbidden"))}
     if os.Geteuid()==0{fatal(errors.New("FI C1 local: refuse root; run as fi-sor service account"))}
-    if *source==""||(*gen=="")==(*ready=="")||*staging==""||
+    if (*gen=="")==(*ready=="")||*staging==""||
        *custody==""||*recorded==""||*db==""||*publisher==""{
-        fatal(errors.New("FI C1 local: select exact source, one generation OR READY queue, signed custody and both local SQL roles"))
+        fatal(errors.New("FI C1 local: one generation OR READY queue, signed custody and both local SQL roles required"))
+    }
+    if (*source=="")==(*sources==""){
+        fatal(errors.New("FI C1 local: choose one source-id OR a multi-source READY roster"))
+    }
+    if *sources!="" && *ready==""{
+        fatal(errors.New("FI C1 local: multi-source mode requires original READY queue"))
+    }
+    orderedSources:=make([]string,0,2)
+    if *source!=""{
+        orderedSources=append(orderedSources,*source)
+    }else{
+        seen:=make(map[string]bool)
+        for _,name:=range strings.Split(*sources,","){
+            name=strings.TrimSpace(name)
+            if name==""||seen[name]||strings.ContainsAny(name,"/\\"){
+                fatal(errors.New("FI C1 local: invalid or duplicate READY source identity"))
+            }
+            seen[name]=true
+            orderedSources=append(orderedSources,name)
+        }
     }
     if *ready!="" && *batch==0{fatal(errors.New("FI C1 local: READY pass must be bounded"))}
     if *continuous && (*ready==""||*poll<=0){
@@ -74,7 +96,7 @@ func main() {
         fatal(errors.New("FI C1 local: explicit existing non-symlink local staging directory required"))
     }
     config:=recordingest.C1SoRLocalConfig{
-        SourceID:*source,WorkerDSN:*db,PublisherDSN:*publisher,
+        SourceID:orderedSources[0],WorkerDSN:*db,PublisherDSN:*publisher,
         SQLWorkersMax:*max,AllowReplay:*replay,
         Custody:recordingest.C1NativeBCustodyConfig{
             CustodyRoot:*custody,RecordedRoot:*recorded,
@@ -97,9 +119,13 @@ func main() {
     if e=os.Setenv("TMPDIR",*staging);e!=nil{fatal(e)}
     if *ready!=""{
         for {
-            accepted,e:=recordingest.RunC1SoRLocalReadyPass(ctx,config,*ready,*batch)
-            if e!=nil{fatal(e)}
-            fmt.Printf("FI C1 SOR LOCAL READY PASS accepted=%d original_custody_preserved=true continuous=%t\n",accepted,*continuous)
+            for _,originalSource:=range orderedSources{
+                config.SourceID=originalSource
+                accepted,e:=recordingest.RunC1SoRLocalReadyPass(ctx,config,*ready,*batch)
+                if e!=nil{fatal(e)}
+                fmt.Printf("FI C1 SOR LOCAL READY PASS source=%s accepted=%d original_custody_preserved=true continuous=%t\n",
+                    originalSource,accepted,*continuous)
+            }
             if !*continuous{return}
             timer:=time.NewTimer(*poll)
             select {
