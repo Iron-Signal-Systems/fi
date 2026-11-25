@@ -136,20 +136,41 @@ jexec -U fi-sor fi-sor /bin/sh -c '
         PGPASSFILE=$fi_c1_sor_pgpass
         export PGPASSFILE
     fi
-    exec /usr/local/sbin/fi-c1-sor-local \
+    # Match the ORIGINAL receiver receipt layout used by the working
+    # C220 C1 SoR. Never invent a "sources/<id>" namespace.
+    set -- \
         -preflight \
         -source-id iss-fs-22a.iss.local \
         -generation-id 20261030T000032.061323100Z-3e38b2210771462c \
         -custody-root /var/db/fi/custody/generation \
         -recorded-root /var/db/fi/custody/recorded \
-        -source-namespaces \
         -postgres-local "$fi_c1_sor_postgres_local" \
         -postgres-publisher-local "$fi_c1_sor_postgres_publisher_local" \
         -sql-workers-max 32 \
         -staging-root /var/tmp/fi-c1-sor-local-scratch
+    case "${fi_c1_sor_source_namespaces:-NO}" in
+        YES) set -- "$@" -source-namespaces ;;
+        NO) ;;
+        *) echo "FI C1 local: invalid original receipt namespace setting" >&2; exit 1 ;;
+    esac
+    exec /usr/local/sbin/fi-c1-sor-local "$@"
 ' || fail 'new native C1 direct fi-sor read-only preflight failed'
 jexec -U fi-sor fi-sor /usr/local/libexec/fi-c1-sor-local-run --verify ||
     fail 'disabled single-jail dual-source service runner preflight failed'
+echo "===== FI-SOR READY SCHEDULING MOUNT AUDIT (READ ONLY) ====="
+host_ready=/work/fi-c220-20261114/custody/ready
+sor_ready=$fi_sor/var/db/fi/custody/ready
+[ -d "$host_ready" ] ||
+    fail 'receiver READY scheduling root missing; original custody untouched'
+if mount -p | awk -v src="$host_ready" -v dst="$sor_ready" '
+    $2==dst {count++; if ($1==src && $3=="nullfs" && index(","$4",",",rw,")>0)good++}
+    END {exit !(count==1 && good==1)}
+';then
+    echo 'C1_SOR_ORIGINAL_READY_MOUNT=RW_VERIFIED'
+else
+    echo 'C1_SOR_ORIGINAL_READY_MOUNT=NOT_VERIFIED'
+    echo 'FI C1: READY intake cannot be enabled until original receiver READY root is mounted RW inside fi-sor'
+fi
 after=$(sql "BEGIN READ ONLY; SELECT count(*) FROM fi.recorded_generation; COMMIT;" |
     grep -E '^[0-9]+$' | tail -1)
 [ "$after" = "$before" ] ||
