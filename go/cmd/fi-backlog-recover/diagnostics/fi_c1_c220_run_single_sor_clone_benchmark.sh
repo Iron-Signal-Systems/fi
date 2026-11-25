@@ -9,7 +9,38 @@
 set -eu
 umask 077
 fail(){ echo "FI C1 SINGLE-JAIL CLONE BENCHMARK STOP: $*" >&2; exit 1; }
-[ "$#" -eq 2 ] || fail 'usage: --audit|--run PINNED_COMMIT_SHA'
+# These two mutually distinct cluster identities were independently observed
+# on the physical C220, not inferred from the benchmark clone configuration.
+# Only the disposable clone is required to have NO TCP listener.
+live_identity_expected='/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.22|5432|6773|0|6773'
+live_identity_matches(){ [ "$1" = "$live_identity_expected" ]; }
+clone_identity_matches(){ [ "$1" = "$2|$3||5432|0|0|0" ]; }
+if [ "$#" -eq 1 ] && [ "$1" = --selftest ];then
+    live_identity_matches "$live_identity_expected" ||
+        fail 'valid original live SoR fixture refused'
+    for bad in \
+        '/var/db/fi/sor/postgres|/var/db/fi/sor/run||5432|6773|0|6773' \
+        '/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.23|5432|6773|0|6773' \
+        '/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.22|5432|6773|1|6773' \
+        '/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.22|5432|6773|0|6772';do
+        if live_identity_matches "$bad";then fail "unsafe live identity accepted: $bad";fi
+    done
+    clone_identity_matches '/var/tmp/fi-c1-sor-bench.test1234/pgdata|/var/tmp/fi-c1-sor-bench.test1234/socket||5432|0|0|0' \
+        '/var/tmp/fi-c1-sor-bench.test1234/pgdata' '/var/tmp/fi-c1-sor-bench.test1234/socket' ||
+        fail 'valid isolated empty clone fixture refused'
+    for bad in \
+        '/var/tmp/fi-c1-sor-bench.test1234/pgdata|/var/tmp/fi-c1-sor-bench.test1234/socket|172.20.20.22|5432|0|0|0' \
+        '/var/db/fi/sor/postgres|/var/db/fi/sor/run||5432|0|0|0' \
+        '/var/tmp/fi-c1-sor-bench.test1234/pgdata|/var/tmp/fi-c1-sor-bench.test1234/socket||5432|1|0|0';do
+        if clone_identity_matches "$bad" '/var/tmp/fi-c1-sor-bench.test1234/pgdata' \
+            '/var/tmp/fi-c1-sor-bench.test1234/socket';then
+            fail "unsafe clone identity accepted: $bad"
+        fi
+    done
+    echo 'FI C1 SINGLE-JAIL CLONE LIVE/PRIVATE SQL IDENTITY SELFTEST PASS accepts_original_live_listener=true clone_tcp_disabled_required=true rejects_wrong_live_address=true rejects_pending_or_accepted_drift=true rejects_nonempty_or_live_clone=true'
+    exit 0
+fi
+[ "$#" -eq 2 ] || fail 'usage: --selftest | --audit|--run PINNED_COMMIT_SHA'
 case "$1" in --audit|--run) mode=$1;; *) fail 'only --audit or --run';; esac
 pin=$2
 case "$pin" in *[!0123456789abcdef]*|'') fail 'invalid full source pin';; esac
@@ -87,10 +118,10 @@ live_before=$(livesql "$identity")
 # contract. TCP isolation applies ONLY to the new disposable clone.
 # Compare the exact observed live identity (including Accepted journal),
 # rather than incorrectly demanding no TCP listener on live fi-sor.
-[ "$live_before" = '/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.22|5432|6773|0|6773' ] ||
+live_identity_matches "$live_before" ||
     fail "actual live PostgreSQL identity changed; abort benchmark: $live_before"
 clone_before=$(sql "$identity")
-[ "$clone_before" = "$pgdata|$socket||5432|0|0|0" ] ||
+clone_identity_matches "$clone_before" "$pgdata" "$socket" ||
     fail "clone PGDATA, socket, TCP/listen or fresh stage differs: $clone_before"
 # Both SQL roles (which must NOT gain pg_read_all_settings) will validate
 # this SAME immutable control-file identifier at runtime via pg_control_system.
