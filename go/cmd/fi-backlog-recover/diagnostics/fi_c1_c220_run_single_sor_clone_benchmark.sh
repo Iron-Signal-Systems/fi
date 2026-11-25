@@ -88,6 +88,13 @@ live_before=$(livesql "$identity")
 clone_before=$(sql "$identity")
 [ "$clone_before" = "$pgdata|$socket||5432|0|0|0" ] ||
     fail "clone PGDATA, socket, TCP/listen or fresh stage differs: $clone_before"
+# Both SQL roles (which must NOT gain pg_read_all_settings) will validate
+# this SAME immutable control-file identifier at runtime via pg_control_system.
+system_id=$(sql "SELECT system_identifier::text FROM pg_control_system()")
+live_system_id=$(livesql "SELECT system_identifier::text FROM pg_control_system()")
+case "$system_id" in ''|*[!0123456789]*) fail 'isolated clone control system identifier is missing or malformed';; esac
+[ "${#system_id}" -ge 12 ] && [ "$system_id" != "$live_system_id" ] ||
+    fail 'clone and live SoR have matching or invalid PostgreSQL system identifiers'
 [ "$(sql "SELECT count(*) FROM pg_tables WHERE schemaname='fi'")" = 49 ] &&
 [ "$(sql "SELECT count(*) FROM pg_tables WHERE schemaname='fi_c1_pending'")" = 50 ] ||
     fail 'original FI and governed Pending clone schema differs'
@@ -102,7 +109,7 @@ free_kib=$(df -Pk "$sorhost/var/tmp" | awk 'END{print $4}')
 case "$free_kib" in ''|*[!0123456789]*) fail 'invalid fast-pool available space';; esac
 [ "$free_kib" -ge 524288000 ] ||
     fail "need at least 500 GiB free for original signed expansion, full relational clone and WAL; current_kib=$free_kib"
-echo "FI C1 SINGLE-JAIL CLONE BENCHMARK AUDIT PASS mode=$mode source=$source generation=$generation signed_receipt_sha256=$receipt_sha canonical_before=6773 clone_canonical=0 clone_pending=0 clone_accepted=0 clone_pgdata=$pgdata original_custody_readonly=true service_disabled=true ready_untouched=true"
+echo "FI C1 SINGLE-JAIL CLONE BENCHMARK AUDIT PASS mode=$mode source=$source generation=$generation signed_receipt_sha256=$receipt_sha canonical_before=6773 clone_canonical=0 clone_pending=0 clone_accepted=0 clone_pgdata=$pgdata clone_system_identifier=$system_id distinct_from_live=true original_custody_readonly=true service_disabled=true ready_untouched=true"
 [ "$mode" = --audit ] && exit 0
 
 # No source checkout mutation: archive EXACT pinned revision inside fi-dev.
@@ -138,7 +145,7 @@ publisher="host=$socket port=5432 user=fi_c1_publisher dbname=fi sslmode=disable
 # No READY argument: benchmark cannot retire a scheduling marker.
 # Benchmark clone gate enforces both DB roles' actual PGDATA and socket.
 if ! jexec -U fi-sor fi-sor "$clone/fi-c1-sor-benchmark" \
-    -benchmark-clone-root "$clone" \
+    -benchmark-clone-root "$clone" -benchmark-system-id "$system_id" \
     -source-id "$source" -generation-id "$generation" \
     -custody-root /var/db/fi/custody/generation \
     -recorded-root /var/db/fi/custody/recorded \
