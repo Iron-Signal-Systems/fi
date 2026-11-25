@@ -83,7 +83,11 @@ identity="SELECT current_setting('data_directory') || '|' ||
   (SELECT count(*) FROM fi_c1_pending.generation_control)::text || '|' ||
   (SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted')::text"
 live_before=$(livesql "$identity")
-[ "$live_before" = '/var/db/fi/sor/postgres|/var/db/fi/sor/run||5432|6773|0|'"$(livesql "SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'")" ] ||
+# The LIVE SoR is published at 172.20.20.22 by its established networking
+# contract. TCP isolation applies ONLY to the new disposable clone.
+# Compare the exact observed live identity (including Accepted journal),
+# rather than incorrectly demanding no TCP listener on live fi-sor.
+[ "$live_before" = '/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.22|5432|6773|0|6773' ] ||
     fail "actual live PostgreSQL identity changed; abort benchmark: $live_before"
 clone_before=$(sql "$identity")
 [ "$clone_before" = "$pgdata|$socket||5432|0|0|0" ] ||
