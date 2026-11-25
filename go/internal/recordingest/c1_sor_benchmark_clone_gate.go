@@ -45,10 +45,16 @@ func c1ValidateIsolatedBenchmarkRoot(root string)error{
 
 // PreflightC1SoRBenchmarkClone verifies the exact isolated cluster; neither
 // the live SQL socket nor a different PostgreSQL instance can satisfy it.
-func PreflightC1SoRBenchmarkClone(ctx context.Context,c C1SoRLocalConfig,root string)error{
+func PreflightC1SoRBenchmarkClone(ctx context.Context,c C1SoRLocalConfig,root,expectedSystemID string)error{
     if ctx==nil{return errors.New("C1 benchmark: missing context")}
     if err:=validateC1SoRLocalConfig(c);err!=nil{return err}
     if err:=c1ValidateIsolatedBenchmarkRoot(root);err!=nil{return err}
+    if len(expectedSystemID)<12||len(expectedSystemID)>22{
+        return errors.New("C1 benchmark: required exact PostgreSQL system identifier missing")
+    }
+    for _,digit:=range expectedSystemID{
+        if digit<'0'||digit>'9'{return errors.New("C1 benchmark: malformed PostgreSQL system identifier")}
+    }
     data,sock:=filepath.Join(root,"pgdata"),filepath.Join(root,"socket")
     worker,err:=pgx.ParseConfig(c.WorkerDSN)
     if err!=nil{return err}
@@ -67,19 +73,25 @@ func PreflightC1SoRBenchmarkClone(ctx context.Context,c C1SoRLocalConfig,root st
     }{
         conn,err:=pgx.ConnectConfig(ctx,dsn.config)
         if err!=nil{return fmt.Errorf("C1 benchmark: local %s connection: %w",dsn.role,err)}
-        var actualData,actualSocket,listen,db,user,port string
+        var db,user,port,actualSystemID string
+        var serverIP,clientIP *string
         var standby bool
         var version int
-        err=conn.QueryRow(ctx,`SELECT current_setting('data_directory'),
-            current_setting('unix_socket_directories'),current_setting('listen_addresses'),
-            current_database(),current_user,current_setting('port'),
-            current_setting('server_version_num')::integer,pg_is_in_recovery()`).
-            Scan(&actualData,&actualSocket,&listen,&db,&user,&port,&version,&standby)
+        // The normal SQL worker has no pg_read_all_settings privilege.
+        // Its socket DSN plus this PostgreSQL-control-file identifier
+        // binds it to the SAME exact cluster that the host postgres
+        // administrator identified by the physical PGDATA path.
+        err=conn.QueryRow(ctx,`SELECT current_database(),current_user,
+            current_setting('port'),current_setting('server_version_num')::integer,
+            pg_is_in_recovery(),inet_server_addr()::text,inet_client_addr()::text,
+            (SELECT system_identifier::text FROM pg_control_system())`).
+            Scan(&db,&user,&port,&version,&standby,&serverIP,&clientIP,&actualSystemID)
         _=conn.Close(context.Background())
-        if err!=nil{return fmt.Errorf("C1 benchmark: SQL identity query: %w",err)}
-        if actualData!=data||actualSocket!=sock||listen!=""||db!="fi"||
-            user!=dsn.role||port!="5432"||version<180000||version>=190000||standby {
-            return fmt.Errorf("C1 benchmark: refusing physical SQL identity mismatch role=%s pgdata=%s socket=%s tcp=%q",user,actualData,actualSocket,listen)
+        if err!=nil{return fmt.Errorf("C1 benchmark: SQL system identity query for role %s: %w",dsn.role,err)}
+        if actualSystemID!=expectedSystemID||db!="fi"||user!=dsn.role||
+            port!="5432"||version<180000||version>=190000||standby||
+            serverIP!=nil||clientIP!=nil {
+            return fmt.Errorf("C1 benchmark: rejecting foreign cluster identity role=%s system_identifier=%s db=%s",user,actualSystemID,db)
         }
     }
     conn,_,err:=openC1SoRLocalSQL(ctx,c.WorkerDSN,"")
@@ -98,6 +110,6 @@ func PreflightC1SoRBenchmarkClone(ctx context.Context,c C1SoRLocalConfig,root st
         return fmt.Errorf("C1 benchmark: clone is not fresh 49+50 schema: canonical=%d pending=%d accepted=%d tables=%d+%d",canonical,pending,accepted,fiTables,pendingTables)
     }
     if err:=c1PreflightLocalGovernedPendingSQL(ctx,c.WorkerDSN);err!=nil{return err}
-    fmt.Printf("FI C1 SOR CLONE WORKER/PUBLISHER PIN PASS pgdata=%s socket=%s canonical=0 pending=0 accepted=0 readonly_gate=true\n",data,sock)
+    fmt.Printf("FI C1 SOR CLONE WORKER/PUBLISHER PIN PASS pgdata=%s socket=%s postgres_system_identifier=%s canonical=0 pending=0 accepted=0 readonly_gate=true\n",data,sock,expectedSystemID)
     return nil
 }
