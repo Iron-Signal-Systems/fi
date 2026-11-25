@@ -49,6 +49,7 @@ func main() {
     replay:=f.Bool("reconcile-private-replay",false,"EXPLICIT recovery only, requires intact original custody + read-only PostgreSQL audit")
     staging:=f.String("staging-root","","disposable local fast-pool scratch for receiver-verified batch extraction; never receiver custody")
     preflight:=f.Bool("preflight",false,"read-only: verify local mode, custody mounts and DB without staging or ingestion")
+    cloneRoot:=f.String("benchmark-clone-root","","explicit isolated C220 benchmark PGDATA root; enforces physical worker/publisher cluster identity")
     canonical:=f.Uint64("max-canonical-bytes",75161927680,"receiver canonical limit")
     encoded:=f.Uint64("max-encoded-bytes",68719476736,"receiver encoded limit")
     manifest:=f.Uint64("max-manifest-bytes",1048576,"original manifest byte limit")
@@ -86,6 +87,9 @@ func main() {
     if *replay && *ready!=""{
         fatal(errors.New("FI C1 local: automatic READY ingestion cannot enable Pending replay"))
     }
+    if *cloneRoot!="" && (*ready!=""||*gen==""||*continuous||*replay){
+        fatal(errors.New("FI C1 benchmark: require exactly one explicitly selected signed generation, no READY, no continuous mode and no Pending replay"))
+    }
     if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*custody);e!=nil{fatal(e)}
     if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*recorded);e!=nil{fatal(e)}
     // The only writable source staging lives on fi-sor's local fast pool.
@@ -106,6 +110,11 @@ func main() {
     }
     ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM)
     defer stop()
+    // Read-only physical PGDATA fence BEFORE signed generation loading and
+    // BEFORE any Pending SQL admission or canonical publication.
+    if *cloneRoot!=""{
+        if e:=recordingest.PreflightC1SoRBenchmarkClone(ctx,config,*cloneRoot);e!=nil{fatal(e)}
+    }
     if *preflight{
         if e:=recordingest.PreflightC1SoRLocal(ctx,config);e!=nil{fatal(e)}
         if *gen!=""{
