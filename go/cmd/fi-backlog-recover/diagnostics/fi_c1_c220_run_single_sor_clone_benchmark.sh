@@ -95,6 +95,20 @@ live_system_id=$(livesql "SELECT system_identifier::text FROM pg_control_system(
 case "$system_id" in ''|*[!0123456789]*) fail 'isolated clone control system identifier is missing or malformed';; esac
 [ "${#system_id}" -ge 12 ] && [ "$system_id" != "$live_system_id" ] ||
     fail 'clone and live SoR have matching or invalid PostgreSQL system identifiers'
+# A read-only probe AS EACH restricted worker role proves the cluster
+# identifier function is available without ANY new PostgreSQL privilege.
+# Do this in --audit BEFORE compiling or extracting original 65GiB data.
+for role in fi_ingest fi_c1_publisher;do
+    probe=$(jexec -U fi-sor fi-sor /usr/local/bin/psql \
+        -X -w -At -v ON_ERROR_STOP=1 -h "$socket" -p 5432 -U "$role" -d fi \
+        -c "SELECT current_user || '|' ||
+            (SELECT system_identifier::text FROM pg_control_system()) || '|' ||
+            (inet_server_addr() IS NULL)::text") ||
+        fail "restricted clone role $role cannot query local physical cluster identity"
+    [ "$probe" = "$role|$system_id|true" ] ||
+        fail "restricted clone role $role is not using the original isolated cluster"
+done
+echo "FI C1 BENCHMARK CLONE ROLE IDENTITY PASS worker=fi_ingest publisher=fi_c1_publisher system_identifier=$system_id isolated=true no_additional_role_privileges=true"
 [ "$(sql "SELECT count(*) FROM pg_tables WHERE schemaname='fi'")" = 49 ] &&
 [ "$(sql "SELECT count(*) FROM pg_tables WHERE schemaname='fi_c1_pending'")" = 50 ] ||
     fail 'original FI and governed Pending clone schema differs'
