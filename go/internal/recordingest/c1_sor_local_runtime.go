@@ -273,11 +273,17 @@ func RunC1SoRLocalGeneration(ctx context.Context,c C1SoRLocalConfig,
         SourceID:start.SourceID,GenerationID:start.GenerationID,
         ReceiptSHA256:start.ReceiptSHA256,
     }
+    bStart:=time.Now()
     if err=service.Commit(ctx,drain);err!=nil{
         return result,fmt.Errorf("FI C1 local: independent B verification: %w",err)
     }
+    bElapsed:=time.Since(bStart)
     result.IndependentlyVerified=true
+    publicationStart:=time.Now()
     final,err:=service.FinalProof(ctx,drain)
+    publicationElapsed:=time.Since(publicationStart)
+    fmt.Printf("FI C1 SOR LOCAL VERIFICATION/PUBLICATION TIMING independent_b_finalize_seconds=%.3f canonical_publication_readback_retirement_seconds=%.3f verification_parallel_to_ingest=true ingestion_clock_excludes_b_finalize_and_publication=true\n",
+        bElapsed.Seconds(),publicationElapsed.Seconds())
     if err!=nil{return result,fmt.Errorf("FI C1 local: canonical publication/Accepted readback: %w",err)}
     if final!=c1handoff.FinalAccepted{
         return result,errors.New("FI C1 local: independent B passed but canonical Accepted was withheld")
