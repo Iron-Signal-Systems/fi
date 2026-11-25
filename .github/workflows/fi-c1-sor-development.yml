@@ -74,6 +74,7 @@ jobs:
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stop_obsolete_ingest_jail.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh
+          sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh --selftest
           sh -n tools/deployment/freebsd/fi-c1-sor-local-run.sh
           sh -n tools/deployment/freebsd/fi-c1-sor-local-rc.sh
       - name: Set up Go
