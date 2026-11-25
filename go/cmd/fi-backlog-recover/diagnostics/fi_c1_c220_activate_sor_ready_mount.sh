@@ -7,8 +7,54 @@
 set -eu
 umask 077
 fail(){ printf 'FI C1 SOR READY MOUNT STOP: %s\n' "$*" >&2; exit 1; }
-[ "$#" -eq 1 ] || fail 'usage: --audit | --apply'
-case "$1" in --audit|--apply) mode=$1;; *) fail 'unknown action';; esac
+# Exercise the EXACT mount-options matcher in CI and on C220 before audit.
+# A malformed awk expression must never masquerade as a failed custody check.
+mount_options_match() {
+    awk -v source="$1" -v target="$2" -v access="$3" '
+        $2 == target {
+            count++
+            n = split($4, options, ",")
+            for (i = 1; i <= n; i++) {
+                if ($1 == source && $3 == "nullfs" && options[i] == access) {
+                    matched++
+                }
+            }
+        }
+        END { exit !(count == 1 && matched == 1) }
+    '
+}
+check_mount() {
+    mount -p | mount_options_match "$1" "$2" "$3"
+}
+selftest_mount_matcher() {
+    good_ro="/work/custody /fast/jails/roots/fi-sor/custody nullfs ro,nosuid 0 0"
+    good_rw="/work/ready /fast/jails/roots/fi-sor/ready nullfs rw 0 0"
+    printf '%s\\n' "$good_ro" |
+        mount_options_match /work/custody /fast/jails/roots/fi-sor/custody ro ||
+        fail 'RO match failed in synthetic mount fixture'
+    printf '%s\\n' "$good_rw" |
+        mount_options_match /work/ready /fast/jails/roots/fi-sor/ready rw ||
+        fail 'RW match failed in synthetic mount fixture'
+    if printf '%s\\n' "$good_ro" |
+        mount_options_match /work/custody /fast/jails/roots/fi-sor/custody rw; then
+        fail 'RW was incorrectly authorized on RO custody fixture'
+    fi
+    if printf '%s\\n' "$good_rw" |
+        mount_options_match /work/wrong /fast/jails/roots/fi-sor/ready rw; then
+        fail 'foreign original receiver READY source was accepted'
+    fi
+    if printf '%s\\n%s\\n' "$good_ro" "$good_ro" |
+        mount_options_match /work/custody /fast/jails/roots/fi-sor/custody ro; then
+        fail 'duplicate mount rows were accepted'
+    fi
+    printf 'FI C1 SOR READY MOUNT MATCHER SELFTEST PASS ro=true rw=true rejects_bad_access=true rejects_foreign_source=true rejects_duplicate=true\\n'
+}
+[ "$#" -eq 1 ] || fail 'usage: --selftest | --audit | --apply'
+case "$1" in
+    --selftest) selftest_mount_matcher; exit 0 ;;
+    --audit|--apply) mode=$1 ;;
+    *) fail 'unknown action' ;;
+esac
 [ "$(id -u)" -eq 0 ] && [ "$(uname -s)" = FreeBSD ] &&
     [ "$(hostname -s)" = c220 ] ||
     fail 'physical C220 FreeBSD host root required'
@@ -77,9 +123,7 @@ esac
 for pair in "$gen $sor/var/db/fi/custody/generation" \
             "$recorded $sor/var/db/fi/custody/recorded";do
     set -- $pair
-    mount -p | awk -v a="$1" -v b="$2" '
-    $2==b {n++;if($1==a&&$3=="nullfs"&&index(","$4",",",",ro,")>0)ok++}
-    END{exit !(n==1&&ok==1)}' ||
+    check_mount "$1" "$2" ro ||
         fail "original signed receiver custody mount lost read-only protection: $2"
 done
 # The source must be backed by the original work ZFS pool.
@@ -104,9 +148,7 @@ else
 fi
 
 # Exactly zero or one READY nullfs mounts; never cover a foreign mount.
-if mount -p | awk -v a="$src" -v b="$dst" '
-    $2==b {n++;if($1==a&&$3=="nullfs"&&index(","$4",",",",rw,")>0)ok++}
-    END{exit !(n==1&&ok==1)}';then
+if check_mount "$src" "$dst" rw;then
     live=present
 elif mount -p | awk -v b="$dst" '$2==b{n++}END{exit !(n==0)}';then
     live=absent
@@ -151,9 +193,7 @@ if [ "$live" = absent ];then
     mount -t nullfs -o rw "$src" "$dst" ||
         fail 'live scheduling READY nullfs mount failed; no boot changes made'
 fi
-mount -p | awk -v a="$src" -v b="$dst" '
-    $2==b {n++;if($1==a&&$3=="nullfs"&&index(","$4",",",",rw,")>0)ok++}
-    END{exit !(n==1&&ok==1)}' ||
+check_mount "$src" "$dst" rw ||
     fail 'live scheduling READY nullfs did not verify; no boot changes made'
 jexec -U fi-sor fi-sor /bin/test -r /var/db/fi/custody/ready &&
 jexec -U fi-sor fi-sor /bin/test -w /var/db/fi/custody/ready ||
