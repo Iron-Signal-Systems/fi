@@ -155,6 +155,9 @@ mount -p | awk -v a="$src" -v b="$dst" '
     $2==b {n++;if($1==a&&$3=="nullfs"&&index(","$4",",",",rw,")>0)ok++}
     END{exit !(n==1&&ok==1)}' ||
     fail 'live scheduling READY nullfs did not verify; no boot changes made'
+jexec -U fi-sor fi-sor /bin/test -r /var/db/fi/custody/ready &&
+jexec -U fi-sor fi-sor /bin/test -w /var/db/fi/custody/ready ||
+    fail 'unprivileged fi-sor cannot read/write original READY scheduling directory; leave workers disabled'
 if [ "$persistence" = absent ];then
     temp=$(mktemp /etc/jail.fstab.d/.fi-c1-sor-ready.XXXXXXXX) ||
         fail 'cannot prepare atomic persistent READY fstab'
