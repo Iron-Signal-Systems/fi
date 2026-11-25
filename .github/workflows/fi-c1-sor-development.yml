@@ -13,6 +13,7 @@ on:
       - 'go/cmd/fi-ingest-worker/**'
       - 'go/cmd/fi-c1-sor-worker/**'
       - 'go/cmd/fi-c1-sor-local/**'
+      - 'go/cmd/fi-c1-sor-clone-bootstrap/**'
       - 'tools/deployment/freebsd/fi-c1-sor-local-*'
       - 'go/cmd/fi-c1-ingest-worker/**'
       - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
@@ -22,6 +23,7 @@ on:
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stop_obsolete_ingest_jail.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_prepare_sor_clone.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_jail_names_ci.sh'
       - 'go/internal/freebsd/backendinstall/c1_private_projection_migration_sources.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_security.go'
@@ -74,6 +76,7 @@ jobs:
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stop_obsolete_ingest_jail.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_prepare_sor_clone.sh
           sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh --selftest
           sh -n tools/deployment/freebsd/fi-c1-sor-local-run.sh
           sh -n tools/deployment/freebsd/fi-c1-sor-local-rc.sh
@@ -98,6 +101,8 @@ jobs:
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-worker ./cmd/fi-c1-sor-worker
       - name: Cross-compile fi-sor single-jail native C1 worker (no fi-ingest jail)
         run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-local ./cmd/fi-c1-sor-local
+      - name: Cross-compile isolated PostgreSQL18 clone-only fi-sor C1 schema installer
+        run: GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-clone-bootstrap ./cmd/fi-c1-sor-clone-bootstrap
       - name: Run single-jail signed planning and direct-SQL safety tests
         run: go test -race -tags fi_c1_sor_dev ./internal/recordingest -run '^TestC1SoRLocal' -count=1
       - name: Test mounted tmpfs FreeBSD noexec nosuid owner/GID
