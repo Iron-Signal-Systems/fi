@@ -48,7 +48,8 @@ case "$live" in
     '/var/db/fi/sor/postgres|5432|6773|0') : ;;
     *) die "live SoR physical identity/count changed: $live" ;;
 esac
-[ "$(cat "$sorhost/usr/local/sbin/fi-c1-sor-local" | wc -c | tr -d ' ')" -gt 0 ] ||
+[ -s "$sorhost/usr/local/sbin/fi-c1-sor-local" ] &&
+[ ! -L "$sorhost/usr/local/sbin/fi-c1-sor-local" ] ||
     die 'native C1 single-jail executable missing'
 # Prior full backlog benchmark used 8GB WAL and 16MB buffers. Disk and
 # workload profile remain clone-only and are NOT applied to live Postgres.
@@ -101,17 +102,17 @@ candidate=$devhost$build/fi-c1-sor-clone-bootstrap
 install -o "$uid" -g "$pgid" -m 0500 "$candidate" "$full/fi-c1-sor-clone-bootstrap"
 
 echo '===== INITIALIZE SEPARATE POSTGRESQL 18 ====='
-jexec -U postgres fi-sor initdb -D "$clone/pgdata" -A trust --locale=C --encoding=UTF8 --no-instructions ||
+jexec -U postgres fi-sor /usr/local/bin/initdb -D "$clone/pgdata" -A trust --locale=C --encoding=UTF8 --no-instructions ||
     die 'disposable clone PostgreSQL initdb failed'
 # Explicitly refuse if any other PG18 cluster is serving this socket.
 [ ! -e "$full/socket/.s.PGSQL.5432" ] ||
     die 'private socket collision; no PostgreSQL start'
-jexec -U postgres fi-sor pg_ctl -D "$clone/pgdata" \
+jexec -U postgres fi-sor /usr/local/bin/pg_ctl -D "$clone/pgdata" \
     -l "$clone/postgres.log" \
     -o "-p 5432 -k $clone/socket -c listen_addresses= -c unix_socket_permissions=0777 -c max_connections=128 -c max_wal_size=8GB -c wal_buffers=16MB -c fsync=on -c synchronous_commit=on -c full_page_writes=on" \
     -w start ||
     die 'isolated PostgreSQL failed to start; leave clone untouched for diagnostics'
-jexec -U postgres fi-sor psql -X -w -v ON_ERROR_STOP=1 \
+jexec -U postgres fi-sor /usr/local/bin/psql -X -w -v ON_ERROR_STOP=1 \
     -h "$clone/socket" -p 5432 -d postgres -c "CREATE DATABASE fi OWNER postgres" ||
     die 'isolated fi database creation failed'
 echo '===== INSTALL FROZEN 49-TABLE CANONICAL AND GOVERNED PENDING INTO CLONE ====='
