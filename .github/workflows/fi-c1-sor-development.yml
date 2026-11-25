@@ -79,6 +79,7 @@ jobs:
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_prepare_sor_clone.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_run_single_sor_clone_benchmark.sh
+          sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_run_single_sor_clone_benchmark.sh --selftest
           sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh --selftest
           sh -n tools/deployment/freebsd/fi-c1-sor-local-run.sh
           sh -n tools/deployment/freebsd/fi-c1-sor-local-rc.sh
