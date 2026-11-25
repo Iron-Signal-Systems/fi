@@ -29,21 +29,21 @@ check_mount() {
 selftest_mount_matcher() {
     good_ro="/work/custody /fast/jails/roots/fi-sor/custody nullfs ro,nosuid 0 0"
     good_rw="/work/ready /fast/jails/roots/fi-sor/ready nullfs rw 0 0"
-    printf '%s\\n' "$good_ro" |
+    printf '%s\n' "$good_ro" |
         mount_options_match /work/custody /fast/jails/roots/fi-sor/custody ro ||
         fail 'RO match failed in synthetic mount fixture'
-    printf '%s\\n' "$good_rw" |
+    printf '%s\n' "$good_rw" |
         mount_options_match /work/ready /fast/jails/roots/fi-sor/ready rw ||
         fail 'RW match failed in synthetic mount fixture'
-    if printf '%s\\n' "$good_ro" |
+    if printf '%s\n' "$good_ro" |
         mount_options_match /work/custody /fast/jails/roots/fi-sor/custody rw; then
         fail 'RW was incorrectly authorized on RO custody fixture'
     fi
-    if printf '%s\\n' "$good_rw" |
+    if printf '%s\n' "$good_rw" |
         mount_options_match /work/wrong /fast/jails/roots/fi-sor/ready rw; then
         fail 'foreign original receiver READY source was accepted'
     fi
-    if printf '%s\\n%s\\n' "$good_ro" "$good_ro" |
+    if printf '%s\n%s\n' "$good_ro" "$good_ro" |
         mount_options_match /work/custody /fast/jails/roots/fi-sor/custody ro; then
         fail 'duplicate mount rows were accepted'
     fi
