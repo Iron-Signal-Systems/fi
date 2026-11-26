@@ -78,10 +78,12 @@ for db in fi fi_c1_replay_integration;do
 done
 
 cd go
-# New warm-cache regression: a genuinely signed receiver fixture must give
-# identical manifest/batch evidence without a SECOND 65GiB transfer read.
+# Cache input must match the genuine receiver-signed fixture on FreeBSD.
 go test -tags 'fi_c1_sor_dev' -count=1 \
-  -run '^TestC1SoRBenchmarkVerifiedCacheMatchesSignedReceiver
+  -run '^TestC1SoRBenchmarkVerifiedCacheMatchesSignedReceiver$' \
+  -v ./internal/recordingest ||
+  fail "C1 native FreeBSD verified-cache replay and safety regression"
+export GITHUB_ACTIONS=true
 export FI_C1_REPLAY_CI_ALLOW_ISOLATED_WRITES=1
 export FI_C1_REPLAY_PG_DSN='host=127.0.0.1 port=5432 user=fi_c1_test dbname=fi_c1_replay_integration sslmode=disable'
 go test -tags 'fi_c1_sor_dev fi_c1_replay_pg_integration' -count=1 \
