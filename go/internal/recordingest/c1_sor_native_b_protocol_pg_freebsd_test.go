@@ -40,7 +40,7 @@ type c1BReadyTrustFixture struct {
 
 func c1TestNativeBReadyProtocol(t *testing.T,ctx context.Context,
     admin *pgx.Conn,p c1NativeBPlan,custody c1NativeBCustodyConfig,
-    trust generationTrustBundle) {
+    trust generationTrustBundle) string {
     t.Helper()
     if os.Getenv("GITHUB_ACTIONS")!="true"||
         os.Getenv("FI_C1_SCHEMA_CI_ALLOW_DISPOSABLE")!="1"||
@@ -48,7 +48,7 @@ func c1TestNativeBReadyProtocol(t *testing.T,ctx context.Context,
         t.Fatal("C1 B IPC: disposable signed FreeBSD PostgreSQL18 fixture required")
     }
     if err:=c1ValidateNativeBPlan(p);err!=nil{t.Fatal(err)}
-    if p.SQLSchema!=c1GovernedPendingSchema||len(p.Descriptors)!=2{
+    if (p.SQLSchema!=c1GovernedPendingSchema&&p.SQLSchema!="fi")||len(p.Descriptors)!=2{
         t.Fatal("C1 B IPC: exact one committed reporting group required")
     }
     var socketRoots string
@@ -138,7 +138,12 @@ func c1TestNativeBReadyProtocol(t *testing.T,ctx context.Context,
         verifier.Stop()
         t.Fatalf("C1 real parent/child post-COMMIT notification/ACK protocol failed: %v",err)
     }
+    proof,err:=verifier.Commitment()
+    if err!=nil||!canonicalDigest(proof){
+        t.Fatalf("C1 B protocol exited without final original signed row commitment: %v",err)
+    }
     t.Log("PASS: actual C1 B child and its parent launcher/notification goroutines completed the strict signed post-COMMIT READY/PASS/FINAL protocol")
+    return proof
 }
 
 // Invoked only with the exact name above in a separate FreeBSD test OS
