@@ -322,14 +322,13 @@ func c1SignedCrashAfter(t *testing.T,ctx context.Context,root string,
     if e!=nil||restoredProof!=signedProof{
         t.Fatalf("restored signed SQL identity does not match original B: %v",e)
     }
-    proof:=func(ctx context.Context,conn *pgx.Conn,g *PreparedGeneration,
-        _ BacklogWindowLimits)(BacklogGenerationVerification,error){
-        return c1NativeFullPromotionProofWithTrust(ctx,conn,g,p,custody,trust)
-    }
-    accepted,err:=promoteVerifiedBacklogToPopulatedSoRWithProofSchema(ctx,
-        reader,publisher,g,BacklogWindowLimits{},
-        "c1-ci-signed-actual-immediate-"+p.Start.GenerationID,proof,
-        c1GovernedPendingSchema)
+    // Exercise the single-jail publisher path itself: B's original signed
+    // rows were proven above. The publisher now compares the independently
+    // derived commitment under Pending SHARE locks, then remaps atomically.
+    // It must NOT invoke the obsolete full-custody replay callback.
+    accepted,err:=PromoteC1VerifiedToPopulatedSoRWithCommitment(ctx,
+        reader,publisher,p,
+        "c1-ci-signed-actual-immediate-"+p.Start.GenerationID,signedProof)
     if err!=nil{t.Fatalf("signed crash canonical publication: %v",err)}
     if accepted.Outcome!="Accepted"||accepted.RecordsCommitted!=1{
         t.Fatalf("signed crash canonical publication incorrect: %+v",accepted)
