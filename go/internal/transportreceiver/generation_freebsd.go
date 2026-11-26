@@ -382,6 +382,7 @@ func generationReceiveConfigFromListener(
 		ReadyRoot: config.GenerationReadyRoot,
 		Recorder: generationrecorder.DurableConfig{
 			RootDir:          config.GenerationRecordedRoot,
+			VerifiedBatchRoot: config.GenerationVerifiedCacheRoot,
 			SourceNamespaces: config.GenerationSourceNamespaces,
 			Semantic: generationrecorder.Config{
 				MaxManifestBytes: config.GenerationMaxManifestBytes,
@@ -397,6 +398,7 @@ func validateGenerationListenerConfig(
 		config.GenerationCustodyRoot != "" ||
 			config.GenerationReadyRoot != "" ||
 			config.GenerationRecordedRoot != "" ||
+			config.GenerationVerifiedCacheRoot != "" ||
 			config.GenerationSourceNamespaces ||
 			config.GenerationMaxCanonicalBytes != 0 ||
 			config.GenerationMaxEncodedBytes != 0 ||
@@ -452,6 +454,14 @@ func validateGenerationListenerConfig(
 		)
 	}
 
+	if config.GenerationVerifiedCacheRoot != "" {
+		cache := filepath.Clean(config.GenerationVerifiedCacheRoot)
+		if !filepath.IsAbs(cache) ||
+			cache == custodyRoot || cache == recordedRoot || cache == readyRoot ||
+			cache == filepath.Clean(config.CustodyRoot) {
+			return errors.New("FI receiver verified batch cache must be a distinct absolute root")
+		}
+	}
 	if config.GenerationMaxCanonicalBytes > uint64(1<<63-1) ||
 		config.GenerationMaxEncodedBytes > uint64(1<<63-1) {
 		return errors.New(

@@ -20,6 +20,7 @@ type generationRuntimeOptions struct {
 	MaxManifestBytes  uint64
 	ReadyRoot         string
 	RecordedRoot      string
+	VerifiedCacheRoot string
 }
 
 func (
@@ -29,6 +30,7 @@ func (
 		options.CustodyRoot != "" ||
 			options.ReadyRoot != "" ||
 			options.RecordedRoot != "" ||
+			options.VerifiedCacheRoot != "" ||
 			options.MaxCanonicalBytes != 0 ||
 			options.MaxEncodedBytes != 0 ||
 			options.MaxManifestBytes != 0
@@ -74,6 +76,8 @@ func (
 		options.ReadyRoot
 	config.GenerationRecordedRoot =
 		options.RecordedRoot
+	config.GenerationVerifiedCacheRoot =
+		options.VerifiedCacheRoot
 	config.GenerationMaxCanonicalBytes =
 		options.MaxCanonicalBytes
 	config.GenerationMaxEncodedBytes =

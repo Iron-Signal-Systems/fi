@@ -199,6 +199,11 @@ func runTransportCommand() {
 		"",
 		"durable FI generation recorded-receipt root; requires -generation-enable",
 	)
+	generationVerifiedCacheRoot := flags.String(
+		"generation-verified-cache-root",
+		"",
+		"receiver-owned verified batch cache root; mounted read-only into fi-sor; requires -generation-enable",
+	)
 	generationReadyRoot := flags.String(
 		"generation-ready-root",
 		"",
@@ -254,6 +259,7 @@ func runTransportCommand() {
 		MaxManifestBytes:  *generationMaxManifestBytes,
 		ReadyRoot:         *generationReadyRoot,
 		RecordedRoot:      *generationRecordedRoot,
+		VerifiedCacheRoot: *generationVerifiedCacheRoot,
 	}
 
 	if err := generationOptions.validate(); err != nil {

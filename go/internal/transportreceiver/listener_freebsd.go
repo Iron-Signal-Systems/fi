@@ -48,6 +48,7 @@ type Config struct {
 	GenerationMaxManifestBytes  uint64
 	GenerationReadyRoot         string
 	GenerationRecordedRoot      string
+	GenerationVerifiedCacheRoot string
 	GenerationSourceNamespaces  bool
 	LookupSource                SourceLookup
 	MaxConcurrentConnections    uint64

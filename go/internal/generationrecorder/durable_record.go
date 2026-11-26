@@ -30,6 +30,7 @@ type DurableConfig struct {
 	RootDir          string
 	Semantic         Config
 	SourceNamespaces bool
+	VerifiedBatchRoot string // optional receiver-owned cache; consumed RO by fi-sor
 }
 
 // RecordedDisposition describes how one semantically validated generation

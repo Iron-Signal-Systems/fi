@@ -6,6 +6,7 @@ package generationrecorder
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportgeneration"
 )
@@ -36,11 +37,21 @@ func RecordCustodyDurably(
 	if err != nil {
 		return DurableResult{}, err
 	}
-
+	cache, err := newReceiverVerifiedBatchWriter(recorderConfig.VerifiedBatchRoot)
+	if err != nil {
+		return DurableResult{}, err
+	}
+	if cache != nil { defer cache.Discard() }
+	consumer := state.consumeArtifact
+	if cache != nil {
+		consumer = func(name string, reader io.Reader) error {
+			return cache.Consume(name, reader, state.consumeArtifact)
+		}
+	}
 	transfer, err := transportgeneration.ReadDurableCustodyArtifacts(
 		custody,
 		custodyConfig,
-		state.consumeArtifact,
+		consumer,
 	)
 	if err != nil {
 		return DurableResult{}, fmt.Errorf(
@@ -57,9 +68,17 @@ func RecordCustodyDurably(
 		return DurableResult{}, err
 	}
 
-	return publishRecordedSemanticResult(
+	recorded, err := publishRecordedSemanticResult(
 		transfer,
 		semantic,
 		recorderConfig,
 	)
+	if err != nil { return DurableResult{}, err }
+	if cache != nil {
+		if err := cache.Publish(recorded); err != nil {
+			return DurableResult{}, fmt.Errorf("publish receiver-authenticated batch cache: %w", err)
+		}
+	}
+	return recorded, nil
+
 }
