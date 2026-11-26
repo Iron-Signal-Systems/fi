@@ -40,6 +40,9 @@ type C1NativeBCustodyConfig = c1NativeBCustodyConfig
 type c1NativeBCustodyConfig struct {
     CustodyRoot string
     RecordedRoot string
+    // Only permitted with the physically isolated benchmark clone.
+    VerifiedCacheRoot string
+    BenchmarkClone bool
     SourceNamespaces bool
     MaxCanonicalBytes uint64
     MaxEncodedBytes uint64

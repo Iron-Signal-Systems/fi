@@ -141,6 +141,8 @@ func c1StartNativeBWithLauncher(ctx context.Context,dsn string,p c1NativeBPlan,
         "FI_C1_B_CHILD=1","FI_C1_B_DSN="+dsn,
         "FI_C1_B_CUSTODY_ROOT="+custody.CustodyRoot,
         "FI_C1_B_RECORDED_ROOT="+custody.RecordedRoot,
+        "FI_C1_B_VERIFIED_CACHE_ROOT="+custody.VerifiedCacheRoot,
+        "FI_C1_B_BENCHMARK_CLONE="+strconv.FormatBool(custody.BenchmarkClone),
         "FI_C1_B_SOURCE_NAMESPACES="+strconv.FormatBool(custody.SourceNamespaces),
         "FI_C1_B_MAX_CANONICAL="+strconv.FormatUint(custody.MaxCanonicalBytes,10),
         "FI_C1_B_MAX_ENCODED="+strconv.FormatUint(custody.MaxEncodedBytes,10),
@@ -282,6 +284,8 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     custody:=c1NativeBCustodyConfig{
         CustodyRoot:os.Getenv("FI_C1_B_CUSTODY_ROOT"),
         RecordedRoot:os.Getenv("FI_C1_B_RECORDED_ROOT"),
+        VerifiedCacheRoot:os.Getenv("FI_C1_B_VERIFIED_CACHE_ROOT"),
+        BenchmarkClone:os.Getenv("FI_C1_B_BENCHMARK_CLONE")=="true",
         SourceNamespaces:namespaces,MaxCanonicalBytes:canonical,
         MaxEncodedBytes:encoded,MaxManifestBytes:manifest,
     }
@@ -340,7 +344,12 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         _,err:=fmt.Fprintf(output,"PASS %d\n",wi)
         return err
     }
-    if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup,commitment);err!=nil{
+    if custody.VerifiedCacheRoot!="" {
+        if !custody.BenchmarkClone{return errors.New("C1 B: verified cache forbidden outside isolated clone")}
+        if err:=c1NativeBVerifyCachedGroups(ctx,conn,p,custody,onGroup,commitment);err!=nil{
+            return fmt.Errorf("C1 B: original verified-cache/SQL group replay: %w",err)
+        }
+    } else if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup,commitment);err!=nil{
         return fmt.Errorf("C1 B: independent original signed custody/SQL streaming: %w",err)
     }
     if passed!=groupTotal{

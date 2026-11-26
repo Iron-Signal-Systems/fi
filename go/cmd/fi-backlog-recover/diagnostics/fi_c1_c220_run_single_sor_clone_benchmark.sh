@@ -52,12 +52,17 @@ if [ "$#" -eq 1 ] && [ "$1" = --selftest ];then
     echo 'FI C1 SINGLE-JAIL CLONE LIVE/PRIVATE SQL IDENTITY SELFTEST PASS accepts_original_live_listener=true clone_tcp_disabled_required=true rejects_wrong_live_address=true rejects_pending_or_accepted_drift=true rejects_nonempty_or_live_clone=true'
     exit 0
 fi
-[ "$#" -eq 3 ] || fail 'usage: --selftest | --audit|--run PINNED_COMMIT_SHA FRESH_CLONE_ROOT'
+[ "$#" -eq 4 ] || fail 'usage: --selftest | --audit|--run PINNED_COMMIT_SHA FRESH_CLONE_ROOT READ_ONLY_VERIFIED_CACHE_ROOT'
 case "$1" in --audit|--run) mode=$1;; *) fail 'only --audit or --run';; esac
 pin=$2
 case "$pin" in *[!0123456789abcdef]*|'') fail 'invalid full source pin';; esac
 [ "${#pin}" -eq 40 ] || fail 'exact 40-character commit pin required'
 clone_root_valid "$3" || fail 'fresh isolated clone root required (from clone preparation output)'
+# Only the ORIGINAL C1 receiver-authenticated cache may be used in clone
+# acceptance. Never silently revert to the 65GiB cold extraction path.
+cache_root=$4
+[ "$cache_root" = /var/db/fi/verified-cache ] ||
+    fail 'clone benchmark requires explicitly mounted original C1 verified cache'
 [ "$(uname -s)" = FreeBSD ] && [ "$(hostname -s)" = c220 ] &&
     [ "$(id -u)" -eq 0 ] || fail 'physical root@c220 only'
 
@@ -66,6 +71,10 @@ sorhost=/fast/jails/roots/fi-sor
 devhost=/fast/jails/roots/fi-dev
 clone=$3
 hostclone=$sorhost$clone
+[ -d "$sorhost$cache_root" ] && [ ! -L "$sorhost$cache_root" ] ||
+    fail 'original C1 verified cache not mounted in fi-sor'
+jexec -U fi-sor fi-sor /bin/test -r "$cache_root" ||
+    fail 'fi-sor account cannot read original C1 benchmark cache'
 pgdata=$clone/pgdata
 socket=$clone/socket
 scratch=/var/tmp/fi-c1-sor-local-scratch
@@ -171,7 +180,7 @@ free_kib=$(df -Pk "$sorhost/var/tmp" | awk 'END{print $4}')
 case "$free_kib" in ''|*[!0123456789]*) fail 'invalid fast-pool available space';; esac
 [ "$free_kib" -ge 524288000 ] ||
     fail "need at least 500 GiB free for original signed expansion, full relational clone and WAL; current_kib=$free_kib"
-echo "FI C1 SINGLE-JAIL CLONE BENCHMARK AUDIT PASS mode=$mode source=$source generation=$generation signed_receipt_sha256=$receipt_sha canonical_before=6773 clone_canonical=0 clone_pending=0 clone_accepted=0 clone_pgdata=$pgdata clone_system_identifier=$system_id distinct_from_live=true original_custody_readonly=true service_disabled=true ready_untouched=true"
+echo "FI C1 SINGLE-JAIL CLONE BENCHMARK AUDIT PASS verified_cache=$cache_root mode=$mode source=$source generation=$generation signed_receipt_sha256=$receipt_sha canonical_before=6773 clone_canonical=0 clone_pending=0 clone_accepted=0 clone_pgdata=$pgdata clone_system_identifier=$system_id distinct_from_live=true original_custody_readonly=true service_disabled=true ready_untouched=true"
 [ "$mode" = --audit ] && exit 0
 
 # No source checkout mutation: archive EXACT pinned revision inside fi-dev.
@@ -208,6 +217,7 @@ publisher="host=$socket port=5432 user=fi_c1_publisher dbname=fi sslmode=disable
 # Benchmark clone gate enforces both DB roles' actual PGDATA and socket.
 if ! jexec -U fi-sor fi-sor "$clone/fi-c1-sor-benchmark" \
     -benchmark-clone-root "$clone" -benchmark-system-id "$system_id" \
+    -benchmark-verified-cache-root "$cache_root" \
     -source-id "$source" -generation-id "$generation" \
     -custody-root /var/db/fi/custody/generation \
     -recorded-root /var/db/fi/custody/recorded \

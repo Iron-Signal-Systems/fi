@@ -33,8 +33,14 @@ func StageC1SignedPendingMetadata(ctx context.Context, dsn string,
 	}
 	// Original receiver custody, not the client, determines source, batches,
 	// signed identities and every expected record. Read it before SQL writes.
-	original, err := c1StreamOriginalSignedManifestPlan(ctx,
-		start.SourceID, start.GenerationID, custody)
+	var original *PreparedGeneration
+	var err error
+	if custody.VerifiedCacheRoot!="" {
+		if !custody.BenchmarkClone{return errors.New("C1 pending: untrusted verified cache outside clone")}
+		original,err=c1SoRVerifiedCacheGeneration(ctx,start.SourceID,start.GenerationID,custody)
+	} else {
+		original,err=c1StreamOriginalSignedManifestPlan(ctx,start.SourceID,start.GenerationID,custody)
+	}
 	if err != nil {
 		return fmt.Errorf("C1 pending: original signed custody preflight: %w", err)
 	}

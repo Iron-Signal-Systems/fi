@@ -51,6 +51,7 @@ func main() {
     preflight:=f.Bool("preflight",false,"read-only: verify local mode, custody mounts and DB without staging or ingestion")
     cloneRoot:=f.String("benchmark-clone-root","","explicit isolated C220 benchmark PGDATA root; enforces physical worker/publisher cluster identity")
     cloneSystemID:=f.String("benchmark-system-id","","independent postgres-administrator-verified unique clone system identifier")
+    cacheRoot:=f.String("benchmark-verified-cache-root","","ORIGINAL C1 receiver-authenticated read-only cache; isolated clone only")
     canonical:=f.Uint64("max-canonical-bytes",75161927680,"receiver canonical limit")
     encoded:=f.Uint64("max-encoded-bytes",68719476736,"receiver encoded limit")
     manifest:=f.Uint64("max-manifest-bytes",1048576,"original manifest byte limit")
@@ -91,11 +92,17 @@ func main() {
     if *cloneRoot!="" && (*ready!=""||*gen==""||*continuous||*replay||*cloneSystemID==""){
         fatal(errors.New("FI C1 benchmark: require one original generation, isolated system identifier, no READY, no continuous mode and no Pending replay"))
     }
+    if *cacheRoot!="" && (*cloneRoot==""||*cloneSystemID==""||*ready!=""||*replay){
+        fatal(errors.New("FI C1 cache: previously authenticated benchmark cache requires isolated clone, no READY and no replay"))
+    }
     if *cloneRoot=="" && *cloneSystemID!=""{
         fatal(errors.New("FI C1 benchmark: PostgreSQL system identifier without physical clone path"))
     }
     if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*custody);e!=nil{fatal(e)}
     if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*recorded);e!=nil{fatal(e)}
+    if *cacheRoot!=""{
+        if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*cacheRoot);e!=nil{fatal(e)}
+    }
     // The only writable source staging lives on fi-sor's local fast pool.
     // It is disposable, never a second receiver custody authority.
     stageInfo,e:=os.Lstat(*staging)
@@ -108,6 +115,7 @@ func main() {
         SQLWorkersMax:*max,AllowReplay:*replay,
         Custody:recordingest.C1NativeBCustodyConfig{
             CustodyRoot:*custody,RecordedRoot:*recorded,
+            VerifiedCacheRoot:*cacheRoot,BenchmarkClone:*cloneRoot!="",
             SourceNamespaces:*namespaces,MaxCanonicalBytes:*canonical,
             MaxEncodedBytes:*encoded,MaxManifestBytes:*manifest,
         },
@@ -158,7 +166,12 @@ func main() {
         return
     }
     totalStarted:=time.Now()
-    signed,e:=recordingest.LoadRecordedGeneration(recordingest.C1SoRLocalGenerationLoad(config),*gen)
+    var signed *recordingest.PreparedGeneration
+    if *cacheRoot!=""{
+        signed,e=recordingest.LoadC1SoRBenchmarkVerifiedCache(ctx,config,*gen)
+    }else{
+        signed,e=recordingest.LoadRecordedGeneration(recordingest.C1SoRLocalGenerationLoad(config),*gen)
+    }
     if e!=nil{fatal(e)}
     extractionElapsed:=time.Since(totalStarted)
     result,runErr:=recordingest.RunC1SoRLocalGeneration(ctx,config,signed)
