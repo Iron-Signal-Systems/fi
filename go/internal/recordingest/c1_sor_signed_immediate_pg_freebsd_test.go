@@ -298,6 +298,12 @@ func c1SignedCrashAfter(t *testing.T,ctx context.Context,root string,
     if groupStarts!=1||groupCompletes!=1{
         t.Fatal("B did not verify the original committed group exactly once")
     }
+    // Run the actual B child/parent READY/PASS/FINAL IPC through a second
+    // FreeBSD OS process, using the same receiver-signed, crash-recovered
+    // source and an independent read-only PostgreSQL Unix socket session.
+    c1TestNativeBReadyProtocol(t,ctx,admin,p,custody,
+        generationTrustBundle{Root:rootCA,BatchIssuer:issuer,
+            BatchCRL:crl,Source:f.Source})
     signedProof:=hex.EncodeToString(originalCommitment.Sum(nil))
     lockedSQLProof,err:=c1NativeBLockedSQLRowCommitment(ctx,reader,p)
     if err!=nil{t.Fatalf("signed original SQL commitment readback: %v",err)}
