@@ -23,6 +23,7 @@ type receiverVerifiedBatchWriter struct {
 	pending string
 	index uint64
 	lastDataID string
+	shared bool
 }
 type receiverVerifiedBatchMarker struct {
 	ReceiptSHA256 string `json:"receipt_sha256"`
@@ -39,12 +40,26 @@ func newReceiverVerifiedBatchWriter(root string)(*receiverVerifiedBatchWriter,er
 	}
 	st,err:=os.Lstat(root)
 	if err!=nil{return nil,err}
-	if !st.IsDir()||st.Mode()&os.ModeSymlink!=0||st.Mode().Perm()&0022!=0{
-		return nil,errors.New("FI receiver cache: private non-symlink directory required")
+	if !st.IsDir()||st.Mode()&os.ModeSymlink!=0{
+		return nil,errors.New("FI receiver cache: non-symlink directory required")
+	}
+	perm:=st.Mode().Perm()
+	if perm!=0700 && perm!=0750{
+		return nil,errors.New("FI receiver cache: root must be private 0700 or restricted shared-group 0750")
+	}
+	shared:=perm==0750
+	if shared && st.Mode()&os.ModeSetgid==0{
+		return nil,errors.New("FI receiver cache: shared group root must be setgid for immutable cache owner group")
 	}
 	pending,err:=os.MkdirTemp(root,".fi-verified-cache-pending-")
 	if err!=nil{return nil,err}
-	return &receiverVerifiedBatchWriter{root:root,pending:pending},nil
+	if shared{
+		if err=os.Chmod(pending,0750);err!=nil{
+			_ = os.Remove(pending)
+			return nil,err
+		}
+	}
+	return &receiverVerifiedBatchWriter{root:root,pending:pending,shared:shared},nil
 }
 func(w *receiverVerifiedBatchWriter)Discard(){
 	if w!=nil&&w.pending!="" {
@@ -71,7 +86,9 @@ func(w *receiverVerifiedBatchWriter)Consume(name string,reader io.Reader,
 		return errors.New("FI receiver cache: unsupported artifact")
 	}
 	path:=filepath.Join(w.pending,filename)
-	file,err:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+	perm:=os.FileMode(0600)
+	if w.shared { perm=0640 }
+	file,err:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,perm)
 	if err!=nil{return err}
 	validateErr:=validate(name,io.TeeReader(reader,file))
 	syncErr:=file.Sync()
@@ -113,7 +130,9 @@ func(w *receiverVerifiedBatchWriter)Publish(result DurableResult)error{
 	}else if !errors.Is(err,os.ErrNotExist){return err}
 	raw,err:=json.Marshal(marker)
 	if err!=nil{return err}
-	file,err:=os.OpenFile(filepath.Join(w.pending,"verified.json"),os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
+	perm:=os.FileMode(0600)
+	if w.shared { perm=0640 }
+	file,err:=os.OpenFile(filepath.Join(w.pending,"verified.json"),os.O_WRONLY|os.O_CREATE|os.O_EXCL,perm)
 	if err!=nil{return err}
 	_,writeErr:=file.Write(raw)
 	syncErr:=file.Sync()

@@ -76,8 +76,17 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     }
     sum:=sha256.Sum256(raw)
     receiptSHA:=hex.EncodeToString(sum[:])
-    dir,err:=backlogVerifiedCacheOpen(cacheRoot,receiptSHA,
-        receipt.TransferSHA256,receipt.BatchCount,receipt.RecordCount,receipt.DataBytes)
+    var dir string
+    var err error
+    readFile:=readBacklogStageFile
+    if cfg.BenchmarkClone{
+        dir,err=backlogVerifiedCacheOpen(cacheRoot,receiptSHA,
+            receipt.TransferSHA256,receipt.BatchCount,receipt.RecordCount,receipt.DataBytes)
+    }else{
+        dir,err=c1ReceiverVerifiedCacheOpen(cacheRoot,receiptSHA,
+            receipt.TransferSHA256,receipt.BatchCount,receipt.RecordCount,receipt.DataBytes)
+        readFile=c1ReadReceiverVerifiedCacheFile
+    }
     if err!=nil{return nil,fmt.Errorf("FI C1 cache: original authenticated checkpoint missing: %w",err)}
     batchCount:=int(receipt.BatchCount)
     batches:=make([]PreparedBatch,0,batchCount)
@@ -85,7 +94,7 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     for i:=0;i<batchCount;i++{
         if err:=ctx.Err();err!=nil{return nil,err}
         manifestName:=backlogCacheBatchManifest(dir,i)
-        manifestRaw,err:=readBacklogStageFile(manifestName,int64(cfg.MaxManifestBytes))
+        manifestRaw,err:=readFile(manifestName,int64(cfg.MaxManifestBytes))
         if err!=nil{return nil,fmt.Errorf("FI C1 cache: missing verified manifest %d: %w",i,err)}
         m,err:=spool.DecodeManifest(bytes.NewReader(manifestRaw))
         if err!=nil{return nil,fmt.Errorf("FI C1 cache: manifest %d: %w",i,err)}
@@ -97,7 +106,9 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
         dataPath:=backlogCacheBatchData(dir,i)
         dataStat,err:=os.Lstat(dataPath)
         if err!=nil{return nil,fmt.Errorf("FI C1 cache: missing verified data %d: %w",i,err)}
-        if !dataStat.Mode().IsRegular()||dataStat.Mode().Perm()!=0600||
+        if !dataStat.Mode().IsRegular()||
+            (dataStat.Mode().Perm()!=0600 &&
+             !(mode=="receiver"&&dataStat.Mode().Perm()==0640))||
             dataStat.Size()!=m.DataBytes{
             return nil,fmt.Errorf("FI C1 cache: unsafe signed batch inode %d",i)
         }

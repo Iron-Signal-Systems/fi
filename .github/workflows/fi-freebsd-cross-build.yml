@@ -3,6 +3,9 @@ name: FI FreeBSD Target Build (CI build host)
 on:
   push:
     paths:
+      - 'go/internal/generationrecorder/**'
+      - 'go/internal/transportreceiver/**'
+      - 'go/cmd/fi-receiver/**'
       - 'go/internal/recordingest/**'
       - 'go/internal/c1handoff/**'
       - 'go/internal/freebsd/backendinstall/**'

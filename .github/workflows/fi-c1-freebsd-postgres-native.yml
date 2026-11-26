@@ -11,6 +11,9 @@ on:
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh'
       - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
+      - 'go/internal/generationrecorder/**'
+      - 'go/internal/transportreceiver/**'
+      - 'go/cmd/fi-receiver/**'
       - 'go/internal/recordingest/c1_*.go'
       - 'go/internal/recordingest/private_c1_*.go'
       # Signed C1 uses the shared P6 SourceParent/Security/Coverage/
@@ -51,4 +54,5 @@ jobs:
             set -eu
             export PATH="/usr/local/go127/bin:$PATH"
             go version
+            (cd go && go test -count=1 ./internal/generationrecorder ./internal/transportreceiver)
             GITHUB_ACTIONS=true sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh
