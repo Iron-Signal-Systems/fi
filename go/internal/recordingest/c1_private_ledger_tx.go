@@ -33,9 +33,14 @@ func c1StageOriginalPendingLedgerTx(ctx context.Context,tx pgx.Tx,
     return c1StageOriginalLedgerTx(ctx,tx,original,c1GovernedPendingSchema)
 }
 
+// Canonical ledger writes use the original signed receipt and batch writer.
+func c1StageOriginalCanonicalLedgerTx(ctx context.Context,tx pgx.Tx,
+    original *PreparedGeneration)([]int64,error){
+    return c1StageOriginalLedgerTx(ctx,tx,original,"fi")
+}
 func c1StageOriginalLedgerTx(ctx context.Context,tx pgx.Tx,
     original *PreparedGeneration,schema string)([]int64,error){
-    if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema {
+    if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema&&schema!="fi" {
         return nil,errors.New("C1 bootstrap: unapproved signed ledger SQL destination")
     }
     if ctx==nil||tx==nil||original==nil||len(original.Batches)==0||
@@ -46,7 +51,7 @@ func c1StageOriginalLedgerTx(ctx context.Context,tx pgx.Tx,
     if err!=nil||len(digest)!=32{
         return nil,errors.New("C1 bootstrap: invalid original signed receipt digest")
     }
-    shadow:=privateProjectionTx{Tx:tx,schema:schema}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema,canonicalDirect:schema=="fi"}
     id,err:=insertRecordedGeneration(ctx,shadow,original)
     if err!=nil{return nil,fmt.Errorf("C1 bootstrap: private signed generation insert: %w",err)}
     profile:=&sourceBatchBulkProfile{}
