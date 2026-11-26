@@ -152,6 +152,7 @@ jexec -U fi-sor fi-sor /bin/sh -c '
     PGPASSFILE=$fi_c1_sor_pgpass
     export PGPASSFILE
   fi
+  executable=$5
   set -- -source-id "$1" -generation-id "$2" \
     -receiver-verified-cache-root "$4" \
     -custody-root "$fi_c1_sor_custody_root" \
@@ -162,7 +163,7 @@ jexec -U fi-sor fi-sor /bin/sh -c '
   if [ "${fi_c1_sor_source_namespaces:-NO}" = YES ];then
     set -- "$@" -source-namespaces
   fi
-  "$5" "$@" -preflight
+  "$executable" "$@" -preflight
 ' sh "$source" "$generation" "$root" "$cache" "$target" || fail 'original signed generation, verified receiver batches or real SQL preflight failed'
 
 echo '===== RUN EXACT SIGNED GENERATION INTO REAL CANONICAL FI ====='
@@ -176,6 +177,7 @@ if ! jexec -U fi-sor fi-sor /bin/sh -c '
     PGPASSFILE=$fi_c1_sor_pgpass
     export PGPASSFILE
   fi
+  executable=$5
   set -- -source-id "$1" -generation-id "$2" \
     -receiver-verified-cache-root "$4" \
     -custody-root "$fi_c1_sor_custody_root" \
@@ -186,7 +188,7 @@ if ! jexec -U fi-sor fi-sor /bin/sh -c '
   if [ "${fi_c1_sor_source_namespaces:-NO}" = YES ];then
     set -- "$@" -source-namespaces
   fi
-  exec "$5" "$@"
+  exec "$executable" "$@"
 ' sh "$source" "$generation" "$root" "$cache" "$target" > "$logdir/ingest.log" 2>&1;then
  tail -n 100 "$logdir/ingest.log" >&2 || :
  fail 'C1 did not complete with independent B and canonical Accepted; preserve evidence and assess ZFS rollback'
