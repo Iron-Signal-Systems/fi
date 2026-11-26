@@ -77,7 +77,6 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     sum:=sha256.Sum256(raw)
     receiptSHA:=hex.EncodeToString(sum[:])
     var dir string
-    var err error
     readFile:=readBacklogStageFile
     if cfg.BenchmarkClone{
         dir,err=backlogVerifiedCacheOpen(cacheRoot,receiptSHA,
