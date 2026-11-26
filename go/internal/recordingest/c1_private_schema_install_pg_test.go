@@ -616,6 +616,10 @@ WHERE CASE
     // Genuine three source batches (2+2+1) cross both independent
     // SourceParent handoffs and separate typed-family SQL transactions.
     c1TestSignedMTLSRAMPostgres18(t,ctx,admin,worker,publisher,5)
+    // LAST: exercise the actual one-write canonical C1 path against the
+    // same disposable populated PostgreSQL18 cluster. Nothing is cloned,
+    // replaced, or silently reinserted by the journal-only publisher.
+    c1TestDirectCanonicalSignedPostgres18(t,ctx,admin,worker,publisher)
     t.Log("PASS: disposable PostgreSQL18 governed pending 49-table mirror, DDL rollback, SQL worker ACLs and unresolved-generation fence")
     t.Log("PASS: disposable PostgreSQL18 C1 full private schema atomic rollback/install, canonical FI untouched")
     _=filepath.Separator
