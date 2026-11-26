@@ -25,6 +25,8 @@ on:
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_prepare_sor_clone.sh'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_run_single_sor_clone_benchmark.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_sql_write_profile_readonly.sh'
+      - 'docs/performance/fi-c1-sor-go-sql-write-review-20261126.md'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_jail_names_ci.sh'
       - 'go/internal/freebsd/backendinstall/c1_private_projection_migration_sources.go'
       - 'go/internal/freebsd/backendinstall/c1_ram_mount_security.go'
@@ -79,6 +81,7 @@ jobs:
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_prepare_sor_clone.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_run_single_sor_clone_benchmark.sh
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_sql_write_profile_readonly.sh
           sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_run_single_sor_clone_benchmark.sh --selftest
           sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh --selftest
           sh -n tools/deployment/freebsd/fi-c1-sor-local-run.sh
