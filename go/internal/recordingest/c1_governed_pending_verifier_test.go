@@ -23,7 +23,15 @@ func TestC1GovernedPendingNativeBRequiresWhitelistedRelationalSchema(t *testing.
 	if err = c1ValidateNativeBPlan(p); err != nil {
 		t.Fatalf("signed group verifier rejected governed pending schema: %v", err)
 	}
-	for _, bad := range []string{"fi", "pg_catalog", "public", "fi_c1_pending; DROP SCHEMA fi", "fi_recovery"} {
+	p.SQLSchema = "fi"
+    schema, err = c1NativeBSchema(p)
+    if err != nil || schema != "fi" {
+        t.Fatalf("B cannot select the explicitly approved direct canonical target: schema=%q err=%v",schema,err)
+    }
+    if err = c1ValidateNativeBPlan(p); err != nil {
+        t.Fatalf("independent B rejected the signed direct-canonical plan: %v",err)
+    }
+    for _, bad := range []string{"pg_catalog", "public", "fi_c1_pending; DROP SCHEMA fi", "fi_recovery"} {
 		p.SQLSchema = bad
 		if _, err = c1NativeBSchema(p); err == nil {
 			t.Fatalf("independent B accepted arbitrary relational schema %q", bad)
