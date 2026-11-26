@@ -14,6 +14,7 @@ import (
     "context"
     "crypto/x509"
     "encoding/json"
+    "encoding/hex"
     "errors"
     "os"
     "path/filepath"
@@ -280,6 +281,47 @@ func c1SignedCrashAfter(t *testing.T,ctx context.Context,root string,
     }
     g,err:=c1NativePromotionGeneration(p)
     if err!=nil{t.Fatal(err)}
+    // Exercise the SAME single-custody-pass commitment that the fi-sor
+    // child returns during signed group proof. The original C1 group
+    // relational verifier is reused, not replaced by a new projector.
+    originalCommitment,err:=c1NativeBNewRowCommitment(p)
+    if err!=nil{t.Fatal(err)}
+    groupStarts,groupCompletes:=0,0
+    err=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,reader,p,custody,trust,
+        func(wi int,complete bool)error{
+            if wi!=1{return errors.New("native B streamed unexpected original group")}
+            if !complete{groupStarts++;return nil}
+            groupCompletes++
+            return privateC1AsyncVerifyGroup(ctx,reader,g,p.Descriptors,wi,p.SQLSchema)
+        },originalCommitment)
+    if err!=nil{t.Fatalf("original C1 group B signed streaming failed: %v",err)}
+    if groupStarts!=1||groupCompletes!=1{
+        t.Fatal("B did not verify the original committed group exactly once")
+    }
+    signedProof:=hex.EncodeToString(originalCommitment.Sum(nil))
+    lockedSQLProof,err:=c1NativeBLockedSQLRowCommitment(ctx,reader,p)
+    if err!=nil{t.Fatalf("signed original SQL commitment readback: %v",err)}
+    if signedProof!=lockedSQLProof{
+        t.Fatal("original signed B proof and PostgreSQL row identity differ")
+    }
+    // Change ONLY persisted Pending SQL, not immutable signed custody.
+    // The publisher's under-lock comparison must reject the drift; restore
+    // the original source SHA only for the disposable accepted crash fixture.
+    if _,err=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
+        SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
+        bytes.Repeat([]byte{0xbd},32),p.SQLIDs[0]);err!=nil{t.Fatal(err)}
+    changedSQLProof,e:=c1NativeBLockedSQLRowCommitment(ctx,reader,p)
+    if e!=nil{t.Fatal(e)}
+    if changedSQLProof==signedProof{
+        t.Fatal("publisher accepted Pending SQL digest mutation after independent B proof")
+    }
+    if _,err=admin.Exec(ctx,`UPDATE fi_c1_pending.source_record
+        SET record_sha256=$1 WHERE source_batch_id=$2 AND record_ordinal=1`,
+        prepared.RecordDigest[:],p.SQLIDs[0]);err!=nil{t.Fatal(err)}
+    restoredProof,e:=c1NativeBLockedSQLRowCommitment(ctx,reader,p)
+    if e!=nil||restoredProof!=signedProof{
+        t.Fatalf("restored signed SQL identity does not match original B: %v",e)
+    }
     proof:=func(ctx context.Context,conn *pgx.Conn,g *PreparedGeneration,
         _ BacklogWindowLimits)(BacklogGenerationVerification,error){
         return c1NativeFullPromotionProofWithTrust(ctx,conn,g,p,custody,trust)
