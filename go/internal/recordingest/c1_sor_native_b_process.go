@@ -356,6 +356,29 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     if passed!=groupTotal{
         return errors.New("C1 B: complete signed transfer lacks exact durable group proofs")
     }
+    if p.SQLSchema=="fi" {
+        // In the one-write canonical path, the separate B process is the
+        // FINAL checker of cross-group USN source-bound capture dependencies.
+        // Never push this into the Accepted journal writer or repeat source
+        // JSONL verification after B.
+        tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
+        if err!=nil{return err}
+        shadow:=privateProjectionTx{Tx:tx,schema:"fi",canonicalDirect:true}
+        id,found,e:=lookupRecordedGeneration(ctx,shadow,p.Start.SourceID,
+            p.Start.GenerationID,p.Transfer,p.Start.ReceiptSHA256)
+        if e!=nil{_ = tx.Rollback(context.Background());return e}
+        if !found||id<=0{
+            _ = tx.Rollback(context.Background())
+            return errors.New("C1 B: missing exact direct canonical generation for final USN proof")
+        }
+        if e=verifyBacklogUSNCapturesComplete(ctx,shadow,id);e!=nil{
+            _ = tx.Rollback(context.Background())
+            return fmt.Errorf("C1 B: original source-bound USN capture proof: %w",e)
+        }
+        if e=tx.Commit(ctx);e!=nil{return e}
+        fmt.Fprintf(os.Stderr,"FI C1 NATIVE B DIRECT FINAL USN PROOF PASS source=%s generation=%s read_only=true\n",
+            p.Start.SourceID,p.Start.GenerationID)
+    }
     // FINAL is only a terminal authorization gate, not a second 15M-row
     // signed-custody replay. No FINAL PASS may precede original transfer
     // cryptographic verification and the independent final SQL coverage.
