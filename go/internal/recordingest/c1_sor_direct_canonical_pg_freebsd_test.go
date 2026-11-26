@@ -56,6 +56,20 @@ func c1TestDirectCanonicalSignedPostgres18(t *testing.T,ctx context.Context,
             t.Fatalf("C1 direct disposable role cutover %q: %v",sql,err)
         }
     }
+    // The native acceptance workflow runs independent power-loss Pending
+    // tests afterward on the SAME disposable VM PostgreSQL server.
+    // Revert only these test-local grants before that unrelated fixture;
+    // production's separate operator-governed role cutover is unchanged.
+    defer func(){
+        if _,e:=admin.Exec(context.Background(),
+            "REVOKE INSERT ON ALL TABLES IN SCHEMA fi FROM fi_ingest");e!=nil{
+            t.Errorf("C1 direct CI role cleanup worker: %v",e)
+        }
+        if _,e:=admin.Exec(context.Background(),
+            "GRANT SELECT,INSERT,MAINTAIN ON ALL TABLES IN SCHEMA fi TO fi_c1_publisher");e!=nil{
+            t.Errorf("C1 direct CI role cleanup publisher: %v",e)
+        }
+    }()
     // The fixture's administrative SQL sessions may use a local TCP URI,
     // but the actual direct C1 service and B child MUST open a local Unix
     // socket. Resolve it from the disposable PG18 server itself.
