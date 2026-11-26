@@ -472,7 +472,7 @@ func TestRecordCustodyDurablyPublishesReceiverVerifiedBatchCache(t *testing.T) {
 	dest := filepath.Join(cacheRoot, "receipt-"+first.ReceiptSHA256)
 	data, err := os.ReadFile(filepath.Join(dest, "batch-00000000.data"))
 	if err != nil { t.Fatal(err) }
-	if !bytes.Equal(data, []byte("{\"record\":1}\\n{\"record\":2}\\n")) {
+	if !bytes.Equal(data, []byte("{\"record\":1}\n{\"record\":2}\n")) {
 		t.Fatal("receiver-published batch bytes differ from original signed batch")
 	}
 	manifest, err := os.ReadFile(filepath.Join(dest, "batch-00000000.manifest"))
