@@ -15,6 +15,14 @@ fail(){ echo "FI C1 SINGLE-JAIL CLONE BENCHMARK STOP: $*" >&2; exit 1; }
 live_identity_expected='/var/db/fi/sor/postgres|/var/db/fi/sor/run|172.20.20.22|5432|6773|0|6773'
 live_identity_matches(){ [ "$1" = "$live_identity_expected" ]; }
 clone_identity_matches(){ [ "$1" = "$2|$3||5432|0|0|0" ]; }
+# Select a NEW clone from fi_c1_c220_prepare_sor_clone.sh; never erase or
+# reuse the interrupted benchmark's original PostgreSQL cluster.
+clone_root_valid(){
+    case "$1" in /var/tmp/fi-c1-sor-bench.????????) :;; *) return 1;; esac
+    suffix=${1#/var/tmp/fi-c1-sor-bench.}
+    case "$suffix" in *[!A-Za-z0-9]*|'') return 1;; esac
+    [ "${#suffix}" -eq 8 ]
+}
 if [ "$#" -eq 1 ] && [ "$1" = --selftest ];then
     live_identity_matches "$live_identity_expected" ||
         fail 'valid original live SoR fixture refused'
@@ -37,21 +45,26 @@ if [ "$#" -eq 1 ] && [ "$1" = --selftest ];then
             fail "unsafe clone identity accepted: $bad"
         fi
     done
+    clone_root_valid '/var/tmp/fi-c1-sor-bench.Ab12Cd34' || fail 'valid clone root refused'
+    for invalid in '/var/db/fi/sor/postgres' '/var/tmp/fi-c1-sor-bench.Aa123456/pgdata' '/var/tmp/fi-c1-sor-bench.Aa123456/../other' '/var/tmp/fi-c1-sor-bench.foo';do
+        if clone_root_valid "$invalid";then fail "unsafe clone root accepted: $invalid";fi
+    done
     echo 'FI C1 SINGLE-JAIL CLONE LIVE/PRIVATE SQL IDENTITY SELFTEST PASS accepts_original_live_listener=true clone_tcp_disabled_required=true rejects_wrong_live_address=true rejects_pending_or_accepted_drift=true rejects_nonempty_or_live_clone=true'
     exit 0
 fi
-[ "$#" -eq 2 ] || fail 'usage: --selftest | --audit|--run PINNED_COMMIT_SHA'
+[ "$#" -eq 3 ] || fail 'usage: --selftest | --audit|--run PINNED_COMMIT_SHA FRESH_CLONE_ROOT'
 case "$1" in --audit|--run) mode=$1;; *) fail 'only --audit or --run';; esac
 pin=$2
 case "$pin" in *[!0123456789abcdef]*|'') fail 'invalid full source pin';; esac
 [ "${#pin}" -eq 40 ] || fail 'exact 40-character commit pin required'
+clone_root_valid "$3" || fail 'fresh isolated clone root required (from clone preparation output)'
 [ "$(uname -s)" = FreeBSD ] && [ "$(hostname -s)" = c220 ] &&
     [ "$(id -u)" -eq 0 ] || fail 'physical root@c220 only'
 
 repo=/home/jwood/fi-c1-two-process-2a449f1a
 sorhost=/fast/jails/roots/fi-sor
 devhost=/fast/jails/roots/fi-dev
-clone=/var/tmp/fi-c1-sor-bench.yBi1CkVm
+clone=$3
 hostclone=$sorhost$clone
 pgdata=$clone/pgdata
 socket=$clone/socket
@@ -74,7 +87,7 @@ done
 [ -d "$hostclone/pgdata" ] && [ ! -L "$hostclone/pgdata" ] &&
 [ -d "$hostclone/socket" ] && [ ! -L "$hostclone/socket" ] &&
 [ -d "$sorhost$scratch" ] && [ ! -L "$sorhost$scratch" ] ||
-    fail 'specific previously created isolated PG18 clone or staging path changed'
+    fail 'selected isolated PG18 clone or staging path changed'
 [ -f "$hostclone/pgdata/PG_VERSION" ] &&
 [ "$(cat "$hostclone/pgdata/PG_VERSION")" = 18 ] ||
     fail 'isolated clone is not PostgreSQL18'
