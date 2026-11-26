@@ -293,14 +293,21 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
         s.mu.Unlock()
         return c1handoff.FinalNone,err
     }
+    signedSQLCommitment,proofErr:=s.verifier.Commitment()
+    if proofErr!=nil{
+        s.failed=proofErr
+        s.mu.Unlock()
+        return c1handoff.FinalNone,fmt.Errorf("C1 fi-sor: no independent signed B row evidence: %w",proofErr)
+    }
     s.publishing=true
     s.mu.Unlock()
-    // The independently completed B process is a prerequisite, never an
-    // authority to accept. The remapper repeats complete signed proof
-    // under table locks, commits all canonical rows + Accepted atomically,
-    // then a fresh read-only snapshot proves the actual journal.
-    _,err:=PublishC1VerifiedPendingGeneration(ctx,dsn,publisherDSN,custody,
-        f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    // B's original signed rows were individually compared to committed
+    // SQL during ingestion. Rehash the narrow SQL source identity columns
+    // under publisher-held Pending SHARE locks to reject any post-B
+    // mutation; do not reopen the 15M-row signed custody transfer here.
+    // Atomic remap, Accepted journal and fresh canonical readback remain.
+    _,err:=PublishC1VerifiedPendingGenerationWithCommitment(ctx,dsn,publisherDSN,custody,
+        f.SourceID,f.GenerationID,f.ReceiptSHA256,signedSQLCommitment)
     var status c1handoff.FinalStatus
     if err==nil {
         status,err=c1PostPublicationReadback(ctx,dsn,
