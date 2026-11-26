@@ -11,6 +11,7 @@ import (
 )
 func TestReceiverVerifiedBatchCachePublishesOnlyAfterReceipt(t *testing.T){
 	root:=t.TempDir()
+	if err:=os.Chmod(root,0700);err!=nil{t.Fatal(err)}
 	writer,err:=newReceiverVerifiedBatchWriter(root)
 	if err!=nil{t.Fatal(err)}
 	body:=[]byte("{\"record\":1}\n")
