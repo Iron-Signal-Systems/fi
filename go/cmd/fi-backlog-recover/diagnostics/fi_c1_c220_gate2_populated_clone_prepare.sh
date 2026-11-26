@@ -168,6 +168,19 @@ clone_counts=$(clfi "SELECT (SELECT count(*) FROM fi.recorded_generation)::text|
     generation_id='20261030T000032.061323100Z-3e38b2210771462c')::text")
 [ "$clone_counts" = "$live" ] ||
   die "populated clone counts not equal to live prestate; clone=$clone_counts live_prestate=$live"
+# Full source-record COUNT checks are deliberate on this 54M+ row SoR:
+# a logically restored copy must contain every pre-existing canonical row.
+source_rows_live=$(sql "SELECT count(*) FROM fi.source_record")
+source_rows_clone=$(clfi "SELECT count(*) FROM fi.source_record")
+[ "$source_rows_live" = "$source_rows_clone" ] ||
+  die "canonical source_record count mismatch live=$source_rows_live cloned=$source_rows_clone"
+schema_live=$(sql "SELECT (SELECT count(*) FROM pg_indexes WHERE schemaname='fi')::text||'|'||
+  (SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='fi' AND c.contype='f')::text")
+schema_clone=$(clfi "SELECT (SELECT count(*) FROM pg_indexes WHERE schemaname='fi')::text||'|'||
+  (SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='fi' AND c.contype='f')::text")
+[ "$schema_live" = "$schema_clone" ] ||
+  die "FI index/FK layout mismatch live=$schema_live clone=$schema_clone"
+echo "FI C1 GATE2 POPULATED DATA/DDL VERIFIED source_records=$source_rows_clone fi_indexes_and_fks=$schema_clone"
 [ "$(clfi "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='fi' AND c.contype='f' AND NOT c.convalidated")" = 0 ] ||
   die 'restored FI canonical constraints are NOT validated'
 [ "$(sql "SELECT (SELECT count(*) FROM fi.recorded_generation)::text||'|'||
