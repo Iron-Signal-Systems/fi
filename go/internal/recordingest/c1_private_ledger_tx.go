@@ -33,31 +33,6 @@ func c1StageOriginalPendingLedgerTx(ctx context.Context,tx pgx.Tx,
     return c1StageOriginalLedgerTx(ctx,tx,original,c1GovernedPendingSchema)
 }
 
-// c1StageOriginalCanonicalLedgerTx is a *direct* FI table write. It must
-// only be called after the physical PostgreSQL cluster has been certified
-// disposable. In this development test, a signed generation and its source
-// batches receive canonical identities once, before Preparation/Family
-// Processing starts; they are NOT subsequently copied or remapped.
-func c1StageOriginalCanonicalLedgerTx(ctx context.Context,tx pgx.Tx,
-    original *PreparedGeneration)([]int64,error){
-    if ctx==nil||tx==nil||original==nil||len(original.Batches)==0||
-        !canonicalDigest(original.ReceiptSHA256){
-        return nil,errors.New("C1 direct clone: signed original ledger required")
-    }
-    id,err:=insertRecordedGeneration(ctx,tx,original)
-    if err!=nil{return nil,fmt.Errorf("C1 direct clone: signed generation: %w",err)}
-    profile:=&sourceBatchBulkProfile{}
-    ids,err:=copySourceBatches(ctx,tx,id,original.Batches,profile)
-    if err!=nil{return nil,fmt.Errorf("C1 direct clone: signed batch metadata: %w",err)}
-    if len(ids)!=len(original.Batches){
-        return nil,errors.New("C1 direct clone: incomplete signed batch identity mapping")
-    }
-    for _,id:=range ids{
-        if id<=0{return nil,errors.New("C1 direct clone: invalid PostgreSQL signed batch identity")}
-    }
-    return ids,nil
-}
-
 func c1StageOriginalLedgerTx(ctx context.Context,tx pgx.Tx,
     original *PreparedGeneration,schema string)([]int64,error){
     if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema {

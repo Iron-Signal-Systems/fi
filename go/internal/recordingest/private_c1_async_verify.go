@@ -147,7 +147,7 @@ func privateC1AsyncVerifyGroup(ctx context.Context,conn *pgx.Conn,
     if len(targetSchema)>0 {
         if len(targetSchema)!=1||(targetSchema[0]!=""&&
             targetSchema[0]!=privateProjectionSchema&&
-            targetSchema[0]!=c1GovernedPendingSchema&&targetSchema[0]!="fi"){
+            targetSchema[0]!=c1GovernedPendingSchema){
             return errors.New("C1 B: unapproved group verification schema")
         }
         if targetSchema[0]!=""{schema=targetSchema[0]}
@@ -156,7 +156,7 @@ func privateC1AsyncVerifyGroup(ctx context.Context,conn *pgx.Conn,
     tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
-    shadow:=c1SQLProjectorTx(tx,schema)
+    shadow:=privateProjectionTx{Tx:tx,schema:schema}
     id,ok,err:=lookupRecordedGeneration(ctx,shadow,
         ds[0].SourceID,ds[0].GenerationID,g.Receipt.TransferSHA256,g.ReceiptSHA256)
     if err!=nil{return err}

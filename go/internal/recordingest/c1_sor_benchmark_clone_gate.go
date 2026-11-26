@@ -109,33 +109,7 @@ func PreflightC1SoRBenchmarkClone(ctx context.Context,c C1SoRLocalConfig,root,ex
     if canonical!=0||pending!=0||accepted!=0||fiTables!=49||pendingTables!=50{
         return fmt.Errorf("C1 benchmark: clone is not fresh 49+50 schema: canonical=%d pending=%d accepted=%d tables=%d+%d",canonical,pending,accepted,fiTables,pendingTables)
     }
-    if c.DirectCanonicalClone{
-        // This is a physically isolated, EMPTY PostgreSQL clone. Canonical
-        // INSERT privileges are mandatory in this test ONLY; the normal
-        // pending-mode runtime must not accept these broader grants.
-        var missingTable,mutableTable,missingSeq int64
-        err=conn.QueryRow(ctx,`SELECT
-          count(*) FILTER (WHERE c.relkind IN ('r','p') AND
-             NOT (has_table_privilege(current_user,c.oid,'SELECT') AND
-                  has_table_privilege(current_user,c.oid,'INSERT')))::bigint,
-          count(*) FILTER (WHERE c.relkind IN ('r','p') AND
-             (has_table_privilege(current_user,c.oid,'UPDATE') OR
-              has_table_privilege(current_user,c.oid,'DELETE') OR
-              has_table_privilege(current_user,c.oid,'TRUNCATE')))::bigint,
-          count(*) FILTER (WHERE c.relkind='S' AND
-             NOT (has_sequence_privilege(current_user,c.oid,'USAGE') AND
-                  has_sequence_privilege(current_user,c.oid,'SELECT')))::bigint
-          FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-          WHERE n.nspname='fi'`).Scan(&missingTable,&mutableTable,&missingSeq)
-        if err!=nil{return err}
-        if missingTable!=0||mutableTable!=0||missingSeq!=0{
-            return fmt.Errorf("C1 direct clone: canonical worker ACL missing tables=%d mutable=%d sequences=%d",
-                missingTable,mutableTable,missingSeq)
-        }
-    }else{
-        if err:=c1PreflightLocalGovernedPendingSQL(ctx,c.WorkerDSN);err!=nil{return err}
-    }
-    fmt.Printf("FI C1 SOR CLONE WORKER/PUBLISHER PIN PASS pgdata=%s socket=%s postgres_system_identifier=%s canonical=0 pending=0 accepted=0 direct_canonical_clone=%t readonly_gate=true\n",
-        data,sock,expectedSystemID,c.DirectCanonicalClone)
+    if err:=c1PreflightLocalGovernedPendingSQL(ctx,c.WorkerDSN);err!=nil{return err}
+    fmt.Printf("FI C1 SOR CLONE WORKER/PUBLISHER PIN PASS pgdata=%s socket=%s postgres_system_identifier=%s canonical=0 pending=0 accepted=0 readonly_gate=true\n",data,sock,expectedSystemID)
     return nil
 }

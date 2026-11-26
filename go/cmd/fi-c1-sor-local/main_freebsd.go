@@ -52,7 +52,6 @@ func main() {
     cloneRoot:=f.String("benchmark-clone-root","","explicit isolated C220 benchmark PGDATA root; enforces physical worker/publisher cluster identity")
     cloneSystemID:=f.String("benchmark-system-id","","independent postgres-administrator-verified unique clone system identifier")
     cacheRoot:=f.String("benchmark-verified-cache-root","","ORIGINAL C1 receiver-authenticated read-only cache; isolated clone only")
-    directClone:=f.Bool("benchmark-direct-canonical-clone",false,"TEST ONLY: direct fi SQL writes, independent B final journal, no Pending copy; disposable isolated PG18 clone required")
     canonical:=f.Uint64("max-canonical-bytes",75161927680,"receiver canonical limit")
     encoded:=f.Uint64("max-encoded-bytes",68719476736,"receiver encoded limit")
     manifest:=f.Uint64("max-manifest-bytes",1048576,"original manifest byte limit")
@@ -93,9 +92,6 @@ func main() {
     if *cloneRoot!="" && (*ready!=""||*gen==""||*continuous||*replay||*cloneSystemID==""){
         fatal(errors.New("FI C1 benchmark: require one original generation, isolated system identifier, no READY, no continuous mode and no Pending replay"))
     }
-    if *directClone && (*cloneRoot==""||*cloneSystemID==""||*cacheRoot==""||*ready!=""||*replay||*continuous){
-        fatal(errors.New("FI C1 direct canonical: only original verified-cache isolated one-generation clone benchmark is allowed"))
-    }
     if *cacheRoot!="" && (*cloneRoot==""||*cloneSystemID==""||*ready!=""||*replay){
         fatal(errors.New("FI C1 cache: previously authenticated benchmark cache requires isolated clone, no READY and no replay"))
     }
@@ -117,7 +113,6 @@ func main() {
     config:=recordingest.C1SoRLocalConfig{
         SourceID:orderedSources[0],WorkerDSN:*db,PublisherDSN:*publisher,
         SQLWorkersMax:*max,AllowReplay:*replay,
-        DirectCanonicalClone:*directClone,CloneRoot:*cloneRoot,CloneSystemID:*cloneSystemID,
         Custody:recordingest.C1NativeBCustodyConfig{
             CustodyRoot:*custody,RecordedRoot:*recorded,
             VerifiedCacheRoot:*cacheRoot,BenchmarkClone:*cloneRoot!="",

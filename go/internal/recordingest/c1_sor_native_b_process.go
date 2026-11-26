@@ -47,7 +47,6 @@ func c1NativeBSchema(p c1NativeBPlan)(string,error){
     if p.SQLSchema==""||p.SQLSchema==privateProjectionSchema{
         return privateProjectionSchema,nil
     }
-    if p.SQLSchema=="fi"{return "fi",nil} // clone-only direct-canonical readback; authorized at C1 service admission
     if p.SQLSchema!=c1GovernedPendingSchema{
         return "",errors.New("C1 B: unapproved relational proof schema")
     }
