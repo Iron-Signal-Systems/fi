@@ -75,3 +75,20 @@ This supersedes the previous **populated-clone acceptance requirement** for the 
 5. During a controlled first run, record full pre/post live SoR identities, exact already-Accepted historical counts, signed new generation identity and original custody, SQL family/parent ACK evidence, original Verifier B final PASS, one Accepted journal event and database visibility. Only then declare the real test PASS and retain the database. On any failure, stop and investigate before operator-controlled rollback.
 
 **Gate status as of snapshot:** Gate 1 original isolated C1 PASS; real SoR ZFS rollback snapshot READY; direct-to-canonical C1 integration NOT YET COMPLETE; live test NOT STARTED; no new generation has been selected. The earlier physically separate clone route is superseded by this explicit operator decision.
+
+
+## Operator-approved fresh SoR data reset (2026-11-26, approximately 15:04 EST)
+
+**Most recent operator direction supersedes retaining populated FI history for the next acceptance test:** "blank the sor db then run this into the sor db. we will start fresh". Scope: reset all FI SoR *row data* in the existing PostgreSQL 18 cluster, including the existing 6,773 canonical Accepted generations, journal, and governed Pending rows; retain SQL schemas, 49 canonical relations, 50 Pending relations, indexes, constraints, roles, database ownership, PGDATA, configured services, read-only receiver custody and signing trust.
+
+The previous real-SoR snapshot `fast/data/fi/sor/pgdata@fi-c1-real-pretest-20261126` remains the explicit rollback point for the pre-reset 6,773-accepted-generation history. A reset loses any later PostgreSQL changes if rolled back to that snapshot. **Do not overwrite, destroy, or auto-rollback that snapshot.**
+
+Staged a **separate** reset utility:
+`go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_real_sor_fresh_reset.sh`.
+It has read-only `--audit` and explicit full-history `--reset I-ACKNOWLEDGE-RESET-ALL-FI-SOR-DATA`, validates the exact physical ZFS dataset/snapshot, live cluster system identifier, 49/50 relation counts, 6,773/6,773 original history, empty Pending control, and no other active FI SQL sessions, and executes a single transactional table-level `TRUNCATE ... RESTART IDENTITY RESTRICT` (no schema/role drop). The script does NOT run C1, and its application has not been performed or proven on C220.
+
+**Engineering STOP RULE:** Do not execute the reset before a direct-to-canonical C1 binary is actually compiled, tests pass, original signed 8,399-batch custody is available, fi-sor-only write roles are explicitly approved and B's read-only canonical SQL validation is proven. Otherwise wiping historical SoR data just leaves an empty database and the wrong Pending-to-canonical executable. The current runtime still uses `fi_c1_pending` and a post-B canonical remapper and therefore cannot be called the approved one-write test. This is not a blocker on database size; it is a C1 source-code and acceptance gap.
+
+On the **fresh** FI database the original 15,140,785-record generation is no longer already Accepted, so it can serve as the original signed test generation, with no artificial generation IDs. Test must still prove all 8,399 batches / 15,140,785 new rows, distinct Verifier B original-custody proof, exact one Accepted, FKs/USN, role separation, no duplicate writes, no copy/remap after B, and accurate ingest-only and end-to-end timing. If any stage fails, withhold Accepted and let the operator restore the ZFS snapshot only after cleanly stopping PostgreSQL and all FI writers.
+
+**Status at this write:** snapshot ready, guarded reset utility staged in repo, real PostgreSQL still populated with 6,773 Accepted, NO RESET APPLIED, NO NEW LIVE C1 INGESTION, direct-to-canonical C1 writer still not complete.
