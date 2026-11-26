@@ -25,7 +25,7 @@ generation=20261030T000032.061323100Z-3e38b2210771462c
 root=/var/tmp/fi-c1-sor-local-scratch
 cache=/var/db/fi/verified-cache
 socket=/var/db/fi/sor/run
-target=/usr/local/sbin/fi-c1-sor-direct-real
+target=/usr/local/sbin/fi-c1-sor-direct-real-$pin
 hosttarget=$sor$target
 
 [ "$(zfs list -H -t snapshot -o name "$snapshot")" = "$snapshot" ] ||
@@ -162,8 +162,8 @@ jexec -U fi-sor fi-sor /bin/sh -c '
   if [ "${fi_c1_sor_source_namespaces:-NO}" = YES ];then
     set -- "$@" -source-namespaces
   fi
-  /usr/local/sbin/fi-c1-sor-direct-real "$@" -preflight
-' sh "$source" "$generation" "$root" "$cache" || fail 'original signed generation, verified receiver batches or real SQL preflight failed'
+  "$5" "$@" -preflight
+' sh "$source" "$generation" "$root" "$cache" "$target" || fail 'original signed generation, verified receiver batches or real SQL preflight failed'
 
 echo '===== RUN EXACT SIGNED GENERATION INTO REAL CANONICAL FI ====='
 logdir=$(mktemp -d /root/fi-c1-real-canonical.XXXXXXXX) ||
@@ -186,8 +186,8 @@ if ! jexec -U fi-sor fi-sor /bin/sh -c '
   if [ "${fi_c1_sor_source_namespaces:-NO}" = YES ];then
     set -- "$@" -source-namespaces
   fi
-  exec /usr/local/sbin/fi-c1-sor-direct-real "$@"
-' sh "$source" "$generation" "$root" "$cache" > "$logdir/ingest.log" 2>&1;then
+  exec "$5" "$@"
+' sh "$source" "$generation" "$root" "$cache" "$target" > "$logdir/ingest.log" 2>&1;then
  tail -n 100 "$logdir/ingest.log" >&2 || :
  fail 'C1 did not complete with independent B and canonical Accepted; preserve evidence and assess ZFS rollback'
 fi
