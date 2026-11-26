@@ -19,6 +19,7 @@ import (
     "encoding/hex"
     "errors"
     "fmt"
+    "hash"
     "io"
     "os"
     "path/filepath"
@@ -51,6 +52,11 @@ type c1NativeBCustodyConfig struct {
 func c1NativeBVerifyData(ctx context.Context,conn *pgx.Conn,raw io.Reader,
     batchIndex int,batchID int64,expected PreparedBatch,
     targetSchema ...string)error{
+    return c1NativeBVerifyDataWithCommitment(ctx,conn,raw,batchIndex,batchID,expected,nil,targetSchema...)
+}
+func c1NativeBVerifyDataWithCommitment(ctx context.Context,conn *pgx.Conn,raw io.Reader,
+    batchIndex int,batchID int64,expected PreparedBatch,commitment hash.Hash,
+    targetSchema ...string)error{
     if ctx==nil||conn==nil||raw==nil||batchIndex<0||batchID<=0||
         expected.BatchID==""||expected.Manifest.RecordCount<=0||
         expected.Manifest.DataBytes<=0{
@@ -71,6 +77,16 @@ func c1NativeBVerifyData(ctx context.Context,conn *pgx.Conn,raw io.Reader,
             if !state.ParentCommitted||!state.TypedRootCommitted{
                 return fmt.Errorf("C1 B custody: original signed batch %s ordinal %d not fully committed",
                     expected.BatchID,chunk[i].ordinal)
+            }
+        }
+        if commitment!=nil{
+            for _,r:=range chunk{
+                if e=c1NativeBCommitRow(commitment,r.sourceBatchID,r.ordinal,
+                    r.prepared.Record.Version,r.prepared.Record.RecordKind,
+                    r.prepared.Record.ScopeID,r.prepared.WrittenAtUTC,
+                    int64(r.prepared.RecordBytes),r.prepared.RecordDigest[:]);e!=nil{
+                    return e
+                }
             }
         }
         if e=tx.Commit(ctx);e!=nil{return e}
@@ -134,7 +150,7 @@ func c1NativeBVerifySignedCustody(ctx context.Context,conn *pgx.Conn,
 func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
     p c1NativeBPlan,cfg c1NativeBCustodyConfig,
     resolve generationTrustResolver)error{
-    return c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,cfg,resolve,nil)
+    return c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,cfg,resolve,nil,nil)
 }
 
 // Streaming B verifies the original signed custody in its only full pass.
@@ -145,7 +161,8 @@ func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
 // changed, extracted or re-opened by this group scheduler.
 func c1NativeBVerifySignedCustodyGroupsWithTrust(ctx context.Context,conn *pgx.Conn,
     p c1NativeBPlan,cfg c1NativeBCustodyConfig,
-    resolve generationTrustResolver,onGroup func(int,bool)error)error{
+    resolve generationTrustResolver,onGroup func(int,bool)error,
+    commitment hash.Hash)error{
     if resolve==nil{return errors.New("C1 B custody: original receiver trust required")}
     if ctx==nil||conn==nil||cfg.CustodyRoot==""||cfg.RecordedRoot==""||
         !filepath.IsAbs(cfg.CustodyRoot)||!filepath.IsAbs(cfg.RecordedRoot)||
@@ -223,7 +240,7 @@ func c1NativeBVerifySignedCustodyGroupsWithTrust(ctx context.Context,conn *pgx.C
                 if onGroup!=nil&&nextGroup<len(groups)&&idx==groups[nextGroup].firstBatch{
                     if err:=onGroup(nextGroup+1,false);err!=nil{return err}
                 }
-                if err:=c1NativeBVerifyData(ctx,conn,r,idx,p.SQLIDs[idx],batch,p.SQLSchema);err!=nil{
+                if err:=c1NativeBVerifyDataWithCommitment(ctx,conn,r,idx,p.SQLIDs[idx],batch,commitment,p.SQLSchema);err!=nil{
                     return fmt.Errorf("C1 B custody: independent SourceParent/typed readback batch %d: %w",idx,err)
                 }
             }else{
