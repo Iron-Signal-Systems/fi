@@ -119,7 +119,7 @@ func(s *C1SoRService)finalProofDirectCanonicalClone(ctx context.Context,
     if err!=nil{s.mu.Unlock();return c1handoff.FinalNone,err}
     s.publishing=true
     s.mu.Unlock()
-    err=c1MarkDirectCanonicalAccepted(ctx,s.PublisherDSN,f,commitment)
+    err=c1MarkDirectCanonicalAccepted(ctx,s.PublisherDSN,f,commitment,len(s.session.sourceBatches))
     var status c1handoff.FinalStatus
     if err==nil{status,err=c1PostPublicationReadback(ctx,s.DSN,f.SourceID,f.GenerationID,f.ReceiptSHA256)}
     s.mu.Lock()
@@ -138,9 +138,9 @@ func(s *C1SoRService)finalProofDirectCanonicalClone(ctx context.Context,
 // fifteen million source rows. The B process has already checked each
 // committed SourceParent and mandatory typed root against signed custody.
 func c1MarkDirectCanonicalAccepted(ctx context.Context,publisherDSN string,
-    f c1handoff.Frame,bProof string)error{
+    f c1handoff.Frame,bProof string,expectedBatches int)error{
     if ctx==nil||f.Kind!=c1handoff.Drain||!canonicalDigest(bProof)||
-        !canonicalDigest(f.ReceiptSHA256)||f.ExpectedRecords<=0{
+        !canonicalDigest(f.ReceiptSHA256)||expectedBatches<=0{
         return errors.New("C1 direct clone: independent complete B result required")
     }
     publisher,err:=openC1SoRLocalPublisherSQL(ctx,publisherDSN)
@@ -161,7 +161,7 @@ func c1MarkDirectCanonicalAccepted(ctx context.Context,publisherDSN string,
     if err!=nil{return err}
     receipt,_:=hex.DecodeString(f.ReceiptSHA256)
     if !bytes.Equal(recordedReceipt,receipt)||len(transfer)!=32||
-        count!=f.ExpectedRecords||batches!=int64(len(f.BatchIDs)){
+        count<=0||batches!=int64(expectedBatches){
         return errors.New("C1 direct clone: canonical signed generation metadata changed since B proof")
     }
     var accepted int64
