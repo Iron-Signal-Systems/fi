@@ -30,6 +30,26 @@ func PublishC1VerifiedPendingGeneration(ctx context.Context,
     workerDSN,publisherDSN string,custody c1NativeBCustodyConfig,
     source,generation,receiptSHA string)(
     IngestResult,error){
+    return publishC1VerifiedPendingGeneration(ctx,workerDSN,publisherDSN,
+        custody,source,generation,receiptSHA,"")
+}
+
+// The single-jail production candidate MUST bring independent B's completed
+// signed source-row commitment. The SQL publisher cannot manufacture B's
+// evidence or take it from a network-supplied Drain/READY frame.
+func PublishC1VerifiedPendingGenerationWithCommitment(ctx context.Context,
+    workerDSN,publisherDSN string,custody c1NativeBCustodyConfig,
+    source,generation,receiptSHA,bProof string)(IngestResult,error){
+    if !canonicalDigest(bProof){
+        return IngestResult{},errors.New("C1 canonical: missing independently verified B source-row evidence")
+    }
+    return publishC1VerifiedPendingGeneration(ctx,workerDSN,publisherDSN,
+        custody,source,generation,receiptSHA,bProof)
+}
+func publishC1VerifiedPendingGeneration(ctx context.Context,
+    workerDSN,publisherDSN string,custody c1NativeBCustodyConfig,
+    source,generation,receiptSHA,bProof string)(
+    IngestResult,error){
     var empty IngestResult
     if ctx==nil||source==""||generation==""||!canonicalDigest(receiptSHA){
         return empty,errors.New("C1 canonical: original signed generation identity required")
@@ -63,8 +83,16 @@ func PublishC1VerifiedPendingGeneration(ctx context.Context,
     var random [16]byte
     if _,err=rand.Read(random[:]);err!=nil{return empty,err}
     attemptID:="fi-c1-"+hex.EncodeToString(random[:])
-    result,err:=PromoteC1VerifiedToPopulatedSoR(ctx,verifier,publisher,
-        plan,custody,attemptID)
+    var result IngestResult
+    if bProof!=""{
+        result,err=PromoteC1VerifiedToPopulatedSoRWithCommitment(
+            ctx,verifier,publisher,plan,attemptID,bProof)
+    }else{
+        // Retained only for the separately named offline full-custody
+        // diagnostic API; the single-jail service never uses this branch.
+        result,err=PromoteC1VerifiedToPopulatedSoR(ctx,verifier,publisher,
+            plan,custody,attemptID)
+    }
     if err!=nil{return empty,err}
     if result.Outcome!="Accepted"&&result.Outcome!="AlreadyAccepted"{
         return empty,fmt.Errorf("C1 canonical: unexpected SQL result %q",result.Outcome)
