@@ -15,6 +15,7 @@ import (
     "fmt"
     "os"
     "path/filepath"
+    "strings"
     "testing"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
@@ -55,8 +56,24 @@ func c1TestDirectCanonicalSignedPostgres18(t *testing.T,ctx context.Context,
             t.Fatalf("C1 direct disposable role cutover %q: %v",sql,err)
         }
     }
-    workerDSN:=fmt.Sprintf("host=%s port=5432 dbname=fi user=fi_ingest password=isolated-only-test sslmode=disable",worker.Config().Host)
-    publisherDSN:=fmt.Sprintf("host=%s port=5432 dbname=fi user=fi_c1_publisher password=isolated-only-test sslmode=disable",publisher.Config().Host)
+    // The fixture's administrative SQL sessions may use a local TCP URI,
+    // but the actual direct C1 service and B child MUST open a local Unix
+    // socket. Resolve it from the disposable PG18 server itself.
+    var socketRoots string
+    if err:=admin.QueryRow(ctx,"SHOW unix_socket_directories").Scan(&socketRoots);err!=nil{
+        t.Fatal(err)
+    }
+    socketDir:=""
+    for _,candidate:=range strings.Split(socketRoots,","){
+        candidate=strings.TrimSpace(candidate)
+        if !filepath.IsAbs(candidate){continue}
+        if _,err:=os.Stat(filepath.Join(candidate,".s.PGSQL.5432"));err==nil{
+            socketDir=candidate;break
+        }
+    }
+    if socketDir==""{t.Fatalf("C1 direct: disposable PG18 local Unix socket missing from %q",socketRoots)}
+    workerDSN:=fmt.Sprintf("host=%s port=5432 dbname=fi user=fi_ingest password=isolated-only-test sslmode=disable",socketDir)
+    publisherDSN:=fmt.Sprintf("host=%s port=5432 dbname=fi user=fi_c1_publisher password=isolated-only-test sslmode=disable",socketDir)
     if err:=c1PreflightDirectCanonicalSQL(ctx,workerDSN);err!=nil{
         t.Fatalf("C1 direct role preflight on real disposable canonical SQL: %v",err)
     }
