@@ -81,7 +81,7 @@ func startC1SoRParallelB(ctx context.Context,dsn string,
     // that A's ordered parent/five-family SQL pool has already selected.
     schema:=pool.projectionSchema
     if schema==""{schema=privateProjectionSchema}
-    if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema{
+    if schema!=privateProjectionSchema&&schema!=c1GovernedPendingSchema&&schema!="fi"{
         return nil,nil,errors.New("C1 verifier: unapproved A/B relational schema")
     }
     // This session belongs ONLY to verifier B and is not in A's native SQL
