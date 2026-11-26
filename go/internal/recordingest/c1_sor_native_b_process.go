@@ -274,33 +274,68 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     g.Receipt.TransferSHA256=p.Transfer
     g.Receipt.Descriptor.SourceID=p.Start.SourceID
     g.Receipt.Descriptor.GenerationID=p.Start.GenerationID
-    seen:=make(map[int]bool,len(p.Descriptors)-1)
-    fmt.Fprintf(os.Stderr,"FI C1 NATIVE B CHILD START pid=%d pg_pid=%d groups=%d\n",os.Getpid(),pid,len(p.Descriptors)-1)
-    for scan.Scan(){
-        line:=scan.Text()
-        if line=="FINAL"{
-            if len(seen)!=len(p.Descriptors)-1{return errors.New("C1 B: unverified groups at final gate")}
-            if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{return err}
-            if err:=c1NativeBVerifySignedCustodyWithTrust(ctx,conn,p,custody,resolve);err!=nil{
-                return fmt.Errorf("C1 B: independent original signed custody and SQL readback: %w",err)
+    groupTotal:=len(p.Descriptors)-1
+    readySeen:=make([]bool,groupTotal+1)
+    proved:=make([]bool,groupTotal+1)
+    passed:=0
+    fmt.Fprintf(os.Stderr,"FI C1 NATIVE B CHILD START pid=%d pg_pid=%d groups=%d signed_custody=single_pass_parallel_to_ingest\\n",os.Getpid(),pid,groupTotal)
+    // The independent B child consumes SQL durability notifications in any
+    // arrival order. Original receiver custody is streamed in SIGNED batch
+    // order, never restarted from the beginning for each READY notification.
+    // The queued READY instruction is not a proof; original JSONL + SQL
+    // identity checks take place only after that group's durable SQL fence.
+    onGroup:=func(wi int,complete bool)error{
+        if wi<1||wi>groupTotal{return errors.New("C1 B: unknown signed group")}
+        if !complete{
+            for !readySeen[wi]{
+                if !scan.Scan(){
+                    if err:=scan.Err();err!=nil{return err}
+                    return errors.New("C1 B: original custody reached group before durable SQL READY")
+                }
+                line:=scan.Text()
+                if !strings.HasPrefix(line,"READY "){
+                    return errors.New("C1 B: premature FINAL or unrecognized group instruction")
+                }
+                n,err:=strconv.Atoi(strings.TrimPrefix(line,"READY "))
+                if err!=nil||n<1||n>groupTotal||readySeen[n]{
+                    return errors.New("C1 B: duplicate or invalid durable SQL group")
+                }
+                readySeen[n]=true
             }
-            if _,err:=fmt.Fprintln(output,"FINAL PASS");err!=nil{return err}
-            if scan.Scan(){return errors.New("C1 B: commands after final proof")}
-            return scan.Err()
+            return nil
         }
-        if !strings.HasPrefix(line,"READY "){return errors.New("C1 B: unrecognized command")}
-        wi,e:=strconv.Atoi(strings.TrimPrefix(line,"READY "))
-        if e!=nil||wi<1||wi>=len(p.Descriptors)||seen[wi]{
-            return errors.New("C1 B: duplicate/invalid post-COMMIT group")
+        if !readySeen[wi]||proved[wi]{
+            return errors.New("C1 B: group proof without exactly one durable receipt")
         }
+        // This coverage/FK proof is over the already-committed reporting
+        // group, after every ORIGINAL signed row and manifest in that group
+        // was independently audited by the single sequential custody pass.
         if err:=privateC1AsyncVerifyGroup(ctx,conn,g,p.Descriptors,wi,p.SQLSchema);err!=nil{
-            return fmt.Errorf("C1 B: independent signed group %d: %w",wi,err)
+            return fmt.Errorf("C1 B: committed signed group %d: %w",wi,err)
         }
-        seen[wi]=true
-        if _,err:=fmt.Fprintf(output,"PASS %d\n",wi);err!=nil{return err}
+        proved[wi]=true
+        passed++
+        _,err:=fmt.Fprintf(output,"PASS %d\\n",wi)
+        return err
     }
-    if err:=scan.Err();err!=nil{return err}
-    return errors.New("C1 B: missing final completion instruction")
+    if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup);err!=nil{
+        return fmt.Errorf("C1 B: independent original signed custody/SQL streaming: %w",err)
+    }
+    if passed!=groupTotal{
+        return errors.New("C1 B: complete signed transfer lacks exact durable group proofs")
+    }
+    // FINAL is only a terminal authorization gate, not a second 15M-row
+    // signed-custody replay. No FINAL PASS may precede original transfer
+    // cryptographic verification and the independent final SQL coverage.
+    if !scan.Scan(){
+        if err:=scan.Err();err!=nil{return err}
+        return errors.New("C1 B: final completion instruction missing")
+    }
+    if scan.Text()!="FINAL"{return errors.New("C1 B: duplicate READY or unexpected final command")}
+    if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{return err}
+    if _,err:=fmt.Fprintln(output,"FINAL PASS");err!=nil{return err}
+    if scan.Scan(){return errors.New("C1 B: commands after final proof")}
+    return scan.Err()
 }
 
 func c1NativeBValidateStage(ctx context.Context,conn *pgx.Conn,p c1NativeBPlan)error{
