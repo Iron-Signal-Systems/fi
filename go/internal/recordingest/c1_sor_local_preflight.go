@@ -29,5 +29,7 @@ func PreflightC1SoRLocal(ctx context.Context,c C1SoRLocalConfig)error{
     if err!=nil{return err}
     defer conn.Close(context.Background())
     // Existing fail-closed governed Pending grants and schema preflight.
-    return c1PreflightLocalGovernedPendingSQL(ctx,c.WorkerDSN)
+    if c.Custody.BenchmarkClone{return c1PreflightLocalGovernedPendingSQL(ctx,c.WorkerDSN)}
+    if err:=c1PreflightDirectCanonicalSQL(ctx,c.WorkerDSN);err!=nil{return err}
+    return c1PreflightLocalPublisher(ctx,c.PublisherDSN)
 }
