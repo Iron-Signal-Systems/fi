@@ -354,7 +354,12 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         return errors.New("C1 B: final completion instruction missing")
     }
     if scan.Text()!="FINAL"{return errors.New("C1 B: duplicate READY or unexpected final command")}
-    if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{return err}
+    // Every committed group was independently audited above against the
+    // original signed JSONL, SourceParent identity and typed coverage.
+    // FINAL must not rescan 15M committed rows. Recheck only the bounded
+    // original generation and batch ledger; the canonical publisher runs
+    // whole-generation relational and USN checks under Pending table locks.
+    if err:=c1NativeBValidateStage(ctx,conn,p);err!=nil{return err}
     if _,err:=fmt.Fprintf(output,"FINAL PASS %s\n",hex.EncodeToString(commitment.Sum(nil)));err!=nil{return err}
     if scan.Scan(){return errors.New("C1 B: commands after final proof")}
     return scan.Err()
