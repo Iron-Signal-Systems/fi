@@ -215,6 +215,7 @@ func RunC1SoRLocalGeneration(ctx context.Context,c C1SoRLocalConfig,
     service,err:=NewC1SoRService(c.WorkerDSN,c.SQLWorkersMax)
     if err!=nil{return result,err}
     defer service.Close()
+    service.DirectCanonical=!c.Custody.BenchmarkClone
     service.PublisherDSN=c.PublisherDSN
     service.NativeBCustody=c.Custody
     service.AllowC1Replay=c.AllowReplay
