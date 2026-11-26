@@ -617,7 +617,7 @@ func(w *privateC1FiveSQL) writeSource(ctx context.Context,rows []privateP6Record
     if w.sourceProfile {
         sourceTx=&privateC1TimedSourceTx{Tx:tx,timing:&sourceCopyTiming}
     }
-    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:sourceTx,schema:w.projectionSchema},
+    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:sourceTx,schema:w.projectionSchema,canonicalDirect:w.projectionSchema=="fi"},
         w.sourceID,profile)
     sourceStarted:=time.Now()
     if err==nil{err=coordinator.Source(ctx,rows)}
