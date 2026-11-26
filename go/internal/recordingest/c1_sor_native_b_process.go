@@ -47,6 +47,7 @@ func c1NativeBSchema(p c1NativeBPlan)(string,error){
     if p.SQLSchema==""||p.SQLSchema==privateProjectionSchema{
         return privateProjectionSchema,nil
     }
+    if p.SQLSchema=="fi"{return "fi",nil}
     if p.SQLSchema!=c1GovernedPendingSchema{
         return "",errors.New("C1 B: unapproved relational proof schema")
     }
@@ -426,7 +427,7 @@ func c1NativeBCompleteRelational(ctx context.Context,conn *pgx.Conn,
     tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
-    shadow:=privateProjectionTx{Tx:tx,schema:schema}
+    shadow:=privateProjectionTx{Tx:tx,schema:schema,canonicalDirect:schema=="fi"}
     id,ok,err:=lookupRecordedGeneration(ctx,shadow,
         p.Start.SourceID,p.Start.GenerationID,p.Transfer,p.Start.ReceiptSHA256)
     if err!=nil{return err}
@@ -454,6 +455,13 @@ func c1NativeBCompleteRelational(ctx context.Context,conn *pgx.Conn,
     var authoritative bool
     if err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM fi.recorded_generation WHERE source_id=$1 AND generation_id=$2)",
         p.Start.SourceID,p.Start.GenerationID).Scan(&authoritative);err!=nil{return err}
-    if authoritative{return errors.New("C1 B: generation already canonical; do not republish")}
+    if schema=="fi" {
+        if !authoritative{return errors.New("C1 B: direct canonical generation missing")}
+        var accepted int64
+        if err=tx.QueryRow(ctx,`SELECT count(*) FROM fi.ingest_journal
+           WHERE source_id=$1 AND generation_id=$2 AND outcome='Accepted'`,
+           p.Start.SourceID,p.Start.GenerationID).Scan(&accepted);err!=nil{return err}
+        if accepted!=0{return errors.New("C1 B: canonical Accepted preceded independent B proof")}
+    }else if authoritative{return errors.New("C1 B: generation already canonical; do not republish")}
     return tx.Commit(ctx)
 }
