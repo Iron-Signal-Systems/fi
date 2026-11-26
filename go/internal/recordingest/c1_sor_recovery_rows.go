@@ -80,7 +80,7 @@ func c1AuditCommittedRowStates(ctx context.Context,tx pgx.Tx,
     if len(targetSchema)>0 {
         if len(targetSchema)!=1||(targetSchema[0]!=""&&
             targetSchema[0]!=privateProjectionSchema&&
-            targetSchema[0]!=c1GovernedPendingSchema){
+            targetSchema[0]!=c1GovernedPendingSchema&&targetSchema[0]!="fi"){
             return nil,errors.New("C1 recovery: unapproved read-only relational namespace")
         }
         if targetSchema[0]!=""{schema=targetSchema[0]}
