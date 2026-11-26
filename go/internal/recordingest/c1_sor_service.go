@@ -29,6 +29,10 @@ type C1SoRService struct {
     // from original signed custody. Never set for live SoR until accepted.
     NativeBCustody c1NativeBCustodyConfig
     AllowC1Replay bool
+    // Strictly isolated development clone only; never selected by READY or normal service.
+    DirectCanonicalClone bool
+    CloneRoot string
+    CloneSystemID string
     replayMode bool
     replayRead *pgx.Conn
     pendingSession *pgx.Conn // holds one active-generation advisory lock
@@ -59,6 +63,7 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         return nil,errors.New("C1 fi-sor: unexpected or missing signed Start")
     }
     if err:=frame.Validate();err!=nil{return nil,err}
+    if s.DirectCanonicalClone{return s.bootstrapDirectCanonicalClone(ctx,frame)}
     s.mu.Lock()
     defer s.mu.Unlock()
     if s.pool!=nil||s.session!=nil||s.failed!=nil {
@@ -258,6 +263,7 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
     if s==nil||ctx==nil||f.Kind!=c1handoff.Drain{
         return c1handoff.FinalNone,errors.New("C1 fi-sor: final proof requires signed Drain")
     }
+    if s.DirectCanonicalClone{return s.finalProofDirectCanonicalClone(ctx,f)}
     s.mu.Lock()
     if s.failed!=nil{
         err:=s.failed
