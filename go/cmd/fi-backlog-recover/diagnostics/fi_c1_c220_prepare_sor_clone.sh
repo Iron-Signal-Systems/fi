@@ -92,7 +92,7 @@ set -eu
 repo=$1; pin=$2; build=$3
 git -C "$repo" archive "$pin" | tar -xf - -C "$build"
 cd "$build/go"
-go test -tags fi_c1_sor_dev -run "^TestC1SoRLocal" ./internal/recordingest
+go test -tags fi_c1_sor_dev -count=1 -run "^TestC1SoR(Local|BenchmarkVerifiedCache)" ./internal/recordingest
 go build -trimpath -tags fi_c1_sor_dev -o "$build/fi-c1-sor-clone-bootstrap" ./cmd/fi-c1-sor-clone-bootstrap
 test -s "$build/fi-c1-sor-clone-bootstrap"
 ' sh "$repo" "$pin" "$build" ||

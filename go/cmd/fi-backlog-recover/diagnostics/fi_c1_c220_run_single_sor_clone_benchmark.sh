@@ -196,7 +196,7 @@ set -eu
 repo=$1; pin=$2; build=$3
 git -C "$repo" archive "$pin" | tar -xf - -C "$build"
 cd "$build/go"
-go test -tags fi_c1_sor_dev -count=1 -run "^TestC1SoR(CloneGate|Local)" ./internal/recordingest
+go test -tags fi_c1_sor_dev -count=1 -run "^TestC1SoR(CloneGate|Local|BenchmarkVerifiedCache)" ./internal/recordingest
 go build -trimpath -tags fi_c1_sor_dev -o "$build/fi-c1-sor-benchmark" ./cmd/fi-c1-sor-local
 test -s "$build/fi-c1-sor-benchmark"
 ' sh "$repo" "$pin" "$build" ||
