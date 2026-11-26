@@ -278,7 +278,7 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     readySeen:=make([]bool,groupTotal+1)
     proved:=make([]bool,groupTotal+1)
     passed:=0
-    fmt.Fprintf(os.Stderr,"FI C1 NATIVE B CHILD START pid=%d pg_pid=%d groups=%d signed_custody=single_pass_parallel_to_ingest\\n",os.Getpid(),pid,groupTotal)
+    fmt.Fprintf(os.Stderr,"FI C1 NATIVE B CHILD START pid=%d pg_pid=%d groups=%d signed_custody=single_pass_parallel_to_ingest\n",os.Getpid(),pid,groupTotal)
     // The independent B child consumes SQL durability notifications in any
     // arrival order. Original receiver custody is streamed in SIGNED batch
     // order, never restarted from the beginning for each READY notification.
@@ -315,7 +315,7 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         }
         proved[wi]=true
         passed++
-        _,err:=fmt.Fprintf(output,"PASS %d\\n",wi)
+        _,err:=fmt.Fprintf(output,"PASS %d\n",wi)
         return err
     }
     if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup);err!=nil{
