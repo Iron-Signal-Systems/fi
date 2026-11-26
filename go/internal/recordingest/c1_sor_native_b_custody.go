@@ -134,6 +134,18 @@ func c1NativeBVerifySignedCustody(ctx context.Context,conn *pgx.Conn,
 func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
     p c1NativeBPlan,cfg c1NativeBCustodyConfig,
     resolve generationTrustResolver)error{
+    return c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,cfg,resolve,nil)
+}
+
+// Streaming B verifies the original signed custody in its only full pass.
+// Each group pauses at its first original batch until independent durable
+// SQL commit readiness, then proves every signed row against committed SQL.
+// A group PASS is provisional until the complete original transfer signature
+// and final relational authorization pass. The receiver's custody is never
+// changed, extracted or re-opened by this group scheduler.
+func c1NativeBVerifySignedCustodyGroupsWithTrust(ctx context.Context,conn *pgx.Conn,
+    p c1NativeBPlan,cfg c1NativeBCustodyConfig,
+    resolve generationTrustResolver,onGroup func(int,bool)error)error{
     if resolve==nil{return errors.New("C1 B custody: original receiver trust required")}
     if ctx==nil||conn==nil||cfg.CustodyRoot==""||cfg.RecordedRoot==""||
         !filepath.IsAbs(cfg.CustodyRoot)||!filepath.IsAbs(cfg.RecordedRoot)||
@@ -142,6 +154,13 @@ func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
         return errors.New("C1 B custody: explicit read-only signed custody roots and limits required")
     }
     if err:=c1ValidateNativeBPlan(p);err!=nil{return err}
+    var groups []c1SoRGroup
+    nextGroup:=0
+    if onGroup!=nil{
+        var err error
+        groups,err=c1SoRGroupPlan(p.Batches,int(p.Start.StartBatchIndex))
+        if err!=nil{return err}
+    }
     name:=generationrecorder.RecordedReceiptObjectName(p.Start.SourceID,p.Start.GenerationID)
     receiptRoot:=cfg.RecordedRoot
     if cfg.SourceNamespaces{
@@ -201,6 +220,9 @@ func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
                 if name!=dataName{
                     return fmt.Errorf("C1 B custody: wrong signed batch file %q expected %q",name,dataName)
                 }
+                if onGroup!=nil&&nextGroup<len(groups)&&idx==groups[nextGroup].firstBatch{
+                    if err:=onGroup(nextGroup+1,false);err!=nil{return err}
+                }
                 if err:=c1NativeBVerifyData(ctx,conn,r,idx,p.SQLIDs[idx],batch,p.SQLSchema);err!=nil{
                     return fmt.Errorf("C1 B custody: independent SourceParent/typed readback batch %d: %w",idx,err)
                 }
@@ -226,6 +248,10 @@ func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
                     manifest.DataSHA256!=batch.Manifest.DataSHA256{
                     return errors.New("C1 B custody: signed manifest metadata differs from private PostgreSQL source_batch")
                 }
+                if onGroup!=nil&&nextGroup<len(groups)&&idx+1==groups[nextGroup].endBatch{
+                    if err:=onGroup(nextGroup+1,true);err!=nil{return err}
+                    nextGroup++
+                }
             }
             i++
             return nil
@@ -250,6 +276,9 @@ func c1NativeBVerifySignedCustodyWithTrust(ctx context.Context,conn *pgx.Conn,
         original.Transfer.TransferSHA256!=receipt.TransferSHA256||
         i!=expectedArtifacts{
         return errors.New("C1 B custody: original signed transfer/receipt/artifact completeness mismatch")
+    }
+    if onGroup!=nil&&nextGroup!=len(groups){
+        return errors.New("C1 B custody: signed source ended before every committed group was proven")
     }
     // The production B child uses stdout ONLY for exact PASS n and
     // FINAL PASS IPC. Even successful diagnostics on stdout would make
