@@ -16,6 +16,8 @@ case "${1:-}" in
   --prepare)
     [ "$#" -eq 3 ] || die 'usage: --prepare VERIFIED_LIVE_SYSTEM_ID VERIFIED_GENERATION_COUNT'
     mode=prepare
+    expect_sid=$2
+    expect_gens=$3
     case "$2:$3" in *[!0123456789:]*|:*) die 'invalid expected live identity/count';; esac ;;
   *) die 'usage: --audit | --prepare VERIFIED_LIVE_SYSTEM_ID VERIFIED_GENERATION_COUNT';;
 esac
@@ -91,7 +93,7 @@ if [ "$mode" = audit ];then
   echo 'FI C1 GATE2 AUDIT COMPLETE read_only=true no_clone_created=true no_sql_writes=true'
   exit 0
 fi
-[ "$sid" = "$2" ] && [ "$gens" = "$3" ] ||
+[ "$sid" = "$expect_sid" ] && [ "$gens" = "$expect_gens" ] ||
   die "operator supplied identity/baseline differs (live_sid=$sid live_gens=$gens)"
 # Fresh destination not derived from any previous benchmark path.
 base=$sorroot/var/tmp
