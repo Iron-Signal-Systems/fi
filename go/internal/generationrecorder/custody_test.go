@@ -459,3 +459,34 @@ func custodyRecorderCertificateSHA256(
 	digest := sha256.Sum256(certificate.Raw)
 	return hex.EncodeToString(digest[:])
 }
+
+func TestRecordCustodyDurablyPublishesReceiverVerifiedBatchCache(t *testing.T) {
+	fixture := newCustodyRecorderFixture(t, false)
+	cacheRoot := filepath.Join(t.TempDir(), "verified")
+	if err := os.Mkdir(cacheRoot, 0700); err != nil { t.Fatal(err) }
+	fixture.recorderConfig.VerifiedBatchRoot = cacheRoot
+	first, err := RecordCustodyDurably(
+		fixture.custody, fixture.custodyConfig, fixture.recorderConfig,
+	)
+	if err != nil { t.Fatal(err) }
+	dest := filepath.Join(cacheRoot, "receipt-"+first.ReceiptSHA256)
+	data, err := os.ReadFile(filepath.Join(dest, "batch-00000000.data"))
+	if err != nil { t.Fatal(err) }
+	if !bytes.Equal(data, []byte("{\"record\":1}\\n{\"record\":2}\\n")) {
+		t.Fatal("receiver-published batch bytes differ from original signed batch")
+	}
+	manifest, err := os.ReadFile(filepath.Join(dest, "batch-00000000.manifest"))
+	if err != nil || len(manifest)==0 { t.Fatalf("original verified manifest missing: %v",err) }
+	marker, err := os.ReadFile(filepath.Join(dest, "verified.json"))
+	if err != nil { t.Fatal(err) }
+	if !bytes.Contains(marker, []byte(first.ReceiptSHA256)) ||
+		!bytes.Contains(marker, []byte(first.Receipt.TransferSHA256)) {
+		t.Fatal("receiver cache marker did not bind exact original signed receipt and FIGT")
+	}
+	second, err := RecordCustodyDurably(
+		fixture.custody, fixture.custodyConfig, fixture.recorderConfig,
+	)
+	if err != nil || second.Disposition != RecordedDispositionAlreadyRecorded {
+		t.Fatalf("exact signed receiver retransmit failed cached idempotency: %v",err)
+	}
+}
