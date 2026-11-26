@@ -5,6 +5,9 @@
 # receiver custody/READY, or deletes any existing benchmark database.
 # '--audit' is read-only; '--prepare <SYSTEM_ID> <GENERATIONS>' explicitly
 # authorizes disk allocation and a read-only pg_dump of the live FI database.
+# The 15,140,785-record signed generation is ALREADY Accepted in live SoR.
+# Preserve it unchanged: this tool only copies the populated SoR; it does not
+# re-run the accepted signed generation as new data.
 # User must first review fi_c1_c220_gate2_populated_sor_inventory.sh output.
 set -eu
 umask 077
@@ -62,17 +65,26 @@ fi_tables=$4
 pending_tables=$5
 target=$6
 [ "$gens" -gt 0 ] && [ "$accepted" -gt 0 ] && [ "$pending" = 0 ] &&
-[ "$fi_tables" = 49 ] && [ "$pending_tables" = 50 ] && [ "$target" = 0 ] ||
-  die "unexpected populated live baseline ($live); do not copy without review"
+[ "$fi_tables" = 49 ] && [ "$pending_tables" = 50 ] && [ "$target" = 1 ] ||
+  die "unexpected populated live baseline ($live); existing Accepted generation must be preserved"
 [ "$(sql "SELECT count(*) FROM pg_subscription")" = 0 ] ||
   die 'live FI has logical subscriptions; clone startup cannot be assumed isolated'
 [ "$(sql "SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')")" = 0 ] ||
   die 'live FI uses custom tablespaces; separate manual restore plan required'
 [ "$(sql "SELECT count(*) FROM pg_roles WHERE rolname='$pg_user'")" = 0 ] ||
   die "reserved clone-only PostgreSQL superuser already exists on live $pg_user"
-[ "$(sql "SELECT count(*) FROM fi.ingest_journal WHERE source_id='iss-fs-22a.iss.local' AND
- generation_id='20261030T000032.061323100Z-3e38b2210771462c' AND outcome='Accepted'")" = 0 ] ||
- die 'target generation already Accepted: no replay'
+# This generation was accepted on 2026-11-24 and is not a new-ingest test
+# candidate. Require the exact signed count/batches and one matching Accepted
+# journal entry BEFORE cloning; never mutate or delete existing history.
+target_evidence=$(sql "SELECT g.record_count::text||'|'||g.batch_count::text||'|'||
+ (SELECT count(*) FROM fi.ingest_journal j WHERE j.source_id=g.source_id AND
+  j.generation_id=g.generation_id AND j.outcome='Accepted' AND
+  j.records_committed=g.record_count AND j.transfer_sha256=g.transfer_sha256)::text
+ FROM fi.recorded_generation g WHERE g.source_id='iss-fs-22a.iss.local' AND
+ g.generation_id='20261030T000032.061323100Z-3e38b2210771462c'")
+[ "$target_evidence" = '15140785|8399|1' ] ||
+ die "expected prior signed canonical acceptance proof not found: $target_evidence"
+echo "FI C1 GATE2 PRE-ACCEPTED HISTORY VERIFIED records=15140785 batches=8399 matching_accepted=1 preserve_existing=true"
 for svc in fi_c1_sor fi_c1_sor_local;do
   if jexec fi-sor service "$svc" onestatus >/dev/null 2>&1;then
     die "C1 service already active: $svc"
@@ -121,6 +133,7 @@ destination_socket=$clone/socket
 purpose=gate2_populated_development_sor_only
 no_live_writes=true
 no_c1_ingestion_authorized=true
+signed_generation_already_accepted=true
 EOF
 chmod 0600 "$full/CLONE_MANIFEST.txt"
 echo '===== INITIALIZE INDEPENDENT PG18 CLUSTER, NO TCP ====='
@@ -168,6 +181,14 @@ clone_counts=$(clfi "SELECT (SELECT count(*) FROM fi.recorded_generation)::text|
     generation_id='20261030T000032.061323100Z-3e38b2210771462c')::text")
 [ "$clone_counts" = "$live" ] ||
   die "populated clone counts not equal to live prestate; clone=$clone_counts live_prestate=$live"
+clone_target_evidence=$(clfi "SELECT g.record_count::text||'|'||g.batch_count::text||'|'||
+ (SELECT count(*) FROM fi.ingest_journal j WHERE j.source_id=g.source_id AND
+  j.generation_id=g.generation_id AND j.outcome='Accepted' AND
+  j.records_committed=g.record_count AND j.transfer_sha256=g.transfer_sha256)::text
+ FROM fi.recorded_generation g WHERE g.source_id='iss-fs-22a.iss.local' AND
+ g.generation_id='20261030T000032.061323100Z-3e38b2210771462c'")
+[ "$clone_target_evidence" = "$target_evidence" ] ||
+  die "pre-Accepted signed target changed in populated clone: $clone_target_evidence"
 # Full source-record COUNT checks are deliberate on this 54M+ row SoR:
 # a logically restored copy must contain every pre-existing canonical row.
 source_rows_live=$(sql "SELECT count(*) FROM fi.source_record")
@@ -191,4 +212,4 @@ echo "FI C1 GATE2 POPULATED DATA/DDL VERIFIED source_records=$source_rows_clone 
    (SELECT count(*) FROM fi.recorded_generation WHERE source_id='iss-fs-22a.iss.local' AND
     generation_id='20261030T000032.061323100Z-3e38b2210771462c')::text")" = "$live" ] ||
   die 'real SoR baseline changed during clone; do not use this clone for acceptance'
-echo "FI C1 GATE2 POPULATED CLONE READY clone_root=$clone clone_system_id=$clone_sid live_system_id=$sid original_generations=$gens original_accepted=$accepted canonical_tables=49 pending_tables=50 sql_archive=fi-populated.backup verified_fk=true ready_queue_untouched=true original_live_untouched=true NO_INGESTION_PERFORMED=true"
+echo "FI C1 GATE2 POPULATED CLONE READY clone_root=$clone clone_system_id=$clone_sid live_system_id=$sid original_generations=$gens original_accepted=$accepted canonical_tables=49 pending_tables=50 sql_archive=fi-populated.backup verified_fk=true ready_queue_untouched=true original_live_untouched=true prior_signed_generation_accepted=true NO_INGESTION_PERFORMED=true"
