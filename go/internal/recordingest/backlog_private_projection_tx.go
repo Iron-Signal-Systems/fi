@@ -30,6 +30,7 @@ type privateProjectionTx struct {
 	pgx.Tx
 	fieldPartition string // empty unless the isolated, opt-in W128 experiment is active
 	schema string // empty defaults to the unchanged private benchmark target
+	canonicalDirect bool // explicit C1 direct-authoritative routing only
 }
 
 // Only these two compile-time-known schemas are permitted. Never accept
@@ -39,6 +40,7 @@ func (p privateProjectionTx) destinationSchema() (string, error) {
 	if schema == "" {
 		schema = privateProjectionSchema
 	}
+	if schema == "fi" && p.canonicalDirect { return schema,nil }
 	if schema != privateProjectionSchema && schema != c1GovernedPendingSchema {
 		return "", errors.New("FI C1: unapproved relational projection schema")
 	}
@@ -46,21 +48,21 @@ func (p privateProjectionTx) destinationSchema() (string, error) {
 }
 
 func (p privateProjectionTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema)
+	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema, p.canonicalDirect)
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
 	return p.Tx.Exec(ctx, rewritten, args...)
 }
 func (p privateProjectionTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema)
+	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema, p.canonicalDirect)
 	if err != nil {
 		return nil, err
 	}
 	return p.Tx.Query(ctx, rewritten, args...)
 }
 func (p privateProjectionTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema)
+	rewritten, err := rewritePrivateProjectionStatementTo(sql, p.schema, p.canonicalDirect)
 	if err != nil {
 		return privateProjectionErrorRow{err: err}
 	}
@@ -126,11 +128,12 @@ func rewritePrivateProjectionStatement(sql string) (string, error) {
 
 // This SQL parser accepts only static qualified FI projector SQL. It changes
 // the destination namespace without changing the original typed projection.
-func rewritePrivateProjectionStatementTo(sql, targetSchema string) (string, error) {
+func rewritePrivateProjectionStatementTo(sql, targetSchema string, allowCanonical ...bool) (string, error) {
 	if targetSchema == "" {
 		targetSchema = privateProjectionSchema
 	}
-	if targetSchema != privateProjectionSchema && targetSchema != c1GovernedPendingSchema {
+	if targetSchema != privateProjectionSchema && targetSchema != c1GovernedPendingSchema &&
+		!(targetSchema == "fi" && len(allowCanonical)==1 && allowCanonical[0]) {
 		return "", errors.New("FI C1: unapproved relational projection schema")
 	}
 	words := strings.Fields(sql)
