@@ -45,7 +45,12 @@ if jls -j fi-ingest >/dev/null 2>&1;then
     fail 'competing C1 fi-ingest consumer running'
   fi
 fi
-if jexec fi-sor /usr/bin/pgrep -f 'fi-c1-sor-local|fi-c1-sor-direct-real' >/dev/null 2>&1;then
+pgrep=
+for candidate in /bin/pgrep /usr/bin/pgrep;do
+  if jexec fi-sor /bin/test -x "$candidate";then pgrep=$candidate;break;fi
+done
+[ -n "$pgrep" ] || fail 'cannot verify absence of running C1 processes'
+if jexec fi-sor "$pgrep" -f 'fi-c1-sor-local|fi-c1-sor-direct-real' >/dev/null 2>&1;then
   fail 'another C1 direct runner is active'
 fi
 [ -d "$sor$root" ] && [ ! -L "$sor$root" ] ||
