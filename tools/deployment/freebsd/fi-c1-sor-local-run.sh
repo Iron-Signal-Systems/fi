@@ -25,6 +25,7 @@ localconf=/etc/rc.conf.d/fi_c1_sor_local
 : "${fi_c1_sor_local_sources:?}"
 : "${fi_c1_sor_local_ready_root:?}"
 : "${fi_c1_sor_local_stage_root:?}"
+: "${fi_c1_sor_local_receiver_cache_root:?}"
 if [ -n "${fi_c1_sor_pgpass:-}" ]; then
     [ -f "$fi_c1_sor_pgpass" ] && [ ! -L "$fi_c1_sor_pgpass" ] &&
     [ -r "$fi_c1_sor_pgpass" ] &&
@@ -43,7 +44,8 @@ set -- \
     -postgres-local "$fi_c1_sor_postgres_local" \
     -postgres-publisher-local "$fi_c1_sor_postgres_publisher_local" \
     -sql-workers-max "${fi_c1_sor_local_sql_workers_max:-32}" \
-    -staging-root "$fi_c1_sor_local_stage_root"
+    -staging-root "$fi_c1_sor_local_stage_root" \
+    -receiver-verified-cache-root "$fi_c1_sor_local_receiver_cache_root"
 case "${fi_c1_sor_source_namespaces:-NO}" in
     YES) set -- "$@" -source-namespaces ;;
     NO) ;;

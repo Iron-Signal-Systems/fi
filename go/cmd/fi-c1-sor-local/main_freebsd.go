@@ -52,6 +52,7 @@ func main() {
     cloneRoot:=f.String("benchmark-clone-root","","explicit isolated C220 benchmark PGDATA root; enforces physical worker/publisher cluster identity")
     cloneSystemID:=f.String("benchmark-system-id","","independent postgres-administrator-verified unique clone system identifier")
     cacheRoot:=f.String("benchmark-verified-cache-root","","ORIGINAL C1 receiver-authenticated read-only cache; isolated clone only")
+    receiverCache:=f.String("receiver-verified-cache-root","","receiver-published batch cache mounted read-only in fi-sor; independent B still uses original FIGT")
     canonical:=f.Uint64("max-canonical-bytes",75161927680,"receiver canonical limit")
     encoded:=f.Uint64("max-encoded-bytes",68719476736,"receiver encoded limit")
     manifest:=f.Uint64("max-manifest-bytes",1048576,"original manifest byte limit")
@@ -95,6 +96,12 @@ func main() {
     if *cacheRoot!="" && (*cloneRoot==""||*cloneSystemID==""||*ready!=""||*replay){
         fatal(errors.New("FI C1 cache: previously authenticated benchmark cache requires isolated clone, no READY and no replay"))
     }
+    if *receiverCache!="" && (*cloneRoot!=""||*cacheRoot!=""){
+        fatal(errors.New("FI C1 local: live receiver cache and clone benchmark modes are mutually exclusive"))
+    }
+    if *ready!="" && *receiverCache==""{
+        fatal(errors.New("FI C1 local: routine READY requires receiver-published verified batches; refuse full FIGT expansion before SQL"))
+    }
     if *cloneRoot=="" && *cloneSystemID!=""{
         fatal(errors.New("FI C1 benchmark: PostgreSQL system identifier without physical clone path"))
     }
@@ -102,6 +109,9 @@ func main() {
     if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*recorded);e!=nil{fatal(e)}
     if *cacheRoot!=""{
         if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*cacheRoot);e!=nil{fatal(e)}
+    }
+    if *receiverCache!=""{
+        if e:=c1handoff.RequireFreeBSDReadOnlyCustody(*receiverCache);e!=nil{fatal(e)}
     }
     // The only writable source staging lives on fi-sor's local fast pool.
     // It is disposable, never a second receiver custody authority.
@@ -115,7 +125,8 @@ func main() {
         SQLWorkersMax:*max,AllowReplay:*replay,
         Custody:recordingest.C1NativeBCustodyConfig{
             CustodyRoot:*custody,RecordedRoot:*recorded,
-            VerifiedCacheRoot:*cacheRoot,BenchmarkClone:*cloneRoot!="",
+            VerifiedCacheRoot:*cacheRoot,ReceiverVerifiedCacheRoot:*receiverCache,
+            BenchmarkClone:*cloneRoot!="",
             SourceNamespaces:*namespaces,MaxCanonicalBytes:*canonical,
             MaxEncodedBytes:*encoded,MaxManifestBytes:*manifest,
         },
@@ -131,6 +142,9 @@ func main() {
         if e:=recordingest.PreflightC1SoRLocal(ctx,config);e!=nil{fatal(e)}
         if *gen!=""{
             if _,e:=recordingest.C1SoRLocalRecordedReceipt(config,*gen);e!=nil{fatal(e)}
+            if *receiverCache!=""{
+                if _,e:=recordingest.LoadC1SoRReceiverVerifiedCache(ctx,config,*gen);e!=nil{fatal(e)}
+            }
         }
         fmt.Println("FI C1 SOR SINGLE-JAIL READ-ONLY PREFLIGHT PASS fi_ingest_jail_unused=true signed_receiver_custody_readonly=true postgres_local=true services_started=false")
         return
@@ -169,6 +183,8 @@ func main() {
     var signed *recordingest.PreparedGeneration
     if *cacheRoot!=""{
         signed,e=recordingest.LoadC1SoRBenchmarkVerifiedCache(ctx,config,*gen)
+    }else if *receiverCache!=""{
+        signed,e=recordingest.LoadC1SoRReceiverVerifiedCache(ctx,config,*gen)
     }else{
         signed,e=recordingest.LoadRecordedGeneration(recordingest.C1SoRLocalGenerationLoad(config),*gen)
     }

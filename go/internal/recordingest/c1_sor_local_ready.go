@@ -44,8 +44,16 @@ func RunC1SoRLocalReadyPass(ctx context.Context,c C1SoRLocalConfig,
                 return accepted,errors.New("FI C1 local READY: unsafe canonical status")
             }
             overallStart:=time.Now()
-            g,e:=LoadRecordedGeneration(load,want.generationID)
-            if e!=nil{return accepted,fmt.Errorf("FI C1 local READY: original signed custody: %w",e)}
+            var g *PreparedGeneration
+            var e error
+            if c.Custody.ReceiverVerifiedCacheRoot!=""{
+                // Receiver has authenticated and published each batch. Never
+                // unpack the complete FIGT archive before starting SQL.
+                g,e=LoadC1SoRReceiverVerifiedCache(ctx,c,want.generationID)
+            }else{
+                g,e=LoadRecordedGeneration(load,want.generationID)
+            }
+            if e!=nil{return accepted,fmt.Errorf("FI C1 local READY: original receiver batch source: %w",e)}
             extractionElapsed:=time.Since(overallStart)
             result,runErr:=RunC1SoRLocalGeneration(ctx,c,g)
             closeErr:=g.Close()

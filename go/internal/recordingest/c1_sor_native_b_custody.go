@@ -41,7 +41,8 @@ type c1NativeBCustodyConfig struct {
     CustodyRoot string
     RecordedRoot string
     // Only permitted with the physically isolated benchmark clone.
-    VerifiedCacheRoot string
+    VerifiedCacheRoot string // isolated clone-only benchmark cache
+    ReceiverVerifiedCacheRoot string // receiver-published cache, read-only in the live SoR
     BenchmarkClone bool
     SourceNamespaces bool
     MaxCanonicalBytes uint64

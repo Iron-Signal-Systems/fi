@@ -23,6 +23,7 @@ dev=/fast/jails/roots/fi-dev
 source=iss-fs-22a.iss.local
 generation=20261030T000032.061323100Z-3e38b2210771462c
 root=/var/tmp/fi-c1-sor-local-scratch
+cache=/var/db/fi/verified-cache
 socket=/var/db/fi/sor/run
 target=/usr/local/sbin/fi-c1-sor-direct-real
 hosttarget=$sor$target
@@ -54,7 +55,9 @@ if jexec fi-sor "$pgrep" -f 'fi-c1-sor-local|fi-c1-sor-direct-real' >/dev/null 2
   fail 'another C1 direct runner is active'
 fi
 [ -d "$sor$root" ] && [ ! -L "$sor$root" ] ||
- fail 'original verified fi-sor local extraction scratch missing'
+ fail 'fi-sor local scratch missing'
+[ -d "$sor$cache" ] && [ ! -L "$sor$cache" ] ||
+ fail 'receiver verified batch cache not mounted; refuse full FIGT extraction'
 
 echo '===== EXACT REAL POSTGRESQL CLUSTER, FRESH DATA AND ROLE AUDIT ====='
 jexec -U postgres fi-sor psql -X -w -v ON_ERROR_STOP=1 -P pager=off \
@@ -150,6 +153,7 @@ jexec -U fi-sor fi-sor /bin/sh -c '
     export PGPASSFILE
   fi
   set -- -source-id "$1" -generation-id "$2" \
+    -receiver-verified-cache-root "$4" \
     -custody-root "$fi_c1_sor_custody_root" \
     -recorded-root "$fi_c1_sor_recorded_root" \
     -postgres-local "$fi_c1_sor_postgres_local" \
@@ -159,7 +163,7 @@ jexec -U fi-sor fi-sor /bin/sh -c '
     set -- "$@" -source-namespaces
   fi
   /usr/local/sbin/fi-c1-sor-direct-real "$@" -preflight
-' sh "$source" "$generation" "$root" || fail 'original signed generation or real SQL preflight failed'
+' sh "$source" "$generation" "$root" "$cache" || fail 'original signed generation, verified receiver batches or real SQL preflight failed'
 
 echo '===== RUN EXACT SIGNED GENERATION INTO REAL CANONICAL FI ====='
 logdir=$(mktemp -d /root/fi-c1-real-canonical.XXXXXXXX) ||
@@ -173,6 +177,7 @@ if ! jexec -U fi-sor fi-sor /bin/sh -c '
     export PGPASSFILE
   fi
   set -- -source-id "$1" -generation-id "$2" \
+    -receiver-verified-cache-root "$4" \
     -custody-root "$fi_c1_sor_custody_root" \
     -recorded-root "$fi_c1_sor_recorded_root" \
     -postgres-local "$fi_c1_sor_postgres_local" \
@@ -182,7 +187,7 @@ if ! jexec -U fi-sor fi-sor /bin/sh -c '
     set -- "$@" -source-namespaces
   fi
   exec /usr/local/sbin/fi-c1-sor-direct-real "$@"
-' sh "$source" "$generation" "$root" > "$logdir/ingest.log" 2>&1;then
+' sh "$source" "$generation" "$root" "$cache" > "$logdir/ingest.log" 2>&1;then
  tail -n 100 "$logdir/ingest.log" >&2 || :
  fail 'C1 did not complete with independent B and canonical Accepted; preserve evidence and assess ZFS rollback'
 fi

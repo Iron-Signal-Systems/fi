@@ -4,10 +4,10 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
-// Reuse the ORIGINAL C1 benchmark's receiver-authenticated verified batch
-// cache as input. This is confined to explicitly isolated clone acceptance:
-// the cache marker is an already-verified receiver transport checkpoint, NOT
-// an independent signature and NOT a substitute for live signed custody.
+// Receiver-authenticated verified batch cache input for native C1. The live
+// SoR imports only a read-only receiver-published cache; independent B still
+// verifies ORIGINAL signed FIGT custody and committed canonical SQL. The clone
+// cache is restricted to isolated benchmark use. Neither is SQL authority.
 package recordingest
 
 import (
@@ -33,8 +33,17 @@ import (
 // checked independently by verifier B during processing, before publication.
 func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     cfg c1NativeBCustodyConfig)(*PreparedGeneration,error){
-    if ctx==nil||source==""||generation==""||!cfg.BenchmarkClone||
-        cfg.VerifiedCacheRoot==""||!filepath.IsAbs(cfg.VerifiedCacheRoot)||
+    cacheRoot:=cfg.VerifiedCacheRoot
+    mode:="clone"
+    if cfg.BenchmarkClone {
+        if cfg.ReceiverVerifiedCacheRoot!="" {return nil,errors.New("FI C1 cache: clone must not select live receiver cache")}
+    } else {
+        if cfg.VerifiedCacheRoot!="" {return nil,errors.New("FI C1 cache: clone cache forbidden on real SoR")}
+        cacheRoot=cfg.ReceiverVerifiedCacheRoot
+        mode="receiver"
+    }
+    if ctx==nil||source==""||generation==""||
+        cacheRoot==""||!filepath.IsAbs(cacheRoot)||
         cfg.RecordedRoot==""||cfg.CustodyRoot==""||
         !filepath.IsAbs(cfg.RecordedRoot)||!filepath.IsAbs(cfg.CustodyRoot)||
         cfg.MaxManifestBytes==0||cfg.MaxManifestBytes>1<<20{
@@ -67,7 +76,7 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     }
     sum:=sha256.Sum256(raw)
     receiptSHA:=hex.EncodeToString(sum[:])
-    dir,err:=backlogVerifiedCacheOpen(cfg.VerifiedCacheRoot,receiptSHA,
+    dir,err:=backlogVerifiedCacheOpen(cacheRoot,receiptSHA,
         receipt.TransferSHA256,receipt.BatchCount,receipt.RecordCount,receipt.DataBytes)
     if err!=nil{return nil,fmt.Errorf("FI C1 cache: original authenticated checkpoint missing: %w",err)}
     batchCount:=int(receipt.BatchCount)
@@ -108,8 +117,8 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     if totalRows!=receipt.RecordCount||totalBytes!=receipt.DataBytes{
         return nil,errors.New("FI C1 cache: full verified batch cache does not match original recorder receipt")
     }
-    fmt.Fprintf(os.Stderr,"FI C1 SOR VERIFIED CACHE INPUT PASS batches=%d records=%d data_bytes=%d original_custody_present=true independent_b_required=true clone_only=true\n",
-        len(batches),totalRows,totalBytes)
+    fmt.Fprintf(os.Stderr,"FI C1 SOR VERIFIED CACHE INPUT PASS batches=%d records=%d data_bytes=%d original_custody_present=true independent_b_required=true cache_mode=%s\n",
+        len(batches),totalRows,totalBytes,mode)
     return &PreparedGeneration{Batches:batches,Receipt:receipt,ReceiptSHA256:receiptSHA,
         ReceiptBytes:len(raw),ReceiptRawBytes:raw},nil
 }
@@ -120,6 +129,16 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
 func LoadC1SoRBenchmarkVerifiedCache(ctx context.Context,c C1SoRLocalConfig,generation string)(*PreparedGeneration,error){
     if c.Custody.VerifiedCacheRoot==""||!c.Custody.BenchmarkClone{
         return nil,errors.New("FI C1 cache: only isolated clone may import verified cache")
+    }
+    return c1SoRVerifiedCacheGeneration(ctx,c.SourceID,generation,c.Custody)
+}
+
+// Live receiver cache is input acceleration only. Independent verifier B
+// always reopens original signed FIGT custody on the real SoR.
+func LoadC1SoRReceiverVerifiedCache(ctx context.Context,c C1SoRLocalConfig,generation string)(*PreparedGeneration,error){
+    if c.Custody.BenchmarkClone||c.Custody.VerifiedCacheRoot!=""||
+        c.Custody.ReceiverVerifiedCacheRoot==""{
+        return nil,errors.New("FI C1 receiver cache: requires live read-only receiver-published cache, not a clone")
     }
     return c1SoRVerifiedCacheGeneration(ctx,c.SourceID,generation,c.Custody)
 }

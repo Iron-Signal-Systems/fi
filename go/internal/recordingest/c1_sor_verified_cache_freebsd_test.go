@@ -87,6 +87,15 @@ func TestC1SoRBenchmarkVerifiedCacheMatchesSignedReceiver(t *testing.T){
     if _,err:=c1SoRVerifiedCacheGeneration(context.Background(),source,signed.GenerationID,cfg);err==nil{
         t.Fatal("C1 silently authorized untrusted cache outside isolated clone")
     }
+    cfg.VerifiedCacheRoot=""
+    cfg.ReceiverVerifiedCacheRoot=cacheRoot
+    live,err:=c1SoRVerifiedCacheGeneration(context.Background(),source,signed.GenerationID,cfg)
+    if err!=nil||live.ReceiptSHA256!=g.ReceiptSHA256||
+        live.Receipt.RecordCount!=g.Receipt.RecordCount{
+        t.Fatalf("live receiver cache source does not match original signed receipt: %v",err)
+    }
+    cfg.ReceiverVerifiedCacheRoot=""
+    cfg.VerifiedCacheRoot=cacheRoot
     cfg.BenchmarkClone=true
     bad:=g.Batches[0].DataPath
     if err:=os.Chmod(bad,0644);err!=nil{t.Fatal(err)}
