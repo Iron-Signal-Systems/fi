@@ -54,7 +54,7 @@ func openC1SoRLocalSQL(ctx context.Context,dsn,_ string)(*pgx.Conn,int64,error){
 // Instantiate C1's SAME ordered SourceParent writer and five shared SQL
 // modules on fi-sor rather than in fi-ingest. Caller must first validate
 // immutable signed batch metadata and private staging cleanliness.
-func newC1SoRSQLPool(ctx context.Context,dsn,sourceID,generationID string,maxWorkers int)(*privateC1FiveSQL,error){
+func newC1SoRSQLPool(ctx context.Context,dsn,sourceID,generationID string,maxWorkers int,directCanonical ...bool)(*privateC1FiveSQL,error){
     if sourceID==""||generationID==""||maxWorkers<1||maxWorkers>32{
         return nil,errors.New("C1 fi-sor: original source and SQL worker limit required")
     }
@@ -63,8 +63,10 @@ func newC1SoRSQLPool(ctx context.Context,dsn,sourceID,generationID string,maxWor
     // the canonical fi schema or the discarded fi_recovery_projection stage.
     // The full signed-generation Bootstrap/verification path is still gated
     // until it is moved to this governed pending target.
+    schema:=c1GovernedPendingSchema
+    if len(directCanonical)>0 && directCanonical[0] {schema="fi"}
     pool,err:=newC1SQLWithOpener(ctx,dsn,"",sourceID,maxWorkers,false,
-        openC1SoRLocalSQL,false,c1GovernedPendingSchema)
+        openC1SoRLocalSQL,false,schema)
     if err!=nil{return nil,err}
     // Assigned before any authenticated Source/Family dispatch. No SQL
     // worker uses this field before the first queued USN handoff.
