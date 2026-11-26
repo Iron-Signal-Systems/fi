@@ -22,9 +22,9 @@ Recorded November 21 baseline: 8,399 signed batches; 15,140,785 signed total rec
 
 **Before attempting a fresh Gate 1 run:** confirm the pinned source, original seed, disposable PostgreSQL instance, read-only cache/custody, disabled services, sufficient storage, and previous run outputs. Never overwrite the interrupted clone or assume its Pending state is empty.
 
-## Gate 2 — physical populated SoR clone
+## Gate 2 — populated SoR copy in a physically separate PostgreSQL cluster
 
-After Gate 1 PASS, capture the live SoR identity/schema/index/FK and accepted-record baselines **read-only**. Restore a consistent copy of the **populated** development SoR to a physically separate PostgreSQL 18 instance. Preserve existing canonical history, 49 relations, indexes, constraints, identities and ingest journal. Verify distinct PGDATA, unique PostgreSQL system identifier and isolated Unix socket with no TCP listener. Do not change live SoR.
+After Gate 1 PASS, capture the live SoR identity/schema/index/FK and accepted-record baselines **read-only**. Restore a transaction-consistent logical backup of the **populated** development SoR into a physically separate PostgreSQL 18 cluster with distinct PGDATA and control-system identifier. The restored database preserves its data, SQL schema, roles/ACLs, constraints and identities; logically rebuilt index storage and physical page layout can differ from the live source. Preserve existing canonical history, 49 relations, indexes, constraints, identities and ingest journal. Verify distinct PGDATA, unique PostgreSQL system identifier and isolated Unix socket with no TCP listener. Do not change live SoR.
 
 Run the **same C1 algorithm** once against the clone's actual database structure, with B checking the records that Family Processing committed. No copy/reinsert of all families after B. Prove unchanged previous history, exact signed 15-million generation, no duplicates, interruption and crash/restart/replay, true end-to-end time, and correct final status. Resolve any unverified-generation reader-visibility risk before allowing live ingestion.
 
@@ -41,3 +41,9 @@ Only after reviewing all Gate 2 evidence: separately audited deployment and cont
 - Verifier B writing to SoR.
 - Different ingest engines for normal batches versus outages.
 - Reuse of /var/tmp/fi-c1-sor-bench.1ZjLP6eF as a fresh database without reconciliation.
+
+## Gate status (2026-11-26)
+
+- Gate 1: PASS on C220 (original 8,399 signed batches, 15,140,785 total records; 14,647,307 new; independent B PASS; original private SQL clone, no canonical writes). SQL drain 12m8.141s, approximately 20,116 new records/s. Historical comparator 11m41.147s, approximately 20,891/s; same algorithm, runtime variability not yet explained.
+- Gate 2: PREPARATION ONLY. Read-only inventory in `fi_c1_c220_gate2_populated_sor_inventory.sh`; independent populated PostgreSQL backup/restore in `fi_c1_c220_gate2_populated_clone_prepare.sh`. Clone data copy is NOT ingestion acceptance. Do not invoke the older empty-clone bootstrap or single-jail Pending-to-canonical publisher as a substitute for the approved one-write path. Implement and verify an actual populated-clone C1 SQL destination with B verifying those committed destination rows before attempting Gate 2 ingestion.
+- Gate 3: NOT STARTED. Live SoR remains unchanged.
