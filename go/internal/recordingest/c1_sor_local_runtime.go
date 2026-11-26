@@ -31,6 +31,11 @@ type C1SoRLocalConfig struct {
     PublisherDSN string
     SQLWorkersMax int
     AllowReplay bool
+    // Unsafe for normal SoR: development only, with physical isolated-clone
+    // fence enforced BEFORE any canonical metadata or family SQL write.
+    DirectCanonicalClone bool
+    CloneRoot string
+    CloneSystemID string
 }
 
 type C1SoRLocalResult struct {
@@ -216,6 +221,9 @@ func RunC1SoRLocalGeneration(ctx context.Context,c C1SoRLocalConfig,
     if err!=nil{return result,err}
     defer service.Close()
     service.PublisherDSN=c.PublisherDSN
+    service.DirectCanonicalClone=c.DirectCanonicalClone
+    service.CloneRoot=c.CloneRoot
+    service.CloneSystemID=c.CloneSystemID
     service.NativeBCustody=c.Custody
     service.AllowC1Replay=c.AllowReplay
     ids,err:=service.Bootstrap(ctx,start)
