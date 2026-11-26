@@ -53,7 +53,6 @@ func (s *C1SoRService) bootstrapDirectCanonicalClone(
     // roster are opened just as they are in the existing cache-backed C1 test.
     original,err:=c1SoRVerifiedCacheGeneration(ctx,f.SourceID,f.GenerationID,s.NativeBCustody)
     if err!=nil{return nil,err}
-    defer original.Close()
     if original.ReceiptSHA256!=f.ReceiptSHA256||
         uint64(f.ExpectedRecords)!=original.Receipt.RecordCount||
         len(original.Batches)!=len(f.BatchIDs){
