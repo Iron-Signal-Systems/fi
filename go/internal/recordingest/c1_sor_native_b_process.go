@@ -40,6 +40,7 @@ type c1SoRNativeB struct {
     cancel context.CancelFunc
     done chan struct{}
     err error // only written before closing done
+    proofDigest string // immutable B signed SQL commitment; read only after done
 }
 // Schema is selected only by fi-sor's own frozen construction path.
 func c1NativeBSchema(p c1NativeBPlan)(string,error){
@@ -175,12 +176,14 @@ func c1StartNativeBWithLauncher(ctx context.Context,dsn string,p c1NativeBPlan,
         var scanErr error
         for scanner.Scan(){
             line:=scanner.Text()
-            if line=="FINAL PASS"{
-                if final||len(checked)!=len(p.Descriptors)-1{
-                    scanErr=errors.New("C1 B: premature or duplicate final proof")
+            if strings.HasPrefix(line,"FINAL PASS "){
+                proof:=strings.TrimPrefix(line,"FINAL PASS ")
+                if final||len(checked)!=len(p.Descriptors)-1||!canonicalDigest(proof){
+                    scanErr=errors.New("C1 B: premature, missing-digest or duplicate final proof")
                     break
                 }
                 final=true
+                v.proofDigest=proof
             }else if strings.HasPrefix(line,"PASS "){
                 wi,e:=strconv.Atoi(strings.TrimPrefix(line,"PASS "))
                 if e!=nil||wi<1||wi>=len(p.Descriptors)||checked[wi]||final{
@@ -225,6 +228,23 @@ func(v *c1SoRNativeB)Stop(){
     if v==nil{return}
     v.cancel()
     <-v.done
+}
+
+// Never accept an IPC-supplied hash from A or a READY marker. Only the
+// independently spawned original-custody verifier's completed FINAL proof
+// may authorize the locked SQL content-stability check at publication.
+func(v *c1SoRNativeB)Commitment()(string,error){
+    if v==nil{return "",errors.New("C1 B: missing independent verifier")}
+    select{
+    case <-v.done:
+        if v.err!=nil{return "",v.err}
+        if !canonicalDigest(v.proofDigest){
+            return "",errors.New("C1 B: final signed row evidence unavailable")
+        }
+        return v.proofDigest,nil
+    default:
+        return "",errors.New("C1 B: signed row evidence requested before final proof")
+    }
 }
 
 func RunC1SoRNativeBChild(ctx context.Context,input io.Reader,output io.Writer)error{
@@ -274,6 +294,8 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     g.Receipt.TransferSHA256=p.Transfer
     g.Receipt.Descriptor.SourceID=p.Start.SourceID
     g.Receipt.Descriptor.GenerationID=p.Start.GenerationID
+    commitment,err:=c1NativeBNewRowCommitment(p)
+    if err!=nil{return err}
     groupTotal:=len(p.Descriptors)-1
     readySeen:=make([]bool,groupTotal+1)
     proved:=make([]bool,groupTotal+1)
@@ -318,7 +340,7 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         _,err:=fmt.Fprintf(output,"PASS %d\n",wi)
         return err
     }
-    if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup);err!=nil{
+    if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup,commitment);err!=nil{
         return fmt.Errorf("C1 B: independent original signed custody/SQL streaming: %w",err)
     }
     if passed!=groupTotal{
@@ -333,7 +355,7 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     }
     if scan.Text()!="FINAL"{return errors.New("C1 B: duplicate READY or unexpected final command")}
     if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{return err}
-    if _,err:=fmt.Fprintln(output,"FINAL PASS");err!=nil{return err}
+    if _,err:=fmt.Fprintf(output,"FINAL PASS %s\n",hex.EncodeToString(commitment.Sum(nil)));err!=nil{return err}
     if scan.Scan(){return errors.New("C1 B: commands after final proof")}
     return scan.Err()
 }
