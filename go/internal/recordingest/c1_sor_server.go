@@ -60,8 +60,8 @@ func c1SoRStartupTLS(ctx context.Context,cfg C1SoRServerConfig)(*tls.Config,erro
     if _,err=c1SoRLocalPublisherConfig(cfg.PublisherPostgresDSN);err!=nil{return nil,err}
     // Both SQL roles and the governed Pending ACL graph are checked
     // READ ONLY against the existing local socket before any TLS listener.
-    if err=c1PreflightLocalGovernedPendingSQL(ctx,cfg.LocalPostgresDSN);err!=nil{
-        return nil,fmt.Errorf("C1 fi-sor: SQL worker/Pending admission not ready: %w",err)
+    if err=c1PreflightDirectCanonicalSQL(ctx,cfg.LocalPostgresDSN);err!=nil{
+        return nil,fmt.Errorf("C1 fi-sor: direct canonical SQL worker admission not ready: %w",err)
     }
     if err=c1PreflightLocalPublisher(ctx,cfg.PublisherPostgresDSN);err!=nil{
         return nil,fmt.Errorf("C1 fi-sor: canonical publisher not ready: %w",err)
@@ -92,6 +92,7 @@ func RunC1SoRWorker(ctx context.Context,cfg C1SoRServerConfig)error{
         // writer's session ownership and preventing concurrent replays.
         service,e:=NewC1SoRService(cfg.LocalPostgresDSN,cfg.SQLWorkersMax)
         if e!=nil{conn.Close();return e}
+        service.DirectCanonical=true
         service.SharedRAMDir=cfg.SharedRAMDir
         service.PublisherDSN=cfg.PublisherPostgresDSN
         service.AllowC1Replay=cfg.AllowC1Replay
