@@ -229,7 +229,7 @@ func newC1SQLWithOpener(ctx context.Context,dsn,pgdata,sourceID string,
     }
     schema:=privateProjectionSchema
     if len(targetSchema)>0 {
-        if len(targetSchema)!=1||targetSchema[0]!="fi_c1_pending"||cloneOnly {
+        if len(targetSchema)!=1||(targetSchema[0]!="fi_c1_pending"&&targetSchema[0]!="fi")||cloneOnly {
             return nil,errors.New("FI C1: private clone cannot redirect to governed pending or arbitrary schema")
         }
         schema=targetSchema[0]
@@ -507,7 +507,7 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
     if err!=nil{return err}
     defer tx.Rollback(context.Background())
     profile:=&ingestStageProfile{}
-    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx,schema:w.projectionSchema},
+    coordinator,err:=newPrivateP6SQLCoordinator(privateProjectionTx{Tx:tx,schema:w.projectionSchema,canonicalDirect:w.projectionSchema=="fi"},
         w.sourceID,profile)
     if err!=nil{return err}
     writeCtx,hashCopy,aceCopy,usnCopy:=privateC1BoundedProjectorContext(ctx)
@@ -562,7 +562,7 @@ func(w *privateC1FiveSQL) writeFamily(ctx context.Context,lane *privateC1SQLLane
     // The same privateProjectionTx rewrites all five family's COPY
     // targets into fi_recovery_projection. Drain *before* SQL COMMIT:
     // pending hashes/ACEs/USN changes and reasons are real FK children.
-    projector:=privateProjectionTx{Tx:tx,schema:w.projectionSchema}
+    projector:=privateProjectionTx{Tx:tx,schema:w.projectionSchema,canonicalDirect:w.projectionSchema=="fi"}
     if err=usnCopy.flushAll(writeCtx,projector);err!=nil{
         return fmt.Errorf("FI C1: USN/reason child COPY: %w",err)
     }
