@@ -305,6 +305,44 @@ func c1SignedCrashAfter(t *testing.T,ctx context.Context,root string,
         generationTrustBundle{Root:rootCA,BatchIssuer:issuer,
             BatchCRL:crl,Source:f.Source})
     signedProof:=hex.EncodeToString(originalCommitment.Sum(nil))
+    // Reuse the SAME receiver-authenticated batch cache employed by the
+    // 20k-record/s original C1 benchmark. This must drive the ACTUAL B child
+    // and strict parent/child READY, PASS, FINAL IPC, not just a mock loader.
+    cacheRoot:=filepath.Join(root,"verified-cache")
+    if err=os.MkdirAll(cacheRoot,0700);err!=nil{t.Fatal(err)}
+    cachePending,e:=backlogVerifiedCacheBegin(cacheRoot,original.ReceiptSHA256)
+    if e!=nil{t.Fatal(e)}
+    if e=writeBacklogStageFile(backlogCacheBatchData(cachePending,0),raw);e!=nil{t.Fatal(e)}
+    if e=writeBacklogStageFile(backlogCacheBatchManifest(cachePending,0),
+        original.Batches[0].ManifestRawBytes);e!=nil{t.Fatal(e)}
+    if e=backlogVerifiedCacheCommit(cacheRoot,cachePending,original.ReceiptSHA256,
+        original.Receipt.TransferSHA256,original.Receipt.BatchCount,
+        original.Receipt.RecordCount,original.Receipt.DataBytes);e!=nil{t.Fatal(e)}
+    cacheCustody:=custody
+    cacheCustody.VerifiedCacheRoot=cacheRoot
+    cacheCustody.BenchmarkClone=true
+    cached,err:=c1SoRVerifiedCacheGeneration(ctx,p.Start.SourceID,
+        p.Start.GenerationID,cacheCustody)
+    if err!=nil||len(cached.Batches)!=1||
+        cached.Batches[0].ManifestSHA256!=original.Batches[0].ManifestSHA256{
+        t.Fatalf("signed receiver cache failed after real PostgreSQL crash: %v",err)
+    }
+    cachedCommitment,e:=c1NativeBNewRowCommitment(p)
+    if e!=nil{t.Fatal(e)}
+    e=c1NativeBVerifyCachedGroups(ctx,reader,p,cacheCustody,
+        func(wi int,complete bool)error{
+            if wi!=1{return errors.New("cached verifier changed signed group")}
+            if !complete{return nil}
+            return privateC1AsyncVerifyGroup(ctx,reader,g,p.Descriptors,wi,p.SQLSchema)
+        },cachedCommitment)
+    if e!=nil{t.Fatalf("cached C1 B signed/SQL group proof: %v",e)}
+    if hex.EncodeToString(cachedCommitment.Sum(nil))!=signedProof{
+        t.Fatal("cached B row evidence differs from original independently signed custody")
+    }
+    c1TestNativeBReadyProtocol(t,ctx,admin,p,cacheCustody,
+        generationTrustBundle{Root:rootCA,BatchIssuer:issuer,
+            BatchCRL:crl,Source:f.Source})
+    t.Log("PASS: real separate B process accepted signed cached replay; original full custody unchanged")
     lockedSQLProof,err:=c1NativeBLockedSQLRowCommitment(ctx,reader,p)
     if err!=nil{t.Fatalf("signed original SQL commitment readback: %v",err)}
     if signedProof!=lockedSQLProof{
