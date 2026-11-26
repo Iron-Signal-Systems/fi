@@ -21,6 +21,7 @@ import (
 )
 
 type C1SoRService struct {
+    DirectCanonical bool // one-write canonical destination; both routine READY and backlog use this same service
     DSN string
     PublisherDSN string // fi-sor-only privileged canonical publisher; never the SQL worker
     MaxSQLWorkers int
@@ -59,6 +60,7 @@ func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int
         return nil,errors.New("C1 fi-sor: unexpected or missing signed Start")
     }
     if err:=frame.Validate();err!=nil{return nil,err}
+    if s.DirectCanonical{return s.bootstrapDirectCanonical(ctx,frame)}
     s.mu.Lock()
     defer s.mu.Unlock()
     if s.pool!=nil||s.session!=nil||s.failed!=nil {
@@ -164,9 +166,10 @@ func(s *C1SoRService)loadSignedBatchRecordCounts(ctx context.Context,ids []int64
         if _,exists:=index[id];exists{return nil,errors.New("C1 fi-sor: duplicate signed SQL batch identity")}
         index[id]=i
     }
-    rows,err:=tx.Query(ctx,`SELECT source_batch_id,record_count
-        FROM fi_c1_pending.source_batch
-        WHERE source_batch_id=ANY($1::bigint[])`,ids)
+    schema:=c1GovernedPendingSchema
+    if s.DirectCanonical{schema="fi"}
+    rows,err:=tx.Query(ctx,"SELECT source_batch_id,record_count FROM "+pgx.Identifier{schema,"source_batch"}.Sanitize()+
+        " WHERE source_batch_id=ANY($1::bigint[])",ids)
     if err!=nil{return nil,err}
     found:=0
     for rows.Next(){
@@ -258,6 +261,7 @@ func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
     if s==nil||ctx==nil||f.Kind!=c1handoff.Drain{
         return c1handoff.FinalNone,errors.New("C1 fi-sor: final proof requires signed Drain")
     }
+    if s.DirectCanonical{return s.finalProofDirectCanonical(ctx,f)}
     s.mu.Lock()
     if s.failed!=nil{
         err:=s.failed
