@@ -1,0 +1,76 @@
+name: FI C220 C1 Live Ingest and Telemetry Build Gates
+on:
+  push:
+    paths:
+      - 'go/internal/telemetrybackend/**'
+      - 'go/cmd/fi-telemetry-backend/**'
+      - 'tools/deployment/freebsd/runtime.d/fi-c1-sor-live*'
+      - 'tools/deployment/freebsd/runtime.d/fi-telemetry-*'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_telemetry*'
+      - '.github/workflows/fi-c1-c220-operational.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  c220-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+          cache: true
+      - name: Durable telemetry spool (host native)
+        working-directory: go
+        run: |
+          set -eu
+          go test -count=1 -race ./internal/telemetrybackend
+          go vet ./internal/telemetrybackend
+      - name: Build actual FreeBSD C220 telemetry binary
+        working-directory: go
+        run: |
+          set -eu
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/fi-telemetry-backend ./cmd/fi-telemetry-backend
+          test -s /tmp/fi-telemetry-backend
+          file /tmp/fi-telemetry-backend
+      - name: Build actual FreeBSD single-jail C1 consumer
+        working-directory: go
+        run: |
+          set -eu
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags fi_c1_sor_dev -o /tmp/fi-c1-sor-live ./cmd/fi-c1-sor-local
+          test -s /tmp/fi-c1-sor-live
+      - name: FreeBSD service definitions and safety invariants
+        run: |
+          set -eu
+          for script in \
+            tools/deployment/freebsd/runtime.d/fi-c1-sor-live-run.sh \
+            tools/deployment/freebsd/runtime.d/fi-c1-sor-live.rc.d \
+            tools/deployment/freebsd/runtime.d/fi-telemetry-sample.rc.d \
+            tools/deployment/freebsd/runtime.d/fi-telemetry-upload.rc.d
+          do
+            sh -n "$script"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          base=Path("tools/deployment/freebsd/runtime.d")
+          c1=(base/"fi-c1-sor-live-run.sh").read_text()
+          rc=(base/"fi-c1-sor-live.rc.d").read_text()
+          collector=Path("go/cmd/fi-telemetry-backend/main_freebsd.go").read_text()
+          spool=Path("go/internal/telemetrybackend/spool.go").read_text()
+          sql=(base/"fi-telemetry-v2-schema.sql").read_text()
+          assert "-ready-root" in c1 and "-continuous" in c1
+          assert "-receiver-verified-cache-root" in c1
+          assert "-sql-workers-max 32" in c1
+          assert "-reconcile-private-replay" not in c1
+          assert "/usr/sbin/daemon" in rc and " -r " not in rc
+          assert "pgx.Connect" in collector
+          assert "telemetry_v2.entry" in collector
+          assert "15*time.Second" in collector and "5*time.Minute" in collector
+          assert "os.Rename" in spool and "tmp.Sync()" in spool
+          assert "FROM pg_stat_wal" in collector
+          assert "current_database()<>'fi_telemetry'" in sql
+          assert "DROP TABLE" not in sql and "TRUNCATE" not in sql
+          print("FI C220 OPERATIONAL SOURCE INVARIANTS PASS")
+          PY
