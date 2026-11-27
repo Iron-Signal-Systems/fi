@@ -164,28 +164,37 @@ func RecoverDurableCustodyRoot(
 }
 
 // ReadDiscoveredCustodyDescriptor reads only the bounded FIGT header and
-// signed-metadata envelope needed to identify one restart-discovered source.
-//
-// This does not authorize the generation. The returned source identity is used
-// only to select the enrolled authorization applied by the subsequent complete
-// durable-custody validation pass.
+// signed metadata required to identify one restart-discovered source. It does
+// not authorize the generation; full custody verification remains separate.
 func ReadDiscoveredCustodyDescriptor(
+ discovered DiscoveredCustody,
+ root string,
+) (Descriptor, error) {
+ offer, err := ReadDiscoveredCustodyOffer(discovered, root)
+ if err != nil { return Descriptor{}, err }
+ return offer.Descriptor, nil
+}
+
+// ReadDiscoveredCustodyOffer returns the bounded FIGT signed-metadata identity,
+// byte count and metadata digest without streaming the canonical payload.
+// It is NOT signed-content verification or proof of receipt acceptance.
+func ReadDiscoveredCustodyOffer(
 	discovered DiscoveredCustody,
 	root string,
 ) (
-	Descriptor,
+	Offer,
 	error,
 ) {
 	if err := validateDiscoveredCustody(
 		discovered,
 		root,
 	); err != nil {
-		return Descriptor{}, err
+		return Offer{}, err
 	}
 
 	before, err := os.Lstat(discovered.Path)
 	if err != nil {
-		return Descriptor{}, fmt.Errorf(
+		return Offer{}, fmt.Errorf(
 			"inspect discovered FI generation custody object: %w",
 			err,
 		)
@@ -195,12 +204,12 @@ func ReadDiscoveredCustodyDescriptor(
 		before,
 		discovered.Bytes,
 	); err != nil {
-		return Descriptor{}, err
+		return Offer{}, err
 	}
 
 	file, err := os.Open(discovered.Path)
 	if err != nil {
-		return Descriptor{}, fmt.Errorf(
+		return Offer{}, fmt.Errorf(
 			"open discovered FI generation custody object: %w",
 			err,
 		)
@@ -210,7 +219,7 @@ func ReadDiscoveredCustodyDescriptor(
 	if err != nil {
 		_ = file.Close()
 
-		return Descriptor{}, fmt.Errorf(
+		return Offer{}, fmt.Errorf(
 			"stat opened discovered FI generation custody object: %w",
 			err,
 		)
@@ -219,7 +228,7 @@ func ReadDiscoveredCustodyDescriptor(
 	if !os.SameFile(before, opened) {
 		_ = file.Close()
 
-		return Descriptor{}, errors.New(
+		return Offer{}, errors.New(
 			"discovered FI generation custody object changed while being opened",
 		)
 	}
@@ -232,11 +241,11 @@ func ReadDiscoveredCustodyDescriptor(
 	closeErr := file.Close()
 
 	if readErr != nil {
-		return Descriptor{}, readErr
+		return Offer{}, readErr
 	}
 
 	if closeErr != nil {
-		return Descriptor{}, fmt.Errorf(
+		return Offer{}, fmt.Errorf(
 			"close discovered FI generation custody object: %w",
 			closeErr,
 		)
@@ -244,14 +253,14 @@ func ReadDiscoveredCustodyDescriptor(
 
 	after, err := os.Lstat(discovered.Path)
 	if err != nil {
-		return Descriptor{}, fmt.Errorf(
+		return Offer{}, fmt.Errorf(
 			"reinspect discovered FI generation custody object: %w",
 			err,
 		)
 	}
 
 	if !os.SameFile(before, after) {
-		return Descriptor{}, errors.New(
+		return Offer{}, errors.New(
 			"discovered FI generation custody object changed during identity inspection",
 		)
 	}
@@ -260,10 +269,10 @@ func ReadDiscoveredCustodyDescriptor(
 		after,
 		discovered.Bytes,
 	); err != nil {
-		return Descriptor{}, err
+		return Offer{}, err
 	}
 
-	return offer.Descriptor, nil
+	return offer, nil
 }
 
 // ReadDiscoveredDurableCustodyArtifacts reopens one restart-discovered custody
