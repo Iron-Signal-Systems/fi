@@ -277,13 +277,54 @@ func c1DirectWriteAccepted(ctx context.Context,dsn string,
        Scan(&id,&count,&batchCount,&receipt,&transfer)
     if err!=nil{return fmt.Errorf("C1 direct: canonical signed ledger: %w",err)}
     if id<=0||count!=expected||batchCount!=int64(batches)||
-        hex.EncodeToString(receipt)!=f.ReceiptSHA256||len(transfer)!=32 {
+        hex.EncodeToString(receipt)!=f.ReceiptSHA256||
+        hex.EncodeToString(transfer)!=plan.Transfer {
         return errors.New("C1 direct: signed canonical identity changed after B proof")
     }
     err=tx.QueryRow(ctx,`SELECT count(*) FROM fi.source_batch
        WHERE recorded_generation_id=$1`,id).Scan(&persisted)
     if err!=nil{return err}
     if persisted!=batchCount{return errors.New("C1 direct: canonical signed batch count mismatch")}
+    // Compare the entire signed per-batch ledger under the SAME table locks
+    // as the source-row hash and Accepted journal. B's plan binds each SHA,
+    // count and SQL identity; a changed source_batch must never survive
+    // publication merely because its parent rows were unchanged.
+    index:=make(map[int64]int,len(plan.SQLIDs))
+    for i,signedID:=range plan.SQLIDs{
+        if signedID<=0{return errors.New("C1 direct: nonpositive signed SQL batch ID")}
+        if _,duplicate:=index[signedID];duplicate{
+            return errors.New("C1 direct: duplicate signed SQL batch IDs")
+        }
+        index[signedID]=i
+    }
+    ledgerRows,e:=tx.Query(ctx,`SELECT source_batch_id,batch_id,record_count,
+        data_bytes,manifest_sha256,data_sha256 FROM fi.source_batch
+        WHERE recorded_generation_id=$1`,id)
+    if e!=nil{return e}
+    matched:=0
+    for ledgerRows.Next(){
+        var batchID,rowCount,dataBytes int64
+        var name string
+        var manifestSHA,dataSHA []byte
+        if e=ledgerRows.Scan(&batchID,&name,&rowCount,&dataBytes,&manifestSHA,&dataSHA);e!=nil{break}
+        i,ok:=index[batchID]
+        if !ok{e=errors.New("C1 direct: unknown locked canonical batch identity");break}
+        signed:=plan.Batches[i]
+        if name!=signed.BatchID||rowCount!=int64(signed.Manifest.RecordCount)||
+            dataBytes!=signed.Manifest.DataBytes||
+            hex.EncodeToString(manifestSHA)!=signed.ManifestSHA256||
+            hex.EncodeToString(dataSHA)!=signed.Manifest.DataSHA256{
+            e=errors.New("C1 direct: locked canonical batch differs from original signed B plan")
+            break
+        }
+        matched++
+    }
+    if e==nil{e=ledgerRows.Err()}
+    ledgerRows.Close()
+    if e!=nil{return e}
+    if matched!=len(index){
+        return errors.New("C1 direct: locked canonical batch ledger coverage incomplete")
+    }
     err=tx.QueryRow(ctx,`SELECT count(*) FROM fi.ingest_journal
        WHERE source_id=$1 AND generation_id=$2 AND outcome='Accepted'`,
         f.SourceID,f.GenerationID).Scan(&accepted)
