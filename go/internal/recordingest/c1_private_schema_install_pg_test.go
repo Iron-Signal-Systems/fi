@@ -20,7 +20,6 @@ import (
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
-    "github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
     "github.com/jackc/pgx/v5"
 )
 
@@ -57,7 +56,7 @@ func TestC1PrivateSchemaRealPostgres18AtomicDDL(t *testing.T){
     }{
         if _,err=admin.Exec(ctx,sql);err!=nil{t.Fatal(err)}
     }
-    migrations,err:=backendinstall.C1CanonicalSchemaMigrations()
+    migrations,err:=c1CanonicalSchemaMigrations()
     if err!=nil{t.Fatal(err)}
     for _,m:=range migrations{
         if _,err=admin.Exec(ctx,m.SQL,pgx.QueryExecModeSimpleProtocol);err!=nil{
