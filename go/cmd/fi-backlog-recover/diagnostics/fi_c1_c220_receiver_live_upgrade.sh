@@ -143,8 +143,13 @@ cmp -s "$stage/old-config" "$config" ||
 [ "$(sha256 -q "$stage/new-supervisor")" = "$(cat "$stage/new-supervisor.sha")" ] ||
  fail 'staged file checksum mismatch'
 echo '===== CONTROLLED STOP OF ORIGINAL RECEIVER ====='
-jexec fi-receiver service fi_receiver onestop ||
- fail 'receiver refused to stop; original files unchanged'
+if ! jexec fi-receiver service fi_receiver onestop;then
+ if ! jexec fi-receiver service fi_receiver onestatus >/dev/null 2>&1;then
+  echo 'Receiver stop returned failure and process is absent: restoring service' >&2
+  jexec fi-receiver service fi_receiver onestart || :
+ fi
+ fail 'receiver stop failed; original files unchanged'
+fi
 sleep 2
 if jexec fi-receiver service fi_receiver onestatus >/dev/null 2>&1 ||
    jexec fi-receiver pgrep -u fi-receiver -f '^/usr/local/sbin/fi-receiver ' >/dev/null 2>&1;then
@@ -180,7 +185,9 @@ if ! jexec fi-receiver service fi_receiver onestatus ||
    ! jexec fi-receiver ps -axww -o command |
        grep -F -- '-generation-verified-cache-root /var/db/fi/verified-cache' >/dev/null ||
    ! jexec fi-receiver ps -axww -o command |
-       grep -F -- '-generation-ready-root /var/db/fi/custody/ready' >/dev/null;then
+       grep -F -- '-generation-ready-root /var/db/fi/custody/ready' >/dev/null ||
+   ! jexec fi-receiver sockstat -4 -l -P tcp |
+       grep -F '172.20.23.21:8443' >/dev/null;then
  rollback
  fail 'receiver failed live verification after restart'
 fi
