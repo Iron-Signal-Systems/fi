@@ -1,0 +1,7 @@
+# C220 fi-sor /etc/rc.conf.d/fi_c1_sor_live
+# Deliberately disabled until normal sender-to-SoR acceptance and telemetry PASS.
+fi_c1_sor_live_enable="NO"
+fi_c1_sor_live_sources="iss-fs-22a.iss.local,iss-fs-22b.iss.local"
+fi_c1_sor_live_ready_root="/var/db/fi/custody/ready"
+fi_c1_sor_live_cache_root="/var/db/fi/verified-cache"
+fi_c1_sor_live_staging_root="/var/tmp/fi-c1-sor-local-scratch"
