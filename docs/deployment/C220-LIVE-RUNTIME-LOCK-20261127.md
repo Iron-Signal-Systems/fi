@@ -3,7 +3,7 @@
 This records the installed, working FI backend. It does not authorize
 redeployment or changes to PostgreSQL, signed custody, or running services.
 
-## Verified source revisions
+## Recorded candidate source revisions and observed installed hashes
 
 | Executable | Source revision | Installed SHA-256 |
 | --- | --- | --- |
@@ -28,6 +28,6 @@ The three runtime source revisions are intentionally isolated because
 the receiver and C1 executable were built against different revisions
 of shared code. Do not mix them or replace accepted Windows code.
 
-This establishes exact application binary identity, not complete
-fresh-install disaster recovery, configuration or secret equivalence,
-or telemetry delivery acceptance.
+**Verification state as of 2026-11-27:** The source revisions and installed SHA-256 hashes above are recorded, and the reproducibility-check script is committed. This document does **not** contain a captured successful run of that script for all three executables. Therefore bit-for-bit matching of all three reconstructed binaries to the live installed binaries remains **unverified by this repository evidence**. Do not treat the word *verified* in a source directory name or historic investigation as an accepted reproducibility result.
+
+A successful, retained verifier transcript for the exact revisions and build environment would establish application-binary identity for those artifacts only. It would **not** establish fresh-install disaster recovery, configuration/secret equivalence, service state, or telemetry delivery acceptance.
