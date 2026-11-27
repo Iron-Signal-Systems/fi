@@ -105,28 +105,27 @@ func RecoverGenerationStartup(
 	for _, discovered := range recovery.Objects {
 		objectConfig := transactionConfig
 
+		// Inspect only the bounded FIGT signed-metadata identity here.
+		// Recorded generations are checked against immutable receipts below.
+		offer, err := transportgeneration.ReadDiscoveredCustodyOffer(
+			discovered, config.GenerationCustodyRoot,
+		)
+		if err != nil {
+			return result, fmt.Errorf(
+				"inspect restart-discovered FI generation custody %q: %w",
+				discovered.Path, err,
+			)
+		}
 		if config.LookupSource != nil {
-			descriptor, err :=
-				transportgeneration.ReadDiscoveredCustodyDescriptor(
-					discovered,
-					config.GenerationCustodyRoot,
-				)
-			if err != nil {
-				return result, fmt.Errorf(
-					"inspect restart-discovered FI generation custody %q: %w",
-					discovered.Path,
-					err,
-				)
-			}
 
 			source, found, err := resolveSourceID(
 				config,
-				descriptor.SourceID,
+				offer.Descriptor.SourceID,
 			)
 			if err != nil {
 				return result, fmt.Errorf(
 					"resolve restart-discovered FI generation source %q: %w",
-					descriptor.SourceID,
+					offer.Descriptor.SourceID,
 					err,
 				)
 			}
@@ -134,7 +133,7 @@ func RecoverGenerationStartup(
 			if !found {
 				return result, fmt.Errorf(
 					"restart-discovered FI generation source %q is not enrolled",
-					descriptor.SourceID,
+					offer.Descriptor.SourceID,
 				)
 			}
 
@@ -157,6 +156,27 @@ func RecoverGenerationStartup(
 				"validate restart-discovered FI generation source boundary: %w",
 				err,
 			)
+		}
+		if offer.Descriptor.SourceID != objectConfig.Custody.Receive.Source.SourceID {
+			return result, fmt.Errorf(
+				"FI startup generation source identity mismatch: %q",
+				offer.Descriptor.SourceID,
+			)
+		}
+
+		// Existing recorded receipts are immutable statements of completed
+		// semantic verification. Hash the entire original FIGT to verify the
+		// receipt's exact transfer identity without decompressing the old
+		// generation or creating new cache as a listener startup prerequisite.
+		known, err := recordedStartupCustody(config, discovered, offer)
+		if err != nil {
+			return result, fmt.Errorf(
+				"verify recorded startup generation %q: %w", discovered.Path, err,
+			)
+		}
+		if known {
+			result.AlreadyRecorded++
+			continue
 		}
 
 		recorded, err :=
