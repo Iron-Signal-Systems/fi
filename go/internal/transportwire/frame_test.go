@@ -274,7 +274,7 @@ func newWireTestBatch(t testing.TB) (transportpackage.SignedBatch, []byte) {
 }
 
 
-func wireTemplateExtensions(t *testing.T) []pkix.Extension {
+func wireTemplateExtensions(t testing.TB) []pkix.Extension {
 	t.Helper()
 	value, err := asn1.Marshal(struct {
 		TemplateID asn1.ObjectIdentifier

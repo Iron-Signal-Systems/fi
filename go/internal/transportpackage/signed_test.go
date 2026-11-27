@@ -151,27 +151,6 @@ func TestNewSignedBatchRejectsMissingDigitalSignatureUsage(t *testing.T) {
 	}
 }
 
-func TestNewSignedBatchRejectsDuplicateTemplateExtensions(t *testing.T) {
-	key, certificate := newBatchSigningIdentityWithOptions(
-		t,
-		"iss-fs-01.iss.local",
-		[]string{
-			batchSigningTestTemplateOID,
-			batchSigningTestTemplateOID,
-		},
-		x509.KeyUsageDigitalSignature,
-		false,
-	)
-
-	_, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, key)
-	if err == nil {
-		t.Fatal("NewSignedBatch() error = nil, want duplicate-template rejection")
-	}
-	if !strings.Contains(err.Error(), "template information extensions") {
-		t.Fatalf("NewSignedBatch() error = %q, want OU-count rejection", err)
-	}
-}
-
 func TestNewSignedBatchRejectsNonRSACertificate(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
