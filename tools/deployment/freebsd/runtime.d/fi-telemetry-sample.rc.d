@@ -9,6 +9,7 @@ rcvar=fi_telemetry_sample_enable
 load_rc_config "$name"
 : "${fi_telemetry_sample_enable:=NO}"
 : "${fi_telemetry_sample_source:=c220-host}"
+: "${fi_telemetry_sample_user:=fi-telemetry}"
 : "${fi_telemetry_sample_spool:=/var/db/fi/telemetry/spool}"
 : "${fi_telemetry_sample_revision:=UNCONFIGURED}"
 : "${fi_telemetry_sample_gap_since:=}"
@@ -28,7 +29,7 @@ fi_telemetry_sample_start(){
  # NEVER in the process argument list. Separate PG read-only monitor role.
  FI_TELEMETRY_MONITOR_DSN="${fi_telemetry_sample_monitor_dsn:-}"
  export FI_TELEMETRY_MONITOR_DSN
- /usr/sbin/daemon -u fi-telemetry -p "$pidfile" \
+ /usr/sbin/daemon -u "$fi_telemetry_sample_user" -p "$pidfile" \
     -o /var/log/fi/fi-telemetry-sample.log \
     /usr/local/sbin/fi-telemetry-backend -mode collect \
     -spool "$fi_telemetry_sample_spool" \
