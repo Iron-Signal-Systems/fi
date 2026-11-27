@@ -5,7 +5,9 @@
 package generationrecorder
 
 import (
+	"context"
 	"errors"
+	"io"
 	"fmt"
 	"io"
 
@@ -25,10 +27,19 @@ func RecordDiscoveredCustodyDurably(
 	discovered transportgeneration.DiscoveredCustody,
 	custodyConfig transportgeneration.CustodyConfig,
 	recorderConfig DurableConfig,
-) (
-	DurableResult,
-	error,
-) {
+) (DurableResult,error) {
+	return RecordDiscoveredCustodyDurablyContext(context.Background(),discovered,custodyConfig,recorderConfig)
+}
+
+// Backfill uses this source-compatible cancellation-aware entry point.
+// The live receiver's existing startup behavior remains unchanged.
+func RecordDiscoveredCustodyDurablyContext(ctx context.Context,
+	discovered transportgeneration.DiscoveredCustody,
+	custodyConfig transportgeneration.CustodyConfig,
+	recorderConfig DurableConfig,
+) (DurableResult,error) {
+	if ctx==nil{return DurableResult{},errors.New("FI recorder: context required")}
+	if err:=ctx.Err();err!=nil{return DurableResult{},err}
 	if err := validateDurableConfig(recorderConfig); err != nil {
 		return DurableResult{}, err
 	}
@@ -62,9 +73,11 @@ func RecordDiscoveredCustodyDurably(
 			}
 
 			state = created
-			if cache == nil { return state.consumeArtifact, nil }
 			return func(name string, reader io.Reader) error {
-				return cache.Consume(name, reader, state.consumeArtifact)
+				if err:=ctx.Err();err!=nil{return err}
+				bounded:=receiverCacheContextReader{ctx:ctx,reader:reader}
+				if cache == nil { return state.consumeArtifact(name,&bounded) }
+				return cache.Consume(name,&bounded,state.consumeArtifact)
 			}, nil
 		},
 	)
@@ -102,4 +115,15 @@ func RecordDiscoveredCustodyDurably(
 	}
 	return recorded, nil
 
+}
+
+// receiverCacheContextReader makes one-time historical backfill interruptible
+// during the large immutable signed batch stream without changing custody.
+type receiverCacheContextReader struct {
+	ctx context.Context
+	reader io.Reader
+}
+func(r *receiverCacheContextReader)Read(b []byte)(int,error){
+	if err:=r.ctx.Err();err!=nil{return 0,err}
+	return r.reader.Read(b)
 }

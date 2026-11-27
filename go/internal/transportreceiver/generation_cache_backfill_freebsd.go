@@ -76,7 +76,7 @@ func BackfillRecordedGenerationCache(ctx context.Context,c Config,sourceID,gener
 	// The discovered-custody recorder verifies the exact signed FIGT, source
 	// certificate+CRL, complete transfer/manifest semantics and existing
 	// immutable receipt before allowing receiver cache publication.
-	result,err:=generationrecorder.RecordDiscoveredCustodyDurably(
+	result,err:=generationrecorder.RecordDiscoveredCustodyDurablyContext(ctx,
 		transportgeneration.DiscoveredCustody{
 			Path:custodyPath,Bytes:uint64(custodyInfo.Size()),
 		},config.Custody,config.Recorder)
