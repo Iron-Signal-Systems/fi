@@ -123,6 +123,28 @@ func c1TestDirectCanonicalSignedPostgres18(t *testing.T,ctx context.Context,
         ExpectedRecords:1,BatchIDs:[]string{batch.BatchID},
     }
     if err=start.Validate();err!=nil{t.Fatal(err)}
+    // Real C1 canonical bootstrap reads the receiver-authenticated batch
+    // cache, not a second upfront FIGT re-extraction. Construct that same
+    // exact receipt-bound read-only input using the genuine signed fixture.
+    cacheRoot:=filepath.Join(root,"receiver-cache")
+    if err=os.Mkdir(cacheRoot,0700);err!=nil{t.Fatal(err)}
+    provisional,err:=backlogVerifiedCacheBegin(cacheRoot,original.ReceiptSHA256)
+    if err!=nil{t.Fatal(err)}
+    frozen,err:=os.ReadFile(filepath.Join(root,source,"frozen",batch.DataArtifactName))
+    if err!=nil{t.Fatal(err)}
+    if err=writeBacklogStageFile(backlogCacheBatchData(provisional,0),frozen);err!=nil{t.Fatal(err)}
+    if err=writeBacklogStageFile(backlogCacheBatchManifest(provisional,0),batch.ManifestRawBytes);err!=nil{t.Fatal(err)}
+    if err=backlogVerifiedCacheCommit(cacheRoot,provisional,
+        original.ReceiptSHA256,original.Receipt.TransferSHA256,
+        original.Receipt.BatchCount,original.Receipt.RecordCount,
+        original.Receipt.DataBytes);err!=nil{t.Fatal(err)}
+    custody.ReceiverVerifiedCacheRoot=cacheRoot
+    cached,err:=c1DirectCanonicalReceiverPlan(ctx,start,custody)
+    if err!=nil{t.Fatalf("C1 direct original receiver cache bootstrap: %v",err)}
+    if cached.ReceiptSHA256!=original.ReceiptSHA256||
+        len(cached.Batches)!=len(original.Batches){
+        t.Fatal("C1 direct: cache bootstrap changed original signed receipt")
+    }
 
     var historical int64
     if err=admin.QueryRow(ctx,`SELECT count(*) FROM fi.ingest_journal WHERE outcome='Accepted'`).
@@ -131,7 +153,7 @@ func c1TestDirectCanonicalSignedPostgres18(t *testing.T,ctx context.Context,
     // and bounded source_batch COPY. All direct typed workers reuse P6.
     ledger,err:=worker.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.ReadCommitted})
     if err!=nil{t.Fatal(err)}
-    ids,err:=c1StageOriginalCanonicalLedgerTx(ctx,ledger,original)
+    ids,err:=c1StageOriginalCanonicalLedgerTx(ctx,ledger,cached)
     if err!=nil{_ =ledger.Rollback(context.Background());t.Fatalf("C1 signed canonical ledger: %v",err)}
     if len(ids)!=1||ids[0]<=0{t.Fatal("C1 signed ledger returned invalid source batch identity")}
     if err=ledger.Commit(ctx);err!=nil{t.Fatal(err)}
