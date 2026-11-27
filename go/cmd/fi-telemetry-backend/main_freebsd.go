@@ -18,7 +18,6 @@ import (
  "os"
  "os/exec"
  "os/signal"
- "sort"
  "strings"
  "syscall"
  "time"
