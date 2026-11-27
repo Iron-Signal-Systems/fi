@@ -1,0 +1,10 @@
+FI C220 running C1 source recovery
+Source: /home/jwood/fi-op-stage.Yve587sn
+Running binary SHA256: 54ea5cce0538ba0f65cd1d6effc78b695ed44bd2f8257aa14781bf1e58e558b2
+Rebuilt source SHA256: 54ea5cce0538ba0f65cd1d6effc78b695ed44bd2f8257aa14781bf1e58e558b2
+Go: 1.27.4 freebsd/amd64
+Build: CGO_ENABLED=1 GOAMD64=v1 -trimpath
+Tags: fi_c1_sor_dev
+VCS stamping: -buildvcs=false
+Status: Exact running executable reproduced
+Deployment: Not authorized

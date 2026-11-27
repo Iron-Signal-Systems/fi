@@ -1,0 +1,378 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
+package recordingest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
+	"github.com/jackc/pgx/v5"
+)
+
+func projectUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID string, sourceRecordID int64, scopeID string, value usnReadBoundaryPayload) error {
+	if sourceID == "" || scopeID == "" {
+		return errors.New("FI USN read boundary source and scope are required")
+	}
+	if value.CollectionMethod != records.WindowsUSNCollectionMethod {
+		return fmt.Errorf("unsupported FI USN read boundary collection method %q", value.CollectionMethod)
+	}
+	if err := records.ValidateVolumeIdentity(value.VolumeIdentity); err != nil {
+		return fmt.Errorf("validate FI USN read boundary volume: %w", err)
+	}
+	if value.SourceRecordCount < 0 || value.SourceDistinctObjectCount < 0 || value.SelectedRecordCount < 0 || value.SelectedObjectCount < 0 || value.IgnoredVolumeRecordCount < 0 || value.IgnoredVolumeObjectCount < 0 || value.ScopeUnresolvedObjectCount < 0 {
+		return errors.New("FI USN read boundary counts must not be negative")
+	}
+	sourceBound, err := validateUSNBoundaryContract(value)
+	if err != nil {
+		return err
+	}
+	observedAt, err := parseRFC3339(value.ObservedAt, "usn_read_boundary.observed_at")
+	if err != nil {
+		return err
+	}
+	volumeID, err := ensureNTFSVolume(ctx, tx, sourceID, value.VolumeIdentity)
+	if err != nil {
+		return err
+	}
+	for field, valueText := range map[string]string{"journal_id": value.JournalID, "start_usn": value.StartUSN, "next_usn": value.NextUSN} {
+		if _, err := parseDecimalCanonical(valueText, "usn_read_boundary."+field); err != nil {
+			return err
+		}
+	}
+	var captureHash, correlationHash, rootID any
+	if sourceBound {
+		state, ok := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		if !ok || state == nil || state.sourceID != sourceID {
+			return errors.New("FI USN capture generation state is required")
+		}
+		captureHash, _ = decodeHex(value.SourceBatchSHA256, 32, true, "usn_read_boundary.source_batch_sha256")
+		correlationHash, _ = decodeHex(value.CorrelationSHA256, 32, true, "usn_read_boundary.correlation_sha256")
+		rootID, err = ensureNTFSObject(ctx, tx, volumeID, *value.RootIdentity)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `
+INSERT INTO fi.usn_read_boundary (
+ source_record_id,observed_at,collection_method,ntfs_volume_id,journal_id,start_usn,next_usn,source_record_count,source_distinct_object_count,
+ selected_record_count,selected_object_count,ignored_volume_record_count,ignored_volume_object_count,scope_unresolved_object_count,
+ usn_read_operation_id,reobservation_operation_id,source_batch_sha256,correlation_sha256,root_ntfs_object_id
+) VALUES ($1,$2,$3,$4,$5::text::numeric,$6::text::numeric,$7::text::numeric,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+`, sourceRecordID, observedAt, value.CollectionMethod, volumeID, value.JournalID, value.StartUSN, value.NextUSN, value.SourceRecordCount,
+		value.SourceDistinctObjectCount, value.SelectedRecordCount, value.SelectedObjectCount, value.IgnoredVolumeRecordCount, value.IgnoredVolumeObjectCount,
+		value.ScopeUnresolvedObjectCount, nullString(value.USNReadOperationID), value.ReObservationOperationID, captureHash, correlationHash, rootID)
+	if err != nil {
+		return fmt.Errorf("insert FI USN read boundary: %w", err)
+	}
+	if sourceBound {
+		state := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		if err := state.remember(sourceID, scopeID, value.SourceBatchSHA256, usnCaptureBoundary{
+			recordID: sourceRecordID, volumeID: volumeID, root: *value.RootIdentity,
+			expectedObjects: value.SourceDistinctObjectCount, expectedChanges: value.SourceRecordCount,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func projectUSNObjectObservation(ctx context.Context, tx pgx.Tx, sourceID string, sourceRecordID int64, scopeID string, value usnObjectObservationPayload) error {
+	usnStarted := time.Now()
+	defer tallyUSN(ctx, "total", usnStarted)
+	if err := validateUSNObjectObservationPayload(scopeID, value); err != nil {
+		return err
+	}
+
+	stepStarted := time.Now()
+	var boundaryRecordID, volumeID int64
+	var capture *usnCaptureBoundary
+	var captureState *usnCaptureState
+	var err error
+	if value.SourceBatchSHA256 != "" {
+		captureState, _ = ctx.Value(usnCaptureContextKey{}).(*usnCaptureState)
+		if enabled, _ := ctx.Value(backlogUSNCrossWindowContextKey{}).(bool); enabled && captureState != nil {
+			key := usnCaptureKey{sourceID: sourceID, scopeID: scopeID, sourceBatchSHA256: value.SourceBatchSHA256}
+			if _, found := captureState.boundaries[key]; !found {
+				if err := restoreBacklogUSNCapture(ctx, tx, captureState, sourceID, scopeID, value.SourceBatchSHA256, sourceRecordID); err != nil {
+					return err
+				}
+			}
+		}
+		capture, err = captureState.resolve(sourceID, scopeID, value.SourceBatchSHA256, sourceRecordID)
+		if err == nil {
+			boundaryRecordID, volumeID = capture.recordID, capture.volumeID
+		}
+	} else {
+		boundaryRecordID, volumeID, err = findPrecedingUSNReadBoundary(ctx, tx, sourceID, scopeID, sourceRecordID)
+	}
+	tallyUSN(ctx, "boundary", stepStarted)
+	if err != nil {
+		return err
+	}
+	stepStarted = time.Now()
+	objectID, err := ensureNTFSObject(ctx, tx, volumeID, value.FileIdentity)
+	tallyUSN(ctx, "object", stepStarted)
+	if err != nil {
+		return err
+	}
+
+	stepStarted = time.Now()
+	var captureHash any
+	if capture != nil {
+		captureHash, _ = decodeHex(value.SourceBatchSHA256, 32, true, "usn_object_observation.source_batch_sha256")
+	}
+	_, err = tx.Exec(ctx, `
+INSERT INTO fi.usn_object_observation (
+ source_record_id,scope_basis,scope_detail,status,reason_code,error_text,has_ntfs_observation,has_content_hashes,
+ usn_read_boundary_source_record_id,ntfs_object_id,source_batch_sha256
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`, sourceRecordID, value.ScopeBasis, nullString(value.ScopeDetail), value.Status, nullString(value.ReasonCode), nullString(value.Error),
+		value.NTFS != nil, value.ContentHashes != nil, boundaryRecordID, objectID, captureHash)
+	tallyUSN(ctx, "observation", stepStarted)
+	if err != nil {
+		return fmt.Errorf("insert FI USN object observation: %w", err)
+	}
+
+	stepStarted = time.Now()
+	var reasonBatch pgx.Batch
+	for i, change := range value.Changes {
+		parentObjectID, err := ensureNTFSObject(ctx, tx, volumeID, change.ParentIdentity)
+		if err != nil {
+			return err
+		}
+		major, err := parseUint(change.MajorVersion, 15, "usn_object_change.major_version")
+		if err != nil {
+			return err
+		}
+		minor, err := parseUint(change.MinorVersion, 15, "usn_object_change.minor_version")
+		if err != nil {
+			return err
+		}
+		if _, err := parseDecimalCanonical(change.USN, "usn_object_change.usn"); err != nil {
+			return err
+		}
+		timestamp, err := parseRFC3339(change.Timestamp, "usn_object_change.timestamp")
+		if err != nil {
+			return err
+		}
+		reasonRaw, err := parseUint(change.ReasonRaw, 32, "usn_object_change.reason_raw")
+		if err != nil {
+			return err
+		}
+		sourceInfo, err := parseUint(change.SourceInfoRaw, 32, "usn_object_change.source_info_raw")
+		if err != nil {
+			return err
+		}
+		securityID, err := parseUint(change.SecurityID, 32, "usn_object_change.security_id")
+		if err != nil {
+			return err
+		}
+		attributes, err := parseUint(change.FileAttributesRaw, 32, "usn_object_change.file_attributes_raw")
+		if err != nil {
+			return err
+		}
+		fileName, err := decodeBase64URL(change.FileNameUTF16LEBase64URL, true, "usn_object_change.file_name_utf16le")
+		if err != nil {
+			return err
+		}
+		ordinal := i + 1
+		if state, ok := ctx.Value(usnChangeCopyContextKey{}).(*usnChangeCopyState); ok && state != nil {
+			row := []any{
+				sourceRecordID, ordinal, int(major), int(minor),
+				change.USN, timestamp, int64(reasonRaw),
+				int64(sourceInfo), int64(securityID), int64(attributes),
+				fileName, objectID, parentObjectID,
+			}
+			if err := state.add(ctx, tx, row, change.ReasonNames); err != nil {
+				return fmt.Errorf("queue FI USN change COPY: %w", err)
+			}
+			continue
+		}
+		_, err = tx.Exec(ctx, `
+INSERT INTO fi.usn_object_change (
+ source_record_id,change_ordinal,major_version,minor_version,usn,event_timestamp,reason_raw,source_info_raw,security_id,file_attributes_raw,
+ file_name_utf16le,file_ntfs_object_id,parent_ntfs_object_id
+) VALUES ($1,$2,$3,$4,$5::text::numeric,$6,$7,$8,$9,$10,$11,$12,$13)
+`, sourceRecordID, ordinal, int(major), int(minor), change.USN, timestamp, int64(reasonRaw), int64(sourceInfo), int64(securityID), int64(attributes),
+			fileName, objectID, parentObjectID)
+		if err != nil {
+			return fmt.Errorf("insert FI USN object change: %w", err)
+		}
+		for reasonIndex, reason := range change.ReasonNames {
+			reasonBatch.Queue(`INSERT INTO fi.usn_object_change_reason (source_record_id,change_ordinal,reason_ordinal,reason_name) VALUES ($1,$2,$3,$4)`, sourceRecordID, ordinal, reasonIndex+1, reason)
+			if reasonBatch.Len() == usnReasonBatchLimit {
+				if err := flushUSNReasonBatch(ctx, tx, &reasonBatch); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if err := flushUSNReasonBatch(ctx, tx, &reasonBatch); err != nil {
+		return err
+	}
+	tallyUSN(ctx, "changes", stepStarted)
+
+	stepStarted = time.Now()
+	if value.NTFS != nil {
+		nested := *value.NTFS
+		nested.ContentHashes = value.ContentHashes
+		if nested.ObjectIdentity != value.FileIdentity {
+			return errors.New("FI USN nested NTFS observation identity does not match USN object identity")
+		}
+		if capture != nil && nested.GovernedRoot.ObjectIdentity != capture.root {
+			return errors.New("FI source-bound USN nested governed-root identity differs from capture root")
+		}
+		if nested.GovernedRoot.ScopeID != scopeID {
+			return errors.New("FI USN nested NTFS governed-root scope does not match source envelope")
+		}
+		if err := ntfs.ValidateObservation(nested); err != nil {
+			return fmt.Errorf("validate FI USN nested NTFS observation: %w", err)
+		}
+		nestedVolumeID, err := ensureNTFSVolume(ctx, tx, sourceID, nested.VolumeIdentity)
+		if err != nil {
+			return err
+		}
+		if nestedVolumeID != volumeID {
+			return errors.New("FI USN nested NTFS observation volume does not match preceding read boundary")
+		}
+		nestedCtx := context.WithValue(ctx, ntfsNestedStageContextKey{}, true)
+		if state, ok := ctx.Value(fileObservationBulkContextKey{}).(*fileObservationBulkState); ok && state != nil {
+			recordBytes, _ := ctx.Value(fileObservationBulkBytesContextKey{}).(int)
+			if recordBytes <= 0 {
+				return errors.New("FI USN nested NTFS bulk source byte count is missing")
+			}
+			if err := state.add(nestedCtx, tx, fileObservationBulkRecord{
+				sourceID: sourceID, sourceRecordID: sourceRecordID, value: nested,
+				hashes: value.ContentHashes, bytes: int64(recordBytes),
+			}); err != nil {
+				return fmt.Errorf("queue FI USN nested NTFS observation: %w", err)
+			}
+		} else if err := projectNTFSObservation(nestedCtx, tx, sourceID, sourceRecordID, nested, value.ContentHashes); err != nil {
+			return err
+		}
+	}
+	tallyUSN(ctx, "nested", stepStarted)
+	if capture != nil {
+		if err := captureState.completeObject(capture, len(value.Changes)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const usnReasonBatchLimit = 256
+
+func flushUSNReasonBatch(ctx context.Context, tx pgx.Tx, batch *pgx.Batch) error {
+	if batch.Len() == 0 {
+		return nil
+	}
+	results := tx.SendBatch(ctx, batch)
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("insert FI USN change reason batch: %w", err)
+	}
+	*batch = pgx.Batch{}
+	return nil
+}
+
+func validateUSNObjectObservationPayload(scopeID string, value usnObjectObservationPayload) error {
+	if scopeID == "" {
+		return errors.New("FI USN object observation scope is required")
+	}
+	if err := records.ValidateNTFSObjectIdentity(value.FileIdentity); err != nil {
+		return fmt.Errorf("validate FI USN object identity: %w", err)
+	}
+	switch value.ScopeBasis {
+	case "CurrentObjectContained", "CurrentObjectContainedByHelper", "RecordedAncestorContained", "RecordedParentContained", "ScopeUnresolvedIncluded":
+	default:
+		return fmt.Errorf("unsupported FI USN scope basis %q", value.ScopeBasis)
+	}
+	switch value.Status {
+	case "Observed":
+		if value.NTFS == nil || value.ContentHashes == nil {
+			return errors.New("FI observed USN object is missing NTFS/content-hash observation")
+		}
+		if value.ReasonCode != "" || value.Error != "" {
+			return errors.New("FI observed USN object carries failure fields")
+		}
+	case "OutsideGovernedRoot", "Unavailable", "Error":
+		if value.NTFS != nil || value.ContentHashes != nil {
+			return errors.New("FI non-observed USN object carries NTFS/content-hash observation")
+		}
+		if value.ReasonCode == "" {
+			return errors.New("FI non-observed USN object reason code is required")
+		}
+	default:
+		return fmt.Errorf("unsupported FI USN re-observation status %q", value.Status)
+	}
+	if len(value.Changes) == 0 {
+		return errors.New("FI USN object observation contains no source changes")
+	}
+	for i, change := range value.Changes {
+		if err := records.ValidateUSNChangeObservation(change); err != nil {
+			return fmt.Errorf("validate FI USN object change %d: %w", i+1, err)
+		}
+		if change.FileIdentity != value.FileIdentity {
+			return fmt.Errorf("FI USN object change %d file identity does not match object observation", i+1)
+		}
+	}
+	return nil
+}
+
+func findPrecedingUSNReadBoundary(ctx context.Context, tx pgx.Tx, sourceID string, scopeID string, sourceRecordID int64) (int64, int64, error) {
+	var boundaryRecordID int64
+	var volumeID int64
+	err := tx.QueryRow(ctx, `
+SELECT urb.source_record_id, urb.ntfs_volume_id
+FROM fi.usn_read_boundary AS urb
+WHERE urb.source_record_id < $3
+  AND urb.source_batch_sha256 IS NULL
+  AND (
+      SELECT
+          rg.source_id = $1
+          AND sr.scope_id = $2
+      FROM fi.source_record AS sr
+      JOIN fi.source_batch AS sb
+          ON sb.source_batch_id = sr.source_batch_id
+      JOIN fi.recorded_generation AS rg
+          ON rg.recorded_generation_id =
+             sb.recorded_generation_id
+      WHERE sr.source_record_id =
+            urb.source_record_id
+  ) IS TRUE
+ORDER BY urb.source_record_id DESC
+LIMIT 1
+`, sourceID, scopeID, sourceRecordID).Scan(&boundaryRecordID, &volumeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, errors.New("FI USN object observation has no preceding durable USN read boundary")
+		}
+		return 0, 0, fmt.Errorf("resolve FI USN read boundary: %w", err)
+	}
+	return boundaryRecordID, volumeID, nil
+}
+
+func projectUSNContinuityGap(ctx context.Context, tx pgx.Tx, sourceRecordID int64, value records.USNContinuityGapObservation) error {
+	observedAt, err := parseRFC3339(value.ObservedAt, "usn_continuity_gap.observed_at")
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+INSERT INTO fi.usn_continuity_gap (
+ source_record_id,observed_at,collection_method,scope_id,governed_root,reason_code,checkpoint_journal_id,checkpoint_next_usn,
+ current_journal_id,current_first_usn,current_lowest_valid_usn,current_next_usn,coverage_state,reconciliation_action
+) VALUES ($1,$2,$3,$4,$5,$6,$7::text::numeric,$8::text::numeric,$9::text::numeric,$10::text::numeric,$11::text::numeric,$12::text::numeric,$13,$14)
+`, sourceRecordID, observedAt, value.CollectionMethod, value.ScopeID, value.GovernedRoot, value.ReasonCode, value.CheckpointJournalID,
+		value.CheckpointNextUSN, value.CurrentJournalID, value.CurrentFirstUSN, value.CurrentLowestValidUSN, value.CurrentNextUSN,
+		value.CoverageState, value.ReconciliationAction)
+	if err != nil {
+		return fmt.Errorf("insert FI USN continuity gap: %w", err)
+	}
+	return nil
+}
