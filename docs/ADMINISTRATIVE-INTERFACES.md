@@ -1,5 +1,15 @@
 # FI Administrative Interfaces
 
+> **Document scope (2026-11-27):** The interface principles here remain applicable,
+> but the named Phase 3 `fi-ingest`, `fi-ingest-reconcile`, and Linux
+> `fi-ingest-worker` surfaces below are **historical Gate 3 examples**, not the
+> active C220 operating commands. The current FreeBSD development runtime is
+> `fi-receiver` + `fi-sor` (`fi-c1-sor-live` with independent B child), with a
+> separate telemetry plane. Use the [current architecture](architecture/FI-C220-CURRENT-BACKEND.md)
+> and [C220 read-only operator reference](deployment/C220-OPERATOR-REFERENCE.md)
+> for current service ownership and commands. C1 is an internal backlog/recovery
+> processor, not a customer-facing product capability.
+
 ## Purpose
 
 FI's administrative and diagnostic interfaces exist for professionals who deploy,
@@ -119,9 +129,9 @@ total disagreement, incomplete child rows, or missing typed projections.
 
 ---
 
-## Phase 3 relational administrative surfaces
+## Historical Phase 3 relational administrative surfaces
 
-The accepted Phase 3 administrative commands are engineering and operational
+The Gate 3-accepted historical Phase 3 administrative commands were engineering and operational
 surfaces. They remain technical administrative interfaces rather than the
 finished product/query user experience.
 
@@ -180,7 +190,7 @@ The reconcile tool deliberately does not expose a write/reconcile mode.
 
 ### `fi-ingest-worker`
 
-The accepted worker is the permanent sequential live Phase 3 consumer. Useful
+The previously accepted Linux worker was the sequential live Phase 3 consumer at the time of the 2026-09 Gate 3 tests; it is retired from the active C220 runtime. Useful
 administrative output includes:
 
 - polling time;
@@ -207,7 +217,7 @@ include:
 - permanent systemd service packaging with bounded restart behavior and
   fail-closed permanent configuration/database-boundary errors.
 
-The accepted Phase 3 topology still has deliberate deployment boundaries that
+The historically accepted Phase 3 topology had deliberate deployment boundaries that
 administrative documentation must not hide:
 
 - one active backend ingest-worker host per deployment;
