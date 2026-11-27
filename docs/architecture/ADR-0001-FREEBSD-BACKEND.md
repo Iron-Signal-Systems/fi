@@ -1,5 +1,7 @@
 # ADR-0001 — FreeBSD Backend and Jail-Isolated FI Services
 
+> **Historical architecture proposal (2026-09-25), superseded for the current C220 implementation.** FreeBSD 15.1 is now running with the `fi-receiver` and `fi-sor` application jails, not the illustrative three-plus-jail topology below. Do not deploy from this historical ADR. Read [current architecture with diagrams](FI-C220-CURRENT-BACKEND.md) and [observed as-built](../deployment/C220-FREEBSD-AS-BUILT-20261127.md).
+
 **Status:** Proposed<br>
 **Date:** 2026-09-25<br>
 **Decision scope:** FI backend deployment platform and service-isolation model<br>

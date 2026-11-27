@@ -1,4 +1,6 @@
-# FI FreeBSD Receiver Trust Acceptance
+# FI FreeBSD Receiver Trust Acceptance — historical 2026-10-04 record
+
+> **HISTORICAL ONLY:** This record refers to `fi-backend-b`, FreeBSD 15.1-p3 and an older source branch. It must not be interpreted as the present C220 trust status or current certificate material. See [current C220 architecture](../../../docs/architecture/FI-C220-CURRENT-BACKEND.md) and [as-built](../../../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md).
 
 **Status:** Receiver trust accepted; source authorization pending
 **Date:** 2026-10-04

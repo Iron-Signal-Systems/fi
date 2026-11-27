@@ -1,5 +1,8 @@
 # FI Agent and Contributor Rules
 
+> **Current deployed backend authority — 2026-11-27:** FI runs on C220 FreeBSD 15.1 with **`fi-receiver` → signed custody / receiver verified cache → `fi-sor` C1 P5/P6 + PostgreSQL**, with verifier B as a child of `fi-c1-sor-live`. There is no active `fi-ingest` application jail. This current as-built overrides any older Linux or three-jail platform statements below that were retained solely as historical Gate 3 documentation. Do not rebuild an old backlog worker, historical clone/bench path, or `fi-sor-db` jail as the current C220 architecture. See [current architecture](docs/architecture/FI-C220-CURRENT-BACKEND.md) and [observed evidence](docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md).
+
+
 ## Purpose
 
 This file defines how contributors, coding agents, automation, and review agents
@@ -19,16 +22,15 @@ as applicable:
 - `fi-roadmap/docs/roadmap/phase-04-classification-and-enrichment.md`
 - `fi-roadmap/docs/roadmap/phase-05-projection-query-and-user-experience.md`
 - `fi-roadmap/docs/roadmap/phase-06-integrated-deployment-and-release.md`
-- `docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`
 - `docs/PUBLISHED-FI-PROJECTION-CONTRACT.md`
-- `docs/architecture/ADR-0001-FREEBSD-BACKEND.md`
-- `docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
+- `docs/architecture/ADR-0001-FREEBSD-BACKEND.md` (historical proposal)
+- `docs/architecture/FI-C220-CURRENT-BACKEND.md` (current implementation)
+- `docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md` (observed C220 inventory)
 - `docs/COLLECTOR-CONTRACT.md`
 - `docs/LOCAL-SPOOL-INTEGRITY.md`
 - `docs/GATE-1-RESULT-RECORD.md`
 - `docs/WINDOWS-SERVER-VALIDATION.md`
 - `docs/security/`
-- `docs/performance/`
 - `tools/gate1/README.md`
 
 If code and documentation disagree, do not silently choose whichever is easier.
@@ -572,42 +574,19 @@ so is convenient.
 
 ### Current FI Pilot Platform Contract
 
-For the current FI pilot path, the supported platform boundary is:
+For the **current FreeBSD C220 backend**, the observed platform boundary is:
 
 ```text
-Windows
-    FI source collector
-    FI Windows service runtime
-    NTFS source work
-    USN source work
-    Windows Security source work
-    SMB source work
-    Active Directory source work
-    FIUSNReader privileged helper
-
-Linux
-    FI receiver
-    durable backend generation custody
-    generation recorder runtime
-    PostgreSQL relational backend
-    relational ingest worker
-    relational reconciliation / repair runtime
+Windows FI senders  -->  FreeBSD C220 fi-receiver jail (signed custody + verified cache)
+                   -->  FreeBSD C220 fi-sor jail (C1 P5/P6 + PostgreSQL 18)
+                                             |--> independent child verifier B
+C220 host + fi-sor --------------------------------> separate telemetry database
 ```
 
-FreeBSD is not currently part of the accepted FI pilot support contract.
-The accepted Gate 3 backend/runtime remains Linux.
+`fi-dev` is a build/source environment only, not another ingest hop.
+The previously accepted Linux Gate 3 platform is historical and does not supersede the active FreeBSD deployment. This is a **development** runtime and does not imply a completed product release, automated fresh-server install, or binary equivalence to a tagged Git commit.
 
-`docs/architecture/ADR-0001-FREEBSD-BACKEND.md` records FreeBSD with VNET jails,
-PF, and ZFS as the **proposed Phase 6 target backend profile**. The ADR remains
-`Proposed`; this is an architectural direction, not a claim of implemented or
-supported FreeBSD runtime behavior.
-
-Code must not claim or imply FreeBSD support until that platform has its own
-implementation, CI/build coverage, validation, packaging, migration proof, and
-operational acceptance.
-
-Do not broaden the supported platform contract merely because Go code happens to
-compile there.
+[Current documented FreeBSD backend](docs/architecture/FI-C220-CURRENT-BACKEND.md) is authoritative over the original proposed FreeBSD ADR and obsolete Phase 3 worker examples.
 
 ---
 
@@ -1384,12 +1363,12 @@ production-impacting exercise.
 
 Supported-platform CI must verify that platform boundaries remain correct.
 
-FI currently has meaningful Windows and Linux code in the same Go module.
+FI includes Windows source code, historical Linux material, and current FreeBSD C220 backend code in one Go module.
 Therefore:
 
 ```text
-Linux CI
-    must compile and test Linux backend implementation
+FreeBSD CI
+    must compile and test the current FreeBSD receiver, C1 SoR and telemetry
 
 Windows CI
     must compile and test Windows source implementation
@@ -1397,8 +1376,8 @@ Windows CI
 Windows CI
     must not attempt to compile Linux-only backend implementation
 
-Linux CI
-    must not accidentally substitute Linux behavior for required Windows semantics
+FreeBSD CI
+    must not accidentally substitute historical Linux behavior for live C220 FreeBSD semantics
 ```
 
 Platform-specific implementation should disappear cleanly from unsupported builds

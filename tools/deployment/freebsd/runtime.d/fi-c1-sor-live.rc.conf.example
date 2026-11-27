@@ -1,5 +1,6 @@
 # C220 fi-sor /etc/rc.conf.d/fi_c1_sor_live
-# Deliberately disabled until normal sender-to-SoR acceptance and telemetry PASS.
+# Example defaults disabled for new installations. The observed C220 fi_c1_sor_live
+# process is running; do not infer deployed enable state from this template.
 fi_c1_sor_live_enable="NO"
 fi_c1_sor_live_sources="iss-fs-22a.iss.local,iss-fs-22b.iss.local"
 fi_c1_sor_live_ready_root="/var/db/fi/custody/ready"

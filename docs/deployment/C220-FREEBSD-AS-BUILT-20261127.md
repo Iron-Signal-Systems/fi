@@ -36,13 +36,13 @@ Processes in the operator inventory: `fi-receiver`, `fi-c1-sor-live`, PostgreSQL
 - B verifier: `go/internal/recordingest/c1_sor_native_b_process.go`, launched by the C1 executable itself.
 - Telemetry: `go/cmd/fi-telemetry-backend`, `go/internal/telemetrybackend`.
 - Runtime definitions: `tools/deployment/freebsd/runtime.d/fi-c1-sor-live-*`, `fi-receiver-*`, `fi-telemetry-*`.
-- Existing C220 operational installation helper: `go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_operational_install.sh`.
+- Existing C220 operational installation helper: `tools/deployment/freebsd/operations/fi_c1_c220_operational_install.sh`.
 
 ## Observed acceptance and limitations
 - Operator had previously verified end-to-end sender ingest into canonical `fi` SoR: **53 accepted generations and 631 committed records** from `iss-fs-22b.iss.local`.
 - Neither the source commit that compiled each installed binary nor byte-for-byte reproducibility was confirmed by this inventory.
 - This cleanup deliberately does **not** change C220 files, services, ZFS, signed custody, or PostgreSQL content.
 - Old H16/W512 benchmark runners and retired fi-ingest workers do not belong to the accepted live FreeBSD execution path.
-- Replacing the remaining legacy host bootstrap with a complete reproducible C220 installer still requires capture and verification of current jail, PF, ZFS and non-secret rc configuration. Never commit private keys, certificates with keys, passwords, or live credentials.
+- Implementing a complete reproducible C220 installer still requires capture and verification of current jail, PF, ZFS and non-secret rc configuration. Never commit private keys, certificates with keys, passwords, or live credentials.
 
-**Development branch:** `dev-backend`. **Accepted prior baseline:** `main` remains unchanged until a separate acceptance/promotion decision.
+**Repository branches:** both `dev-backend` and `main` contain the promoted current C220 backend source snapshot. GitHub code builds passed; exact equivalence to the installed C220 ELF binaries is not yet established.

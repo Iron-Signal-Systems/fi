@@ -4,6 +4,12 @@
   <img src="docs/images/fi.png" alt="FI — File Intelligence" width="100%">
 </p>
 
+> **CURRENT C220 BACKEND (27 Nov 2026):** The active implementation is FreeBSD 15.1 with the `fi-receiver` and `fi-sor` service jails. The receiver publishes original signed custody, recorded receipts, READY, and a verified cache; the SoR jail runs **C1 P5 Preparation → P6 Family Processing → PostgreSQL 18** with an independent original-signed verifier B child. Backend telemetry runs on the host and in `fi-sor`, separately from canonical writes. The obsolete `fi-ingest` worker and the former `fi-sor-db` model are **not** the running deployment.
+>
+> [Current backend diagram](docs/images/fi-c220-current.svg) · [C1 A/B verification diagram](docs/images/fi-c220-c1-acceptance.svg) · [Architecture and operating boundary](docs/architecture/FI-C220-CURRENT-BACKEND.md) · [Observed C220 as-built](docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md)
+
+![FI C220 current backend](docs/images/fi-c220-current.svg)
+
 **File Intelligence (FI)** is a non-remediating, read-oriented system for
 building a historical understanding of explicitly governed files.
 
@@ -658,7 +664,9 @@ receipt and transfer identity.
 
 ---
 
-## Accepted Phase 3 relational ingest and recorder materialization
+## Historical Gate 3 relational ingest and recorder materialization (September 2026)
+
+**Historical record only:** the sequential Linux `fi-ingest-worker` described below was replaced as the active C220 backend by FreeBSD `fi-c1-sor-live`. The present C220 operation is documented above. The old implementation's acceptance history must not be used as today's startup or deployment procedure.
 
 Phase 3 / Gate 3 is complete. The accepted relational implementation is
 `fi-postgresql-relational-ingest/0.2` and establishes the authoritative typed
@@ -753,8 +761,8 @@ markers. Phase 3 / Gate 3 is complete.
 
 Authoritative receiver/database proof is complete for all 13 current relational
 record kinds, including `USNContinuityGap`. See
-`docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md` and
-`docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md`.
+the historical Gate 3 acceptance record (retired from the current branch) and
+the historical Linux ingest-worker operating contract (retired from the current branch).
 
 ---
 
@@ -810,7 +818,7 @@ manifest.
 
 ---
 
-## Phase 1 through Phase 3 closeout; current Phase 4 focus
+## Historical Phase 1–3 closeout and original Phase 4 planning
 
 Phase 1 / Gate 1 is complete for the accepted source-intelligence boundary.
 
@@ -895,7 +903,7 @@ See:
 
 - `docs/performance/PHASE-2-250K-RANDOM-NESTED-ONBOARDING-REPORT.md`
 - `docs/performance/PHASE-2-GATE-2-CLOSEOUT.md`
-- `docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
+- the historical Gate 3 acceptance record (retired from the current branch)
 
 No additional Phase 1 or Phase 2 subsystem should be added unless a concrete
 accepted requirement demonstrates that the corresponding boundary is incomplete.
