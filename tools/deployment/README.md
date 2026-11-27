@@ -71,15 +71,19 @@ A successful Test 07 must include a clean recursive ACL traversal for both
 proof because Windows Server 2016 can return exit code `0` while still reporting
 individual `Access is denied` failures in its output.
 
-## Linux Phase 3 ingest-worker packaging
+## Current deployment reference and historical scope
 
-Permanent Linux relational ingest-worker service packaging lives under:
+The Linux Phase 3 `fi-ingest-worker` and its former `tools/deployment/linux/`
+packaging are **historical**; the Linux deployment subtree is **not present on
+current `main`**. Do not use an older service or host bootstrap as the live
+C220 procedure.
 
-```text
-tools/deployment/linux/
-```
+The current development backend is FreeBSD 15.1 with the `fi-receiver` and
+`fi-sor` service jails. See [current C220 deployment tooling](freebsd/README.md)
+and [as-built architecture](../../docs/architecture/FI-C220-CURRENT-BACKEND.md).
+The separate native Windows configuration-driven installer is documented in
+[Windows installer](../../docs/WINDOWS-INSTALLER.md).
 
-That subtree owns the Phase 3 systemd unit, installer, package validation, and
-operator instructions for the permanent ingest worker.
-
-It does not replace Phase 6 integrated installation/release packaging.
+The Windows ACL-hardening script above is an administrator-run reference action;
+it is **not** an extra mandatory step after a successfully approved and
+converged current native FI installation.
