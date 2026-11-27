@@ -5,8 +5,8 @@
 set -eu
 umask 077
 fail(){ echo "FI RECEIVER UPGRADE STOP: $*" >&2; exit 1; }
-[ "$#" -eq 2 ] || fail 'usage: --stage|--activate 40_CHAR_SHA'
-case "$1" in --stage|--activate) mode=$1;;*) fail 'invalid action';;esac
+[ "$#" -eq 2 ] || fail 'usage: --stage|--activate|--resume 40_CHAR_SHA'
+case "$1" in --stage|--activate|--resume) mode=$1;;*) fail 'invalid action';;esac
 pin=$2
 case "$pin" in *[!0123456789abcdef]*|'') fail 'invalid commit SHA';;esac
 [ "$(printf %s "$pin" | wc -c | tr -d ' ')" -eq 40 ] ||
@@ -22,6 +22,12 @@ config=$recv/etc/rc.conf.d/fi_receiver
 supervisor=$recv/usr/local/libexec/fi-receiver-supervisor
 binary=$recv/usr/local/sbin/fi-receiver
 stage=/var/backups/fi-receiver-upgrade-$pin
+if [ "$mode" = --resume ];then
+ # Reuse the FreeBSD-built assets already staged and tested before the
+ # premature three-second listener-verification rollback.
+ original_pin=1191110f8b721725484355b02bb7165d278718ba
+ stage=/var/backups/fi-receiver-upgrade-$original_pin
+fi
 for jail in fi-dev fi-receiver fi-sor;do
  jls -j "$jail" >/dev/null || fail "jail missing: $jail"
 done
@@ -35,6 +41,13 @@ jexec -U jwood fi-dev git -C "$repo" fetch origin \
 [ "$(jexec -U jwood fi-dev git -C "$repo" \
   rev-parse "refs/remotes/origin/$branch")" = "$pin" ] ||
  fail 'GitHub branch moved'
+if [ "$mode" = --resume ];then
+ # Reusing a binary is safe only when its entire Go tree and the
+ # receiver supervisor have not changed since that binary was built.
+ jexec -U jwood fi-dev git -C "$repo" diff --quiet "$original_pin" "$pin" \
+   -- go tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh ||
+   fail 'receiver source changed since prior build; do not reuse staged binary'
+fi
 for f in "$config" "$supervisor" "$binary";do
  [ -f "$f" ] && [ ! -L "$f" ] || fail "missing/unsafe file: $f"
 done
@@ -142,6 +155,12 @@ cmp -s "$stage/old-config" "$config" ||
 [ "$(sha256 -q "$stage/new-binary")" = "$(cat "$stage/new-binary.sha")" ] &&
 [ "$(sha256 -q "$stage/new-supervisor")" = "$(cat "$stage/new-supervisor.sha")" ] ||
  fail 'staged file checksum mismatch'
+[ "$(cat "$stage/new-binary.sha")" = \
+  '34a82462a0dc4f62c23410c5d2f94296a304d2663d4488181883f76fca3bb5da' ] ||
+ fail 'staged binary is not the approved tested receiver'
+jexec fi-receiver sockstat -4 -l -P tcp |
+ grep -F '172.20.23.21:8443' >/dev/null ||
+ fail 'existing receiver TCP listener missing; do not restart'
 echo '===== CONTROLLED STOP OF ORIGINAL RECEIVER ====='
 if ! jexec fi-receiver service fi_receiver onestop;then
  if ! jexec fi-receiver service fi_receiver onestatus >/dev/null 2>&1;then
@@ -180,16 +199,53 @@ if ! jexec fi-receiver service fi_receiver onestart;then
  rollback
  fail 'updated receiver failed to start'
 fi
-sleep 3
-if ! jexec fi-receiver service fi_receiver onestatus ||
-   ! jexec fi-receiver ps -axww -o command |
+# Receiver startup custody recovery precedes opening the listener.
+# A three-second listener check caused the preceding false rollback.
+# Check required flags and actual worker every poll. Do not roll back
+# a live worker that is still performing startup recovery.
+n=0
+while [ "$n" -lt 150 ];do
+  if ! jexec fi-receiver service fi_receiver onestatus >/dev/null 2>&1;then
+    echo 'RECEIVER STARTUP: service exited before ready' >&2
+    jexec fi-receiver tail -50 /var/log/messages || :
+    rollback
+    fail 'receiver service exited; rollback attempted'
+  fi
+  cmds=$(jexec fi-receiver ps -axww -o command)
+  if ! printf '%s\n' "$cmds" |
+       grep -F '/usr/local/sbin/fi-receiver -transport-listen' >/dev/null;then
+    echo 'RECEIVER STARTUP: receiver process exited' >&2
+    jexec fi-receiver tail -50 /var/log/messages || :
+    rollback
+    fail 'receiver child exited; rollback attempted'
+  fi
+  if ! printf '%s\n' "$cmds" |
        grep -F -- '-generation-verified-cache-root /var/db/fi/verified-cache' >/dev/null ||
-   ! jexec fi-receiver ps -axww -o command |
-       grep -F -- '-generation-ready-root /var/db/fi/custody/ready' >/dev/null ||
-   ! jexec fi-receiver sockstat -4 -l -P tcp |
+     ! printf '%s\n' "$cmds" |
+       grep -F -- '-generation-ready-root /var/db/fi/custody/ready' >/dev/null;then
+    echo "$cmds" >&2
+    rollback
+    fail 'new receiver missing required live flags; rollback attempted'
+  fi
+  if jexec fi-receiver sockstat -4 -l -P tcp |
        grep -F '172.20.23.21:8443' >/dev/null;then
- rollback
- fail 'receiver failed live verification after restart'
-fi
-echo 'FI C220 RECEIVER UPGRADE PASS cache_publication=true READY=true boot_enabled=true'
-echo "ORIGINAL_FILE_BACKUPS=$stage"
+    sleep 3
+    if jexec fi-receiver service fi_receiver onestatus >/dev/null 2>&1 &&
+       jexec fi-receiver sockstat -4 -l -P tcp |
+         grep -F '172.20.23.21:8443' >/dev/null;then
+      echo 'FI C220 RECEIVER UPGRADE PASS cache_publication=true READY=true listener=true boot_enabled=true'
+      echo "ORIGINAL_FILE_BACKUPS=$stage"
+      exit 0
+    fi
+  fi
+  n=$((n+1))
+  if [ $((n % 10)) -eq 0 ];then
+    echo "RECEIVER RECOVERY RUNNING: verified-cache flags present; listener pending check=$n"
+  fi
+  sleep 2
+done
+echo '===== RECEIVER STILL RUNNING BUT LISTENER NOT READY =====' >&2
+jexec fi-receiver ps -axww -o pid,user,stat,etime,command >&2 || :
+jexec fi-receiver tail -50 /var/log/messages >&2 || :
+# Do not interrupt a still-active custody recovery to force a rollback.
+fail 'startup not yet completed; no automatic rollback of live receiver; C1 remains disabled'
