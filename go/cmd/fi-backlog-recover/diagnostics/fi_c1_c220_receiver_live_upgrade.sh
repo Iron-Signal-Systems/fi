@@ -5,8 +5,8 @@
 set -eu
 umask 077
 fail(){ echo "FI RECEIVER UPGRADE STOP: $*" >&2; exit 1; }
-[ "$#" -eq 2 ] || fail 'usage: --stage|--activate|--resume 40_CHAR_SHA'
-case "$1" in --stage|--activate|--resume) mode=$1;;*) fail 'invalid action';;esac
+[ "$#" -eq 2 ] || fail 'usage: --audit|--stage|--activate|--resume 40_CHAR_SHA'
+case "$1" in --audit|--stage|--activate|--resume) mode=$1;;*) fail 'invalid action';;esac
 pin=$2
 case "$pin" in *[!0123456789abcdef]*|'') fail 'invalid commit SHA';;esac
 [ "$(printf %s "$pin" | wc -c | tr -d ' ')" -eq 40 ] ||
@@ -22,7 +22,7 @@ config=$recv/etc/rc.conf.d/fi_receiver
 supervisor=$recv/usr/local/libexec/fi-receiver-supervisor
 binary=$recv/usr/local/sbin/fi-receiver
 stage=/var/backups/fi-receiver-upgrade-$pin
-if [ "$mode" = --resume ];then
+if [ "$mode" = --resume ] || [ "$mode" = --audit ];then
  # Reuse the FreeBSD-built assets already staged and tested before the
  # premature three-second listener-verification rollback.
  original_pin=1191110f8b721725484355b02bb7165d278718ba
@@ -41,12 +41,55 @@ jexec -U jwood fi-dev git -C "$repo" fetch origin \
 [ "$(jexec -U jwood fi-dev git -C "$repo" \
   rev-parse "refs/remotes/origin/$branch")" = "$pin" ] ||
  fail 'GitHub branch moved'
-if [ "$mode" = --resume ];then
- # Reusing a binary is safe only when its entire Go tree and the
- # receiver supervisor have not changed since that binary was built.
+if [ "$mode" = --resume ] || [ "$mode" = --audit ];then
+ # Compare the entire repository, excluding only this deployment script,
+ # which necessarily changed after the original receiver binary was built.
+ # Earlier '-- go' erroneously included the diagnostic script itself.
  jexec -U jwood fi-dev git -C "$repo" diff --quiet "$original_pin" "$pin" \
-   -- go tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh ||
-   fail 'receiver source changed since prior build; do not reuse staged binary'
+   -- . ':(exclude)go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_receiver_live_upgrade.sh' ||
+   fail 'repository changed outside receiver upgrade script; cannot reuse staged binary'
+fi
+if [ "$mode" = --audit ];then
+ echo '===== CURRENT RECEIVER PROCESS AND LISTENER ====='
+ jexec fi-receiver service fi_receiver onestatus 2>&1 || :
+ jexec fi-receiver ps -axww -o pid,ppid,user,stat,etime,command |
+   grep -E 'fi-receiver|PID' || :
+ jexec fi-receiver sockstat -4 -l -P tcp |
+   grep -F '172.20.23.21:8443' || :
+ echo '===== INSTALLED RECEIVER ASSET MATCH ====='
+ if [ -d "$stage" ] && [ ! -L "$stage" ];then
+  for pair in "old-binary:$binary" "new-binary:$binary" \
+    "old-supervisor:$supervisor" "new-supervisor:$supervisor" \
+    "old-config:$config" "new-config:$config";do
+   name=${pair%%:*};dest=${pair#*:}
+   if [ -f "$stage/$name" ] && cmp -s "$stage/$name" "$dest";then
+    echo "MATCH $name"
+   fi
+  done
+ else
+  echo "STAGE NOT FOUND: $stage"
+ fi
+ echo 'FI RECEIVER AUDIT COMPLETE read_only=true'
+ exit 0
+fi
+# The prior upgrade's response ended during rollback. A still-running
+# upgraded receiver must never be stopped for a second upgrade.
+if [ "$mode" = --resume ] &&
+ [ -d "$stage" ] && [ ! -L "$stage" ] &&
+ cmp -s "$stage/new-binary" "$binary" &&
+ cmp -s "$stage/new-supervisor" "$supervisor" &&
+ cmp -s "$stage/new-config" "$config";then
+ if jexec fi-receiver service fi_receiver onestatus >/dev/null 2>&1 &&
+    jexec fi-receiver ps -axww -o command |
+      grep -F -- '-generation-verified-cache-root /var/db/fi/verified-cache' >/dev/null &&
+    jexec fi-receiver ps -axww -o command |
+      grep -F -- '-generation-ready-root /var/db/fi/custody/ready' >/dev/null &&
+    jexec fi-receiver sockstat -4 -l -P tcp |
+      grep -F '172.20.23.21:8443' >/dev/null;then
+   echo 'FI RECEIVER ALREADY UPDATED: verified-cache=true listener=true no_restart=true'
+   exit 0
+ fi
+ fail 'new receiver assets installed but listener/worker not verified; stop instead of restarting'
 fi
 for f in "$config" "$supervisor" "$binary";do
  [ -f "$f" ] && [ ! -L "$f" ] || fail "missing/unsafe file: $f"
