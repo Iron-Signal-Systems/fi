@@ -1,5 +1,14 @@
 # Phase 1 — Windows File & Identity Intelligence
 
+> **Acceptance boundary (2026-11-27):** The Phase 1 / Gate 1 results below
+> are dated acceptance of their exact Windows source builds and behavior. They do
+> not certify the later **volume-first Windows sender redesign** or its fresh
+> installation on a completely FI-free, AD-joined Windows Server. In the redesign,
+> USN observation is organized by volume and governed roots remain policy/reporting
+> boundaries, with deduplication and identity relationships preserved outside
+> configured roots where necessary. Redesign release remains gated on independent
+> fresh-install acceptance. This does not revoke historic Gate 1 results.
+
 ## Purpose
 
 Establish and continuously maintain source-side historical intelligence for each
