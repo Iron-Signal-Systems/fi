@@ -26,8 +26,7 @@ type CertificateIdentity struct {
 	CertificateSHA256 string
 	CommonName        string
 	IssuingCASHA256   string
-	OrganizationalUnit string // source-config v1 Windows identity
-	TemplateOID       string // source-config v2 C220 identity
+	TemplateOID       string
 }
 
 // CertificateUse identifies the FI purpose for which a certificate is being
@@ -75,17 +74,8 @@ func AuthorizeSource(
 		return AuthorizationIdentityMismatch, nil
 	}
 
-	if expected.TemplateOID != "" {
-		// v2 authority: template OID is mandatory and the only role selector.
-		if presented.TemplateOID != expected.TemplateOID {
-			return AuthorizationIdentityMismatch, nil
-		}
-	} else {
-		// v1 authority: preserve the original enrolled organizational-unit policy.
-		if expected.OrganizationalUnit == "" ||
-			presented.OrganizationalUnit != expected.OrganizationalUnit {
-			return AuthorizationIdentityMismatch, nil
-		}
+	if presented.TemplateOID != expected.TemplateOID {
+		return AuthorizationIdentityMismatch, nil
 	}
 
 	expectedCA, err := normalizeSHA256(expected.IssuingCASHA256)

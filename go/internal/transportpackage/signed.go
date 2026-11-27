@@ -167,19 +167,6 @@ func validateBatchSigningCertificateRole(
 	if certificate.IsCA {
 		return errors.New("batch-signing certificate must not be a CA")
 	}
-	if _, err := transporttrust.CertificateTemplateOID(certificate); err != nil {
-		if err.Error() != "certificate template information extension is required" {
-			return fmt.Errorf("batch-signing certificate template extension: %w", err)
-		}
-		// Legacy Windows v1 signing certificates used the signed OU role.
-		if len(certificate.Subject.OrganizationalUnit) != 1 {
-			return fmt.Errorf("batch-signing certificate must contain exactly one organizational unit, got %d", len(certificate.Subject.OrganizationalUnit))
-		}
-		if certificate.Subject.OrganizationalUnit[0] != transporttrust.BatchSigningOrganizationalUnit {
-			return fmt.Errorf("batch-signing certificate organizational unit must be %q, got %q",
-				transporttrust.BatchSigningOrganizationalUnit, certificate.Subject.OrganizationalUnit[0])
-		}
-	}
 	if !strings.EqualFold(certificate.Subject.CommonName, descriptor.SourceID) {
 		return fmt.Errorf(
 			"batch-signing certificate common name %q does not match source ID %q",
