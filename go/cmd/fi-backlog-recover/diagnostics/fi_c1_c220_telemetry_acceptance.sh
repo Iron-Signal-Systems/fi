@@ -33,7 +33,10 @@ BEGIN
  INTO receipts,last_receipt
  FROM telemetry_v2.delivery_receipt;
  IF host_count<2 OR sor_count<2 OR
-    last_sample<now()-interval '90 seconds' OR
+    -- Database samples arrive in 5-minute upload batches. Allow one
+    -- bounded delivery delay; the separate receipt check still enforces
+    -- successful live publication within the last seven minutes.
+    last_sample<now()-interval '7 minutes' OR
     last_receipt IS NULL OR last_receipt<now()-interval '7 minutes' THEN
    RAISE EXCEPTION 'FI telemetry coverage incomplete: host=% sor=% newest=% last_delivery=%',
       host_count,sor_count,last_sample,last_receipt;
