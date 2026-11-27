@@ -5,12 +5,20 @@
 Turn the accepted FI capabilities into a reproducible, supportable, recoverable
 product.
 
-Phase 6 freezes and proves the supported integrated backend deployment profile.
-The currently proposed backend direction is documented in
-`docs/architecture/ADR-0001-FREEBSD-BACKEND.md`.
+Phase 6 freezes and proves the supported **single, configuration-driven FI
+product installation and lifecycle**. FI's development backend already runs on
+FreeBSD 15.1 at C220 with `fi-receiver` and `fi-sor` service jails, PostgreSQL 18,
+and independent C1 verifier B. That is an implemented development architecture,
+**not** an accepted repeatable customer installation. See
+[the actual C220 architecture](../../../../docs/architecture/FI-C220-CURRENT-BACKEND.md),
+[current deployment source](../../../../tools/deployment/freebsd/README.md), and
+the [historical FreeBSD ADR](../../../../docs/architecture/ADR-0001-FREEBSD-BACKEND.md).
 
-The accepted Linux Phase 3 service remains part of FI's engineering history
-regardless of the final Phase 6 deployment platform.
+The September 2026 accepted Linux Phase 3 service remains an engineering-history
+record only and is not the live C220 target. C1 is an internal mechanism for
+clearing accumulated backlog after interruptions; it is not a separately sold
+feature. The supported product must integrate the required services, configuration,
+security prerequisites, health, and recovery behind one customer-facing workflow.
 
 ## Integrated Scope
 
@@ -35,7 +43,7 @@ The release combines:
 - backend storage/backup/recovery layout; and
 - operational tooling.
 
-If the FreeBSD ADR is accepted, the integrated scope also includes:
+For the FreeBSD-based product deployment being developed, the integrated scope also includes:
 
 - FreeBSD backend/appliance lifecycle;
 - VNET jail lifecycle;
