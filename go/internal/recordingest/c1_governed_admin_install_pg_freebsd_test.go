@@ -17,7 +17,6 @@ import (
     "testing"
     "time"
 
-    "github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
     "github.com/jackc/pgx/v5"
 )
 
@@ -64,7 +63,7 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
     // restricted SQL role before any C1 Pending installer is invoked.
     if _,err=admin.Exec(ctx,`CREATE ROLE fi_ingest LOGIN NOSUPERUSER
         NOCREATEDB NOCREATEROLE NOREPLICATION`);err!=nil{t.Fatal(err)}
-    migrations,err:=backendinstall.C1CanonicalSchemaMigrations()
+    migrations,err:=c1CanonicalSchemaMigrations()
     if err!=nil{t.Fatal(err)}
     for _,m:=range migrations{
         if _,err=admin.Exec(ctx,m.SQL,pgx.QueryExecModeSimpleProtocol);err!=nil{
