@@ -6,6 +6,16 @@
 
 package recordingest
 
+// SHA-256 values are pinned to the original canonical SQL migration bytes.
+const (
+	sorPostgreSQLDatabaseMigration0001SHA256 = "f83ffb7754e22eef6230300b38ff6d1cf039791fd08f356c77efa2e30b462ebf"
+	sorPostgreSQLDatabaseMigration0002SHA256 = "82050818f1424b7870a1b992b182abeb5497fe52c5a6f84d08fdefc76c496439"
+	sorPostgreSQLDatabaseMigration0003SHA256 = "906dccf64eaf13a0a008bc870801beefb2d372f71574d10fe40ae5f1ba5a174c"
+	sorPostgreSQLDatabaseMigration0004SHA256 = "9a2a54875828e82eed9dbbb36ddaa0b6886bdc43789f1a220f41bf40cd1460dc"
+	sorPostgreSQLDatabaseMigration0005SHA256 = "687f45c9229e7c3cfd9edca51b565e17b8c3f3b9ca3d674a44787b632d438fab"
+)
+
+
 type sorPostgreSQLDatabaseMigrationAsset struct {
 	Name   string
 	SHA256 string
