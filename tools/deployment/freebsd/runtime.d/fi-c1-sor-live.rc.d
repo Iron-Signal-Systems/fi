@@ -28,8 +28,8 @@ fi_c1_sor_live_start() {
     [ -x /usr/local/libexec/fi-c1-sor-live-run ] || return 1
     [ -x /usr/local/sbin/fi-c1-sor-live ] || return 1
     [ -d /var/log/fi ] || return 1
-    FI_C1_LIVE_PREFLIGHT=YES /usr/sbin/su -m fi-sor -c /usr/local/libexec/fi-c1-sor-live-run ||
-       { echo "FI C1 LIVE STOP: preflight failed" >&2; return 1; }
+    # Preflight is run from the physical host with jexec -U fi-sor BEFORE
+    # service activation; FreeBSD su -c selects a login class, not a command.
     # No -r: an ambiguous commit or independent B error must STOP intake,
     # leaving READY/custody intact for manual authoritative reconciliation.
     /usr/sbin/daemon -u fi-sor -p "$pidfile" \

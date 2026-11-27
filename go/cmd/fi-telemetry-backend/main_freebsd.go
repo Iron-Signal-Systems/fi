@@ -132,6 +132,8 @@ func collect(ctx context.Context,spool,source,revision,pgDSN,gapSince string,int
  if err:=addGap(spool,host,run,source,revision,gapSince);err!=nil{return err}
  var seq uint64
  var prior time.Time
+ ticker:=time.NewTicker(interval)
+ defer ticker.Stop()
  for {
   if err:=ctx.Err();err!=nil{return nil}
   now:=time.Now().UTC()
@@ -139,10 +141,9 @@ func collect(ctx context.Context,spool,source,revision,pgDSN,gapSince string,int
   if err:=onceSample(ctx,spool,host,run,source,revision,pgDSN,seq,prior);err!=nil{return err}
   prior=now
   if one{return nil}
-  timer:=time.NewTimer(interval)
   select{
-   case <-ctx.Done():timer.Stop();return nil
-   case <-timer.C:
+   case <-ctx.Done():return nil
+   case <-ticker.C:
   }
  }
 }
@@ -234,6 +235,7 @@ func main(){
  switch *mode{
  case "collect":
   if len(*revision)!=40||strings.ContainsAny(*revision," \n\r\t"){log.Fatal("FI telemetry: 40 character SHA required")}
+  if _,e:=hex.DecodeString(*revision);e!=nil{log.Fatal("FI telemetry: invalid SHA hex")}
   err=collect(ctx,*spool,*source,*revision,os.Getenv("FI_TELEMETRY_MONITOR_DSN"),*gapSince,15*time.Second,*once)
  case "upload":
   if *gapSince!=""{log.Fatal("FI telemetry: gap-since only applies to collectors")}

@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Copyright (c) 2026 John Joseph Wood. All rights reserved.
 // FI telemetry: durable, bounded local source custody, no SQL authority.
 package telemetrybackend
@@ -47,7 +49,8 @@ func IsSafeSpool(dir string)error {
  if !filepath.IsAbs(dir){return errors.New("FI telemetry: spool must be absolute")}
  info,err:=os.Lstat(dir);if err!=nil{return err}
  if !info.IsDir()||info.Mode()&os.ModeSymlink!=0||
-    info.Mode().Perm()&0007!=0 || info.Mode().Perm()&0200==0 {
+    info.Mode().Perm()&0007!=0 || info.Mode().Perm()&0200==0 ||
+    (info.Mode().Perm()&0070!=0 && info.Mode()&os.ModeSetgid==0) {
   return errors.New("FI telemetry: spool must be private, real directory (0700 or private group 0770)")
  }
  return nil

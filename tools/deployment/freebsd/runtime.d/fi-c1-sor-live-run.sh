@@ -14,7 +14,7 @@ umask 077
 : "${fi_c1_sor_live_ready_root:?original READY required}"
 : "${fi_c1_sor_live_cache_root:?receiver cache required}"
 : "${fi_c1_sor_live_staging_root:?disposable scratch required}"
-[ "$fi_c1_sor_live_enable" = YES ] ||
+[ "${FI_C1_LIVE_PREFLIGHT:-NO}" = YES ] || [ "$fi_c1_sor_live_enable" = YES ] ||
     { echo "FI C1 LIVE STOP: not enabled" >&2; exit 1; }
 [ "${fi_c1_sor_reconcile_private_replay:-NO}" = NO ] ||
     { echo "FI C1 LIVE STOP: automatic Pending replay forbidden" >&2; exit 1; }
