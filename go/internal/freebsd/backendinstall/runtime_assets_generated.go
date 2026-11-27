@@ -7,7 +7,7 @@
 package backendinstall
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh
-// SHA256: 19d72ff0d2cf551920b75cb90d2f560416d5e2500a83403586bd27f1b925a6f2
+// SHA256: 0f00c2b4580f4162ece367b8fe26352c86cf223faae188982986d746f0a11401
 const runtimeAssetReceiverSupervisor = `#!/bin/sh
 
 # FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
@@ -56,6 +56,9 @@ fail()
 [ -n "${fi_receiver_generation_ready_root:-}" ] ||
     fail "fi_receiver_generation_ready_root is required"
 
+[ -n "${fi_receiver_generation_verified_cache_root:-}" ] ||
+    fail "fi_receiver_generation_verified_cache_root is required"
+
 [ -n "${fi_receiver_generation_max_canonical_bytes:-}" ] ||
     fail "fi_receiver_generation_max_canonical_bytes is required"
 
@@ -78,6 +81,7 @@ exec "$BINARY" \
     -generation-custody-root "$fi_receiver_generation_custody_root" \
     -generation-recorded-root "$fi_receiver_generation_recorded_root" \
     -generation-ready-root "$fi_receiver_generation_ready_root" \
+    -generation-verified-cache-root "$fi_receiver_generation_verified_cache_root" \
     -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
     -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
     -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes"
@@ -191,7 +195,7 @@ run_rc_command "$1"
 `
 
 // Source: tools/deployment/freebsd/runtime.d/fi-receiver.rc.conf.template
-// SHA256: 20617887620e31eb1cf01b97c78a005c2da9eb672e04669d54bc9ec55cc9a422
+// SHA256: 0ab864115c5d92936c85315611de687b42c19aaaed37e437ccfe638c7f0a3d9c
 const runtimeAssetReceiverRCConfig = `# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
 # FI-ROLE: receiver-runtime-config
 
@@ -206,6 +210,7 @@ fi_receiver_max_data_bytes="67108864"
 fi_receiver_generation_custody_root="/var/db/fi/custody/generation"
 fi_receiver_generation_recorded_root="/var/db/fi/custody/recorded"
 fi_receiver_generation_ready_root="/var/db/fi/custody/ready"
+fi_receiver_generation_verified_cache_root="/var/db/fi/verified-cache"
 
 fi_receiver_generation_max_canonical_bytes="68719476736"
 fi_receiver_generation_max_encoded_bytes="68719476736"
