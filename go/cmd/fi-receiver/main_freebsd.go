@@ -199,6 +199,16 @@ func runTransportCommand() {
 		"",
 		"durable FI generation recorded-receipt root; requires -generation-enable",
 	)
+	generationBackfillSource := flags.String(
+		"generation-cache-backfill-source",
+		"",
+		"one exact enrolled source to revalidate receiver custody into verified cache without opening a listener",
+	)
+	generationBackfillID := flags.String(
+		"generation-cache-backfill-generation",
+		"",
+		"one exact original signed generation ID; requires -generation-cache-backfill-source",
+	)
 	generationVerifiedCacheRoot := flags.String(
 		"generation-verified-cache-root",
 		"",
@@ -232,6 +242,10 @@ func runTransportCommand() {
 	if !*transportListen {
 		printTransportUsage()
 		os.Exit(2)
+	}
+	if (*generationBackfillSource=="")!=(*generationBackfillID=="") ||
+		(*generationBackfillSource!="" && (!*generationEnable||*generationVerifiedCacheRoot=="")){
+		fail(errors.New("FI receiver: one-generation verified-cache backfill requires exact source, generation and enabled receiver verified cache"))
 	}
 
 	if flags.NArg() != 0 {
@@ -365,6 +379,21 @@ func runTransportCommand() {
 	generationOptions.apply(
 		&receiverConfig,
 	)
+
+	if *generationBackfillSource!="" {
+		// No listener, sender ACK, READY mutation, bulk restart sweep, or SQL.
+		// The immutable recorder receipt must already exist, and the exact
+		// FIGT undergoes full trust and semantic revalidation before cache
+		// publication. This is an explicit one-generation recovery operation.
+		result,err:=transportreceiver.BackfillRecordedGenerationCache(
+			ctx,receiverConfig,*generationBackfillSource,*generationBackfillID,
+		)
+		if err!=nil{fail(fmt.Errorf("receiver verified-cache backfill: %w",err))}
+		fmt.Printf("FI RECEIVER VERIFIED CACHE BACKFILL PASS source=%s generation=%s batches=%d records=%d original_custody_preserved=true recorded_receipt_preserved=true ready_unchanged=true sor_unmodified=true listener_started=false\n",
+			*generationBackfillSource,*generationBackfillID,
+			result.Receipt.BatchCount,result.Receipt.RecordCount)
+		return
+	}
 
 	if generationOptions.Enabled {
 		startup, err := transportreceiver.RecoverGenerationStartup(
