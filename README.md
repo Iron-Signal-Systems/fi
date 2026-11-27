@@ -52,13 +52,8 @@ FI is **not yet a released or production-ready product**. This README describes 
 
 ## Project documentation
 
-For implementation, architecture, test evidence, and development details, see:
+The [documentation index](docs/README.md) contains the current engineering references, operational contracts, acceptance records, and historical technical notes moved out of the former long README.
 
-- [Product definition and operating philosophy](docs/PRODUCT-DEFINITION.md)
-- [Development roadmap](fi-roadmap/roadmap.md)
-- [Windows collector contract](docs/COLLECTOR-CONTRACT.md)
-- [Current backend architecture](docs/architecture/FI-C220-CURRENT-BACKEND.md)
-- [Published projection and query design](docs/PUBLISHED-FI-PROJECTION-CONTRACT.md)
 
 ## Licensing and security
 
