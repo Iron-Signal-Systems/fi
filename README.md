@@ -4,6 +4,8 @@
 
 # File Intelligence
 
+**Built on purpose. Backed by discipline. Engineered to endure.**
+
 **Understand the file. Know its history. Trust the evidence.**
 
 File Intelligence (FI) is an on-premises, file-centered intelligence platform being developed by **Iron Signal Systems**. Its purpose is to help IT professionals understand the files they are responsible for: what a file is, where it has been, what changed, who could access it, and what the available evidence actually establishes.
