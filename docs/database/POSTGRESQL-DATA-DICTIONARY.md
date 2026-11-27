@@ -6,9 +6,9 @@
 **Snapshot date:** 2026-09-25\
 **Authoritative implementation:** `main` @ `618cc5186db4410fd43e7d4783bd95b04165aeb8`\
 **Phase status:** Phase 3 / Gate 3 complete\
-**Effective migrations:** `0001_relational.sql` → `0002_source_families.sql` → `0003_usn_relational_identity.sql`
+**Effective migrations in this 2026-09-25 snapshot:** `0001_relational.sql` → `0002_source_families.sql` → `0003_usn_relational_identity.sql`
 
-> This dictionary describes the **effective PostgreSQL FI System-of-Record schema and relational ingest implementation in current `main`** after all three Phase 3 migrations are applied in order. The schema/projector/ingest implementation was rechecked against `main` on 2026-09-25; no database-schema, `recordingest`, or `fi-ingest-worker` implementation drift exists relative to the code used to build the column mappings.
+> **Dated Gate 3 schema reference; not a verified current-main schema inventory.** This dictionary documents commit `618cc5186db4410fd43e7d4783bd95b04165aeb8` as checked on 2026-09-25 through migrations 0001–0003. As of 2026-11-27, `main` also contains `0004_security_field_name_index.sql` (drops a Security field-name index) and `0005_usn_capture_binding.sql` (adds capture-binding columns/constraints). The table, column, secondary-index, Go-writer mapping, and flow counts below are **historical 0001–0003 measurements**, not automatically current after these migrations. Rebuild and re-audit the effective schema and projectors before using this file as an exhaustive current column dictionary. The current C220 backend uses FreeBSD `fi-c1-sor-live`, not the historical Linux `fi-ingest-worker`. See [current C220 architecture](../architecture/FI-C220-CURRENT-BACKEND.md).
 >
 > This is the authoritative relational data dictionary. Phase 5 Published FI Projection schemas are separate rebuildable query representations and will receive their own data dictionary when that schema exists.
 
@@ -16,7 +16,7 @@
 
 FI currently uses one authoritative PostgreSQL database, `fi`, with one restricted application schema, also named `fi`.
 
-| Metric | Current effective value |
+| Metric | 2026-09-25 Gate 3 snapshot |
 |---|---:|
 | Tables | 49 |
 | Columns | 494 |
@@ -43,7 +43,7 @@ The relational database is **derived from verified immutable recorder custody**.
 - A generation is not accepted until every source record has a supported typed relational projection.
 - Every effective PostgreSQL table has an explicit Go producer/model mapping; normalized child tables are mapped to the originating Go slice/field even when no dedicated Go struct exists.
 
-## 2. Migration history relevant to the current dictionary
+## 2. Migration history of the September 2026 snapshot
 
 | Migration | Function |
 |---|---|
