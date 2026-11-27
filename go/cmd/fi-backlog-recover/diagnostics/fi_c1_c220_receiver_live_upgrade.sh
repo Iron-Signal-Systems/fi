@@ -31,8 +31,10 @@ fi
 for jail in fi-dev fi-receiver fi-sor;do
  jls -j "$jail" >/dev/null || fail "jail missing: $jail"
 done
-jexec fi-receiver service fi_receiver onestatus ||
- fail 'receiver not running; requires a separate recovery path'
+if [ "$mode" != --audit ];then
+ jexec fi-receiver service fi_receiver onestatus ||
+  fail 'receiver not running; requires a separate recovery path'
+fi
 if jexec fi-sor service fi_c1_sor_live onestatus >/dev/null 2>&1;then
  fail 'C1 already running; refuse receiver upgrade'
 fi
