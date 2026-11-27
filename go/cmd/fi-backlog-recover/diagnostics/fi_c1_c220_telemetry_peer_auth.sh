@@ -28,12 +28,30 @@ jexec fi-sor id fi-telemetry-monitor >/dev/null ||
 jexec fi-sor id fi-telemetry-recorder >/dev/null ||
   stop 'fi-sor recorder service account missing'
 peer(){
- jexec -U fi-telemetry-monitor fi-sor psql -X -w -At \
-  -h /var/db/fi/sor/run -p 5432 -d fi -c 'SELECT current_user' 2>/dev/null |
+ jexec -U fi-telemetry-monitor fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
+  -h /var/db/fi/sor/run -p 5432 -U fi-telemetry-monitor -d fi \
+  -c 'SELECT current_user' 2>/dev/null |
   grep -Fx fi-telemetry-monitor >/dev/null &&
- jexec -U fi-telemetry-recorder fi-sor psql -X -w -At \
-  -h /var/db/fi/sor/run -p 5432 -d fi_telemetry -c 'SELECT current_user' 2>/dev/null |
+ jexec -U fi-telemetry-recorder fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
+  -h /var/db/fi/sor/run -p 5432 -U fi-telemetry-recorder -d fi_telemetry \
+  -c 'SELECT current_user' 2>/dev/null |
   grep -Fx fi-telemetry-recorder >/dev/null
+}
+explain_peer_failure(){
+ echo "===== PEER FAILURE DETAILS (from fi-sor) =====" >&2
+ for target in fi-telemetry-monitor:fi fi-telemetry-recorder:fi_telemetry;do
+  user=${target%%:*}; db=${target#*:}
+  echo "Probe: OS/PG identity=$user database=$db" >&2
+  jexec -U "$user" fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
+   -h /var/db/fi/sor/run -p 5432 -U "$user" -d "$db" \
+   -c 'SELECT current_user' >/dev/null || :
+ done
+ echo "Socket directory and file (read-only):" >&2
+ jexec fi-sor ls -ld /var/db/fi/sor/run >&2 || :
+ jexec fi-sor ls -l /var/db/fi/sor/run >&2 || :
+ echo "PostgreSQL HBA match candidates:" >&2
+ sql "SELECT rule_number||' '||type||' '||database::text||' '||user_name::text||' '||auth_method
+      FROM pg_hba_file_rules WHERE type='local' ORDER BY rule_number LIMIT 12" >&2 || :
 }
 echo "===== TELEMETRY-ONLY PEER AUTH ====="
 if peer;then
@@ -83,6 +101,7 @@ while [ "$n" -lt 10 ]; do
  n=$((n + 1))
  sleep 1
 done
+explain_peer_failure
 cp -p "$backup/pg_hba.conf" "$file"
 sql 'SELECT pg_reload_conf()' >/dev/null || :
-stop 'telemetry peer identities still denied; original HBA restored'
+stop 'telemetry peer validation failed; original HBA restored'
