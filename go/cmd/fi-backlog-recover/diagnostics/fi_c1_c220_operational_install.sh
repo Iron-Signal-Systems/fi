@@ -234,6 +234,25 @@ if [ "$mode" = --start-ingest ];then
         AND j.transfer_sha256=g.transfer_sha256
         AND j.records_committed=g.record_count)")" = 1 ] ||
        fail "previously accepted 15M generation not intact"
+  echo "===== REAL RECEIVER MUST PUBLISH VERIFIED CACHE FOR NEW SENDERS ====="
+  jexec fi-receiver ps -axww -o command |
+    grep -F -- '-generation-verified-cache-root /var/db/fi/verified-cache' >/dev/null ||
+    fail "receiver not publishing verified cache for new signed generations"
+  jexec fi-receiver ps -axww -o command |
+    grep -F -- '-generation-ready-root /var/db/fi/custody/ready' >/dev/null ||
+    fail "receiver not publishing READY for new signed generations"
+  mount -p | awk '
+    $1=="/work/fi-c220-20261114/custody/verified-cache" &&
+    $2=="/fast/jails/roots/fi-receiver/var/db/fi/verified-cache" &&
+    $3=="nullfs" && $4 ~ /(^|,)rw(,|$)/ {found++}
+    END{exit !(found==1)}' ||
+    fail "receiver cache publication is not mounted RW"
+  mount -p | awk '
+    $1=="/work/fi-c220-20261114/custody/verified-cache" &&
+    $2=="/fast/jails/roots/fi-sor/var/db/fi/verified-cache" &&
+    $3=="nullfs" && $4 ~ /(^|,)ro(,|$)/ {found++}
+    END{exit !(found==1)}' ||
+    fail "SoR receiver cache is not mounted RO"
   mount -p | awk '
     $1=="/work/fi-c220-20261114/custody/ready" &&
     $2=="/fast/jails/roots/fi-sor/var/db/fi/custody/ready" &&
