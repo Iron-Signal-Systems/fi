@@ -504,7 +504,7 @@ func writePreparedRecoveryTestPair(
 			DataSHA256:      digest,
 			DataFile:        dataName,
 			Collector: CollectorIdentity{
-				ExecutablePath: `C:\Program Files\FI\fi.exe`,
+				ExecutablePath: `C:\Program Files\FI\fi-collector.exe`,
 				ExecutableSHA256: strings.Repeat(
 					"e",
 					64,

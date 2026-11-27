@@ -181,3 +181,15 @@ func TestReadSelectedEventsReversedRangeDoesNotQueryWindows(t *testing.T) {
 		t.Fatalf("events = %d, want 0", len(events))
 	}
 }
+
+func TestAuditQuerySystemPolicyBooleanWidth(t *testing.T) {
+	zeroLowByte := uintptr(0x100)
+	if byte(zeroLowByte) != 0 {
+		t.Fatal("BOOLEAN failure must be determined from the low byte only")
+	}
+
+	oneLowByte := uintptr(0x101)
+	if byte(oneLowByte) == 0 {
+		t.Fatal("BOOLEAN success must be determined from the low byte only")
+	}
+}

@@ -32,7 +32,7 @@ const (
 type RecordKind string
 
 const (
-	// ExecutableStart records one fi.exe process launch. It is intentionally
+	// ExecutableStart records one fi-collector.exe process launch. It is intentionally
 	// stored in the same resource journal so later analysis can identify the
 	// exact executable that was started even when the selected CLI command does
 	// not itself create a bounded resource-tracked operation.
@@ -48,7 +48,7 @@ const (
 // ResourceSample and ResourceSummary additionally correlate process resource
 // usage to one bounded FI operation by OperationID.
 //
-// ExecutablePath and ExecutableSHA256 identify the exact fi.exe file associated
+// ExecutablePath and ExecutableSHA256 identify the exact fi-collector.exe file associated
 // with the process producing this record. They are source identity facts, not an
 // independent attestation that the executable is trusted.
 type Record struct {
@@ -112,7 +112,7 @@ func DefaultPath(scopeID string) (string, error) {
 }
 
 // AppendExecutableStart appends one process-start identity record to the resource
-// journal. It is used once by fi.exe at process startup, before command dispatch.
+// journal. It is used once by fi-collector.exe at process startup, before command dispatch.
 func AppendExecutableStart(path string, scopeID string) error {
 	if !safeScopeID(scopeID) {
 		return fmt.Errorf("invalid scope id for resource journal filename")

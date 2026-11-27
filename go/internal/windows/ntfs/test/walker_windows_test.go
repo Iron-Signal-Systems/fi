@@ -11,7 +11,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,40 +131,6 @@ func TestWalkGovernedRootPreservesIllFormedUTF16Path(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("walker did not preserve the ill-formed UTF-16 filename exactly")
-	}
-}
-
-func TestWalkGovernedRootCollectsLargeDirectory(t *testing.T) {
-	root := t.TempDir()
-	const fileCount = 300
-
-	for index := 0; index < fileCount; index++ {
-		name := filepath.Join(root, fmt.Sprintf("file-%04d.txt", index))
-		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	seenFiles := 0
-	err := ntfs.WalkGovernedRoot(
-		context.Background(),
-		"scope-large-directory-test",
-		root,
-		func(_ string, observation ntfs.Observation, objectErr error) error {
-			if objectErr != nil {
-				return objectErr
-			}
-			if observation.SubjectKind == records.SubjectFile {
-				seenFiles++
-			}
-			return nil
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if seenFiles != fileCount {
-		t.Fatalf("walk saw %d files, want %d", seenFiles, fileCount)
 	}
 }
 

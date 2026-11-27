@@ -1,0 +1,739 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
+//go:build windows
+
+package install
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
+)
+
+type approval2ServiceContract struct {
+	Account     string
+	Args        []string
+	DisplayName string
+	Executable  string
+	Name        string
+	Path        string
+	SIDType     uint32
+	StartType   uint32
+}
+
+type approval2ServiceOwnership struct {
+	Contract approval2ServiceContract
+	Created  bool
+	Original mgr.Config
+}
+
+func failApproval2SCMTransaction(
+	base error,
+	rollback func() error,
+) (func() error, func() error, error) {
+	if base == nil {
+		base = errors.New(
+			"Approval 2 SCM transaction failed",
+		)
+	}
+
+	if rollback == nil {
+		return nil, nil, base
+	}
+
+	if rollbackErr := rollback(); rollbackErr != nil {
+		base = errors.Join(
+			base,
+			fmt.Errorf(
+				"rollback Approval 2 SCM transaction: %w",
+				rollbackErr,
+			),
+		)
+	}
+
+	return nil, nil, base
+}
+
+func reconcileServer2016Services(
+	report Report,
+	identities DesiredFIIdentities,
+	plan InstallPlan,
+) (func() error, func() error, error) {
+	contracts := approval2Server2016ServiceContracts(
+		identities,
+		receiverPendingFromPlan(plan),
+	)
+
+	contractByName := make(
+		map[string]approval2ServiceContract,
+		len(contracts),
+	)
+	for _, contract := range contracts {
+		contractByName[strings.ToLower(
+			contract.Name,
+		)] = contract
+	}
+
+	var targets []approval2ServiceContract
+	seen := make(
+		map[string]struct{},
+	)
+
+	for _, action := range plan.Actions {
+		if action.Authority != "SCM" ||
+			!planActionMutates(
+				action.Action,
+			) {
+			continue
+		}
+
+		if action.Action != planActionCreate &&
+			action.Action != planActionReconcile {
+			return nil, nil, fmt.Errorf(
+				"Approval 2 SCM action=%s target=%s is not characterized",
+				action.Action,
+				action.Target,
+			)
+		}
+
+		key := strings.ToLower(
+			strings.TrimSpace(
+				action.Target,
+			),
+		)
+		contract, found := contractByName[key]
+		if !found {
+			return nil, nil, fmt.Errorf(
+				"Approval 2 SCM target %q is not an FI service",
+				action.Target,
+			)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, nil, fmt.Errorf(
+				"Approval 2 SCM target %q appears more than once",
+				action.Target,
+			)
+		}
+		seen[key] = struct{}{}
+		targets = append(
+			targets,
+			contract,
+		)
+	}
+
+	if len(targets) == 0 {
+		return func() error { return nil }, func() error { return nil }, nil
+	}
+
+	if !installerMutationSupportedBuild(report.Host.BuildNumber) {
+		return nil, nil, fmt.Errorf(
+			"Approval 2 SCM mutation does not support Windows build %d",
+			report.Host.BuildNumber,
+		)
+	}
+
+	manager, err := mgr.Connect()
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"connect to service control manager for Approval 2: %w",
+			err,
+		)
+	}
+	defer manager.Disconnect()
+
+	owned := make(
+		[]approval2ServiceOwnership,
+		0,
+		len(targets),
+	)
+
+	rollbackOwned := func() error {
+		return rollbackApproval2Services(
+			owned,
+		)
+	}
+
+	fail := func(
+		base error,
+	) (func() error, func() error, error) {
+		return failApproval2SCMTransaction(
+			base,
+			rollbackOwned,
+		)
+	}
+
+	for _, contract := range targets {
+		observed, found := findService(
+			report.Services,
+			contract.Name,
+		)
+		if !found {
+			return fail(
+				fmt.Errorf(
+					"authoritative SCM discovery for %s is unavailable",
+					contract.Name,
+				),
+			)
+		}
+		if observed.Presence == presenceUnknown {
+			return fail(
+				fmt.Errorf(
+					"authoritative SCM presence for %s is unknown",
+					contract.Name,
+				),
+			)
+		}
+
+		service, openErr := manager.OpenService(
+			contract.Name,
+		)
+
+		switch observed.Presence {
+		case presenceAbsent:
+			if openErr == nil {
+				service.Close()
+				return fail(
+					fmt.Errorf(
+						"service %s appeared after Approval 2 review; no SCM mutation was performed for that target",
+						contract.Name,
+					),
+				)
+			}
+			if !errors.Is(
+				openErr,
+				windows.ERROR_SERVICE_DOES_NOT_EXIST,
+			) {
+				return fail(
+					fmt.Errorf(
+						"preflight open absent service %s: %w",
+						contract.Name,
+						openErr,
+					),
+				)
+			}
+
+			created, err := manager.CreateService(
+				contract.Name,
+				contract.Executable,
+				mgr.Config{
+					DisplayName:      contract.DisplayName,
+					ErrorControl:     mgr.ErrorNormal,
+					ServiceStartName: contract.Account,
+					StartType:        contract.StartType,
+					SidType:          contract.SIDType,
+				},
+				contract.Args...,
+			)
+			if err != nil {
+				return fail(
+					fmt.Errorf(
+						"create service %s: %w",
+						contract.Name,
+						err,
+					),
+				)
+			}
+			created.Close()
+
+			owned = append(
+				owned,
+				approval2ServiceOwnership{
+					Contract: contract,
+					Created:  true,
+				},
+			)
+
+			if err := setApproval2ServiceManagedAccountFlag(
+				contract.Name,
+				contract.Account,
+			); err != nil {
+				return fail(
+					fmt.Errorf(
+						"mark created service %s as managed service account: %w",
+						contract.Name,
+						err,
+					),
+				)
+			}
+
+		case presencePresent:
+			if openErr != nil {
+				return fail(
+					fmt.Errorf(
+						"open reviewed existing service %s: %w",
+						contract.Name,
+						openErr,
+					),
+				)
+			}
+
+			original, err := service.Config()
+			if err != nil {
+				service.Close()
+				return fail(
+					fmt.Errorf(
+						"snapshot service %s before reconciliation: %w",
+						contract.Name,
+						err,
+					),
+				)
+			}
+
+			// Windows does not return an existing service password. Restoring an
+			// arbitrary conventional account would therefore be impossible. FI
+			// reconciles an existing service only when discovery proves it already
+			// uses a managed account, for which the password remains SCM-managed.
+			if observed.ManagedAccount != "true" {
+				service.Close()
+				return fail(
+					fmt.Errorf(
+						"refusing to reconcile existing service %s because prior managed-account state=%s cannot be rolled back safely",
+						contract.Name,
+						observed.ManagedAccount,
+					),
+				)
+			}
+
+			desired := original
+			desired.BinaryPathName = contract.Path
+			desired.DisplayName = contract.DisplayName
+			desired.ServiceStartName = contract.Account
+			desired.Password = ""
+			desired.StartType = contract.StartType
+			desired.SidType = contract.SIDType
+			desired.DelayedAutoStart = false
+
+			// Take rollback ownership before ChangeServiceConfig. If the
+			// native call or a later verification fails, FI still owns the
+			// exact pre-mutation configuration snapshot.
+			owned = append(
+				owned,
+				approval2ServiceOwnership{
+					Contract: contract,
+					Original: original,
+				},
+			)
+
+			if err := service.UpdateConfig(
+				desired,
+			); err != nil {
+				service.Close()
+				return fail(
+					fmt.Errorf(
+						"reconcile service %s: %w",
+						contract.Name,
+						err,
+					),
+				)
+			}
+			service.Close()
+
+		default:
+			if service != nil {
+				service.Close()
+			}
+			return fail(
+				fmt.Errorf(
+					"unsupported reviewed service presence=%s for %s",
+					observed.Presence,
+					contract.Name,
+				),
+			)
+		}
+
+		verificationManager, err := mgr.Connect()
+		if err != nil {
+			return fail(
+				fmt.Errorf(
+					"connect to service control manager for post-mutation verification: %w",
+					err,
+				),
+			)
+		}
+		verified, err := discoverService(
+			verificationManager,
+			serviceContract{
+				DisplayName: contract.DisplayName,
+				Name:        contract.Name,
+				Path:        contract.Path,
+				SIDType:     contract.SIDType,
+			},
+		)
+		verificationManager.Disconnect()
+		if err != nil {
+			return fail(
+				fmt.Errorf(
+					"verify service %s after SCM mutation: %w",
+					contract.Name,
+					err,
+				),
+			)
+		}
+		if !approval2ServiceConfigMatches(
+			verified,
+			contract,
+		) {
+			return fail(
+				fmt.Errorf(
+					"service %s did not converge after SCM mutation: account=%q path=%q managed=%s start=%s sid=%s display=%q",
+					contract.Name,
+					verified.Account,
+					verified.BinaryPath,
+					verified.ManagedAccount,
+					verified.StartType,
+					verified.SIDType,
+					verified.DisplayName,
+				),
+			)
+		}
+	}
+
+	activate := func() error {
+		return startApproval2CreatedServices(
+			owned,
+			identities,
+		)
+	}
+
+	return rollbackOwned, activate, nil
+}
+
+func startApproval2CreatedServices(
+	owned []approval2ServiceOwnership,
+	identities DesiredFIIdentities,
+) error {
+	created := make(
+		map[string]approval2ServiceContract,
+	)
+
+	for _, item := range owned {
+		if item.Created &&
+			item.Contract.StartType ==
+				mgr.StartAutomatic {
+			created[item.Contract.Name] =
+				item.Contract
+		}
+	}
+
+	if len(created) == 0 {
+		return nil
+	}
+
+	manager, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf(
+			"connect to service control manager for initial FI start: %w",
+			err,
+		)
+	}
+	defer manager.Disconnect()
+
+	start := func(
+		name string,
+	) error {
+		contract, found :=
+			created[name]
+
+		if !found {
+			return nil
+		}
+
+		service, err :=
+			manager.OpenService(
+				name,
+			)
+		if err != nil {
+			return fmt.Errorf(
+				"open newly created service %s for initial start: %w",
+				name,
+				err,
+			)
+		}
+		defer service.Close()
+
+		status, err :=
+			service.Query()
+		if err != nil {
+			return fmt.Errorf(
+				"query newly created service %s before initial start: %w",
+				name,
+				err,
+			)
+		}
+
+		if status.State ==
+			svc.Running {
+			return nil
+		}
+
+		if err :=
+			verifyApproval2ServiceStartBoundary(
+				contract,
+				identities,
+			); err != nil {
+			return fmt.Errorf(
+				"pre-start security gate for %s: %w",
+				name,
+				err,
+			)
+		}
+
+		if err :=
+			service.Start(); err != nil {
+			return fmt.Errorf(
+				"start newly created service %s: %w",
+				name,
+				err,
+			)
+		}
+
+		return waitServiceState(
+			service,
+			svc.Running,
+			serviceTransitionTimeout,
+		)
+	}
+
+	if err :=
+		start(
+			"FIUSNReader",
+		); err != nil {
+		return err
+	}
+
+	if err :=
+		start(
+			"FIObjReader",
+		); err != nil {
+		return err
+	}
+
+	if err :=
+		start(
+			"FICollector",
+		); err != nil {
+		return err
+	}
+
+	if err :=
+		start(
+			"FICRLRefresher",
+		); err != nil {
+		return err
+	}
+
+	if err :=
+		start(
+			"FISender",
+		); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func approval2Server2016ServiceContracts(
+	identities DesiredFIIdentities,
+	receiverPendingOption ...bool,
+) []approval2ServiceContract {
+	receiverPending := false
+	if len(receiverPendingOption) != 0 {
+		receiverPending = receiverPendingOption[0]
+	}
+
+	senderStartType := uint32(mgr.StartAutomatic)
+	if receiverPending {
+		senderStartType = uint32(mgr.StartManual)
+	}
+
+	return []approval2ServiceContract{
+		{
+			Account:     identities.CollectorSender.Account,
+			Args:        []string{"-service"},
+			DisplayName: "FI Collector",
+			Executable:  `C:\Program Files\FI\fi-collector.exe`,
+			Name:        "FICollector",
+			Path:        `"C:\Program Files\FI\fi-collector.exe" -service`,
+			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+			StartType:   mgr.StartAutomatic,
+		},
+		{
+			Account:     identities.USNReader.Account,
+			DisplayName: "FIUSNReader",
+			Executable:  `C:\Program Files\FI\fi-usn-reader.exe`,
+			Name:        "FIUSNReader",
+			Path:        `"C:\Program Files\FI\fi-usn-reader.exe"`,
+			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+			StartType:   mgr.StartAutomatic,
+		},
+		{
+			Account:     identities.ObjReader.Account,
+			DisplayName: "FI Object Reader",
+			Executable:  `C:\Program Files\FI\fi-obj-reader.exe`,
+			Name:        "FIObjReader",
+			Path:        `"C:\Program Files\FI\fi-obj-reader.exe"`,
+			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
+			StartType:   mgr.StartAutomatic,
+		},
+		{
+			Account:     identities.CRLRefresher.Account,
+			DisplayName: "FI CRL Refresher",
+			Executable:  `C:\Program Files\FI\fi-crl-refresher.exe`,
+			Name:        "FICRLRefresher",
+			Path:        `"C:\Program Files\FI\fi-crl-refresher.exe"`,
+			SIDType:     windows.SERVICE_SID_TYPE_NONE,
+			StartType:   mgr.StartAutomatic,
+		},
+		{
+			Account:     identities.CollectorSender.Account,
+			DisplayName: "FI Sender",
+			Executable:  `C:\Program Files\FI\fi-sender.exe`,
+			Name:        "FISender",
+			Path:        `"C:\Program Files\FI\fi-sender.exe"`,
+			SIDType:     windows.SERVICE_SID_TYPE_NONE,
+			StartType:   senderStartType,
+		},
+	}
+}
+
+func approval2ServiceConfigMatches(
+	observed ServiceState,
+	contract approval2ServiceContract,
+) bool {
+	return observed.Presence == presencePresent &&
+		strings.EqualFold(
+			strings.TrimSpace(
+				observed.Account,
+			),
+			contract.Account,
+		) &&
+		strings.EqualFold(
+			strings.TrimSpace(
+				observed.BinaryPath,
+			),
+			contract.Path,
+		) &&
+		observed.DisplayName == contract.DisplayName &&
+		observed.ManagedAccount == "true" &&
+		observed.StartType == approval2ServiceStartTypeName(contract.StartType) &&
+		observed.SIDType == serviceSIDTypeName(
+			contract.SIDType,
+		)
+}
+
+func approval2ServiceStartTypeName(value uint32) string {
+	switch value {
+	case mgr.StartAutomatic:
+		return "Automatic"
+	case mgr.StartManual:
+		return "Manual"
+	default:
+		return fmt.Sprintf("%d", value)
+	}
+}
+
+func rollbackApproval2Services(
+	owned []approval2ServiceOwnership,
+) error {
+	manager, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer manager.Disconnect()
+
+	var found []error
+
+	for index := len(owned) - 1; index >= 0; index-- {
+		item := owned[index]
+		service, err := manager.OpenService(
+			item.Contract.Name,
+		)
+		if err != nil {
+			if item.Created &&
+				errors.Is(
+					err,
+					windows.ERROR_SERVICE_DOES_NOT_EXIST,
+				) {
+				continue
+			}
+			found = append(
+				found,
+				fmt.Errorf(
+					"open service %s for rollback: %w",
+					item.Contract.Name,
+					err,
+				),
+			)
+			continue
+		}
+
+		if item.Created {
+			status, queryErr := service.Query()
+			if queryErr == nil &&
+				status.State != svc.Stopped {
+				if status.State != svc.StopPending {
+					_, queryErr = service.Control(
+						svc.Stop,
+					)
+				}
+				if queryErr == nil {
+					queryErr = waitServiceState(
+						service,
+						svc.Stopped,
+						serviceTransitionTimeout,
+					)
+				}
+			}
+			if queryErr != nil {
+				found = append(
+					found,
+					fmt.Errorf(
+						"stop transaction-created service %s: %w",
+						item.Contract.Name,
+						queryErr,
+					),
+				)
+				service.Close()
+				continue
+			}
+			if err := service.Delete(); err != nil {
+				found = append(
+					found,
+					fmt.Errorf(
+						"delete transaction-created service %s: %w",
+						item.Contract.Name,
+						err,
+					),
+				)
+			}
+			service.Close()
+			continue
+		}
+
+		original := item.Original
+		original.Password = ""
+		if err := service.UpdateConfig(
+			original,
+		); err != nil {
+			found = append(
+				found,
+				fmt.Errorf(
+					"restore service %s configuration: %w",
+					item.Contract.Name,
+					err,
+				),
+			)
+		}
+		service.Close()
+	}
+
+	return errors.Join(
+		found...,
+	)
+}

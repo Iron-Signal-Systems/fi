@@ -117,6 +117,31 @@ func CollectorWorkDir(spoolDir string) (string, error) {
 		return "", err
 	}
 
+	return CollectorWorkPath(
+		resolved,
+	)
+}
+
+// CollectorWorkPath derives the same-volume collector work-directory sibling
+// from one already-selected spool path. It is purely lexical and therefore does
+// not require the spool directory itself to exist.
+//
+// Runtime callers that need physical junction resolution must use
+// CollectorWorkDir. Installer planning can use this function before a new spool
+// directory exists.
+func CollectorWorkPath(spoolPath string) (string, error) {
+	if spoolPath == "" ||
+		!filepath.IsAbs(spoolPath) {
+		return "", errors.New(
+			"FI spool directory must be absolute",
+		)
+	}
+
+	resolved :=
+		filepath.Clean(
+			spoolPath,
+		)
+
 	base :=
 		filepath.Base(
 			resolved,

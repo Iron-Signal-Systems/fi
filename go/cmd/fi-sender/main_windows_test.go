@@ -7,16 +7,16 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
 	"testing"
 	"time"
-
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 type senderTrustFixture struct {
@@ -125,8 +125,7 @@ func TestValidateSenderConfig(t *testing.T) {
 func TestValidateSourceTransportIdentity(t *testing.T) {
 	certificate := &x509.Certificate{
 		Subject: pkix.Name{
-			CommonName:         "iss-fs-01.iss.local",
-			OrganizationalUnit: []string{transporttrust.TransportOrganizationalUnit},
+			CommonName: "iss-fs-01.iss.local",
 		},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -139,14 +138,31 @@ func TestValidateSourceTransportIdentity(t *testing.T) {
 		t.Fatalf("validateSourceTransportIdentity() error = %v", err)
 	}
 
-	wrongRole := *certificate
-	wrongRole.Subject = certificate.Subject
-	wrongRole.Subject.OrganizationalUnit = []string{"wrong"}
+	wrongSource := *certificate
+	wrongSource.Subject = pkix.Name{CommonName: "other.iss.local"}
 	if err := validateSourceTransportIdentity(
-		&wrongRole,
+		&wrongSource,
 		"iss-fs-01.iss.local",
 	); err == nil {
-		t.Fatal("validateSourceTransportIdentity(wrong role) error = nil")
+		t.Fatal("validateSourceTransportIdentity(wrong source) error = nil")
+	}
+
+	missingSignature := *certificate
+	missingSignature.KeyUsage = x509.KeyUsageKeyEncipherment
+	if err := validateSourceTransportIdentity(
+		&missingSignature,
+		"iss-fs-01.iss.local",
+	); err == nil {
+		t.Fatal("validateSourceTransportIdentity(missing signature use) error = nil")
+	}
+
+	missingClientAuth := *certificate
+	missingClientAuth.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	if err := validateSourceTransportIdentity(
+		&missingClientAuth,
+		"iss-fs-01.iss.local",
+	); err == nil {
+		t.Fatal("validateSourceTransportIdentity(missing client auth) error = nil")
 	}
 }
 
@@ -272,4 +288,41 @@ func newRSAKey(t *testing.T) *rsa.PrivateKey {
 		t.Fatalf("rsa.GenerateKey() error = %v", err)
 	}
 	return key
+}
+func TestCloseTransportOnContextDoneUnblocksNetworkIO(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	client, server := net.Pipe()
+	defer server.Close()
+
+	closeConnection := closeTransportOnContextDone(
+		ctx,
+		client,
+	)
+	defer closeConnection()
+
+	readDone := make(chan error, 1)
+
+	go func() {
+		var buffer [1]byte
+
+		_, err := client.Read(buffer[:])
+		readDone <- err
+	}()
+
+	cancel()
+
+	select {
+	case err := <-readDone:
+		if err == nil {
+			t.Fatal(
+				"blocked transport read returned nil after context cancellation",
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"context cancellation did not close blocked sender transport",
+		)
+	}
 }
