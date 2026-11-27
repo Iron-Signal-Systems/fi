@@ -431,14 +431,16 @@ func TestRecoverGenerationStartupExistingReceiptRejectsAlteredCustody(t *testing
  if _, err := RecoverGenerationStartup(config,
   fixture.config.Custody.Receive.CurrentTime); err != nil { t.Fatal(err) }
 
- // Preserve the same file name, mode and size; change an interior byte.
- // A receipt fast path must still fail closed on exact FIGT hash mismatch.
+ // Preserve the same file name, mode and size; alter the final byte of
+ // the FIGT payload, not its signed metadata. This exercises the existing
+ // receipt's exact-transfer SHA-256 check rather than the earlier RSA-PSS
+ // signed-metadata verification. Both paths must fail closed.
  if err := os.Chmod(custody.CustodyPath, 0600); err != nil { t.Fatal(err) }
  file, err := os.OpenFile(custody.CustodyPath, os.O_RDWR, 0)
  if err != nil { t.Fatal(err) }
  info, err := file.Stat()
  if err != nil { _ = file.Close(); t.Fatal(err) }
- offset := info.Size()/2
+ offset := info.Size()-1
  buf := []byte{0}
  if _, err := file.ReadAt(buf, offset); err != nil {
   _ = file.Close(); t.Fatal(err)
