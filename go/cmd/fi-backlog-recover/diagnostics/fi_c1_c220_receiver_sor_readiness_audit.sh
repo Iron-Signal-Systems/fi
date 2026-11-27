@@ -48,10 +48,12 @@ done
 echo '===== RECEIVER VERIFIED BATCH CACHE SOURCE ====='
 if [ -d "$source" ]&&[ ! -L "$source" ];then
  stat -f 'HOST_RECEIVER_CACHE=%N owner=%Su group=%Sg mode=%Sp' "$source"
+ echo "HOST_RECEIVER_CACHE_NUMERIC_GID=$(stat -f '%g' "$source")"
+ echo "FI_SOR_ALLOWED_NUMERIC_GROUPS=$(jexec fi-sor id -G fi-sor)"
  echo 'HOST_RECEIVER_CACHE_BYTES:'
  du -sh "$source" 2>/dev/null||:
  echo 'HOST_RECEIVER_COMPLETED_RECEIPTS:'
- find "$source" -maxdepth 1 -type d -name 'receipt-*'|wc -l
+ find "$source" -type d -name 'receipt-*' -prune|wc -l
 else
  echo "BLOCKER: RECEIVER_CACHE_NOT_STAGED=$source"
 fi
