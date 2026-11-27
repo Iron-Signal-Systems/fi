@@ -11,6 +11,7 @@ These scripts are current C220-specific operational or read-only verification he
 | `fi_c1_c220_telemetry_storage_audit.sh` | Telemetry spool / mounts audit |
 | `fi_c1_c220_receiver_sor_readiness_audit.sh` | Receiver → SoR read-only readiness audit |
 | `fi_c1_c220_receiver_live_runtime_audit.sh` | Receiver runtime inventory audit |
+| `verify_c220_live_sources.sh` | FreeBSD-only rebuild and SHA-256 comparison of the three recorded C220 binary candidates; requires exact source revisions and Go 1.27.4; **no passing execution transcript has been accepted in this repo** |
 
 The `operational_install` helper defaults to the original C220 working-clone path for compatibility. To use a different working clone, set `FI_C220_REPO=/absolute/path` explicitly. **Never run any live deployment mode based only on these docs**; the installed versions/hashes and non-secret service configuration must be checked first.
 
