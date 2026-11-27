@@ -63,6 +63,35 @@ if [ "$mode" = --audit ];then
  echo "FI TELEMETRY PEER AUDIT COMPLETE read_only=true"
  exit 0
 fi
+# The real PostgreSQL socket is restricted to fi-ingest-socket. Both
+# dedicated telemetry users must join that socket-only access group
+# without widening the socket/directory mode or PostgreSQL SQL grants.
+socket_dir=/var/db/fi/sor/run
+socket=$socket_dir/.s.PGSQL.5432
+socket_group=fi-ingest-socket
+group_record=$(jexec fi-sor pw groupshow -n "$socket_group" 2>/dev/null) ||
+ stop 'expected fi-sor PostgreSQL socket group not present'
+group_gid=$(printf '%s\n' "$group_record" | cut -d: -f3)
+case "$group_gid" in ''|*[!0-9]*) stop 'invalid PostgreSQL socket group GID';; esac
+dir_gid=$(jexec fi-sor stat -f '%g' "$socket_dir") ||
+ stop 'cannot stat PostgreSQL socket directory'
+socket_gid=$(jexec fi-sor stat -f '%g' "$socket") ||
+ stop 'cannot stat PostgreSQL socket'
+[ "$dir_gid" = "$group_gid" ] && [ "$socket_gid" = "$group_gid" ] ||
+ stop 'unexpected PostgreSQL socket/directory ownership: inspect before granting access'
+echo "===== GRANT FI-SOR TELEMETRY ACCOUNTS SOCKET GROUP ACCESS ====="
+for account in fi-telemetry-monitor fi-telemetry-recorder;do
+ if ! jexec fi-sor id -nG "$account" | tr ' ' '\n' |
+      grep -Fx "$socket_group" >/dev/null;then
+  jexec fi-sor pw groupmod -n "$socket_group" -m "$account" ||
+   stop "cannot add $account to PostgreSQL socket group"
+ fi
+ jexec -U "$account" fi-sor id -nG | tr ' ' '\n' |
+    grep -Fx "$socket_group" >/dev/null ||
+    stop "new fi-sor process for $account lacks socket-group access"
+ jexec -U "$account" fi-sor test -x "$socket_dir" ||
+    stop "$account cannot traverse PostgreSQL socket directory"
+done
 if grep -F 'fi-telemetry-monitor' "$file" >/dev/null ||
    grep -F 'fi-telemetry-recorder' "$file" >/dev/null;then
  stop 'existing telemetry HBA entries present but peer failed; inspect manually'
