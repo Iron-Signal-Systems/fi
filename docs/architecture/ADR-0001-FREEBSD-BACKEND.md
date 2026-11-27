@@ -357,7 +357,7 @@ Before this ADR is marked `Accepted`, FI should prove or explicitly commit to:
 
 ## Decision record
 
-Until this ADR becomes `Accepted`, existing Linux Gate 3 implementation remains
+At the time of this 2026-09-25 proposal, until the ADR became `Accepted`, the existing Linux Gate 3 implementation remained
 the only completed backend runtime acceptance record.
 
 Adopting this ADR changes the target integrated deployment architecture; it does
