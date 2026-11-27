@@ -10,9 +10,9 @@ product installation and lifecycle**. FI's development backend already runs on
 FreeBSD 15.1 at C220 with `fi-receiver` and `fi-sor` service jails, PostgreSQL 18,
 and independent C1 verifier B. That is an implemented development architecture,
 **not** an accepted repeatable customer installation. See
-[the actual C220 architecture](../../../../docs/architecture/FI-C220-CURRENT-BACKEND.md),
-[current deployment source](../../../../tools/deployment/freebsd/README.md), and
-the [historical FreeBSD ADR](../../../../docs/architecture/ADR-0001-FREEBSD-BACKEND.md).
+[the actual C220 architecture](../../../docs/architecture/FI-C220-CURRENT-BACKEND.md),
+[current deployment source](../../../tools/deployment/freebsd/README.md), and
+the [historical FreeBSD ADR](../../../docs/architecture/ADR-0001-FREEBSD-BACKEND.md).
 
 The September 2026 accepted Linux Phase 3 service remains an engineering-history
 record only and is not the live C220 target. C1 is an internal mechanism for
