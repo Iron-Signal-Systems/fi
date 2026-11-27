@@ -73,3 +73,33 @@ func TestC1NativeBChildRefusesUninvitedExecution(t *testing.T){
         t.Fatal("native B child accepted ordinary executable invocation")
     }
 }
+
+// Direct canonical B must never fall back to the serial full-custody
+// re-verification path or a clone. Receiver authentication is a mandatory
+// input precondition for the tested commit-ready group scheduler.
+func TestC1RealBExpectedCommitReadyProofBindsFullReceiptAndGroups(t *testing.T){
+    p:=c1NativeBTestPlan()
+    p.Start.StartBatchIndex=0
+    p.Start.ExpectedRecords=3
+    p.Descriptors[0].EndBatch=0
+    p.Descriptors[1].StartBatch=0
+    p.Descriptors[1].EndBatch=2
+    p.Descriptors[1].EndRecord=3
+    p.Descriptors[1].DataBytes=120
+    p.SQLSchema="fi"
+    before,err:=c1NativeBExpectedCommitReadyGroupProof(p)
+    if err!=nil{t.Fatal(err)}
+    if !canonicalDigest(before){t.Fatal("missing final commit-ready proof")}
+    p.Batches[1].Manifest.DataSHA256=strings.Repeat("a",64)
+    after,err:=c1NativeBExpectedCommitReadyGroupProof(p)
+    if err!=nil{t.Fatal(err)}
+    if before==after{t.Fatal("changed signed batch digest did not invalidate B group proof")}
+}
+func TestC1RealBRequiresReceiverCacheInsteadOfArchiveReplay(t *testing.T){
+    p:=c1NativeBTestPlan()
+    p.SQLSchema="fi"
+    if err:=c1NativeBVerifyReceiverCommitReadyGroups(context.Background(),p,
+        c1NativeBCustodyConfig{},func(int,bool)error{return nil});err==nil{
+        t.Fatal("missing authenticated receiver cache allowed in canonical B")
+    }
+}

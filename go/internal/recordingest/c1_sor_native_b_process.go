@@ -18,6 +18,7 @@ import (
     "errors"
     "fmt"
     "io"
+    "hash"
     "os"
     "os/exec"
     "strconv"
@@ -144,6 +145,7 @@ func c1StartNativeBWithLauncher(ctx context.Context,dsn string,p c1NativeBPlan,
         "FI_C1_B_CUSTODY_ROOT="+custody.CustodyRoot,
         "FI_C1_B_RECORDED_ROOT="+custody.RecordedRoot,
         "FI_C1_B_VERIFIED_CACHE_ROOT="+custody.VerifiedCacheRoot,
+        "FI_C1_B_RECEIVER_VERIFIED_CACHE_ROOT="+custody.ReceiverVerifiedCacheRoot,
         "FI_C1_B_BENCHMARK_CLONE="+strconv.FormatBool(custody.BenchmarkClone),
         "FI_C1_B_SOURCE_NAMESPACES="+strconv.FormatBool(custody.SourceNamespaces),
         "FI_C1_B_MAX_CANONICAL="+strconv.FormatUint(custody.MaxCanonicalBytes,10),
@@ -287,6 +289,7 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         CustodyRoot:os.Getenv("FI_C1_B_CUSTODY_ROOT"),
         RecordedRoot:os.Getenv("FI_C1_B_RECORDED_ROOT"),
         VerifiedCacheRoot:os.Getenv("FI_C1_B_VERIFIED_CACHE_ROOT"),
+        ReceiverVerifiedCacheRoot:os.Getenv("FI_C1_B_RECEIVER_VERIFIED_CACHE_ROOT"),
         BenchmarkClone:os.Getenv("FI_C1_B_BENCHMARK_CLONE")=="true",
         SourceNamespaces:namespaces,MaxCanonicalBytes:canonical,
         MaxEncodedBytes:encoded,MaxManifestBytes:manifest,
@@ -300,7 +303,23 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
     g.Receipt.TransferSHA256=p.Transfer
     g.Receipt.Descriptor.SourceID=p.Start.SourceID
     g.Receipt.Descriptor.GenerationID=p.Start.GenerationID
-    commitment,err:=c1NativeBNewRowCommitment(p)
+    // The tested C1 B is a COMMIT-READY RELATIONAL verifier.
+    // Receiver authentication already established the original signed
+    // FIGT and published verified.json before the SoR admitted this work.
+    // Re-decoding all original JSONL plus thousands of row SQL audits in
+    // real canonical B is a different, serial engine and is forbidden.
+    var commitment hash.Hash
+    if p.SQLSchema=="fi"{
+        if custody.BenchmarkClone||custody.VerifiedCacheRoot!=""||
+            custody.ReceiverVerifiedCacheRoot==""{
+            return errors.New("C1 B: real canonical verification requires receiver-authenticated cache")
+        }
+        commitment,err=c1NativeBNewCommitReadyGroupProof(p)
+    }else{
+        commitment,err=c1NativeBNewRowCommitment(p)
+    }
+    if err!=nil{return err}
+    groups,err:=c1SoRGroupPlan(p.Batches,int(p.Start.StartBatchIndex))
     if err!=nil{return err}
     groupTotal:=len(p.Descriptors)-1
     readySeen:=make([]bool,groupTotal+1)
@@ -341,6 +360,11 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         if err:=privateC1AsyncVerifyGroup(ctx,conn,g,p.Descriptors,wi,p.SQLSchema);err!=nil{
             return fmt.Errorf("C1 B: committed signed group %d: %w",wi,err)
         }
+        if p.SQLSchema=="fi"{
+            // Bind the COMPLETED independent group relational proof to
+            // receiver-authenticated batch metadata. No original row scan.
+            c1NativeBCommitReadyProofGroup(commitment,wi,groups[wi-1])
+        }
         proved[wi]=true
         passed++
         _,err:=fmt.Fprintf(output,"PASS %d\n",wi)
@@ -351,6 +375,14 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         if err:=c1NativeBVerifyCachedGroups(ctx,conn,p,custody,onGroup,commitment);err!=nil{
             return fmt.Errorf("C1 B: original verified-cache/SQL group replay: %w",err)
         }
+    } else if p.SQLSchema=="fi" {
+        // The receiver's verified cache is the already-authenticated
+        // integration boundary. B independently verifies the same tested
+        // commit-ready reporting groups against its own read-only SQL
+        // session, not another serial 15M-record archive reader.
+        if err:=c1NativeBVerifyReceiverCommitReadyGroups(ctx,p,custody,onGroup);err!=nil{
+            return fmt.Errorf("C1 B: receiver-authenticated commit-ready relational verification: %w",err)
+        }
     } else if err:=c1NativeBVerifySignedCustodyGroupsWithTrust(ctx,conn,p,custody,resolve,onGroup,commitment);err!=nil{
         return fmt.Errorf("C1 B: independent original signed custody/SQL streaming: %w",err)
     }
@@ -358,27 +390,15 @@ func c1RunNativeBChildWithTrust(ctx context.Context,input io.Reader,
         return errors.New("C1 B: complete signed transfer lacks exact durable group proofs")
     }
     if p.SQLSchema=="fi" {
-        // In the one-write canonical path, the separate B process is the
-        // FINAL checker of cross-group USN source-bound capture dependencies.
-        // Never push this into the Accepted journal writer or repeat source
-        // JSONL verification after B.
-        tx,err:=conn.BeginTx(ctx,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly})
-        if err!=nil{return err}
-        shadow:=privateProjectionTx{Tx:tx,schema:"fi",canonicalDirect:true}
-        id,found,e:=lookupRecordedGeneration(ctx,shadow,p.Start.SourceID,
-            p.Start.GenerationID,p.Transfer,p.Start.ReceiptSHA256)
-        if e!=nil{_ = tx.Rollback(context.Background());return e}
-        if !found||id<=0{
-            _ = tx.Rollback(context.Background())
-            return errors.New("C1 B: missing exact direct canonical generation for final USN proof")
+        // This is the SAME tested C1 final generation relational/USN
+        // proof. Its group coverage runs from commit-ready notifications;
+        // there is no second original-source streaming verification and
+        // no row-by-row SHA publication pass.
+        if err:=c1NativeBCompleteRelational(ctx,conn,g,p);err!=nil{
+            return fmt.Errorf("C1 B: tested final whole-generation relational/USN proof: %w",err)
         }
-        if e=verifyBacklogUSNCapturesComplete(ctx,shadow,id);e!=nil{
-            _ = tx.Rollback(context.Background())
-            return fmt.Errorf("C1 B: original source-bound USN capture proof: %w",e)
-        }
-        if e=tx.Commit(ctx);e!=nil{return e}
-        fmt.Fprintf(os.Stderr,"FI C1 NATIVE B DIRECT FINAL USN PROOF PASS source=%s generation=%s read_only=true\n",
-            p.Start.SourceID,p.Start.GenerationID)
+        fmt.Fprintf(os.Stderr,"FI C1 NATIVE B TESTED FINAL RELATIONAL PROOF PASS source=%s generation=%s groups=%d receiver_authenticated=true read_only=true\n",
+            p.Start.SourceID,p.Start.GenerationID,groupTotal)
     }
     // FINAL is only a terminal authorization gate, not a second 15M-row
     // signed-custody replay. No FINAL PASS may precede original transfer

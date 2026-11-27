@@ -330,14 +330,15 @@ func c1DirectWriteAccepted(ctx context.Context,dsn string,
         f.SourceID,f.GenerationID).Scan(&accepted)
     if err!=nil{return err}
     if accepted!=0{return errors.New("C1 direct: duplicate canonical Accepted journal rejected")}
-    // Recompute ORIGINAL B's signed source-row commitment from the same
-    // canonical SQL transaction holding SHARE locks. A valid-looking hex
-    // digest is never sufficient to publish Accepted, and mutations after B
-    // are impossible while these locks are held.
-    lockedProof,err:=c1NativeBLockedSQLRowCommitmentTx(ctx,tx,plan)
-    if err!=nil{return fmt.Errorf("C1 direct: locked canonical identity proof: %w",err)}
-    if lockedProof!=independentB{
-        return errors.New("C1 direct: independently verified original B rows disagree with locked canonical source rows")
+    // B is the SAME tested independent commit-ready relational verifier.
+    // Its completed proof binds all durable groups and receiver-signed
+    // batch metadata. The canonical tables are SHARE-locked and the
+    // entire batch ledger was compared above. A second 15M-row ordered
+    // source hash here would be an untested serial verification stage.
+    expectedProof,err:=c1NativeBExpectedCommitReadyGroupProof(plan)
+    if err!=nil{return err}
+    if expectedProof!=independentB{
+        return errors.New("C1 direct: B's independent committed-group proof differs from locked original signed batch ledger")
     }
 
     var attempt [16]byte

@@ -196,3 +196,49 @@ func c1NativeBVerifyCachedGroups(ctx context.Context,conn *pgx.Conn,
         len(groups),len(g.Batches),g.Receipt.RecordCount)
     return nil
 }
+
+    
+// In the production two-jail architecture, the receiver has ALREADY
+// authenticated original signed FIGT and durably published its cache.
+// Verifier B must remain the TESTED C1 asynchronous group SQL verifier:
+// receipt-bound metadata intake, then one read-only relational proof per
+// durable group notification. It must NOT reopen 65GiB of original FIGT,
+// parse all 15M records, or run 2,048-row SQL audit transactions.
+func c1NativeBVerifyReceiverCommitReadyGroups(ctx context.Context,
+    p c1NativeBPlan,cfg c1NativeBCustodyConfig,
+    onGroup func(int,bool)error)error{
+    if ctx==nil||onGroup==nil||p.SQLSchema!="fi"||
+        cfg.BenchmarkClone||cfg.VerifiedCacheRoot!=""||
+        cfg.ReceiverVerifiedCacheRoot==""{
+        return errors.New("C1 B: receiver-authenticated live commit-ready group verification required")
+    }
+    if err:=c1ValidateNativeBPlan(p);err!=nil{return err}
+    g,err:=c1SoRVerifiedCacheGeneration(ctx,p.Start.SourceID,p.Start.GenerationID,cfg)
+    if err!=nil{return fmt.Errorf("C1 B: original receiver signed cache/receipt: %w",err)}
+    if g.ReceiptSHA256!=p.Start.ReceiptSHA256||
+        g.Receipt.TransferSHA256!=p.Transfer||
+        len(g.Batches)!=len(p.Batches)||
+        int64(g.Receipt.RecordCount)!=p.Start.ExpectedRecords{
+        return errors.New("C1 B: receiver authenticated receipt disagrees with canonical source plan")
+    }
+    for i,b:=range g.Batches{
+        signed:=p.Batches[i]
+        if b.BatchID!=signed.BatchID||
+            b.ManifestSHA256!=signed.ManifestSHA256||
+            b.Manifest.DataSHA256!=signed.Manifest.DataSHA256||
+            b.Manifest.RecordCount!=signed.Manifest.RecordCount||
+            b.Manifest.DataBytes!=signed.Manifest.DataBytes{
+            return fmt.Errorf("C1 B: receiver authenticated batch %d differs from canonical SQL ledger",i)
+        }
+    }
+    groups,err:=c1SoRGroupPlan(p.Batches,int(p.Start.StartBatchIndex))
+    if err!=nil{return err}
+    for i:=range groups{
+        if err:=ctx.Err();err!=nil{return err}
+        // B never controls P5, P6 or SQL. Original C1 commit-ready
+        // notifications and per-group SQL coverage gate each PASS.
+        if err:=onGroup(i+1,false);err!=nil{return err}
+        if err:=onGroup(i+1,true);err!=nil{return err}
+    }
+    return nil
+}

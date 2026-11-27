@@ -142,3 +142,52 @@ func c1NativeBLockedSQLRowCommitmentQuery(ctx context.Context,conn c1NativeBRowQ
     }
     return hex.EncodeToString(h.Sum(nil)),nil
 }
+
+// The real two-jail C1 must preserve the tested B contract: the receiver
+// authenticates signed source custody, and an independent B checks each
+// durable SQL commit-ready GROUP and the final relational/USN coverage.
+// This domain-separated commitment binds B's completed group proofs to the
+// immutable receiver receipt and the exact canonical batch identities.
+// It never iterates over 15M original records or executes per-chunk SQL.
+const c1NativeBCommitReadyProofVersion = "FI-C1-RECEIVER-VERIFIED-GROUP-RELATIONAL-V1"
+
+func c1NativeBNewCommitReadyGroupProof(p c1NativeBPlan)(hash.Hash,error){
+    if err:=c1ValidateNativeBPlan(p);err!=nil{return nil,err}
+    if p.SQLSchema!="fi"||p.Start.StartBatchIndex!=0{
+        return nil,errors.New("C1 B: original full canonical group proof required")
+    }
+    h:=sha256.New()
+    c1NativeBCommitString(h,c1NativeBCommitReadyProofVersion)
+    c1NativeBCommitString(h,p.Start.SourceID)
+    c1NativeBCommitString(h,p.Start.GenerationID)
+    c1NativeBCommitString(h,p.Start.ReceiptSHA256)
+    c1NativeBCommitString(h,p.Transfer)
+    c1NativeBCommitInt64(h,p.Start.ExpectedRecords)
+    c1NativeBCommitInt64(h,int64(len(p.Batches)))
+    for i,b:=range p.Batches{
+        c1NativeBCommitInt64(h,p.SQLIDs[i])
+        c1NativeBCommitString(h,b.BatchID)
+        c1NativeBCommitInt64(h,int64(b.Manifest.RecordCount))
+        c1NativeBCommitInt64(h,b.Manifest.DataBytes)
+        c1NativeBCommitString(h,b.ManifestSHA256)
+        c1NativeBCommitString(h,b.Manifest.DataSHA256)
+    }
+    return h,nil
+}
+func c1NativeBCommitReadyProofGroup(h hash.Hash,wi int,g c1SoRGroup){
+    c1NativeBCommitInt64(h,int64(wi))
+    c1NativeBCommitInt64(h,int64(g.firstBatch))
+    c1NativeBCommitInt64(h,int64(g.endBatch))
+    c1NativeBCommitInt64(h,g.count)
+    c1NativeBCommitInt64(h,g.bytes)
+}
+func c1NativeBExpectedCommitReadyGroupProof(p c1NativeBPlan)(string,error){
+    h,err:=c1NativeBNewCommitReadyGroupProof(p)
+    if err!=nil{return "",err}
+    groups,err:=c1SoRGroupPlan(p.Batches,int(p.Start.StartBatchIndex))
+    if err!=nil{return "",err}
+    for i,g:=range groups{
+        c1NativeBCommitReadyProofGroup(h,i+1,g)
+    }
+    return hex.EncodeToString(h.Sum(nil)),nil
+}
