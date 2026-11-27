@@ -18,6 +18,7 @@ import (
     "path/filepath"
     "testing"
 
+    "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
 
@@ -93,6 +94,28 @@ func TestC1SoRBenchmarkVerifiedCacheMatchesSignedReceiver(t *testing.T){
     if err!=nil||live.ReceiptSHA256!=g.ReceiptSHA256||
         live.Receipt.RecordCount!=g.Receipt.RecordCount{
         t.Fatalf("live receiver cache source does not match original signed receipt: %v",err)
+    }
+    // This is the actual DIRECT-CANONICAL metadata bootstrap, not just a
+    // benchmark cache read. It must not reopen/reinflate original FIGT.
+    start:=c1handoff.Frame{
+        Kind:c1handoff.Start,Sequence:1,SourceID:source,
+        GenerationID:signed.GenerationID,ReceiptSHA256:authenticated.ReceiptSHA256,
+        BatchIDs:[]string{g.Batches[0].BatchID},
+        ExpectedRecords:int64(authenticated.Receipt.RecordCount),
+    }
+    direct,err:=c1DirectCanonicalReceiverPlan(context.Background(),start,cfg)
+    if err!=nil||len(direct.Batches)!=1||
+        direct.ReceiptSHA256!=authenticated.ReceiptSHA256{
+        t.Fatalf("real canonical ledger did not accept receiver-verified signed source: %v",err)
+    }
+    corrupted:=start
+    corrupted.BatchIDs=[]string{"wrong-receiver-cache-batch"}
+    if _,err=c1DirectCanonicalReceiverPlan(context.Background(),corrupted,cfg);err==nil{
+        t.Fatal("real canonical ledger accepted foreign batch metadata")
+    }
+    if _,err=c1DirectCanonicalReceiverPlan(context.Background(),start,
+        c1NativeBCustodyConfig{VerifiedCacheRoot:cacheRoot,BenchmarkClone:true});err==nil{
+        t.Fatal("real canonical ledger accepted isolated benchmark cache")
     }
     cfg.ReceiverVerifiedCacheRoot=""
     cfg.VerifiedCacheRoot=cacheRoot
