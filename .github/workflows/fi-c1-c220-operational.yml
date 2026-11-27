@@ -7,6 +7,7 @@ on:
       - 'tools/deployment/freebsd/runtime.d/fi-c1-sor-live*'
       - 'tools/deployment/freebsd/runtime.d/fi-telemetry-*'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_telemetry*'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_operational_install.sh'
       - '.github/workflows/fi-c1-c220-operational.yml'
   workflow_dispatch:
 permissions:
@@ -48,7 +49,10 @@ jobs:
             tools/deployment/freebsd/runtime.d/fi-c1-sor-live-run.sh \
             tools/deployment/freebsd/runtime.d/fi-c1-sor-live.rc.d \
             tools/deployment/freebsd/runtime.d/fi-telemetry-sample.rc.d \
-            tools/deployment/freebsd/runtime.d/fi-telemetry-upload.rc.d
+            tools/deployment/freebsd/runtime.d/fi-telemetry-upload.rc.d \
+            go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_telemetry_peer_auth.sh \
+            go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_telemetry_acceptance.sh \
+            go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_operational_install.sh
           do
             sh -n "$script"
           done
