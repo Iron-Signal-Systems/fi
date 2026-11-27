@@ -20,7 +20,6 @@ import (
     "fmt"
     "strings"
 
-    "github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
     "github.com/jackc/pgx/v5"
 )
 
@@ -55,7 +54,7 @@ func c1MigrationWithoutTransactionEnvelope(source string)(string,error){
 // index with ordinary DROP INDEX: CONCURRENTLY is forbidden inside our
 // ONE metadata transaction, and no C1 SQL workers have yet started.
 func C1PrivateSchemaPlan()([]C1PrivateSchemaStatement,error){
-    originals,err:=backendinstall.C1CanonicalSchemaMigrations()
+    originals,err:=c1CanonicalSchemaMigrations()
     if err!=nil{return nil,err}
     plan:=make([]C1PrivateSchemaStatement,0,len(originals)+1)
     for _,src:=range originals{
