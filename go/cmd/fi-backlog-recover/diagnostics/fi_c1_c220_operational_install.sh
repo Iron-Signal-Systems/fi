@@ -290,9 +290,16 @@ fi
 # by fi-sor without exposing any PostgreSQL credentials to other accounts.
 # Validate BOTH sourced files and all metadata before making any change.
 ensure_c1_runtime_config_access(){
-  echo "===== C1 FI-SOR CONFIGURATION ACCESS ====="
-  fi_sor_gid=$(jexec fi-sor id -g fi-sor) ||
-    fail "fi-sor account/group identity unavailable"
+  echo "===== DEDICATED C1 RUNTIME CONFIGURATION GROUP ====="
+  # fi-sor primary group 4100 is also granted to telemetry monitor.
+  # Do NOT grant that shared group access to privileged C1 DSNs.
+  c1_group=fi-c1-config
+  c1_gid=46010
+  [ "$(jexec fi-sor id -u fi-sor)" = 4100 ] &&
+  [ "$(jexec fi-sor id -u fi-telemetry-monitor)" = 46002 ] ||
+    fail 'C1 or telemetry monitor runtime identity changed'
+
+  # Preflight both files BEFORE changing users/groups or metadata.
   for file in /etc/rc.conf.d/fi_c1_sor /etc/rc.conf.d/fi_c1_sor_live;do
     jexec fi-sor test -f "$file" &&
     ! jexec fi-sor test -L "$file" ||
@@ -300,25 +307,53 @@ ensure_c1_runtime_config_access(){
     state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file") ||
       fail "cannot stat C1 runtime configuration: $file"
     case "$state" in
-      "0:0:600"|"0:0:640"|"0:0:644"|"0:${fi_sor_gid}:600"|"0:${fi_sor_gid}:640"|"0:${fi_sor_gid}:644") ;;
+      "0:0:600"|"0:0:640"|"0:0:644"|
+      "0:4100:600"|"0:4100:640"|"0:4100:644"|
+      "0:${c1_gid}:600"|"0:${c1_gid}:640"|"0:${c1_gid}:644") ;;
       *) fail "unexpected C1 config metadata: $file ($state)" ;;
     esac
   done
+
+  if ! jexec fi-sor pw groupshow -n "$c1_group" >/dev/null 2>&1;then
+    ! jexec fi-sor pw groupshow -g "$c1_gid" >/dev/null 2>&1 ||
+      fail "C1 runtime GID $c1_gid already allocated"
+    # FreeBSD pw(8): -M on groupadd sets exact initial members.
+    jexec fi-sor pw groupadd -n "$c1_group" -g "$c1_gid" -M fi-sor ||
+      fail 'could not create private C1 configuration group'
+  fi
+  membership=$(jexec fi-sor pw groupshow -n "$c1_group" |
+    awk -F: '{print $3 ":" $4}')
+  [ "$membership" = "$c1_gid:fi-sor" ] ||
+    fail "C1 runtime group must contain only fi-sor (observed: $membership)"
+  jexec fi-sor awk -F: -v gid="$c1_gid" '
+    $4==gid && $1!="fi-sor" {bad=1}
+    END {exit bad}' /etc/passwd ||
+    fail 'another account uses C1 runtime GID as primary group'
+  jexec -U fi-sor fi-sor id -G | tr ' ' '\n' |
+    grep -Fx "$c1_gid" >/dev/null ||
+    fail 'fi-sor process cannot acquire private C1 group'
+  if jexec -U fi-telemetry-monitor fi-sor id -G | tr ' ' '\n' |
+    grep -Fx "$c1_gid" >/dev/null;then
+    fail 'telemetry monitor unexpectedly belongs to private C1 group'
+  fi
+
+  echo '===== ENSURE ROOT-OWNED C1 CONFIGS ARE PRIVATE GROUP READ ====='
   for file in /etc/rc.conf.d/fi_c1_sor /etc/rc.conf.d/fi_c1_sor_live;do
     state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file")
-    if [ "$state" != "0:${fi_sor_gid}:640" ];then
-      jexec fi-sor chgrp "$fi_sor_gid" "$file" &&
+    if [ "$state" != "0:${c1_gid}:640" ];then
+      jexec fi-sor chgrp "$c1_gid" "$file" &&
       jexec fi-sor chmod 0640 "$file" ||
         fail "could not restrict C1 runtime config access: $file"
     fi
-    [ "$(jexec fi-sor stat -f '%u:%g:%Lp' "$file")" = "0:${fi_sor_gid}:640" ] ||
+    [ "$(jexec fi-sor stat -f '%u:%g:%Lp' "$file")" = "0:${c1_gid}:640" ] ||
       fail "C1 runtime config final metadata mismatch: $file"
     jexec -U fi-sor fi-sor test -r "$file" ||
       fail "C1 runtime account cannot read $file"
-    jexec -U fi-telemetry-monitor fi-sor test ! -r "$file" ||
+    if jexec -U fi-telemetry-monitor fi-sor test -r "$file";then
       fail "telemetry monitor can read restricted C1 config: $file"
+    fi
   done
-  echo 'FI C1 RUNTIME CONFIG ACCESS PASS root_owned=true fi_sor_read_only=true'
+  echo 'FI C1 CONFIG ACCESS PASS root_owned=true private_group_only=true telemetry_denied=true'
 }
 if [ "$mode" = --start-ingest ];then
   [ "$(sql "SELECT count(*) FROM fi.recorded_generation g
