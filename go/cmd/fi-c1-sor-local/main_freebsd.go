@@ -99,8 +99,8 @@ func main() {
     if *receiverCache!="" && (*cloneRoot!=""||*cacheRoot!=""){
         fatal(errors.New("FI C1 local: live receiver cache and clone benchmark modes are mutually exclusive"))
     }
-    if *ready!="" && *receiverCache==""{
-        fatal(errors.New("FI C1 local: routine READY requires receiver-published verified batches; refuse full FIGT expansion before SQL"))
+    if *cloneRoot=="" && *receiverCache==""{
+        fatal(errors.New("FI C1 local: all real SoR ingestion requires receiver-published verified batches; refuse full FIGT extraction"))
     }
     if *cloneRoot=="" && *cloneSystemID!=""{
         fatal(errors.New("FI C1 benchmark: PostgreSQL system identifier without physical clone path"))
@@ -186,7 +186,7 @@ func main() {
     }else if *receiverCache!=""{
         signed,e=recordingest.LoadC1SoRReceiverVerifiedCache(ctx,config,*gen)
     }else{
-        signed,e=recordingest.LoadRecordedGeneration(recordingest.C1SoRLocalGenerationLoad(config),*gen)
+        fatal(errors.New("FI C1 local: no authenticated receiver cache source selected"))
     }
     if e!=nil{fatal(e)}
     extractionElapsed:=time.Since(totalStarted)
