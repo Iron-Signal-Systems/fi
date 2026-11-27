@@ -4,7 +4,7 @@
 > pending.** The Published FI Projection, query/API, and protected customer UX
 > below describe the intended product, not a currently accepted customer-facing
 > capability. Current SoR data acceptance does not certify projections or query
-> freshness. See [projection contract](../../../../docs/PUBLISHED-FI-PROJECTION-CONTRACT.md).
+> freshness. See [projection contract](../../../docs/PUBLISHED-FI-PROJECTION-CONTRACT.md).
 
 ## Purpose
 
