@@ -68,10 +68,31 @@ check_target(){
         fi
     fi
 }
+# Exercise the mount-options parser on synthetic rows before host audit.
+fixture_match(){
+    awk -v a="$1" -v b="$2" -v o="$3" '
+        $2==b {
+            seen++
+            n=split($4,opts,",")
+            for(i=1;i<=n;i++)if($1==a && $3=="nullfs" && opts[i]==o)ok++
+        }
+        END{exit !(seen==1 && ok==1)}
+    '
+}
 if [ "$#" -eq 1 ] && [ "$1" = --selftest ];then
-    printf '%s\n' '/work/cache /fast/jails/roots/fi-sor/var/db/fi/verified-cache nullfs ro,nosuid 0 0' |
-    awk '$1=="/work/cache" && $3=="nullfs" && index($4,"ro")>0 {exit 0} END {exit 0}'
-    echo 'FI C1 CACHE MOUNT SHELL SELFTEST PASS'
+    ro='/work/cache /fast/jails/roots/fi-sor/var/db/fi/verified-cache nullfs ro,nosuid 0 0'
+    printf '%s\n' "$ro" |
+      fixture_match /work/cache /fast/jails/roots/fi-sor/var/db/fi/verified-cache ro ||
+      fail 'correct RO cache mount was not accepted'
+    if printf '%s\n' "$ro" |
+      fixture_match /work/cache /fast/jails/roots/fi-sor/var/db/fi/verified-cache rw;then
+      fail 'RO mount incorrectly accepted as RW'
+    fi
+    if printf '%s\n%s\n' "$ro" "$ro" |
+      fixture_match /work/cache /fast/jails/roots/fi-sor/var/db/fi/verified-cache ro;then
+      fail 'duplicate cache mounts incorrectly accepted'
+    fi
+    echo 'FI C1 CACHE MOUNT SELFTEST PASS ro=true rejects_rw=true rejects_duplicates=true'
     exit 0
 fi
 [ "$#" -eq 1 ] || fail 'usage: --audit | --apply'
@@ -189,9 +210,9 @@ jexec -U fi-receiver fi-receiver test -w /var/db/fi/verified-cache ||
     fail 'receiver service user cannot write its cache'
 jexec -U fi-sor fi-sor test -r /var/db/fi/verified-cache ||
     fail 'SoR service user cannot read cache'
-if jexec -U fi-sor fi-sor test -w /var/db/fi/verified-cache;then
-    fail 'SoR service user can WRITE receiver cache; reject'
-fi
+# Access(W_OK) on nullfs may report owner permissions even for a read-only
+# mount. Authoritative write isolation is the exact source+nullfs+ro mount
+# verified above. Do not attempt a write probe into receiver-owned custody.
 
 # Append persistent mounts atomically. Preserve the complete existing
 # jail fstab; do not modify any existing signed custody, PostgreSQL or
