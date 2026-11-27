@@ -5,12 +5,12 @@
 **Snapshot:** 2026-09-25\
 **Authoritative implementation reviewed:** `main` @ `618cc5186db4410fd43e7d4783bd95b04165aeb8`\
 **Phase status:** Phase 3 / Gate 3 complete\
-**Coverage:** **49 / 49 tables; 494 / 494 effective PostgreSQL columns classified and mapped**
+**Coverage at 2026-09-25 snapshot:** **49 / 49 tables; 494 / 494 columns classified and mapped**
 
 This document is the engineering traceability companion to `POSTGRESQL-DATA-DICTIONARY.md`.
 It is intentionally organized for troubleshooting. Starting from a suspicious PostgreSQL value, an FI engineer should be able to identify the **exact source JSON fact (when one exists), the Go type/field that receives or derives it, the conversion performed, and the function that persists it**.
 
-The current `main` audit confirmed that the Phase 3 schema, `go/internal/recordingest` projector/writer implementation, and `go/cmd/fi-ingest-worker` relational behavior used by these mappings have not changed since the mapping extraction. Dependency/CI remediation after Gate 3 did not alter the DB↔JSON↔Go paths.
+> **Historical mapping, not an exhaustive current-main traceability certification.** The 49-table/494-column mapping below was reviewed against revision `618cc5186db4410fd43e7d4783bd95b04165aeb8` in September 2026. By 2026-11-27, `main` includes schema migrations 0004 and 0005, additional USN capture-binding fields, and the current FreeBSD C220 C1/SoR writer; the historical `go/cmd/fi-ingest-worker` is no longer the active backend. The mapping remains valuable source lineage evidence for the dated baseline, but its coverage totals and writer paths **must be revalidated** against all migrations and the current writer before being presented as complete. See [current C220 architecture](../architecture/FI-C220-CURRENT-BACKEND.md) and [dated schema dictionary](POSTGRESQL-DATA-DICTIONARY.md).
 
 ## 1. Traceability contract
 

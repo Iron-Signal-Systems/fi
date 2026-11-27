@@ -1,5 +1,12 @@
 # fi-source — FreeBSD source enrollment (development candidate)
 
+> **Development candidate — unaccepted for the active C220 runtime.**
+> The currently observed backend uses `fi-receiver` and `fi-sor` only. A registry
+> or service-refresh operation in this candidate must not be assumed to match
+> the live two-jail C220 ownership model, or the future integrated FI installer,
+> without a new disposable test and explicit acceptance review. See
+> [current backend architecture](architecture/FI-C220-CURRENT-BACKEND.md).
+
 `fi-source` is a **separate Go command** for adding a previously authorized Windows source to an existing FI FreeBSD receiver/ingest backend. It is **not the backend installer** and does **not alter Windows hosts**.
 
 ## Current prototype commands

@@ -29,6 +29,10 @@ FI's root [README](../README.md) states the product's mission and purpose. Engin
 - [Performance reports](performance/README.md) — historical measurement and acceptance results.
 - [Security reporting](../SECURITY.md), [source license](../LICENSE), and [adopted engineering-standard reference](../ENGINEERING-STANDARD).
 
+## Documentation consistency and evidence
+
+- [November 27, 2026 documentation consistency review](DOCUMENTATION-CONSISTENCY-REVIEW-20261127.md) — repository-wide inventory, cross-document corrections, dated authority matrix, and evidence gaps still requiring engineering acceptance.
+
 ### Reading historical notes
 
 The two dated engineering-note documents preserve technical material moved out of the former long README. They are **snapshots**, not newly accepted implementations. In particular, the current C220 architecture replaces historical Linux ingest, three-jail development, and obsolete backlog worker paths. For actual deployment decisions, use current source, dated acceptance evidence, and current operating contracts.

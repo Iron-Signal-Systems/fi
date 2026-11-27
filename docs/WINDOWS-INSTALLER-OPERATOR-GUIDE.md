@@ -1,4 +1,4 @@
-# FI Windows Native Installer â€” Operator Guide
+# FI Windows Native Installer — Operator Guide
 
 ## Scope
 
@@ -9,6 +9,12 @@ files, DACLs, SACLs, AD identities, or Windows audit policy.
 
 Read the exact actions presented by the signed installer before approving them.
 The documented lab results do not authorize a production deployment.
+
+**Source snapshot (2026-11-27):** The active `main` Go module declares Go
+1.27.4. The October signed installer packages remain date- and build-scoped
+historical acceptance artifacts, not a current signed Go 1.27.4 release. Follow
+[the living installer implementation contract](WINDOWS-INSTALLER.md) and exact
+candidate acceptance records for each deployment.
 
 ## Supported exact builds and acceptance boundaries
 

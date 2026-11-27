@@ -1,6 +1,8 @@
 # FI Agent and Contributor Rules
 
 > **Current deployed backend authority — 2026-11-27:** FI runs on C220 FreeBSD 15.1 with **`fi-receiver` → signed custody / receiver verified cache → `fi-sor` C1 P5/P6 + PostgreSQL**, with verifier B as a child of `fi-c1-sor-live`. There is no active `fi-ingest` application jail. This current as-built overrides any older Linux or three-jail platform statements below that were retained solely as historical Gate 3 documentation. Do not rebuild an old backlog worker, historical clone/bench path, or `fi-sor-db` jail as the current C220 architecture. See [current architecture](docs/architecture/FI-C220-CURRENT-BACKEND.md) and [observed evidence](docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md).
+>
+> **Product scope:** FI remains pre-alpha and targets a controlled August 2028–2029 pilot. It is intended to ship as **one integrated configuration-driven product**, not a customer-assembled set of development jails/services. C1 is an **internal outage/backlog catch-up processing path**, not a selling point. Historical Gate 3 Linux process scheduling below must not be copied into the active C220 design. Exact binary reproducibility and complete fresh-install recovery require their own acceptance evidence.
 
 
 ## Purpose
@@ -535,8 +537,8 @@ is a platform-boundary defect.
 The correct boundary is:
 
 ```text
-Linux backend implementation
-    -> Linux-constrained source files
+Current FreeBSD backend implementation
+    -> FreeBSD-constrained source files
 
 Windows source implementation
     -> Windows-constrained source files
@@ -550,9 +552,10 @@ abstraction merely to make the source tree look portable.
 
 If a component lives on Windows, implement Windows semantics.
 
-If a component lives on Linux, implement Linux semantics.
+If a historical Linux-specific component is maintained, keep its Linux semantics
+explicitly isolated; Linux is not the current FI backend deployment platform.
 
-If a future component is intentionally supported on FreeBSD, implement and test
+Current backend components live on FreeBSD and must implement and test
 FreeBSD semantics rather than assuming Linux behavior is portable.
 
 Shared packages are appropriate only for genuinely shared:
@@ -590,7 +593,15 @@ The previously accepted Linux Gate 3 platform is historical and does not superse
 
 ---
 
-## Phase 3 Backend Authority and Runtime Rules
+## Historical Phase 3 Backend Authority and Runtime Rules
+
+> **Historical Gate 3 runbook boundary:** Worker singleton, polling/repair cadence,
+> service packaging, and retry examples in this section describe the former
+> sequential Linux Phase 3 implementation, not the active FreeBSD C220
+> `fi-c1-sor-live` process. The authority/integrity principles remain review
+> constraints only where they match the current accepted C1/SoR contracts.
+> Always check [current runtime](docs/architecture/FI-C220-CURRENT-BACKEND.md)
+> and current source before changing current deployment behavior.
 
 Phase 3 backend code must preserve the distinction between authoritative state,
 operational notification, repair confidence, and process/runtime state.

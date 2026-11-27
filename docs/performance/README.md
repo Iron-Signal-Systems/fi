@@ -1,5 +1,14 @@
 # Performance Measurement
 
+> **Dated engineering measurements and Gate 1–3 acceptance history.**
+> The Phase 3 Linux ingest worker results below remain historical acceptance
+> evidence, not performance proof for the current two-jail FreeBSD C220
+> `fi-receiver` / `fi-c1-sor-live` backend. C1 is an internal catch-up and
+> backlog processor, not a customer-facing differentiator. The Windows
+> volume-first sender redesign and future integrated FI product still require
+> their own scoped performance and recovery acceptance.
+> See [current C220 architecture](../architecture/FI-C220-CURRENT-BACKEND.md).
+
 FI measures source impact before production thresholds are established.
 
 Performance/resource observations are engineering and operational data. They do

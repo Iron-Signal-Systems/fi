@@ -1,5 +1,16 @@
 # FI USN Architecture Summary
 
+> **Historical Phase 1 / Gate 1 reference (2026-09), not acceptance of the
+> ongoing volume-first Windows sender redesign.** The root-scoped service/checkpoint
+> examples below describe the earlier validated collector path. The intended
+> volume-first design treats a volume as the USN collection authority and governed
+> roots as policy/reporting boundaries; it must be implemented and independently
+> accepted through the new fresh-install contract before this document can be
+> used as evidence of that redesign. See the
+> [Windows collector contract](COLLECTOR-CONTRACT.md),
+> [Phase 1 roadmap](../fi-roadmap/docs/roadmap/phase-01-windows-file-and-identity-intelligence.md),
+> and [current Windows installer](WINDOWS-INSTALLER.md).
+
 FI uses the NTFS USN Journal to discover filesystem changes efficiently and to
 maintain continuity between observations.
 

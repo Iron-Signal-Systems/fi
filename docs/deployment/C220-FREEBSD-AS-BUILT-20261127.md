@@ -40,7 +40,7 @@ Processes in the operator inventory: `fi-receiver`, `fi-c1-sor-live`, PostgreSQL
 
 ## Observed acceptance and limitations
 - Operator had previously verified end-to-end sender ingest into canonical `fi` SoR: **53 accepted generations and 631 committed records** from `iss-fs-22b.iss.local`.
-- Neither the source commit that compiled each installed binary nor byte-for-byte reproducibility was confirmed by this inventory.
+- This original process/mount inventory did not establish source-commit provenance or byte-for-byte build reproducibility. Candidate build revisions and recorded hashes were subsequently preserved in [C220 live source lock](C220-LIVE-RUNTIME-LOCK-20261127.md), with an executable check script; a successful full verifier execution is not part of this as-built evidence.
 - This cleanup deliberately does **not** change C220 files, services, ZFS, signed custody, or PostgreSQL content.
 - Old H16/W512 benchmark runners and retired fi-ingest workers do not belong to the accepted live FreeBSD execution path.
 - Implementing a complete reproducible C220 installer still requires capture and verification of current jail, PF, ZFS and non-secret rc configuration. Never commit private keys, certificates with keys, passwords, or live credentials.

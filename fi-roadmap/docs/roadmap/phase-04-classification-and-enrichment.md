@@ -1,5 +1,11 @@
 # Phase 4 — Classification & Enrichment
 
+> **Status (2026-11-27): planned product phase and architecture contract.**
+> The protected classification stream, integrated classification engine, and
+> Gate 4 acceptance are not established as a released FI capability by this
+> design document. Current receiver/C1/SoR operation does not demonstrate that
+> classification is implemented or accepted.
+
 ## Purpose
 
 Add meaning and deeper interpretation to FI observations that are already present

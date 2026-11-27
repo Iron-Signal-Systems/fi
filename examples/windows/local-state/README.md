@@ -1,5 +1,13 @@
 # FI Local Runtime DACL Provisioning
 
+> **Manual engineering example — not a mandatory post-install procedure.**
+> The current native FI Windows installer is responsible for its approved FI-owned
+> directory permissions and configuration-driven desired-state convergence.
+> These scripts remain for controlled testing and understanding the local ACL
+> boundary; do not use them to bypass or repair a failed installer approval.
+> See the [installer contract](../../../docs/WINDOWS-INSTALLER.md) and
+> [operator guide](../../../docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md).
+
 These scripts provision and verify the NTFS access rules for FI-owned local
 runtime data under `%ProgramData%\FI`.
 

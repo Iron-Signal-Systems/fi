@@ -1,5 +1,14 @@
 # FI Windows Split-Privilege Verification Record
 
+> **Checklist scope (2026-11-27):** The Windows tests and historical Linux
+> Phase 3 / Gate 3 items below are reference verification checklists, **not** a
+> current-release deployment acceptance certificate. The C220 backend now runs
+> FreeBSD `fi-receiver` + `fi-sor`/C1 with original-signed verifier B. Historical
+> Linux `fi-ingest-worker` and `fi-ingest-reconcile` command checks below do not
+> establish C220 acceptance. Follow the
+> [current backend authority](architecture/FI-C220-CURRENT-BACKEND.md) and
+> [live acceptance limitations](../tools/deployment/freebsd/REAL-HOST-ACCEPTANCE.md).
+
 Customer / Organization: _______________________________________________
 
 File server: ___________________________________________________________
@@ -272,9 +281,9 @@ runtime.
 - [ ] Startup recovery preserves or resumes interrupted generation state.
 - [ ] Acknowledged-generation reclamation does not touch active generations.
 
-## Phase 3 / Gate 3 relational ingest verification
+## Historical Phase 3 / Gate 3 relational ingest verification
 
-These checks apply to the Linux receiver/PostgreSQL materialization boundary.
+These checks applied to the former Linux receiver/PostgreSQL materialization boundary.
 They supplement the Windows and Phase 2 transport checks above; they do not
 replace them.
 
