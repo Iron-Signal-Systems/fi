@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Iron-Signal-Systems/fi/go/internal/freebsd/backendinstall"
 )
 
 // C1GovernedPendingStatement describes a transaction-owned migration step.
@@ -79,7 +78,7 @@ GRANT INSERT (source_id, generation_id, receipt_sha256, transfer_sha256,
 // intended for an audited durable lifecycle inside the existing SoR server.
 // Installation, replay, publication and service activation are separate gates.
 func C1GovernedPendingPlan() ([]C1GovernedPendingStatement, error) {
-	originals, err := backendinstall.C1CanonicalSchemaMigrations()
+	originals, err := c1CanonicalSchemaMigrations()
 	if err != nil {
 		return nil, err
 	}

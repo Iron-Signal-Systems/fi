@@ -171,6 +171,7 @@ func newWireTestBatchV2(
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: wireTemplateExtensions(t),
 	}
 	raw, err := x509.CreateCertificate(
 		rand.Reader,

@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
 	"math/big"
@@ -243,6 +244,7 @@ func newWireTestBatch(t testing.TB) (transportpackage.SignedBatch, []byte) {
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: wireTemplateExtensions(t),
 	}
 	raw, err := x509.CreateCertificate(
 		rand.Reader,
@@ -269,4 +271,18 @@ func newWireTestBatch(t testing.TB) (transportpackage.SignedBatch, []byte) {
 	}
 
 	return signedBatch, manifest
+}
+
+
+func wireTemplateExtensions(t testing.TB) []pkix.Extension {
+	t.Helper()
+	value, err := asn1.Marshal(struct {
+		TemplateID asn1.ObjectIdentifier
+		MajorVersion int
+	}{
+		TemplateID: asn1.ObjectIdentifier{1,3,6,1,4,1,311,21,8,100,2},
+		MajorVersion: 1,
+	})
+	if err != nil { t.Fatalf("encode AD CS template OID: %v",err) }
+	return []pkix.Extension{{Id: asn1.ObjectIdentifier{1,3,6,1,4,1,311,21,7}, Value:value}}
 }

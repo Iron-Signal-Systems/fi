@@ -20,6 +20,17 @@ on:
       - 'go/internal/spool/**'
       - 'examples/windows/**'
       - 'examples/gmsa_provisioning/**'
+      - 'go/cmd/fi-install/**'
+      - 'go/cmd/fi-crl-refresh/**'
+      - 'go/cmd/fi-release-lab/**'
+      - 'go/internal/transportcrl/**'
+      - 'go/internal/transportpackage/**'
+      - 'go/internal/transporttrust/**'
+      - 'go/internal/transportwire/**'
+      - 'go/internal/releaselab/**'
+      - 'go/internal/releasecms/**'
+      - 'go/internal/spool/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'go/cmd/fi/**'
@@ -37,6 +48,17 @@ on:
       - 'go/internal/spool/**'
       - 'examples/windows/**'
       - 'examples/gmsa_provisioning/**'
+      - 'go/cmd/fi-install/**'
+      - 'go/cmd/fi-crl-refresh/**'
+      - 'go/cmd/fi-release-lab/**'
+      - 'go/internal/transportcrl/**'
+      - 'go/internal/transportpackage/**'
+      - 'go/internal/transporttrust/**'
+      - 'go/internal/transportwire/**'
+      - 'go/internal/releaselab/**'
+      - 'go/internal/releasecms/**'
+      - 'go/internal/spool/**'
+      - '.github/workflows/ci.yml'
 
 permissions:
   contents: read
@@ -55,5 +77,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.4'
-      - name: Test
-        run: go test ./...
+      - name: Compile restored Windows executables
+        run: go build ./cmd/fi ./cmd/fi-sender ./cmd/fi-install ./cmd/fi-crl-refresh ./cmd/fi-usn ./cmd/usnprobe
+      - name: Test actual Windows collector and sender packages
+        run: >-
+          go test -count=1
+          ./cmd/fi ./cmd/fi-sender ./cmd/fi-install ./cmd/fi-crl-refresh
+          ./internal/windows/... ./internal/transportcrl ./internal/transportpackage
+          ./internal/transporttrust ./internal/transportsender
+          ./internal/transportwire ./internal/releaselab ./internal/releasecms
+

@@ -10,6 +10,9 @@ on:
       - 'go/internal/transportreceiver/**'
       - 'go/internal/generationrecorder/**'
       - 'go/internal/receivertrust/**'
+      - 'go/internal/transporttrust/**'
+      - 'go/internal/transportpackage/**'
+      - 'go/internal/transportwire/**'
       - 'go/internal/recordingest/**'
       - 'go/internal/c1handoff/**'
       - 'go/internal/telemetrybackend/**'
@@ -39,6 +42,8 @@ jobs:
           cache-dependency-path: go/go.sum
       - name: Receiver and custody tests
         run: go test -count=1 ./internal/transportreceiver ./internal/generationrecorder
+      - name: Shared signing and source identity contracts
+        run: go test -count=1 ./internal/transporttrust ./internal/transportpackage ./internal/transportwire
       - name: Current C1 / independent B tests
         run: |
           go test -count=1 ./internal/c1handoff

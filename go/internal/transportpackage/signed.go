@@ -167,6 +167,12 @@ func validateBatchSigningCertificateRole(
 	if certificate.IsCA {
 		return errors.New("batch-signing certificate must not be a CA")
 	}
+	// FI uses the AD CS certificate-template OID, not Subject OU, as its
+	// certificate-purpose identity. Full authorized-OID matching is performed
+	// by receiver/source trust against the registered source.
+	if _, err := transporttrust.CertificateTemplateOID(certificate); err != nil {
+		return fmt.Errorf("batch-signing certificate template OID: %w", err)
+	}
 	if !strings.EqualFold(certificate.Subject.CommonName, descriptor.SourceID) {
 		return fmt.Errorf(
 			"batch-signing certificate common name %q does not match source ID %q",

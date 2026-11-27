@@ -15,32 +15,25 @@ import (
 	"syscall"
 )
 
-const DefaultLockFileName = "collector-runtime.lock"
+const (
+	DefaultLockFileName = "collector-runtime.lock"
+	SenderLockFileName  = "sender-runtime.lock"
+)
 
-var ErrAlreadyHeld = errors.New("FI collector runtime ownership is already held")
+var ErrAlreadyHeld = errors.New(
+	"FI Windows runtime ownership is already held",
+)
 
-// Ownership is the exclusive host-local collector runtime handle.
+// Ownership is one exclusive host-local FI runtime handle.
 //
 // The lock file is intentionally persistent. Ownership is represented by the
 // open Windows file handle with share mode zero, not by file existence. Process
 // termination closes the handle automatically, so a stale lock file after a
-// crash does not block a later collector start.
+// crash does not block a later runtime start.
 type Ownership struct {
 	path   string
 	handle syscall.Handle
 	closed bool
-}
-
-func DefaultPath() (string, error) {
-	base := os.Getenv("FI_STATE_DIR")
-	if base == "" {
-		programData := os.Getenv("ProgramData")
-		if programData == "" {
-			return "", errors.New("ProgramData is not set")
-		}
-		base = filepath.Join(programData, "FI", "state")
-	}
-	return filepath.Join(base, DefaultLockFileName), nil
 }
 
 func Acquire() (*Ownership, error) {
@@ -48,15 +41,25 @@ func Acquire() (*Ownership, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return AcquirePath(path)
 }
 
 func AcquirePath(path string) (*Ownership, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("runtime ownership path is empty")
+		return nil, errors.New(
+			"runtime ownership path is empty",
+		)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, fmt.Errorf("create runtime ownership directory: %w", err)
+
+	if err := os.MkdirAll(
+		filepath.Dir(path),
+		0700,
+	); err != nil {
+		return nil, fmt.Errorf(
+			"create runtime ownership directory: %w",
+			err,
+		)
 	}
 
 	pathPtr, err := syscall.UTF16PtrFromString(path)
@@ -77,9 +80,18 @@ func AcquirePath(path string) (*Ownership, error) {
 		// ERROR_SHARING_VIOLATION = 32. The syscall package does not expose a
 		// named constant for it on all supported Go versions.
 		if errors.Is(err, syscall.Errno(32)) {
-			return nil, fmt.Errorf("%w: %s", ErrAlreadyHeld, path)
+			return nil, fmt.Errorf(
+				"%w: %s",
+				ErrAlreadyHeld,
+				path,
+			)
 		}
-		return nil, fmt.Errorf("open runtime ownership file %q: %w", path, err)
+
+		return nil, fmt.Errorf(
+			"open runtime ownership file %q: %w",
+			path,
+			err,
+		)
 	}
 
 	return &Ownership{
@@ -88,25 +100,73 @@ func AcquirePath(path string) (*Ownership, error) {
 	}, nil
 }
 
+func AcquireSender() (*Ownership, error) {
+	path, err := SenderPath()
+	if err != nil {
+		return nil, err
+	}
+
+	return AcquirePath(path)
+}
+
 func (ownership *Ownership) Close() error {
 	if ownership == nil || ownership.closed {
 		return nil
 	}
+
 	ownership.closed = true
 
-	if err := syscall.CloseHandle(ownership.handle); err != nil {
+	if err := syscall.CloseHandle(
+		ownership.handle,
+	); err != nil {
 		return fmt.Errorf(
 			"close runtime ownership file %q: %w",
 			ownership.path,
 			err,
 		)
 	}
+
 	return nil
+}
+
+func DefaultPath() (string, error) {
+	return defaultRuntimePath(DefaultLockFileName)
 }
 
 func (ownership *Ownership) Path() string {
 	if ownership == nil {
 		return ""
 	}
+
 	return ownership.path
+}
+
+func SenderPath() (string, error) {
+	return defaultRuntimePath(SenderLockFileName)
+}
+
+func defaultRuntimePath(
+	lockFileName string,
+) (string, error) {
+	base := os.Getenv("FI_STATE_DIR")
+
+	if base == "" {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			return "", errors.New(
+				"ProgramData is not set",
+			)
+		}
+
+		base = filepath.Join(
+			programData,
+			"FI",
+			"state",
+		)
+	}
+
+	return filepath.Join(
+		base,
+		lockFileName,
+	), nil
 }
