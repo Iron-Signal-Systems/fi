@@ -26,6 +26,13 @@ func RunC1SoRLocalReadyPass(ctx context.Context,c C1SoRLocalConfig,
         return 0,errors.New("FI C1 local READY: original source READY root and bounded pass required")
     }
     if err:=validateC1SoRLocalConfig(c);err!=nil{return 0,err}
+    // READY must NEVER re-expand the full 65 GiB signed transfer to scratch.
+    // The receiver-published authenticated batch source is mandatory for
+    // routine direct-canonical SoR intake, even for in-package callers.
+    if c.Custody.ReceiverVerifiedCacheRoot==""||c.Custody.BenchmarkClone||
+       c.Custody.VerifiedCacheRoot!=""{
+        return 0,errors.New("FI C1 local READY: receiver-published verified batch cache is mandatory")
+    }
     markers,err:=generationready.ReadReceiptNamesForSource(readyRoot,c.SourceID,batchSize)
     if err!=nil{return 0,err}
     accepted:=0
@@ -44,15 +51,10 @@ func RunC1SoRLocalReadyPass(ctx context.Context,c C1SoRLocalConfig,
                 return accepted,errors.New("FI C1 local READY: unsafe canonical status")
             }
             overallStart:=time.Now()
-            var g *PreparedGeneration
-            var e error
-            if c.Custody.ReceiverVerifiedCacheRoot!=""{
-                // Receiver has authenticated and published each batch. Never
-                // unpack the complete FIGT archive before starting SQL.
-                g,e=LoadC1SoRReceiverVerifiedCache(ctx,c,want.generationID)
-            }else{
-                g,e=LoadRecordedGeneration(load,want.generationID)
-            }
+            // Receiver has already authenticated and published the batches.
+            // Missing or unsafe cache is an admission failure, not permission
+            // to replay the slow full-generation extraction path.
+            g,e:=LoadC1SoRReceiverVerifiedCache(ctx,c,want.generationID)
             if e!=nil{return accepted,fmt.Errorf("FI C1 local READY: original receiver batch source: %w",e)}
             extractionElapsed:=time.Since(overallStart)
             result,runErr:=RunC1SoRLocalGeneration(ctx,c,g)
