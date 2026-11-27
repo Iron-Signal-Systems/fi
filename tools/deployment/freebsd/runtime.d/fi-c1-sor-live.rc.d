@@ -6,7 +6,7 @@
 name=fi_c1_sor_live
 rcvar=fi_c1_sor_live_enable
 load_rc_config "$name"
-: "\${fi_c1_sor_live_enable:=NO}"
+: "${fi_c1_sor_live_enable:=NO}"
 pidfile=/var/run/fi-c1-sor-live.pid
 start_cmd=fi_c1_sor_live_start
 stop_cmd=fi_c1_sor_live_stop
