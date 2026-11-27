@@ -1,5 +1,16 @@
 # FI gMSA Provisioning Example
 
+> **Administrator reference example — not the current integrated installation procedure.**
+> The native configuration-driven Windows installer owns its approved AD/service
+> identity planning, authorization, and local application workflow. The example
+> scripts below are for studying or reproducing individual gMSA prerequisites in
+> controlled lab conditions and do not replace the current
+> [Windows installer](../../docs/WINDOWS-INSTALLER.md) or
+> [operator guide](../../docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md).
+> FI continues to use two distinct per-host gMSAs for the documented collector
+> and USN-helper authority boundaries; do not equate two gMSAs with only two SCM
+> runtime services.
+
 This example shows how to create and install the **two unique Group Managed
 Service Accounts (gMSAs) used by each FI Windows collector host**.
 
