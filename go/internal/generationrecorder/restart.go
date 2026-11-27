@@ -7,7 +7,6 @@ package generationrecorder
 import (
 	"context"
 	"errors"
-	"io"
 	"fmt"
 	"io"
 
