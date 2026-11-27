@@ -285,6 +285,41 @@ if [ "$mode" = --start-telemetry ];then
   echo "FI TELEMETRY START REQUESTED: confirm samples AND SQL delivery before C1"
   exit 0
 fi
+# C1 launches unprivileged as fi-sor, but stage historically installed
+# fi_c1_sor_live at 0600 root:wheel; sourced runtime config must be readable
+# by fi-sor without exposing any PostgreSQL credentials to other accounts.
+# Validate BOTH sourced files and all metadata before making any change.
+ensure_c1_runtime_config_access(){
+  echo "===== C1 FI-SOR CONFIGURATION ACCESS ====="
+  fi_sor_gid=$(jexec fi-sor id -g fi-sor) ||
+    fail "fi-sor account/group identity unavailable"
+  for file in /etc/rc.conf.d/fi_c1_sor /etc/rc.conf.d/fi_c1_sor_live;do
+    jexec fi-sor test -f "$file" &&
+    ! jexec fi-sor test -L "$file" ||
+      fail "unsafe/missing C1 runtime configuration: $file"
+    state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file") ||
+      fail "cannot stat C1 runtime configuration: $file"
+    case "$state" in
+      "0:0:600"|"0:${fi_sor_gid}:600"|"0:${fi_sor_gid}:640") ;;
+      *) fail "unexpected C1 config metadata: $file ($state)" ;;
+    esac
+  done
+  for file in /etc/rc.conf.d/fi_c1_sor /etc/rc.conf.d/fi_c1_sor_live;do
+    state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file")
+    if [ "$state" != "0:${fi_sor_gid}:640" ];then
+      jexec fi-sor chgrp fi-sor "$file" &&
+      jexec fi-sor chmod 0640 "$file" ||
+        fail "could not restrict C1 runtime config access: $file"
+    fi
+    [ "$(jexec fi-sor stat -f '%u:%g:%Lp' "$file")" = "0:${fi_sor_gid}:640" ] ||
+      fail "C1 runtime config final metadata mismatch: $file"
+    jexec -U fi-sor fi-sor test -r "$file" ||
+      fail "C1 runtime account cannot read $file"
+    jexec -U fi-telemetry-monitor fi-sor test ! -r "$file" ||
+      fail "telemetry monitor can read restricted C1 config: $file"
+  done
+  echo 'FI C1 RUNTIME CONFIG ACCESS PASS root_owned=true fi_sor_read_only=true'
+}
 if [ "$mode" = --start-ingest ];then
   [ "$(sql "SELECT count(*) FROM fi.recorded_generation g
     WHERE g.source_id='iss-fs-22a.iss.local'
@@ -329,6 +364,7 @@ if [ "$mode" = --start-ingest ];then
     jexec fi-sor service "$svc" onestatus >/dev/null 2>&1 &&
       fail "obsolete C1 service still active" || :
   done
+  ensure_c1_runtime_config_access
   jexec -U fi-sor fi-sor env FI_C1_LIVE_PREFLIGHT=YES \
      /usr/local/libexec/fi-c1-sor-live-run ||
      fail "actual signed custody, receiver cache or SQL role preflight failed"
