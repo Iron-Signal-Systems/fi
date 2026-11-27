@@ -58,7 +58,9 @@ trap 'rm -f "$tmp"' EXIT HUP INT TERM
  printf '%s\n' "$line1" "$line2"
  cat "$backup/pg_hba.conf"
 } > "$tmp"
-chown postgres:postgres "$tmp"
+# Keep the existing HBA file numeric ownership: PostgreSQL lives in fi-sor,
+# and the host need not have a postgres group or matching passwd database.
+chown "$(stat -f '%u:%g' "$file")" "$tmp"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$file"
 if [ "$(sql 'SELECT pg_reload_conf()')" != t ];then
