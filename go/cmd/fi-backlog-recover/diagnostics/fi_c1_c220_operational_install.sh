@@ -179,6 +179,9 @@ if [ "$mode" = --stage ];then
     tmp=$(mktemp /root/fi-c220-config.XXXXXXXX)
     asset "$runtime/$name" |
       sed "s/REPLACE_WITH_40_CHARACTER_DEPLOYED_COMMIT/$pin/" > "$tmp"
+    if [ "$scope" = host ];then
+      sed -i '' -e 's@spool="/var/db/fi/telemetry/spool"@spool="/fast/data/fi/telemetry/spool"@' "$tmp"
+    fi
     if [ "$scope" = sor ];then
       sed -i '' -e 's/source="c220-host"/source="fi-sor"/' \
         -e 's/user="fi-telemetry"/user="fi-telemetry-monitor"/' \

@@ -3,4 +3,4 @@ fi_telemetry_upload_enable="NO"
 fi_telemetry_upload_spool="/var/db/fi/telemetry/spool"
 # Dedicated recorder role can INSERT/SELECT telemetry_v2 in fi_telemetry,
 # NEVER canonical fi. File mode 0600, restricted to root for service startup.
-fi_telemetry_upload_dsn="host=/var/db/fi/sor/run dbname=fi_telemetry user=fi_telemetry_recorder"
+fi_telemetry_upload_dsn="host=/var/db/fi/sor/run dbname=fi_telemetry user=fi-telemetry-recorder"
