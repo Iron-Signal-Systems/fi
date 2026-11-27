@@ -29,8 +29,10 @@ import (
 
 // c1SoRVerifiedCacheGeneration reproduces the original fast C1 development
 // source plan from 8,399 previously authenticated cache batches. It never
-// decompresses the 65GiB transfer to a SECOND directory. Each batch hash is
-// checked independently by verifier B during processing, before publication.
+// decompresses the 65GiB transfer to a SECOND directory. The receiver
+// ALREADY cryptographically authenticated the entire original signed transfer
+// and published receipt-bound verified.json. Real B checks independent
+// commit-ready SQL relational coverage, exactly as in the tested C1.
 func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
     cfg c1NativeBCustodyConfig)(*PreparedGeneration,error){
     cacheRoot:=cfg.VerifiedCacheRoot
@@ -133,9 +135,10 @@ func c1SoRVerifiedCacheGeneration(ctx context.Context,source,generation string,
         ReceiptBytes:len(raw),ReceiptRawBytes:raw},nil
 }
 
-// B reads its OWN file handles from the original verified cache (never A's
-// stream). The original group READY/COMMIT scheduler and per-group relational
-// verifier remain unchanged. No second signed transport expansion happens.
+// The isolated benchmark-cache B below remains available ONLY to clone
+// tests. Real canonical B must NOT use this per-record cache audit: its
+// receiver-authenticated input and unchanged commit-ready group SQL verifier
+// are implemented in c1NativeBVerifyReceiverCommitReadyGroups.
 func LoadC1SoRBenchmarkVerifiedCache(ctx context.Context,c C1SoRLocalConfig,generation string)(*PreparedGeneration,error){
     if c.Custody.VerifiedCacheRoot==""||!c.Custody.BenchmarkClone{
         return nil,errors.New("FI C1 cache: only isolated clone may import verified cache")
@@ -143,8 +146,8 @@ func LoadC1SoRBenchmarkVerifiedCache(ctx context.Context,c C1SoRLocalConfig,gene
     return c1SoRVerifiedCacheGeneration(ctx,c.SourceID,generation,c.Custody)
 }
 
-// Live receiver cache is input acceleration only. Independent verifier B
-// always reopens original signed FIGT custody on the real SoR.
+// Live receiver cache is a receiver-authenticated source. B independently
+// verifies each durable SQL commit-ready group, not original FIGT a second time.
 func LoadC1SoRReceiverVerifiedCache(ctx context.Context,c C1SoRLocalConfig,generation string)(*PreparedGeneration,error){
     if c.Custody.BenchmarkClone||c.Custody.VerifiedCacheRoot!=""||
         c.Custody.ReceiverVerifiedCacheRoot==""{

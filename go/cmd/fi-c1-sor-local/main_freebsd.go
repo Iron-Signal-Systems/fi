@@ -52,7 +52,7 @@ func main() {
     cloneRoot:=f.String("benchmark-clone-root","","explicit isolated C220 benchmark PGDATA root; enforces physical worker/publisher cluster identity")
     cloneSystemID:=f.String("benchmark-system-id","","independent postgres-administrator-verified unique clone system identifier")
     cacheRoot:=f.String("benchmark-verified-cache-root","","ORIGINAL C1 receiver-authenticated read-only cache; isolated clone only")
-    receiverCache:=f.String("receiver-verified-cache-root","","receiver-published batch cache mounted read-only in fi-sor; independent B still uses original FIGT")
+    receiverCache:=f.String("receiver-verified-cache-root","","receiver-authenticated batch cache mounted read-only in fi-sor; B uses tested commit-ready relational verification")
     canonical:=f.Uint64("max-canonical-bytes",75161927680,"receiver canonical limit")
     encoded:=f.Uint64("max-encoded-bytes",68719476736,"receiver encoded limit")
     manifest:=f.Uint64("max-manifest-bytes",1048576,"original manifest byte limit")

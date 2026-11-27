@@ -84,4 +84,4 @@ WHERE g.source_id='iss-fs-22a.iss.local'
 [ "$result" = '15140785|8399|8399|15140785' ] &&
 [ "$accepted" = 1 ] ||
  fail "incorrect real canonical coverage: $result exact_accepted=$accepted"
-echo 'FI C1 FULL REAL RUN ACCEPTED PASS source_records=15140785 signed_batches=8399 original_custody_B_verified=true accepted_journal=1 no_reset=true services_unmodified=true'
+echo 'FI C1 FULL REAL RUN ACCEPTED PASS source_records=15140785 signed_batches=8399 receiver_signed_custody_authenticated=true B_commit_ready_relational_verified=true accepted_journal=1 no_reset=true services_unmodified=true'
