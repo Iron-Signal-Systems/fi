@@ -206,12 +206,12 @@ if [ "$mode" = --stage ];then
 fi
 [ -x "$sor/usr/local/sbin/fi-c1-sor-live" ] || fail "C1 binary not staged"
 if [ "$mode" = --start-telemetry ];then
-  jexec -U fi-telemetry-monitor fi-sor psql -X -w -At \
-    -h /var/db/fi/sor/run -p 5432 -d fi -c 'SELECT current_user' |
+  jexec -U fi-telemetry-monitor fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
+    -h /var/db/fi/sor/run -p 5432 -U fi-telemetry-monitor -d fi -c 'SELECT current_user' |
       grep -Fx 'fi-telemetry-monitor' >/dev/null ||
       fail "read-only monitor peer auth missing"
-  jexec -U fi-telemetry-recorder fi-sor psql -X -w -At \
-    -h /var/db/fi/sor/run -p 5432 -d fi_telemetry -c 'SELECT current_user' |
+  jexec -U fi-telemetry-recorder fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
+    -h /var/db/fi/sor/run -p 5432 -U fi-telemetry-recorder -d fi_telemetry -c 'SELECT current_user' |
       grep -Fx 'fi-telemetry-recorder' >/dev/null ||
       fail "telemetry recorder peer auth missing"
   sysrc -f /etc/rc.conf.d/fi_telemetry_sample fi_telemetry_sample_enable=YES
