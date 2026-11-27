@@ -86,6 +86,7 @@ jobs:
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_direct_canonical_real_generation.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_receiver_sor_readiness_audit.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_receiver_cache_mount_install.sh
+          sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_receiver_cache_mount_install.sh --selftest
           sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_receiver_sor_readiness_audit.sh --selftest
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_stage_single_sor.sh
           sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_activate_sor_ready_mount.sh
