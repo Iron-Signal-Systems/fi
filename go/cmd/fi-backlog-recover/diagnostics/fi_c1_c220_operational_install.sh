@@ -113,7 +113,7 @@ ensure_telemetry_parent_access(){
   [ -d "$spool" ] && [ ! -L "$spool" ] &&
   [ -d "$dst" ] && [ ! -L "$dst" ] ||
     fail 'telemetry spool unavailable or symlink'
-  [ "$(stat -f '%u:%g:%Lp' "$spool")" = '46000:46000:2770' ] ||
+  [ "$(stat -f '%u:%g:%Lp:%Sp' "$spool")" = '46000:46000:770:drwxrws---' ] ||
     fail 'telemetry source spool ownership/mode changed'
   mount -p | awk -v src="$spool" -v dst="$dst" '
     $1==src && $2==dst && $3=="nullfs" && $4 ~ /(^|,)rw(,|$)/ {found++}
