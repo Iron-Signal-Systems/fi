@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestRolloverPublishedSpoolMovesEntireDirectoryAndReopensActivePath(t *testing.T) {
@@ -62,12 +62,12 @@ func generationTestSigningCertificate(t *testing.T, commonName string) (*rsa.Pri
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName:         commonName,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: commonName,
 		},
 		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().Add(time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: senderTestTemplateExtensions(t),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
@@ -127,4 +127,16 @@ func generationRepeatHex(value string, count int) string {
 		result += value
 	}
 	return result
+}
+
+// senderTestTemplateExtensions creates an AD CS template-information extension
+// for signed FI test batches. No organizational-unit role compatibility.
+func senderTestTemplateExtensions(t testing.TB) []pkix.Extension {
+	t.Helper()
+	value, err := asn1.Marshal(struct {
+		TemplateID asn1.ObjectIdentifier
+		MajorVersion int
+	}{TemplateID: asn1.ObjectIdentifier{1,3,6,1,4,1,311,21,8,100,2}, MajorVersion: 1})
+	if err != nil { t.Fatalf("marshal AD CS template information: %v", err) }
+	return []pkix.Extension{{Id: asn1.ObjectIdentifier{1,3,6,1,4,1,311,21,7}, Value: value}}
 }
