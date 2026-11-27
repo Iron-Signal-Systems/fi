@@ -1,21 +1,14 @@
-# FI C220 FreeBSD backend
+# FI C220 FreeBSD backend — current deployment source
 
-The **current observed C220 deployment**, not the historical experiments, is the FreeBSD backend development baseline.
+**Current C220 runtime observed 2026-11-27:** `fi-receiver` + `fi-sor` jails, PostgreSQL 18 in `fi-sor`, telemetry collector on host and telemetry collector/uploader in `fi-sor`.
 
-See [C220 as-built inventory](../../../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md) for executable hashes, runtime layout, mounts and limitations.
+![FI current C220 architecture](../../../docs/images/fi-c220-current.svg)
 
-## Active runtime
+[Current architectural contract and independent verifier B](../../../docs/architecture/FI-C220-CURRENT-BACKEND.md) · [Observed C220 binaries/mounts](../../../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md) · [Read-only operator reference](../../../docs/deployment/C220-OPERATOR-REFERENCE.md)
 
-- `fi-receiver`: signed receiver custody, recorded receipts, READY scheduling and verified cache.
-- `fi-sor`: PostgreSQL 18 plus the single-jail C1 P5/P6 consumer, with independent verifier B spawned from the same C1 binary.
-- C220 host + `fi-sor`: the telemetry collector/recorder services.
-- `fi-dev`: build environment, not a stage in data ingestion.
+## Current compilation from GitHub
 
-No production `fi-ingest` worker or old two-jail C1 SQL handoff participates in the observed live pipeline. The host may retain inactive old datasets and mounts; repository cleanup does not remove those.
-
-## Current build targets
-
-From the `go` directory, build the actual FreeBSD programs:
+From the checked-out `go` module directory:
 
 ```sh
 GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o fi-receiver ./cmd/fi-receiver
@@ -23,10 +16,20 @@ GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags fi_c1_sor_dev -
 GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o fi-telemetry-backend ./cmd/fi-telemetry-backend
 ```
 
-These build commands are **not** proof of byte-identical output to installed binaries; that requires C220 compiler/runtime and configuration comparison.
+These commands passed CI; they do **not** establish byte-for-byte identity with the binaries already running on C220.
 
-## Deployment safety
+## Current FreeBSD runtime files
 
-The original FI host bootstrap still includes historical generic jail assumptions. **Do not run legacy bootstrap against the live C220 until it has been reconciled with the as-built inventory and audited for exact active jail, PF, ZFS and role configuration.**
+- `runtime.d/fi-receiver.rc.d` and `runtime.d/fi-receiver-supervisor.sh` — receiver service; generation/recorded/READY/verified-cache paths are sourced from restricted jail-local configuration.
+- `runtime.d/fi-c1-sor-live.rc.d` and `runtime.d/fi-c1-sor-live-run.sh` — `fi-sor`-local C1 P5/P6/independent B; default 5-second poll, 16 READY slots, max 32 SQL workers.
+- `runtime.d/fi-telemetry-sample.rc.d`, `runtime.d/fi-telemetry-upload.rc.d` — telemetry samples and recording.
+- `runtime.d/fi-telemetry-v2-schema.sql`, `fi-telemetry-v2-roles.sql` — telemetry-only SQL schema and identities, never canonical `fi` by mistake.
+- `operations/` — C220-specific audit/staging helpers and disposable VM native PostgreSQL gate, extracted from the retired backlog CLI.
 
-Only non-secret service templates belong in Git. No C220 service or PostgreSQL state is changed by this repository cleanup.
+**Not current runtime:** `go/cmd/fi-backlog-recover` (removed), `fi-ingest-worker`, `fi-sor-db`, old three-jail SQL staging or H16/W512 experiments.
+
+## Safety: old host bootstrap remains legacy
+
+`fi-bootstrap.sh` and the original `jail.conf.d`, `fstab.d`, `verify/`, `fi-host-*-apply.sh` material were authored for a different three-jail layout and **are not a validated current C220 installer**. They may be examined as historical/low-level utilities, but must never be applied to C220 as the live service definition.
+
+The current repo retains tested source code and current service scripts. It does not yet prove a complete fresh FreeBSD host bootstrap, source-to-installed ELF identity or recovery of data/secrets. Do not claim otherwise or automatically restart/replace running services.

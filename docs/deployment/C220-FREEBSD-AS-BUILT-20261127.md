@@ -45,4 +45,4 @@ Processes in the operator inventory: `fi-receiver`, `fi-c1-sor-live`, PostgreSQL
 - Old H16/W512 benchmark runners and retired fi-ingest workers do not belong to the accepted live FreeBSD execution path.
 - Replacing the remaining legacy host bootstrap with a complete reproducible C220 installer still requires capture and verification of current jail, PF, ZFS and non-secret rc configuration. Never commit private keys, certificates with keys, passwords, or live credentials.
 
-**Development branch:** `dev-backend`. **Accepted prior baseline:** `main` remains unchanged until a separate acceptance/promotion decision.
+**Repository branches:** both `dev-backend` and `main` contain the promoted current C220 backend source snapshot. GitHub code builds passed; exact equivalence to the installed C220 ELF binaries is not yet established.

@@ -36,9 +36,24 @@ investigation.
 
 ---
 
-## Current Development Focus
+## Current C220 FreeBSD backend implementation (27 November 2026)
 
-FI has completed **Phase 3 / Gate 3 — Ingest & Recorder**. Phase 4 is the next planned development boundary.
+The active development backend is **FreeBSD 15.1 on C220**, with exactly two FI service jails:
+
+1. `fi-receiver` — sender trust, signed original FIGT custody, recorded receipt and READY, verified receiver-owned cache.
+2. `fi-sor` — C1 P5 Preparation, P6 five-family SQL processing against local PostgreSQL 18, with independent B verifier child and canonical Accepted/READY completion.
+
+Host and `fi-sor` telemetry form a separate collection and delivery plane. Old staged-backlog executables, the three-jail `fi-ingest`/`fi-sor-db` design and historical sequential Linux ingest worker are not the active backend. The 53 accepted generations / 631 committed records from 2026-11-27 are verified historical queued-data SoR evidence; exact source-to-running-binary equivalence and a complete bare-metal rebuild have not been established.
+
+![C220 backend](../../docs/images/fi-c220-current.svg)
+
+[Architecture and independent verifier diagram](../../docs/architecture/FI-C220-CURRENT-BACKEND.md) · [C220 as-built](../../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md)
+
+---
+
+## Historical Gate 3 closeout and future work
+
+Phase 3/Gate 3 historical acceptance predates the current C220 C1 integration. The earlier plan to move immediately to Phase 4 is **not** the current backend execution status; the current backend path is described above.
 
 **Phase 1 / Gate 1: COMPLETE — PASS**
 
@@ -183,7 +198,7 @@ bytes for the same generation identity fail closed. The final generation
 protocol does not use a separate monotonic security sequence; earlier
 `sequence conflict` wording is retired.
 
-See `docs/performance/PHASE-2-GATE-2-CLOSEOUT.md`.
+Historical Gate 2 closeout is preserved in Git history; it is not a current C220 acceptance record.
 
 
 ## Phase 1 — Windows File & Identity Intelligence
@@ -284,7 +299,7 @@ reconstructable, and every material ingest outcome is preserved.
 
 [Phase 3 details](docs/roadmap/phase-03-ingest-and-recorder.md)
 
-[Phase 3 ingest-worker operating contract](../docs/PHASE-3-INGEST-WORKER-OPERATING-CONTRACT.md)
+[Current C220 C1 service and verification contract](../docs/architecture/FI-C220-CURRENT-BACKEND.md)
 
 ---
 
@@ -340,10 +355,7 @@ Combine the accepted Windows, transport, recorder, classification, projection,
 query, user experience, operational, backup, recovery, upgrade, and release
 capabilities into a reproducible supported product.
 
-Phase 6 freezes and proves the supported backend deployment profile. The proposed
-FreeBSD/VNET-jail/PF/ZFS backend direction is tracked in
-`../docs/architecture/ADR-0001-FREEBSD-BACKEND.md`; Gate 3's accepted Linux
-runtime remains preserved as engineering history.
+Phase 6 still must prove a reproducible supported release. FreeBSD/VNET jails/PF/ZFS are **already running on C220 for development**; the current implementation is tracked in `../docs/architecture/FI-C220-CURRENT-BACKEND.md`. The original FreeBSD ADR is historical, and the old Linux Gate 3 runtime remains an engineering-history record, not the current backend.
 
 **Gate 6 — Integrated Release Acceptance:** prove FI survives representative
 installation, failure, recovery, upgrade, rollback, DR, projection rebuild, and

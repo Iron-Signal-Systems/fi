@@ -1,5 +1,7 @@
 # Phase 3 — Ingest & Recorder
 
+> **Historical Gate 3 acceptance, September 2026:** the old Linux sequential worker described below is no longer the running backend. On 2026-11-27, C220 runs FreeBSD `fi-receiver` and `fi-sor` (`fi-c1-sor-live` C1 P5/P6 with verifier B and PostgreSQL 18). See [current C220 architecture](../../../../docs/architecture/FI-C220-CURRENT-BACKEND.md). This page preserves historical phase results, not current operator instructions.
+
 ## Current Development Status
 
 **COMPLETE — PASS — Phase 3 / Gate 3**
@@ -225,10 +227,9 @@ records.
 Later observations, corrections, analysis, classification, or changed
 conclusions are represented by new related records.
 
-## Accepted live worker
+## Historical Gate 3 worker (not the current C220 runtime)
 
-`go/cmd/fi-ingest-worker` is the accepted permanent sequential Phase 3
-consumer.
+The removed `go/cmd/fi-ingest-worker` was the accepted **historical** sequential Linux Phase 3 consumer. The current FreeBSD C220 executable is `fi-c1-sor-live`.
 
 Implemented behavior includes:
 
@@ -289,7 +290,7 @@ completed on 2026-09-24.
 
 The authoritative acceptance record is:
 
-`docs/performance/PHASE-3-250K-RELATIONAL-INGEST-ACCEPTANCE.md`
+the historical Gate 3 relational acceptance record (now in Git history)
 
 ## Gate 3 — Authoritative Record & Journal Integrity
 

@@ -1,3 +1,5 @@
+# LEGACY THREE-JAIL BOOTSTRAP TEMPLATE. NOT AN AS-BUILT C220 CONFIG.
+# DO NOT APPLY TO THE CURRENT C220. See tools/deployment/freebsd/README.md.
 # FI FreeBSD site-specific deployment variables.
 #
 # Copy this file outside the repository and populate values appropriate
