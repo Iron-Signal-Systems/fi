@@ -45,9 +45,9 @@ The active development backend is **FreeBSD 15.1 on C220**, with exactly two FI 
 
 Host and `fi-sor` telemetry form a separate collection and delivery plane. Old staged-backlog executables, the three-jail `fi-ingest`/`fi-sor-db` design and historical sequential Linux ingest worker are not the active backend. The 53 accepted generations / 631 committed records from 2026-11-27 are verified historical queued-data SoR evidence; exact source-to-running-binary equivalence and a complete bare-metal rebuild have not been established.
 
-![C220 backend](../../docs/images/fi-c220-current.svg)
+![C220 backend](../docs/images/fi-c220-current.svg)
 
-[Architecture and independent verifier diagram](../../docs/architecture/FI-C220-CURRENT-BACKEND.md) · [C220 as-built](../../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md)
+[Architecture and independent verifier diagram](../docs/architecture/FI-C220-CURRENT-BACKEND.md) · [C220 as-built](../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md)
 
 ---
 

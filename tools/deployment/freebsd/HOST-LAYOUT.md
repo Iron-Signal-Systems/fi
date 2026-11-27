@@ -1,220 +1,24 @@
-# FI FreeBSD Host Layout
+# FI C220 — running jail and storage layout
 
-This document defines the production host-side jail-root and mount layout for
-the FI FreeBSD backend.
+> **Observed 27 Nov 2026:** This describes the currently running C220 FreeBSD 15.1 backend, not a future three-jail design or a verified fresh-install recipe. [Current architecture and diagrams](../../../docs/architecture/FI-C220-CURRENT-BACKEND.md).
 
-It implements the authority contracts defined by:
+The two active FI service jails are **fi-receiver** and **fi-sor**. The fi-dev jail is for development; old fi-ingest and fi-frontend datasets/jails are not in the current ingest path.
 
-    STORAGE-AUTHORITY.md
-    SERVICE-IDENTITY.md
-    JAIL-CAPABILITIES.md
+![As-built topology](../../../docs/images/fi-c220-current.svg)
 
-No FI application service runs directly on the host.
+| Item | Observed host path | Mount/role |
+|---|---|---|
+| Receiver jail root | `/fast/jails/roots/fi-receiver` | Running receiver process |
+| SoR jail root | `/fast/jails/roots/fi-sor` | Running C1 P5/P6, verifier B child, PostgreSQL 18 |
+| Dev jail | `/fast/jails/roots/fi-dev` | No ingest processing |
+| Original custody | `/work/fi-c220-20261114/custody/generation` | Receiver RW, SoR RO |
+| Recorded receipts | `/work/fi-c220-20261114/custody/recorded` | Receiver RW, SoR RO |
+| Verified cache | `/work/fi-c220-20261114/custody/verified-cache` | Receiver RW, SoR RO |
+| READY | `/work/fi-c220-20261114/custody/ready` | Receiver RW, SoR RW (governed retirement) |
+| PostgreSQL PGDATA | `/fast/data/fi/sor/pgdata` | SoR `/var/db/fi/sor/postgres` RW |
+| PostgreSQL WAL dataset | `/fast/data/fi/sor/pgwal` | Host-managed ZFS |
+| Telemetry spool | `/fast/data/fi/telemetry/spool` | SoR RW |
 
-## Jail root hierarchy
+The retained `/var/run/fi-c1-handoff` tmpfs mount is **not evidence of an active inter-jail handoff**. The current `fi-c1-sor-live` is a single-jail executable.
 
-Production jail root filesystems live beneath the host jail-container
-hierarchy.
-
-Logical dataset layout:
-
-    <FI_JAIL_DATASET_ROOT>/fi-receiver
-    <FI_JAIL_DATASET_ROOT>/fi-ingest
-    <FI_JAIL_DATASET_ROOT>/fi-sor-db
-
-Logical host mountpoints:
-
-    <FI_JAIL_ROOT_BASE>/fi-receiver
-    <FI_JAIL_ROOT_BASE>/fi-ingest
-    <FI_JAIL_ROOT_BASE>/fi-sor-db
-
-For the initial FI appliance layout the expected defaults are:
-
-    FI_JAIL_DATASET_ROOT=<FI_ZPOOL>/jails/containers
-    FI_JAIL_ROOT_BASE=/usr/local/jails/containers
-
-The production jail roots are separate from the FI authoritative data
-hierarchy under `/var/db/fi`.
-
-Destroying or rebuilding a jail root must not imply destruction of FI
-authoritative datasets.
-
-## Jail root provenance
-
-Production jail roots are created from an explicitly configured and verified
-FreeBSD base template snapshot.
-
-The deployment configuration supplies:
-
-    FI_JAIL_TEMPLATE_SNAPSHOT
-
-The bootstrap must not guess the template snapshot.
-
-Before cloning, deployment must verify that:
-
-- the configured template snapshot exists;
-- it is a ZFS snapshot;
-- the destination jail-root dataset does not conflict with unexpected state;
-- the FreeBSD release represented by the template matches the accepted
-  deployment release.
-
-A pre-existing matching jail root may be accepted only after explicit
-validation.
-
-Deployment must not destroy or overwrite an unexpected existing jail root.
-
-## Production jail roots
-
-The initial production roots are:
-
-    fi-receiver
-        /usr/local/jails/containers/fi-receiver
-
-    fi-ingest
-        /usr/local/jails/containers/fi-ingest
-
-    fi-sor-db
-        /usr/local/jails/containers/fi-sor-db
-
-The exact host root prefix remains a site configuration value.
-
-## FI data hierarchy
-
-Persistent production FI data remains outside the jail root datasets.
-
-Host-visible paths:
-
-    /var/db/fi/custody/generation
-    /var/db/fi/custody/transport
-    /var/db/fi/custody/recorded
-    /var/db/fi/custody/ready
-    /var/db/fi/sor/postgres
-    /var/db/fi/config/receiver
-    /var/db/fi/config/ingest
-    /var/db/fi/backups
-
-These paths are backed by the datasets defined in `STORAGE-AUTHORITY.md`.
-
-## Jail-visible paths
-
-The receiver jail receives:
-
-    /var/db/fi/custody/generation    RW
-    /var/db/fi/custody/transport     RW
-    /var/db/fi/custody/recorded      RW
-    /var/db/fi/custody/ready         RW
-    /usr/local/etc/fi                RO
-
-The ingest jail receives:
-
-    /var/db/fi/custody/generation    RO
-    /var/db/fi/custody/recorded      RO
-    /var/db/fi/custody/ready         RW
-    /usr/local/etc/fi                RO
-
-The System of Record jail receives:
-
-    /var/db/fi/sor/postgres          RW
-
-No production FI data dataset is mounted into `fi-dev`.
-
-## Mount mechanism
-
-Shared production data is presented through host-controlled nullfs mounts.
-
-Per-jail fstab files are maintained by the host and referenced by the jail
-configuration through `mount.fstab`.
-
-The application jail is not granted:
-
-    allow.mount
-    allow.mount.nullfs
-    allow.mount.zfs
-
-The host creates the mount before the jail starts.
-
-The host removes the mount when the jail is removed.
-
-## Mountpoint preparation
-
-Destination directories inside a jail root must exist before jail creation.
-
-Deployment tooling creates only the expected empty mountpoint directories.
-
-A destination that unexpectedly contains files or directories must cause
-preflight failure unless the contents are explicitly recognized as deployment
-state.
-
-This prevents an absent production mount from being silently masked by local
-jail-root data.
-
-## Configuration mount
-
-Receiver and ingest configuration are different host datasets even though both
-are presented inside their respective jails as:
-
-    /usr/local/etc/fi
-
-This prevents one jail from seeing the other jail's configuration material.
-
-Both configuration mounts are read-only in the application jail.
-
-## PostgreSQL data mount
-
-The System of Record PostgreSQL dataset is mounted only into `fi-sor-db`.
-
-The jail-visible path is:
-
-    /var/db/fi/sor/postgres
-
-This path is the explicit FI PostgreSQL `PGDATA` authority.
-
-The System-of-Record PostgreSQL policy layer validates the authoritative host
-source directory against the package-provided `postgres` UID and primary GID,
-requires mode `0700`, and selects the jail-visible path explicitly rather than
-relying on the package default data directory.
-
-The package default data directory is not implicitly authoritative.
-
-## Runtime state
-
-Each jail owns its local:
-
-    /var/run/fi
-
-This is created during service startup or deployment with explicit ownership
-and mode.
-
-It is not a host-shared production dataset.
-
-## Jail destruction and rebuild
-
-Removing a production jail must not remove or destroy:
-
-    generation custody
-    transport custody
-    recorded receipts
-    READY state
-    System of Record data
-    production FI configuration
-    backups
-
-Those are separately managed host datasets.
-
-A jail root can therefore be rebuilt from the accepted FreeBSD template while
-persistent FI state remains under host storage authority.
-
-## Verification requirements
-
-Deployment verification must prove:
-
-1. each production jail root is a distinct ZFS dataset;
-2. each root is beneath the configured jail-container dataset;
-3. no authoritative FI dataset is a child of a production jail-root dataset;
-4. required destination mountpoints exist before jail creation;
-5. destination mountpoints are empty before their host mount is attached;
-6. receiver receives the expected four RW data mounts and one RO config mount;
-7. ingest receives two RO data mounts, READY RW, and config RO;
-8. `fi-sor-db` alone receives the PostgreSQL data mount;
-9. no production FI dataset is mounted into `fi-dev`;
-10. removal of a jail leaves authoritative host datasets intact.
+Current `ifconfig`, PF rules and detailed VNET addresses were **not included in the process/mount inventory**. Do not invent them or use old `10.77.x`/`vtnet` addresses. See the [as-built](../../../docs/deployment/C220-FREEBSD-AS-BUILT-20261127.md).

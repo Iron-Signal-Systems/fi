@@ -1,4 +1,6 @@
-# FI Jail Configuration Templates
+# FI Jail Configuration Templates — legacy bootstrap checks
+
+> **NOT CURRENT C220 INSTALLATION INSTRUCTIONS.** The template and verification commands below apply to the old three-jail FreeBSD design. The actual C220 runs `fi-receiver` and `fi-sor` with PostgreSQL local to `fi-sor`. Do not run these host-mutating commands against C220. See [current architecture](../../../../docs/architecture/FI-C220-CURRENT-BACKEND.md).
 
 Files in this directory are source templates.
 
