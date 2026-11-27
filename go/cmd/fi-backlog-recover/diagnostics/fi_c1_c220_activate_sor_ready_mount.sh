@@ -70,6 +70,15 @@ fstab=/etc/jail.fstab.d/fi-c1-fi-sor.fstab
 jailconf=/etc/jail.conf.d/fi-sor.conf
 rc=/etc/rc.conf
 ready_line="$src $dst nullfs rw 0 0"
+cache_src=$host_root/custody/verified-cache
+cache_line="$cache_src $sor/var/db/fi/verified-cache nullfs ro 0 0"
+[ -d "$cache_src" ] && [ ! -L "$cache_src" ] ||
+    fail 'receiver-owned verified cache source missing'
+check_mount "$cache_src" "$receiver/var/db/fi/verified-cache" rw ||
+    fail 'receiver authenticated batch cache must be mounted RW'
+check_mount "$cache_src" "$sor/var/db/fi/verified-cache" ro ||
+    fail 'fi-sor authenticated batch cache must be mounted RO'
+
 
 [ -d "$sor" ] && [ -d "$receiver" ] &&
     [ -d "$src" ] && [ ! -L "$src" ] &&
@@ -112,12 +121,17 @@ expected_fstab=$(cat <<'EOF'
 /work/fi-c220-20261114/config/receiver/sources /fast/jails/roots/fi-sor/usr/local/etc/fi/sources nullfs ro 0 0
 EOF
 )
+# The authenticated batch-cache installation added one persisted
+# nullfs RO entry after the previous six-mount C220 baseline. Refuse
+# to undo, cover or reorder it during the READY scheduling cutover.
 current_fstab=$(cat "$fstab")
 case "$current_fstab" in
-    "$expected_fstab") persistence=absent ;;
     "$expected_fstab
+$cache_line") persistence=absent ;;
+    "$expected_fstab
+$cache_line
 $ready_line") persistence=present ;;
-    *) fail 'persistent fi-sor mount table differs from verified C220 six-mount baseline; review before apply' ;;
+    *) fail 'fi-sor fstab differs from known six mounts plus signed receiver-cache RO; review before apply' ;;
 esac
 # The existing fi-sor signed generation + receipt mounts MUST remain RO.
 for pair in "$gen $sor/var/db/fi/custody/generation" \
@@ -225,6 +239,7 @@ if [ "$boot" = needs_retirement ];then
         fail 'cannot publish retired fi-ingest boot list'
 fi
 [ "$(cat "$fstab")" = "$expected_fstab
+$cache_line
 $ready_line" ] ||
     fail 'persistent READY fstab postcheck failed'
 grep -Fx "$new_list" "$rc" >/dev/null ||
