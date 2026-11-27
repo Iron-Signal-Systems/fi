@@ -149,6 +149,7 @@ if [ "$mode" = --stage ];then
   fi
   if ! grep -Fx "$line" "$fstab" >/dev/null;then
     ! grep -F " $dst " "$fstab" >/dev/null || fail "foreign fstab entry"
+    cp -p "$fstab" "$fstab.fi-telemetry-before-$(date -u +%Y%m%dT%H%M%SZ)"
     printf '%s\n' "$line" >> "$fstab"
   fi
   echo "===== INSTALL DISABLED SERVICE ASSETS ====="
@@ -223,6 +224,22 @@ if [ "$mode" = --start-telemetry ];then
   exit 0
 fi
 if [ "$mode" = --start-ingest ];then
+  [ "$(sql "SELECT count(*) FROM fi.recorded_generation g
+    WHERE g.source_id='iss-fs-22a.iss.local'
+      AND g.generation_id='20261030T000032.061323100Z-3e38b2210771462c'
+      AND g.record_count=15140785
+      AND EXISTS (SELECT 1 FROM fi.ingest_journal j
+       WHERE j.source_id=g.source_id AND j.generation_id=g.generation_id
+        AND j.outcome='Accepted'
+        AND j.transfer_sha256=g.transfer_sha256
+        AND j.records_committed=g.record_count)")" = 1 ] ||
+       fail "previously accepted 15M generation not intact"
+  mount -p | awk '
+    $1=="/work/fi-c220-20261114/custody/ready" &&
+    $2=="/fast/jails/roots/fi-sor/var/db/fi/custody/ready" &&
+    $3=="nullfs" && $4 ~ /(^|,)rw(,|$)/ {found++}
+    END{exit !(found==1)}' ||
+       fail "original receiver READY mount is not writable ONLY at scheduling boundary"
   gate=$(mktemp /root/fi-c220-gate.XXXXXXXX)
   trap 'rm -f "$gate"' EXIT
   asset "go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_telemetry_acceptance.sh" > "$gate"
