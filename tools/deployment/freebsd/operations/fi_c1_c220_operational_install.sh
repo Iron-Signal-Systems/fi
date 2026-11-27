@@ -11,7 +11,7 @@ mode=$1; pin=$2
 case "$mode" in --audit|--stage|--start-telemetry|--start-ingest) ;; *) fail "invalid mode";; esac
 case "$pin" in *[!0123456789abcdef]*|'') fail "invalid SHA";; esac
 [ "${#pin}" -eq 40 ] || fail "full 40-character SHA required"
-repo=/home/jwood/fi-c1-two-process-2a449f1a
+repo=${FI_C220_REPO:-/home/jwood/fi-c1-two-process-2a449f1a}
 branch=dev-backend
 dev=/fast/jails/roots/fi-dev
 sor=/fast/jails/roots/fi-sor
@@ -391,7 +391,7 @@ if [ "$mode" = --start-ingest ];then
        fail "original receiver READY mount is not writable ONLY at scheduling boundary"
   gate=$(mktemp /root/fi-c220-gate.XXXXXXXX)
   trap 'rm -f "$gate"' EXIT
-  asset "go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_telemetry_acceptance.sh" > "$gate"
+  asset "tools/deployment/freebsd/operations/fi_c1_c220_telemetry_acceptance.sh" > "$gate"
   sh "$gate" --audit || fail "telemetry acceptance not complete; no C1 start"
   for svc in fi_c1_sor fi_c1_sor_local fi_ingest_worker;do
     jexec fi-sor service "$svc" onestatus >/dev/null 2>&1 &&
