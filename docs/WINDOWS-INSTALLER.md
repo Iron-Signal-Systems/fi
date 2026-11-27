@@ -6,11 +6,16 @@
 reconciler.
 
 This is the living operator and implementation contract for the native installer
-on `windows-installer-multirelease-20261005`. The implementation baseline
-reviewed for this update is `9410c48813ab1dc1c0a3f4dea5176d87971f85d8`
-(Go 1.27.2 and `x/text` vulnerability-remediation checkpoint). Signed lab
-packages accepted before that security update are distinct artifacts and must
-not be represented as rebuilt or retested under the new toolchain.
+on the active FI `main` source (reviewed 2026-11-27 at commit
+`0738bd7e26ed3ab3603170f8800e79f7f7d9d669`). The checked-in `go/go.mod`
+requires Go 1.27.4. Earlier development on branch
+`windows-installer-multirelease-20261005` and at revision
+`9410c48813ab1dc1c0a3f4dea5176d87971f85d8` is historical source context,
+not the current source baseline. Dated signed lab packages, including those
+accepted before the Go 1.27.2 dependency update, are distinct binaries and must
+not be represented as rebuilt, re-signed or retested using Go 1.27.4. Current
+source/CI success does not constitute current signed-package or all-build
+installer acceptance.
 
 FI remains pre-alpha. This document records the behavior implemented and
 validated by the current source. It is not a general production-readiness or
