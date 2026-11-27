@@ -41,6 +41,7 @@ type c1SoRNativeB struct {
     done chan struct{}
     err error // only written before closing done
     proofDigest string // immutable B signed SQL commitment; read only after done
+    plan c1NativeBPlan // original B signed/SQL verification plan retained for publisher lock proof
 }
 // Schema is selected only by fi-sor's own frozen construction path.
 func c1NativeBSchema(p c1NativeBPlan)(string,error){
@@ -155,7 +156,7 @@ func c1StartNativeBWithLauncher(ctx context.Context,dsn string,p c1NativeBPlan,
     stdout,err:=cmd.StdoutPipe()
     if err!=nil{cancel();_ =stdin.Close();return nil,err}
     if err=cmd.Start();err!=nil{cancel();_ =stdin.Close();return nil,err}
-    v:=&c1SoRNativeB{cancel:cancel,done:make(chan struct{})}
+    v:=&c1SoRNativeB{cancel:cancel,done:make(chan struct{}),plan:p}
     fmt.Printf("FI C1 NATIVE B OS PROCESS START pid=%d group_count=%d read_only=true\n",
         cmd.Process.Pid,len(p.Descriptors)-1)
     sent:=make(chan error,1)

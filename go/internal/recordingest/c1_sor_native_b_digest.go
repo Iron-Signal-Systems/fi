@@ -86,6 +86,21 @@ func c1NativeBCommitRow(h hash.Hash,batchID,ordinal int64,
 func c1NativeBLockedSQLRowCommitment(ctx context.Context,conn *pgx.Conn,
     p c1NativeBPlan)(string,error){
     if ctx==nil||conn==nil{return "",errors.New("C1 B: locked SQL commitment requires connection")}
+    return c1NativeBLockedSQLRowCommitmentQuery(ctx,conn,p)
+}
+// The direct-canonical publisher calls this inside the same transaction
+// that owns canonical SHARE table locks, never on an unlocked connection.
+func c1NativeBLockedSQLRowCommitmentTx(ctx context.Context,tx pgx.Tx,
+    p c1NativeBPlan)(string,error){
+    if ctx==nil||tx==nil{return "",errors.New("C1 B: locked SQL commitment requires transaction")}
+    return c1NativeBLockedSQLRowCommitmentQuery(ctx,tx,p)
+}
+type c1NativeBRowQuerier interface{
+    Query(context.Context,string,...any)(pgx.Rows,error)
+}
+func c1NativeBLockedSQLRowCommitmentQuery(ctx context.Context,conn c1NativeBRowQuerier,
+    p c1NativeBPlan)(string,error){
+    if ctx==nil||conn==nil{return "",errors.New("C1 B: locked SQL commitment query unavailable")}
     schema,err:=c1NativeBSchema(p)
     if err!=nil{return "",err}
     h,err:=c1NativeBNewRowCommitment(p)

@@ -204,10 +204,14 @@ func c1TestDirectCanonicalSignedPostgres18(t *testing.T,ctx context.Context,
         GenerationID:signed.GenerationID,ReceiptSHA256:original.ReceiptSHA256,
     }
     if err=drain.Validate();err!=nil{t.Fatal(err)}
-    if err=c1DirectWriteAccepted(ctx,publisherDSN,drain,1,1,proof);err!=nil{
-        t.Fatalf("C1 direct: B-gated journal-only Accepted: %v",err)
+    if err=c1DirectWriteAccepted(ctx,publisherDSN,drain,1,1,
+        strings.Repeat("0",64),plan);err==nil{
+        t.Fatal("C1 direct: fabricated B digest accepted without locked signed row proof")
     }
-    if err=c1DirectWriteAccepted(ctx,publisherDSN,drain,1,1,proof);err==nil{
+    if err=c1DirectWriteAccepted(ctx,publisherDSN,drain,1,1,proof,plan);err!=nil{
+        t.Fatalf("C1 direct: B-gated locked canonical journal-only Accepted: %v",err)
+    }
+    if err=c1DirectWriteAccepted(ctx,publisherDSN,drain,1,1,proof,plan);err==nil{
         t.Fatal("C1 direct: duplicate Accepted journal was written")
     }
     state,err:=c1ReadCanonicalAcceptanceAfterB(ctx,workerDSN,

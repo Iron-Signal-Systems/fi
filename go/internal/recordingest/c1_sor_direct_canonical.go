@@ -210,9 +210,10 @@ func(s *C1SoRService)finalProofDirectCanonical(ctx context.Context,
     }
     s.publishing=true
     expected,batches,publisher,worker:=s.session.expectedRecords,len(s.session.sourceBatches),s.PublisherDSN,s.DSN
+    plan:=s.verifier.plan
     s.mu.Unlock()
 
-    err=c1DirectWriteAccepted(ctx,publisher,f,expected,batches,proof)
+    err=c1DirectWriteAccepted(ctx,publisher,f,expected,batches,proof,plan)
     var status c1handoff.FinalStatus
     if err==nil {status,err=c1PostPublicationReadback(ctx,worker,f.SourceID,f.GenerationID,f.ReceiptSHA256)}
     s.mu.Lock()
@@ -232,11 +233,19 @@ func(s *C1SoRService)finalProofDirectCanonical(ctx context.Context,
 // were already populated by C1's original SQL workers and proved by B.
 // Hold canonical SHARE locks to prevent in-flight writes while finalizing.
 func c1DirectWriteAccepted(ctx context.Context,dsn string,
-    f c1handoff.Frame,expected int64,batches int,independentB string)error{
+    f c1handoff.Frame,expected int64,batches int,independentB string,
+    plan c1NativeBPlan)error{
     if ctx==nil||f.Kind!=c1handoff.Drain||expected<=0||batches<=0||
-        !canonicalDigest(independentB)||!canonicalDigest(f.ReceiptSHA256){
-        return errors.New("C1 direct: signed B commitment, generation and positive counts required")
+        !canonicalDigest(independentB)||!canonicalDigest(f.ReceiptSHA256)||
+        plan.SQLSchema!="fi"||plan.Start.Kind!=c1handoff.Start||
+        plan.Start.SourceID!=f.SourceID||
+        plan.Start.GenerationID!=f.GenerationID||
+        plan.Start.ReceiptSHA256!=f.ReceiptSHA256||
+        plan.Start.ExpectedRecords!=expected||len(plan.Batches)!=batches||
+        len(plan.SQLIDs)!=batches {
+        return errors.New("C1 direct: exact independent B plan, receipt, SQL counts and commitment required")
     }
+    if err:=c1ValidateNativeBPlan(plan);err!=nil{return err}
     conn,err:=openC1SoRLocalPublisherSQL(ctx,dsn)
     if err!=nil{return err}
     defer conn.Close(context.Background())
@@ -280,6 +289,15 @@ func c1DirectWriteAccepted(ctx context.Context,dsn string,
         f.SourceID,f.GenerationID).Scan(&accepted)
     if err!=nil{return err}
     if accepted!=0{return errors.New("C1 direct: duplicate canonical Accepted journal rejected")}
+    // Recompute ORIGINAL B's signed source-row commitment from the same
+    // canonical SQL transaction holding SHARE locks. A valid-looking hex
+    // digest is never sufficient to publish Accepted, and mutations after B
+    // are impossible while these locks are held.
+    lockedProof,err:=c1NativeBLockedSQLRowCommitmentTx(ctx,tx,plan)
+    if err!=nil{return fmt.Errorf("C1 direct: locked canonical identity proof: %w",err)}
+    if lockedProof!=independentB{
+        return errors.New("C1 direct: independently verified original B rows disagree with locked canonical source rows")
+    }
 
     var attempt [16]byte
     if _,err=rand.Read(attempt[:]);err!=nil{return err}
