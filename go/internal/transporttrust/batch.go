@@ -61,21 +61,6 @@ func VerifyBatchSigningCertificate(
 		return "", errors.New("batch-signing certificate must not be a CA")
 	}
 
-	if len(leaf.Subject.OrganizationalUnit) != 1 {
-		return "", fmt.Errorf(
-			"batch-signing certificate must contain exactly one organizational unit, got %d",
-			len(leaf.Subject.OrganizationalUnit),
-		)
-	}
-
-	if leaf.Subject.OrganizationalUnit[0] != BatchSigningOrganizationalUnit {
-		return AuthorizationIdentityMismatch, fmt.Errorf(
-			"batch-signing certificate organizational unit must be %q, got %q",
-			BatchSigningOrganizationalUnit,
-			leaf.Subject.OrganizationalUnit[0],
-		)
-	}
-
 	if err := leaf.CheckSignatureFrom(issuer); err != nil {
 		return "", fmt.Errorf(
 			"batch-signing certificate is not signed by expected FI batch-signing issuer: %w",

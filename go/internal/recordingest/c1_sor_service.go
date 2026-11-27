@@ -1,0 +1,349 @@
+//go:build fi_c1_sor_dev
+
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+//
+// Fi-sor validates the original signed generation against governed pending
+// metadata, then runs the real C1 SourceParent/five-family SQL engine over
+// its LOCAL PostgreSQL socket. Canonical fi tables are never written by
+// these independently committed pending SQL/COPY lanes.
+package recordingest
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "sync"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/c1handoff"
+    "github.com/jackc/pgx/v5"
+)
+
+type C1SoRService struct {
+    DirectCanonical bool // one-write canonical destination; both routine READY and backlog use this same service
+    DSN string
+    PublisherDSN string // fi-sor-only privileged canonical publisher; never the SQL worker
+    MaxSQLWorkers int
+    SharedRAMDir string // fi-sor read-only nullfs mount path
+    // DEVELOPMENT ONLY: explicit opt-in to replay dirty private SQL state
+    // from original signed custody. Never set for live SoR until accepted.
+    NativeBCustody c1NativeBCustodyConfig
+    AllowC1Replay bool
+    replayMode bool
+    replayRead *pgx.Conn
+    pendingSession *pgx.Conn // holds one active-generation advisory lock
+    mu sync.Mutex
+    session *c1SoRCommitHandler
+    pool *privateC1FiveSQL
+    commitReady *privateC1CommitReady
+    verifier *c1SoRNativeB
+    independentlyVerified bool
+    publishing bool // serialize FinalProof publication in this SoR session
+    // Unexported test seam; production always uses the local PostgreSQL
+    // read-only canonical/journal snapshot, never a client status flag.
+    canonicalReadback func(context.Context,string,string,string,string)(c1handoff.FinalStatus,error)
+    failed error
+}
+
+// Must run exclusively inside fi-sor, after the TLS server has authenticated
+// the distinct fi-ingest client certificate. Only one active generation is
+// permitted, since its C1 source and family buffers are transaction-bound.
+func NewC1SoRService(dsn string,maxSQLWorkers int)(*C1SoRService,error){
+    if maxSQLWorkers<1||maxSQLWorkers>32{return nil,errors.New("C1 fi-sor: SQL worker maximum must be 1..32")}
+    if _,err:=c1SoRLocalConnectionConfig(dsn);err!=nil{return nil,err}
+    return &C1SoRService{DSN:dsn,MaxSQLWorkers:maxSQLWorkers},nil
+}
+
+func(s *C1SoRService) Bootstrap(ctx context.Context,frame c1handoff.Frame)([]int64,error){
+    if s==nil||ctx==nil||frame.Kind!=c1handoff.Start{
+        return nil,errors.New("C1 fi-sor: unexpected or missing signed Start")
+    }
+    if err:=frame.Validate();err!=nil{return nil,err}
+    if s.DirectCanonical{return s.bootstrapDirectCanonical(ctx,frame)}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.pool!=nil||s.session!=nil||s.failed!=nil {
+        return nil,errors.New("C1 fi-sor: generation already started or prior attempt failed; no automatic replay")
+    }
+    // The active two-jail worker must use governed pending relational rows,
+    // never the deleted fi_recovery_projection development stage.
+    if err:=c1PreflightLocalGovernedPendingSQL(ctx,s.DSN);err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: governed pending SQL preflight: %w",err)
+    }
+    if err:=s.acquirePendingSessionLock(ctx);err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: singleton pending ownership: %w",err)
+    }
+    if frame.StartBatchIndex!=0{
+        err:=errors.New("C1 fi-sor: replay must restart from full original signed generation")
+        s.failed=err
+        return nil,err
+    }
+    // An earlier canonical Accepted may have committed immediately before
+    // a lost Drain ACK or power failure. Retire ONLY after rechecking
+    // ORIGINAL custody and the actual canonical Accepted journal; otherwise
+    // retain every pending row for signed replay.
+    if err:=s.c1RetirePreviouslyAcceptedPending(ctx);err!=nil{
+        s.failed=err
+        return nil,err
+    }
+    // Reopen signed custody and inspect the exact existing pending SQL
+    // generation before any replay. A zero-byte READY marker alone has no
+    // authority to skip previously committed SourceParent or typed roots.
+    replay,err:=s.c1InspectGovernedPendingReplay(ctx,frame)
+    if err!=nil{s.failed=err;return nil,err}
+    if !replay{
+        if err=StageC1SignedPendingMetadata(ctx,s.DSN,frame,s.NativeBCustody);err!=nil{
+            s.failed=err
+            return nil,fmt.Errorf("C1 fi-sor: original signed Pending bootstrap: %w",err)
+        }
+    }
+    ids,err:=s.validateSignedPendingStage(ctx,frame,replay)
+    if err!=nil{
+        s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: signed Pending readback blocked: %w",err)
+    }
+    s.replayMode=replay
+    counts,err:=s.loadSignedBatchRecordCounts(ctx,ids)
+    if err!=nil{s.failed=err;return nil,err}
+    pool,err:=newC1SoRSQLPool(ctx,s.DSN,frame.SourceID,frame.GenerationID,s.MaxSQLWorkers)
+    if err!=nil{s.failed=err;return nil,err}
+    handler,err:=newC1SoRCommitHandler(pool,frame.SourceID,frame.GenerationID,
+        frame.ReceiptSHA256,ids,counts,frame.ExpectedRecords)
+    if err!=nil{
+        pool.Close();s.failed=err
+        return nil,err
+    }
+    if s.SharedRAMDir!=""{
+        reader,e:=c1handoff.NewRAMStore(s.SharedRAMDir)
+        if e!=nil{pool.Close();s.failed=e;return nil,e}
+        handler.sharedRAM=reader
+    }
+    tracker,verifier,err:=startC1SoRParallelB(ctx,s.DSN,frame,ids,pool,
+        s.NativeBCustody)
+    if err!=nil{
+        pool.Close();s.failed=err
+        return nil,fmt.Errorf("C1 fi-sor: independent parallel verifier startup: %w",err)
+    }
+    if s.replayMode{
+        read,_,e:=openC1SoRLocalSQL(ctx,s.DSN,"")
+        if e!=nil{
+            verifier.Stop();pool.Close();s.failed=e
+            return nil,fmt.Errorf("C1 fi-sor: replay read-only SQL session: %w",e)
+        }
+        if _,e=read.Exec(ctx,"SET default_transaction_read_only = on");e!=nil{
+            _=read.Close(context.Background())
+            verifier.Stop();pool.Close();s.failed=e
+            return nil,fmt.Errorf("C1 fi-sor: replay read-only database session: %w",e)
+        }
+        s.replayRead=read
+    }
+    handler.minBatchIndex=frame.StartBatchIndex
+    s.pool=pool
+    s.session=handler
+    s.commitReady=tracker
+    s.verifier=verifier
+    return append([]int64(nil),ids...),nil
+}
+
+// loadSignedBatchRecordCounts uses the fi-sor LOCAL read-only database
+// to bind each network row ordinal to the immutable original signed
+// source_batch manifest. No client-supplied count can enlarge a batch.
+func(s *C1SoRService)loadSignedBatchRecordCounts(ctx context.Context,ids []int64)([]int64,error){
+    if ctx==nil||len(ids)==0{return nil,errors.New("C1 fi-sor: signed source batch IDs required")}
+    conn,_,err:=openC1SoRLocalSQL(ctx,s.DSN,"")
+    if err!=nil{return nil,err}
+    defer conn.Close(context.Background())
+    tx,err:=conn.BeginTx(ctx,pgx.TxOptions{AccessMode:pgx.ReadOnly})
+    if err!=nil{return nil,err}
+    defer tx.Rollback(context.Background())
+    records:=make([]int64,len(ids))
+    index:=make(map[int64]int,len(ids))
+    for i,id:=range ids{
+        if id<=0{return nil,errors.New("C1 fi-sor: nonpositive signed SQL batch identity")}
+        if _,exists:=index[id];exists{return nil,errors.New("C1 fi-sor: duplicate signed SQL batch identity")}
+        index[id]=i
+    }
+    schema:=c1GovernedPendingSchema
+    if s.DirectCanonical{schema="fi"}
+    rows,err:=tx.Query(ctx,"SELECT source_batch_id,record_count FROM "+pgx.Identifier{schema,"source_batch"}.Sanitize()+
+        " WHERE source_batch_id=ANY($1::bigint[])",ids)
+    if err!=nil{return nil,err}
+    found:=0
+    for rows.Next(){
+        var id,count int64
+        if err=rows.Scan(&id,&count);err!=nil{break}
+        i,ok:=index[id]
+        if !ok||count<=0||records[i]!=0{
+            err=errors.New("C1 fi-sor: invalid original signed per-batch record count")
+            break
+        }
+        records[i]=count
+        found++
+    }
+    if err==nil{err=rows.Err()}
+    rows.Close()
+    if err!=nil{return nil,err}
+    if found!=len(ids){return nil,errors.New("C1 fi-sor: missing source_batch rows for original signed identity")}
+    if err=tx.Commit(ctx);err!=nil{return nil,err}
+    return records,nil
+}
+
+// Dispatch accepts signed C1 SQL work in original transport order and
+// returns the exact future for THIS PostgreSQL transaction. A's reader
+// must not wait for unrelated family commits; B observes committed groups.
+func(s *C1SoRService)Dispatch(ctx context.Context,f c1handoff.Frame)(<-chan error,error){
+    if s==nil||ctx==nil{return nil,errors.New("C1 fi-sor: unavailable SQL dispatcher")}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.failed!=nil{return nil,s.failed}
+    if s.session==nil||s.pool==nil||s.commitReady==nil{
+        return nil,errors.New("C1 fi-sor: START preflight not complete")
+    }
+    var future <-chan error
+    var err error
+    if s.replayMode{
+        if s.replayRead==nil{return nil,errors.New("C1 fi-sor: replay state missing read-only session")}
+        future,err=s.session.EnqueueReplay(ctx,f,s.replayRead)
+    }else{
+        future,err=s.session.Enqueue(ctx,f)
+    }
+    if err!=nil{s.failed=err;return nil,err}
+    return future,nil
+}
+func(s *C1SoRService) Commit(ctx context.Context,f c1handoff.Frame)error{
+    if s==nil{return errors.New("C1 fi-sor: no service")}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.failed!=nil{return s.failed}
+    if s.session==nil||s.commitReady==nil||s.verifier==nil{
+        return errors.New("C1 fi-sor: signed Start and independent B not accepted")
+    }
+    if err:=f.Validate();err!=nil{return err}
+    if f.SourceID!=s.session.sourceID||f.GenerationID!=s.session.generationID||
+        f.ReceiptSHA256!=s.session.receipt {
+        return errors.New("C1 fi-sor: signed generation changed after B initialization")
+    }
+    if f.Kind==c1handoff.Seal{
+        // Signed reader seal never invokes an SQL family flush.
+        if err:=s.commitReady.Seal(int(f.SealedGroup));err!=nil{
+            s.failed=err
+            return err
+        }
+        return nil
+    }
+    if err:=s.session.Commit(ctx,f);err!=nil{
+        s.failed=err
+        return err
+    }
+    if f.Kind==c1handoff.Drain{
+        // A's final SQL drain is complete. B has been verifying committed
+        // groups in parallel; only final publication waits for its proof.
+        if err:=s.commitReady.FinishCommitted();err!=nil{
+            s.failed=err;return err
+        }
+        if err:=s.verifier.Finish(ctx);err!=nil{
+            s.failed=err;return fmt.Errorf("C1 fi-sor: independent B proof: %w",err)
+        }
+        s.independentlyVerified=true
+    }
+    return nil
+}
+// FinalProof is bound to the authenticated Drain ACK and invoked ONLY
+// after all SQL COMMIT futures and independent B's original signed-custody
+// verification have succeeded. Canonical Accepted still requires one
+// atomic publication transaction and an independent read-only readback.
+func(s *C1SoRService)FinalProof(ctx context.Context,f c1handoff.Frame)(
+    c1handoff.FinalStatus,error,
+){
+    if s==nil||ctx==nil||f.Kind!=c1handoff.Drain{
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: final proof requires signed Drain")
+    }
+    if s.DirectCanonical{return s.finalProofDirectCanonical(ctx,f)}
+    s.mu.Lock()
+    if s.failed!=nil{
+        err:=s.failed
+        s.mu.Unlock()
+        return c1handoff.FinalNone,err
+    }
+    if !s.independentlyVerified||s.session==nil||!s.session.drained||
+        s.pool==nil||s.verifier==nil||
+        f.SourceID!=s.session.sourceID||
+        f.GenerationID!=s.session.generationID||
+        f.ReceiptSHA256!=s.session.receipt{
+        s.mu.Unlock()
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: SQL or independent B proof not complete")
+    }
+    if s.publishing {
+        s.mu.Unlock()
+        return c1handoff.FinalNone,errors.New("C1 fi-sor: canonical publication already in progress")
+    }
+    dsn,publisherDSN,readback,custody:=s.DSN,s.PublisherDSN,s.canonicalReadback,s.NativeBCustody
+    // The controlled test seam cannot publish, and preserves original
+    // unit tests; production has no callback and always uses real SQL.
+    if readback!=nil {
+        s.mu.Unlock()
+        status,err:=readback(ctx,dsn,f.SourceID,f.GenerationID,f.ReceiptSHA256)
+        if err!=nil{return c1handoff.FinalNone,err}
+        if status!=c1handoff.FinalVerified&&status!=c1handoff.FinalAccepted{
+            return c1handoff.FinalNone,errors.New("C1 fi-sor: invalid test readback state")
+        }
+        return status,nil
+    }
+    if err:=s.pendingLockHealthy(ctx);err!=nil{
+        s.failed=err
+        s.mu.Unlock()
+        return c1handoff.FinalNone,err
+    }
+    signedSQLCommitment,proofErr:=s.verifier.Commitment()
+    if proofErr!=nil{
+        s.failed=proofErr
+        s.mu.Unlock()
+        return c1handoff.FinalNone,fmt.Errorf("C1 fi-sor: no independent signed B row evidence: %w",proofErr)
+    }
+    s.publishing=true
+    s.mu.Unlock()
+    // B's original signed rows were individually compared to committed
+    // SQL during ingestion. Rehash the narrow SQL source identity columns
+    // under publisher-held Pending SHARE locks to reject any post-B
+    // mutation; do not reopen the 15M-row signed custody transfer here.
+    // Atomic remap, Accepted journal and fresh canonical readback remain.
+    _,err:=PublishC1VerifiedPendingGenerationWithCommitment(ctx,dsn,publisherDSN,custody,
+        f.SourceID,f.GenerationID,f.ReceiptSHA256,signedSQLCommitment)
+    var status c1handoff.FinalStatus
+    if err==nil {
+        status,err=c1PostPublicationReadback(ctx,dsn,
+            f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    }
+    if err==nil&&status==c1handoff.FinalAccepted{
+        // Pending retirement cannot elevate a SQL stage into acceptance.
+        // After canonical acceptance is independently proven, retire all
+        // pending rows atomically; if retirement is uncertain, retain READY
+        // and reconcile the already-Accepted generation on next Bootstrap.
+        err=C1RetireAcceptedPending(ctx,publisherDSN,
+            f.SourceID,f.GenerationID,f.ReceiptSHA256)
+    }
+    s.mu.Lock()
+    s.publishing=false
+    if err!=nil{s.failed=err}
+    s.mu.Unlock()
+    if err!=nil{return c1handoff.FinalNone,fmt.Errorf("C1 fi-sor: canonical publication/Accepted readback: %w",err)}
+    return status,nil
+}
+func(s *C1SoRService)Close(){
+    if s==nil{return}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.verifier!=nil{s.verifier.Stop();s.verifier=nil}
+    if s.pool!=nil{s.pool.Close();s.pool=nil}
+    if s.replayRead!=nil{
+        _=s.replayRead.Close(context.Background())
+        s.replayRead=nil
+    }
+    if s.pendingSession!=nil{
+        _=s.pendingSession.Close(context.Background())
+        s.pendingSession=nil
+    }
+}

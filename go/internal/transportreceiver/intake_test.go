@@ -580,12 +580,17 @@ func newIntakeTestFixture(t *testing.T) intakeTestFixture {
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(300),
 		Subject: pkix.Name{
-			CommonName:         sourceID,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: sourceID,
 		},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(24 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: []pkix.Extension{
+			receiverTestCertificateTemplateExtension(
+				t,
+				receiverTestBatchSigningTemplateOID,
+			),
+		},
 	}
 	leaf := createIntakeTestCertificate(
 		t,

@@ -8,7 +8,6 @@ package usnbroker
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"runtime"
@@ -17,7 +16,6 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/Iron-Signal-Systems/fi/go/internal/windows/auditpolicy"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/usnraw"
 	"golang.org/x/sys/windows"
 )
@@ -123,18 +121,7 @@ func Serve(ctx context.Context, governedRoots []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve FICollector service SID: %w", err)
 	}
-	helperSID, _, _, err := windows.LookupSID(
-		"",
-		`NT SERVICE\`+HelperServiceName,
-	)
-	if err != nil {
-		return fmt.Errorf("resolve FIUSNReader service SID: %w", err)
-	}
-
-	securityAttributes, err := pipeSecurityAttributes(
-		collectorSID,
-		helperSID,
-	)
+	securityAttributes, err := pipeSecurityAttributes(collectorSID)
 	if err != nil {
 		return err
 	}
@@ -310,22 +297,6 @@ func handleConnection(
 	}
 
 	switch value.Operation {
-	case operationAuditPolicy:
-		// The Collector service SID is already authenticated above. The request
-		// contains no parameters; only four fixed policy flags can be returned.
-		observations, err := auditpolicy.QueryRequired()
-		if err != nil {
-			return writeFailure(stream, err)
-		}
-		if len(observations) != 4 {
-			return writeFailure(stream, errors.New("FI audit-policy contract must contain four subcategories"))
-		}
-		data := make([]byte, 4*len(observations))
-		for i, observation := range observations {
-			binary.LittleEndian.PutUint32(data[i*4:(i+1)*4], observation.Flags)
-		}
-		return writeResponse(stream, response{Data: data})
-
 	case operationQuery:
 		allowed, err := authority.allowsVolume(value.GovernedRoot)
 		if err != nil {
@@ -409,25 +380,15 @@ func normalizedGovernedRoot(value string) string {
 	return value
 }
 
-func pipeSecurityAttributes(
-	collectorSID *windows.SID,
-	helperSID *windows.SID,
-) (*windows.SecurityAttributes, error) {
+func pipeSecurityAttributes(collectorSID *windows.SID) (*windows.SecurityAttributes, error) {
 	if collectorSID == nil || !collectorSID.IsValid() {
 		return nil, errors.New("valid FICollector service SID is required")
 	}
-	if helperSID == nil || !helperSID.IsValid() {
-		return nil, errors.New("valid FIUSNReader service SID is required")
-	}
 
-	// FICollector remains the only authorized broker client. FIUSNReader gets
-	// pipe-connect access only so its SCM Stop/Shutdown path can wake a blocked
-	// ConnectNamedPipe after cancellation.
 	sddl := "D:P" +
 		"(A;;GA;;;SY)" +
 		"(A;;GA;;;BA)" +
-		"(A;;GRGW;;;" + collectorSID.String() + ")" +
-		"(A;;GRGW;;;" + helperSID.String() + ")"
+		"(A;;GRGW;;;" + collectorSID.String() + ")"
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		return nil, fmt.Errorf("build FI USN pipe security descriptor: %w", err)

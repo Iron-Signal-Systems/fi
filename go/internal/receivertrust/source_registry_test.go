@@ -198,6 +198,13 @@ func sourceRegistryCertificateSHA256(
 	return hex.EncodeToString(sum[:])
 }
 
+func sourceRegistryTextSHA256(
+	value string,
+) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
 func writeSourceRegistryConfig(
 	t *testing.T,
 	registry string,
@@ -209,25 +216,29 @@ func writeSourceRegistryConfig(
 	t.Helper()
 
 	value := fmt.Sprintf(
-		`version_id: 1.0
+		`version_id: 2.0
 source_id: %s
 enabled: %t
 transport_common_name: %s
-transport_organizational_unit: FI Shipper Transport
+transport_template_oid: 1.3.6.1.4.1.311.21.8.100.1
 transport_certificate_sha256: %s
 transport_issuing_ca_sha256: %s
 batch_signing_common_name: %s
-batch_signing_organizational_unit: FI Batch Signing
+batch_signing_template_oid: 1.3.6.1.4.1.311.21.8.100.2
 batch_signing_certificate_sha256: %s
 batch_signing_issuing_ca_sha256: %s
 `,
 		sourceID,
 		enabled,
 		sourceID,
-		strings.Repeat("1", 64),
+		sourceRegistryTextSHA256(
+			"transport:"+strings.ToLower(sourceID),
+		),
 		sourceRegistryCertificateSHA256(t, transportIssuer),
 		sourceID,
-		strings.Repeat("2", 64),
+		sourceRegistryTextSHA256(
+			"batch:"+strings.ToLower(sourceID),
+		),
 		sourceRegistryCertificateSHA256(t, batchIssuer),
 	)
 

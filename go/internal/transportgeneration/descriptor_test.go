@@ -351,6 +351,12 @@ func testGenerationSigningCertificate(
 				),
 
 			KeyUsage: x509.KeyUsageDigitalSignature,
+			ExtraExtensions: []pkix.Extension{
+				generationTestCertificateTemplateExtension(
+					t,
+					generationTestBatchSigningTemplateOID,
+				),
+			},
 
 			BasicConstraintsValid: true,
 		}

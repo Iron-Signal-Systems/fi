@@ -1,0 +1,10 @@
+# /etc/rc.conf.d/fi_telemetry_sample (host or fi-sor)
+fi_telemetry_sample_enable="NO"
+fi_telemetry_sample_source="c220-host"
+fi_telemetry_sample_user="fi-telemetry"
+fi_telemetry_sample_spool="/var/db/fi/telemetry/spool"
+fi_telemetry_sample_revision="REPLACE_WITH_40_CHARACTER_DEPLOYED_COMMIT"
+fi_telemetry_sample_gap_since=""
+# In fi-sor only: monitoring DSN must have read-only pg_read_all_stats,
+# peer authentication via Unix socket. NEVER source canonical insert roles.
+# fi_telemetry_sample_monitor_dsn="host=/var/db/fi/sor/run dbname=fi user=fi-telemetry-monitor"

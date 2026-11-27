@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
@@ -41,7 +40,6 @@ type serviceRuntimeRecord struct {
 	SecurityInterval           string `json:"security_interval,omitempty"`
 	SupportingRefreshInterval  string `json:"supporting_refresh_interval,omitempty"`
 	Outcome                    string `json:"outcome,omitempty"`
-	SecurityCoverageStatus     string `json:"security_coverage_status,omitempty"`
 	ConfiguredRoots            int    `json:"configured_roots,omitempty"`
 	CompletedRoots             int    `json:"completed_roots,omitempty"`
 	PartialRoots               int    `json:"partial_roots,omitempty"`
@@ -142,22 +140,11 @@ func (service *fiWindowsService) Execute(
 	const workerCount = 3
 	done := make(chan error, workerCount)
 
-	// Publish ServiceStarted before the Security worker can report Ready.
-	// The root worker owns that record; this barrier closes only after its
-	// append is durable, preventing a false startup ordering failure.
-	serviceStarted := make(chan struct{})
-	var serviceStartedOnce sync.Once
 	appendRecord := func(record serviceRuntimeRecord) error {
-		if err := appendServiceRuntimeRecordAt(
+		return appendServiceRuntimeRecordAt(
 			service.operationalSnapshot.StateDir,
 			record,
-		); err != nil {
-			return err
-		}
-		if record.RecordKind == "ServiceStarted" {
-			serviceStartedOnce.Do(func() { close(serviceStarted) })
-		}
-		return nil
+		)
 	}
 
 	go func() {
@@ -192,12 +179,6 @@ func (service *fiWindowsService) Execute(
 	}()
 
 	go func() {
-		select {
-		case <-serviceStarted:
-		case <-ctx.Done():
-			done <- nil
-			return
-		}
 		done <- runServiceWindowsSecurityLoop(
 			ctx,
 			service.securityInterval,

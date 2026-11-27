@@ -35,11 +35,8 @@ generic friendly status when the underlying information is available.
 Where applicable to the operation, administrative and diagnostic interfaces may
 and should expose technical information such as:
 
-- `FICollector`, `FIUSNReader`, `FIObjReader`, and `FISender` service identity;
+- `FICollector` and `FIUSNReader` service identity;
 - Windows service SID and gMSA identity;
-- SCM service/process ownership, including the `FISender` service PID;
-- legacy scheduled-task sender enabled/disabled state where applicable;
-- reviewed runtime binary SHA-256 values;
 - relevant enabled or unavailable privileges;
 - governed root and associated volume;
 - volume identity and filesystem information;

@@ -1,0 +1,288 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+
+package recordingest
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"math/big"
+	"time"
+
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const (
+	securityBulkMaxRecords = 1024
+	securityBulkMaxBytes   = 8 << 20
+)
+
+type securityBulkTimingCounters struct {
+	Batches               int64
+	Events                int64
+	Scopes                int64
+	Fields                int64
+	SourceBytes           int64
+	MaxContiguousSecurity int
+
+	Prepare      time.Duration
+	SourceCopy   time.Duration
+	IDLookup     time.Duration
+	EventCopy    time.Duration
+	ChildPrepare time.Duration
+	ScopeCopy    time.Duration
+	FieldCopy    time.Duration
+
+	// Per-COPY distributions supplement (not replace) existing aggregate timers.
+	SourceLatency copyCallLatency
+	EventLatency  copyCallLatency
+	ScopeLatency  copyCallLatency
+	FieldLatency  copyCallLatency
+}
+
+type securityBulkRecord struct {
+	sourceBatchID  int64 // original signed batch, not a processing-chunk identifier
+	ordinal        int64
+	prepared       SourceRecord
+	digest         []byte
+	value          records.WindowsSecurityEventObservation
+	observedAt     time.Time
+	timeCreated    time.Time
+	eventID        int64
+	eventRecordID  pgtype.Numeric
+	sourceRecordID int64
+}
+
+func prepareSecurityBulkRecord(ordinal int64, prepared SourceRecord, digest []byte) (securityBulkRecord, error) {
+	if prepared.Record.RecordKind != "WindowsSecurityEvent" {
+		return securityBulkRecord{}, errors.New("FI Security bulk record kind mismatch")
+	}
+	var value records.WindowsSecurityEventObservation
+	if err := decodeStrictPayload(prepared.Record.Payload, &value); err != nil {
+		return securityBulkRecord{}, projectionDecodeError(prepared.Record.RecordKind, err)
+	}
+	if err := records.ValidateWindowsSecurityEventObservation(value); err != nil {
+		return securityBulkRecord{}, projectionValidationError(prepared.Record.RecordKind, err)
+	}
+	observedAt, err := parseRFC3339(value.ObservedAt, "windows_security_event.observed_at")
+	if err != nil {
+		return securityBulkRecord{}, err
+	}
+	timeCreated, err := parseRFC3339(value.TimeCreated, "windows_security_event.time_created")
+	if err != nil {
+		return securityBulkRecord{}, err
+	}
+	parsedEventID, err := parseUint(value.EventID, 63, "windows_security_event.event_id")
+	if err != nil {
+		return securityBulkRecord{}, err
+	}
+	eventRecordID, ok := new(big.Int).SetString(value.EventRecordID, 10)
+	if !ok || eventRecordID.Sign() < 0 {
+		return securityBulkRecord{}, errors.New("FI Windows Security event record ID is not an unsigned decimal")
+	}
+	return securityBulkRecord{
+		ordinal: ordinal, prepared: prepared, digest: digest, value: value,
+		observedAt: observedAt, timeCreated: timeCreated, eventID: int64(parsedEventID),
+		eventRecordID: pgtype.Numeric{Int: eventRecordID, Exp: 0, Valid: true},
+	}, nil
+}
+
+// The C1 SQL coordinator sets this unexported context key only AFTER the
+// ordered, signed SourceParent SQL transaction has committed. Keep the key
+// in the common source package so the default Security bulk implementation
+// retains its own unchanged parent COPY outside this trusted P6 path.
+type privateP6SourceAlreadyInsertedKey struct{}
+
+func privateP6SourceAlreadyInserted(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(privateP6SourceAlreadyInsertedKey{}) == true
+}
+
+func copySecurityBulk(ctx context.Context, tx pgx.Tx, sourceBatchID int64, pending []securityBulkRecord, profile *ingestStageProfile) error {
+	if len(pending) == 0 {
+		return nil
+	}
+	limits := securityBulkLimitsFromContext(ctx)
+	if len(pending) > limits.MaxRecords {
+		return fmt.Errorf("FI Security bulk chunk exceeds %s record limit (%d)", limits.Name, limits.MaxRecords)
+	}
+
+	sqlStarted := time.Now()
+	// Reused across event, scope and field COPY calls; Security's ordered
+	// SourceParent is already durable in the native C1 path.
+	var copied int64
+	sourceColumns := []string{"source_batch_id", "record_ordinal", "version", "record_kind", "scope_id", "written_at", "record_bytes", "record_sha256", "ingest_version"}
+	// Preserve production COPY values; reuse rows only in private W128/P3.
+	sourceRows := securitySourceRecordCopyRows(ctx, pending, sourceBatchID)
+	// In the C1 native five-family path the ordered SourceParent writer
+	// has already COMMITTED these exact signed (batch,ordinal) identities.
+	// Security must COPY only its event/scope/field children; replaying the
+	// parent here would violate source_record_batch_ordinal_uq. The existing
+	// non-C1 bulk path still performs its original source COPY unchanged.
+	if !privateP6SourceAlreadyInserted(ctx) {
+		sourceCopyStarted := time.Now()
+		copied, err := tx.CopyFrom(ctx, pgx.Identifier{"fi", "source_record"}, sourceColumns, sourceRows)
+		elapsedSourceCopy := time.Since(sourceCopyStarted)
+		profile.SecurityBulk.SourceCopy += elapsedSourceCopy
+		profile.SecurityBulk.SourceLatency.observe(elapsedSourceCopy)
+		if err != nil {
+			return fmt.Errorf("FI Security bulk source COPY: %w", err)
+		}
+		if copied != int64(len(pending)) {
+			return fmt.Errorf("FI Security bulk source COPY count: got %d expected %d", copied, len(pending))
+		}
+	}
+
+	idLookupStarted := time.Now()
+	batchIDs := make([]int64, len(pending))
+	ordinals := make([]int64, len(pending))
+	for i, p := range pending {
+		batchIDs[i] = bulkSourceBatchID(p.sourceBatchID, sourceBatchID)
+		ordinals[i] = p.ordinal
+	}
+	ids, err := lookupBulkSourceRecordIDs(ctx, tx, batchIDs, ordinals)
+	if err != nil {
+		return fmt.Errorf("FI Security bulk source ID lookup: %w", err)
+	}
+	for i, id := range ids {
+		pending[i].sourceRecordID = id
+	}
+	profile.SecurityBulk.IDLookup += time.Since(idLookupStarted)
+	profile.SourceSQL += time.Since(sqlStarted)
+
+	projectionStarted := time.Now()
+	eventColumns := []string{
+		"source_record_id", "observed_at", "collection_method", "channel", "provider", "event_id", "version", "event_record_id", "time_created", "computer", "keywords",
+		"audit_result", "scope_basis", "subject_user_sid", "subject_user_name", "subject_domain_name", "subject_logon_id", "object_server", "object_type", "object_name",
+		"handle_id", "process_id", "process_name", "access_mask", "access_list", "access_reason", "transaction_id", "file_name", "link_name", "source_ip", "source_port",
+		"share_name", "share_local_path", "relative_target_name", "old_security_descriptor", "new_security_descriptor", "subcategory_guid", "audit_policy_changes",
+		"raw_xml_bytes", "raw_xml_sha256",
+	}
+	// Private replay may reuse the exact tested 40-column row buffer.
+	// Production P1 and ordinary P3 retain their unchanged writer.
+	eventRows := securityEventCopyRows(ctx, pending)
+	eventCopyStarted := time.Now()
+	copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event"}, eventColumns, eventRows)
+	elapsedEventCopy := time.Since(eventCopyStarted)
+	profile.SecurityBulk.EventCopy += elapsedEventCopy
+	profile.SecurityBulk.EventLatency.observe(elapsedEventCopy)
+	if err != nil {
+		return fmt.Errorf("FI Security bulk event COPY: %w", err)
+	}
+	if copied != int64(len(pending)) {
+		return fmt.Errorf("FI Security bulk event COPY count: got %d expected %d", copied, len(pending))
+	}
+
+	childPrepareStarted := time.Now()
+	var scopeCount, fieldCount int
+	for _, p := range pending {
+		scopeCount += len(p.value.MatchedScopes)
+		fieldCount += len(p.value.Fields)
+	}
+	// Scope rows follow the same isolated C1 switch as event rows.
+	// Ordinary SQL scopes preserve the original materialized path.
+	scopeRows := securityScopeCopyRows(ctx, pending, scopeCount)
+	profile.SecurityBulk.ChildPrepare += time.Since(childPrepareStarted)
+	if scopeCount > 0 {
+		scopeCopyStarted := time.Now()
+		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_scope"}, []string{"source_record_id", "scope_ordinal", "scope_id", "governed_root"}, scopeRows)
+		elapsedScopeCopy := time.Since(scopeCopyStarted)
+		profile.SecurityBulk.ScopeCopy += elapsedScopeCopy
+		profile.SecurityBulk.ScopeLatency.observe(elapsedScopeCopy)
+		if err != nil {
+			return fmt.Errorf("FI Security bulk scopes COPY: %w", err)
+		}
+		if copied != int64(scopeCount) {
+			return fmt.Errorf("FI Security bulk scopes count: got %d expected %d", copied, scopeCount)
+		}
+	}
+	// Feed fields directly from the already validated event payloads. Do not
+	// materialize another [][]any array proportional to event-field expansion.
+	cursor := newSecurityFieldCopyCursor(pending)
+	var writtenFields int64
+	for cursor.hasNext() {
+		chunk := &securityFieldCopyChunk{
+			cursor: cursor, maxRows: securityFieldCopyRowsForContext(ctx), maxBytes: securityFieldCopyBytesForContext(ctx),
+		}
+		fieldCopyStarted := time.Now()
+		copied, err = tx.CopyFrom(ctx, pgx.Identifier{"fi", "windows_security_event_field"},
+			[]string{"source_record_id", "field_ordinal", "name", "value"}, chunk)
+		elapsedFieldCopy := time.Since(fieldCopyStarted)
+		profile.SecurityBulk.FieldCopy += elapsedFieldCopy
+		profile.SecurityBulk.FieldLatency.observe(elapsedFieldCopy)
+		if err != nil {
+			return fmt.Errorf("FI Security bulk fields streaming COPY: %w", err)
+		}
+		if chunk.rows == 0 || copied != int64(chunk.rows) {
+			return fmt.Errorf("FI Security bulk fields streaming COPY count: got %d expected %d", copied, chunk.rows)
+		}
+		writtenFields += copied
+	}
+	if writtenFields != int64(fieldCount) {
+		return fmt.Errorf("FI Security bulk fields total: got %d expected %d", writtenFields, fieldCount)
+	}
+	profile.SecurityBulk.Batches++
+	profile.SecurityBulk.Events += int64(len(pending))
+	profile.SecurityBulk.Scopes += int64(scopeCount)
+	profile.SecurityBulk.Fields += writtenFields
+	elapsedProjection := time.Since(projectionStarted)
+	profile.Projection += elapsedProjection
+	profile.SecurityProjection += elapsedProjection
+	return nil
+}
+
+// securityEventCopyRows retains ordinary ingestion's established callback.
+// The original W128 private path or the explicit C1 8GiB switch can select
+// the tested 40-column reusable row source without changing SQL semantics.
+func securityEventCopyRows(ctx context.Context, pending []securityBulkRecord) pgx.CopyFromSource {
+	if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {
+		return newSecurityEventCopySource(pending)
+	}
+	return pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+		p := pending[i]
+		v := p.value
+		rawXML := []byte(v.RawXML)
+		digest := sha256.Sum256(rawXML)
+		return []any{
+			p.sourceRecordID, p.observedAt, v.CollectionMethod, v.Channel, v.Provider, p.eventID, nullString(v.Version), p.eventRecordID, p.timeCreated, v.Computer, nullString(v.Keywords),
+			string(v.AuditResult), string(v.ScopeBasis), nullString(v.SubjectUserSID), nullString(v.SubjectUserName), nullString(v.SubjectDomainName), nullString(v.SubjectLogonID), nullString(v.ObjectServer), nullString(v.ObjectType), nullString(v.ObjectName),
+			nullString(v.HandleID), nullString(v.ProcessID), nullString(v.ProcessName), nullString(v.AccessMask), nullString(v.AccessList), nullString(v.AccessReason), nullString(v.TransactionID), nullString(v.FileName), nullString(v.LinkName), nullString(v.SourceIP), nullString(v.SourcePort),
+			nullString(v.ShareName), nullString(v.ShareLocalPath), nullString(v.RelativeTargetName), nullString(v.OldSecurityDescriptor), nullString(v.NewSecurityDescriptor), nullString(v.SubcategoryGUID), nullString(v.AuditPolicyChanges), len(rawXML), digest[:],
+		}, nil
+	})
+}
+
+// securityScopeCopyRows selects only the tested private reusable scope
+// iterator. Ordinary P1/P3 continues to construct identical [][]any rows.
+func securityScopeCopyRows(ctx context.Context, pending []securityBulkRecord, scopeCount int) pgx.CopyFromSource {
+    if scopeCount==0{return nil}
+    if usePrivateSinglePassSecurity(ctx) || securityC1COPYExperimentEnabled(ctx) {
+        return newSecurityScopeCopySource(pending)
+    }
+    scopes:=make([][]any,0,scopeCount)
+    for _,p:=range pending{
+        for i,scope:=range p.value.MatchedScopes{
+            scopes=append(scopes,[]any{p.sourceRecordID,i+1,scope.ScopeID,scope.GovernedRoot})
+        }
+    }
+    return pgx.CopyFromSlice(len(scopes),func(i int)([]any,error){return scopes[i],nil})
+}
+
+// securitySourceRecordCopyRows isolates the reusable-row selection from the transaction
+// and preserves the original callback for production P1 and ordinary P3.
+func securitySourceRecordCopyRows(ctx context.Context, pending []securityBulkRecord, sourceBatchID int64) pgx.CopyFromSource {
+	var sourceRows pgx.CopyFromSource
+	if usePrivateSinglePassSecurity(ctx) {
+		sourceRows = newSecuritySourceRecordCopySource(pending, sourceBatchID)
+	} else {
+		sourceRows = pgx.CopyFromSlice(len(pending), func(i int) ([]any, error) {
+			p := pending[i]
+			return []any{bulkSourceBatchID(p.sourceBatchID, sourceBatchID), p.ordinal, p.prepared.Record.Version, p.prepared.Record.RecordKind, p.prepared.Record.ScopeID, p.prepared.WrittenAtUTC, p.prepared.RecordBytes, p.digest, IngestVersion}, nil
+		})
+	}
+	return sourceRows
+}

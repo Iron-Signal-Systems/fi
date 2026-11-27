@@ -24,7 +24,6 @@ var (
 
 type serviceWindowsSecurityCycleSummary struct {
 	Status                  configuredSecurityStatus
-	CoverageStatus          records.WindowsSecurityCoverageStatus
 	ReadWindows             int
 	SourceMatchingEvents    int
 	SelectedEvents          int
@@ -89,27 +88,10 @@ func runServiceWindowsSecurityLoop(
 		ctx = context.Background()
 	}
 	if interval <= 0 {
-		return errors.New(
-			"service Windows Security interval must be greater than zero",
-		)
+		return errors.New("service Windows Security interval must be greater than zero")
 	}
 	if source == nil || appendRecord == nil {
-		return errors.New(
-			"service Windows Security runtime dependency is nil",
-		)
-	}
-
-	waitForInterval := func() bool {
-		timer := time.NewTimer(interval)
-		defer timer.Stop()
-
-		select {
-		case <-ctx.Done():
-			return false
-
-		case <-timer.C:
-			return true
-		}
+		return errors.New("service Windows Security runtime dependency is nil")
 	}
 
 	for {
@@ -118,21 +100,12 @@ func runServiceWindowsSecurityLoop(
 		}
 
 		summary, collectErr := source.Collect(ctx)
-
 		outcome := serviceOutcomeComplete
-
 		switch {
-		case collectErr != nil &&
-			errors.Is(
-				collectErr,
-				context.Canceled,
-			) &&
-			ctx.Err() != nil:
-			return nil
-
+		case collectErr != nil && errors.Is(collectErr, context.Canceled) && ctx.Err() != nil:
+			outcome = serviceOutcomeInterrupted
 		case collectErr != nil:
 			outcome = serviceOutcomeFailed
-
 		case summary.Status != configuredSecurityComplete:
 			outcome = serviceOutcomePartial
 		}
@@ -143,7 +116,6 @@ func runServiceWindowsSecurityLoop(
 			ObservedAt:                 serviceNow(),
 			SecurityInterval:           interval.String(),
 			Outcome:                    outcome,
-			SecurityCoverageStatus:     string(summary.CoverageStatus),
 			SecurityReadWindows:        summary.ReadWindows,
 			SecuritySourceMatches:      summary.SourceMatchingEvents,
 			SecuritySelectedEvents:     summary.SelectedEvents,
@@ -154,36 +126,33 @@ func runServiceWindowsSecurityLoop(
 			SecurityContinuityGap:      summary.ContinuityGap,
 			SecurityMoreAvailable:      summary.MoreAvailable,
 		}
-
 		if collectErr != nil {
 			record.Error = collectErr.Error()
 		}
 
-		if err := appendRecord(record); err != nil {
-			return fmt.Errorf(
-				"persist Windows Security runtime record: %w",
-				err,
-			)
-		}
-
-		if collectErr != nil {
-			// Windows Security is an independently observable collection lane.
-			// A source-cycle failure must not terminate unrelated root or USN
-			// collection. Preserve the exact error durably, return to normal
-			// cadence, and retry. Failure to preserve that runtime record remains
-			// fatal because FI would otherwise lose observability of the fault.
-			if !waitForInterval() {
+		appendErr := appendRecord(record)
+		if err := errors.Join(collectErr, appendErr); err != nil {
+			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 				return nil
 			}
-			continue
+			return err
 		}
 
 		if summary.MoreAvailable {
 			continue
 		}
 
-		if !waitForInterval() {
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return nil
+		case <-timer.C:
 		}
 	}
 }
@@ -384,13 +353,8 @@ func summarizeServiceWindowsSecurity(
 	summary configuredSecuritySummary,
 	moreAvailable bool,
 ) serviceWindowsSecurityCycleSummary {
-	var coverageStatus records.WindowsSecurityCoverageStatus
-	if summary.Coverage != nil {
-		coverageStatus = summary.Coverage.Status
-	}
 	return serviceWindowsSecurityCycleSummary{
 		Status:                  summary.Status,
-		CoverageStatus:          coverageStatus,
 		ReadWindows:             summary.ReadWindows,
 		SourceMatchingEvents:    summary.SourceMatchingEvents,
 		SelectedEvents:          summary.SelectedEvents,

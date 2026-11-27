@@ -2,8 +2,6 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 
-//go:build linux
-
 package recordingest
 
 import (
@@ -15,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
+	"github.com/Iron-Signal-Systems/fi/go/internal/windows/ntfs"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -36,13 +36,45 @@ type IngestResult struct {
 	RecordsCommitted     int64
 	RecordedGenerationID int64
 	Outcome              string
+	SecurityMetrics      *CommittedSecurityIngestMetrics
+}
+
+type ingestStageProfile struct {
+	Read           time.Duration
+	BatchHash      time.Duration
+	Prepare        time.Duration
+	SourceSQL      time.Duration
+	Projection     time.Duration
+	FileProjection time.Duration // includes bounded File/USN source projections and related COPY
+	SecurityProjection time.Duration // Security event, scope and field projection; excludes source COPY
+	OtherProjection time.Duration // non-File/Security projections and final deferred writers
+	BatchBulk      sourceBatchBulkProfile
+	CoverageBulk   securityCoverageBulkProfile
+	SecurityBulk   securityBulkTimingCounters
+	SinglePassSecurityRows int64 // private-P3 canonical Security decode only
+	PrivateDependencyFlushes int64 // private-only bounded USN queue flushes
+	PrivateDependencyRows int64 // source-bound USN boundaries and objects written
+	PrivateCoverageSecurityFencesAvoided int64 // coverage arrivals that formerly flushed pending Security
+	PrivateSecurityCapacityFlushes int64 // P3 reached its own record or byte cap
+	PrivateSecurityBoundaryFlushes int64 // trial-only K32/W128 end drains
+	PrivateSecurityBarrierFlushes int64 // conservative unaudited kind
+	coverageBuffer *securityCoverageBulkState
 }
 
 func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attemptID string, generation *PreparedGeneration) (IngestResult, error) {
 	if ctx == nil || connection == nil || generation == nil || attemptID == "" {
 		return IngestResult{}, errors.New("FI relational generation ingest input is incomplete")
 	}
+	started := time.Now()
+	selectedSecurityBulk := securityBulkLimitsFromContext(ctx)
+	var profile ingestStageProfile
+	profile.coverageBuffer = newSecurityCoverageBulkState(&profile)
+	usnTiming := &usnTimingCounters{}
+	ctx = context.WithValue(ctx, usnTimingContextKey{}, usnTiming)
+	ntfsStages := &ntfsStageTimingCounters{}
+	ctx = context.WithValue(ctx, ntfsStageTimingContextKey{}, ntfsStages)
 	descriptor := generation.Receipt.Descriptor
+	ctx = context.WithValue(ctx, usnCaptureContextKey{}, newUSNCaptureState(descriptor.SourceID, descriptor.GenerationID))
 	result := IngestResult{
 		AttemptID: attemptID, SourceID: descriptor.SourceID, GenerationID: descriptor.GenerationID,
 		TransferSHA256: generation.Receipt.TransferSHA256, ReceiptSHA256: generation.ReceiptSHA256,
@@ -53,10 +85,44 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	if err != nil {
 		return result, fmt.Errorf("begin FI relational generation transaction: %w", err)
 	}
+	// Record every pgx.CopyFrom call by relation without changing the
+	// authoritative transaction or any relational insert ordering.
+	copyMetrics := newIngestCopyMetrics()
+	tx = &profiledIngestTx{Tx: tx, metrics: copyMetrics}
+	identityCache := newNTFSObjectCache()
+	ctx = context.WithValue(ctx, ntfsObjectCacheContextKey{}, identityCache)
+	scopeCache := newNTFSScopeIdentityCache()
+	ctx = context.WithValue(ctx, ntfsScopeIdentityCacheContextKey{}, scopeCache)
+	aceCopy := newACECopyState()
+	ctx = context.WithValue(ctx, aceCopyContextKey{}, aceCopy)
+	usnCopy := newUSNChangeCopyState()
+	ctx = context.WithValue(ctx, usnChangeCopyContextKey{}, usnCopy)
+	hashCopy := newContentHashCopyState()
+	ctx = context.WithValue(ctx, contentHashCopyContextKey{}, hashCopy)
+	// A read-only heartbeat reports immutable snapshots during this transaction.
+	progress := newIngestProgress(os.Stdout, result.SourceID, result.GenerationID,
+		len(generation.Batches), int64(generation.Receipt.RecordCount), time.Now(),
+		&profile, ntfsStages, hashCopy, usnCopy, aceCopy)
+	ctx = context.WithValue(ctx, ingestProgressContextKey{}, progress)
+	progress.copyMetrics = copyMetrics
+	progress.start()
 	committed := false
+	defer func() {
+		outcome := "not_confirmed"
+		if committed {
+			outcome = "accepted"
+		}
+		copyMetrics.report(os.Stdout, result.SourceID, result.GenerationID, outcome)
+	}()
 	defer func() {
 		if !committed {
 			_ = tx.Rollback(context.Background())
+		}
+	}()
+	defer func() {
+		progress.stop()
+		if !committed {
+			progress.emit("uncommitted", time.Now())
 		}
 	}()
 
@@ -89,20 +155,57 @@ func IngestPreparedGeneration(ctx context.Context, connection *pgx.Conn, attempt
 	}
 	result.RecordedGenerationID = recordedGenerationID
 
-	for _, batch := range generation.Batches {
-		sourceBatchID, err := insertSourceBatch(ctx, tx, recordedGenerationID, batch)
-		if err != nil {
-			return result, failIngestAttempt(ctx, connection, tx, result, "AuthoritativeRecord", "SOURCE_BATCH_INSERT_FAILED", err)
-		}
-		seen, err := ingestSourceBatch(ctx, tx, descriptor.SourceID, sourceBatchID, batch)
+	// Insert the complete immutable batch manifest set first. All database-
+	// generated batch identities are mapped back to the original receipt order.
+	// Source-record ingestion then proceeds in precisely that original order.
+	sourceBatchIDs, err := copySourceBatches(ctx, tx, recordedGenerationID, generation.Batches, &profile.BatchBulk)
+	progress.publish(0)
+	if err != nil {
+		return result, failIngestAttempt(ctx, connection, tx, result, "AuthoritativeRecord", "SOURCE_BATCH_INSERT_FAILED", err)
+	}
+	for i, batch := range generation.Batches {
+		seen, err := ingestSourceBatch(ctx, tx, descriptor.SourceID, sourceBatchIDs[i], batch, &profile)
 		result.RecordsSeen += seen
 		if err != nil {
 			return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 		}
+		progress.completeBatch(seen)
+	}
+	// The last batch may end in coverage records. Make them relationally
+	// complete before counting projections or committing the generation.
+	if err := profile.coverageBuffer.flush(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 	}
 
 	if result.RecordsSeen != int64(generation.Receipt.RecordCount) {
 		return result, rejectIngestAttempt(ctx, connection, tx, result, fmt.Errorf("generation source-record count %d does not match recorder receipt %d", result.RecordsSeen, generation.Receipt.RecordCount))
+	}
+	usnFlushStarted := time.Now()
+	if err := usnCopy.flushAll(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
+	usnFinalFlush := time.Since(usnFlushStarted)
+	profile.Projection += usnFinalFlush
+	profile.OtherProjection += usnFinalFlush
+
+	hashFlushStarted := time.Now()
+	if err := hashCopy.flush(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
+	hashFinalFlush := time.Since(hashFlushStarted)
+	profile.Projection += hashFinalFlush
+	profile.OtherProjection += hashFinalFlush
+
+	aceFlushStarted := time.Now()
+	if err := aceCopy.flushAll(ctx, tx); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
+	}
+	aceFinalFlush := time.Since(aceFlushStarted)
+	profile.Projection += aceFinalFlush
+	profile.OtherProjection += aceFinalFlush
+
+	if err := ctx.Value(usnCaptureContextKey{}).(*usnCaptureState).verify(); err != nil {
+		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
 	}
 	if err := verifyGenerationProjectionCoverage(ctx, tx, recordedGenerationID); err != nil {
 		return result, rejectIngestAttempt(ctx, connection, tx, result, err)
@@ -125,10 +228,155 @@ INSERT INTO fi.ingest_journal (
 		return result, fmt.Errorf("write FI accepted ingest journal event: %w", err)
 	}
 
+	commitStarted := time.Now()
 	if err := tx.Commit(ctx); err != nil {
 		return result, fmt.Errorf("commit FI relational generation: %w", err)
 	}
 	committed = true
+	progress.stop() // No heartbeat after successful publication.
+	commitElapsed := time.Since(commitStarted)
+	// Only a confirmed COMMIT may publish a generation performance sample.
+	// Failures and AlreadyAccepted outcomes must not train an adaptive policy.
+	result.SecurityMetrics = committedSecurityIngestMetrics(result, &profile,
+		selectedSecurityBulk, time.Since(started))
+	fmt.Printf(
+		"INGEST HASH COPY source=%s generation=%s rows=%d calls=%d copy=%s final_flush=%s\n",
+		result.SourceID, result.GenerationID,
+		hashCopy.copied, hashCopy.calls,
+		hashCopy.duration.Round(time.Millisecond),
+		hashFinalFlush.Round(time.Millisecond),
+	)
+
+	// One bounded telemetry record per committed generation. These timings
+	// are individual pgx.CopyFrom call durations, not SQL-only or disk-only time.
+	// Keep the existing aggregate log fields unchanged for baseline comparisons.
+	fmt.Printf(
+		"INGEST COPY LATENCY FILE source=%s generation=%s hash={%s} file={%s} metadata={%s}\n",
+		result.SourceID, result.GenerationID,
+		hashCopy.latency.String(),
+		ntfsStages.FileCopyLatency.String(),
+		ntfsStages.MetadataCopyLatency.String(),
+	)
+	fmt.Printf(
+		"INGEST COPY LATENCY SECURITY source=%s generation=%s source_copy={%s} event={%s} scopes={%s} fields={%s}\n",
+		result.SourceID, result.GenerationID,
+		profile.SecurityBulk.SourceLatency.String(),
+		profile.SecurityBulk.EventLatency.String(),
+		profile.SecurityBulk.ScopeLatency.String(),
+		profile.SecurityBulk.FieldLatency.String(),
+	)
+
+	fmt.Printf(
+		"INGEST SOURCE BATCH COPY source=%s generation=%s rows=%d calls=%d prepare=%s copy=%s id_lookup=%s\n",
+		result.SourceID, result.GenerationID,
+		profile.BatchBulk.Rows, profile.BatchBulk.Copies,
+		profile.BatchBulk.Prepare.Round(time.Millisecond),
+		profile.BatchBulk.Copy.Round(time.Millisecond),
+		profile.BatchBulk.Lookup.Round(time.Millisecond),
+	)
+
+	fmt.Printf(
+		"INGEST SECURITY COVERAGE COPY source=%s generation=%s records=%d policies=%d roots=%d chunks=%d prepare=%s copy=%s\n",
+		result.SourceID, result.GenerationID,
+		profile.CoverageBulk.Records, profile.CoverageBulk.Policies,
+		profile.CoverageBulk.Roots, profile.CoverageBulk.Chunks,
+		profile.CoverageBulk.Prepare.Round(time.Millisecond),
+		profile.CoverageBulk.Copy.Round(time.Millisecond),
+	)
+
+	fmt.Printf(
+		"INGEST SECURITY BULK source=%s generation=%s batches=%d events=%d scopes=%d fields=%d prepare=%s source_copy=%s id_lookup=%s event_copy=%s child_prepare=%s scope_copy=%s field_copy=%s profile=%s max_events=%d max_bytes=%d\n",
+		result.SourceID, result.GenerationID,
+		profile.SecurityBulk.Batches,
+		profile.SecurityBulk.Events,
+		profile.SecurityBulk.Scopes,
+		profile.SecurityBulk.Fields,
+		profile.SecurityBulk.Prepare.Round(time.Millisecond),
+		profile.SecurityBulk.SourceCopy.Round(time.Millisecond),
+		profile.SecurityBulk.IDLookup.Round(time.Millisecond),
+		profile.SecurityBulk.EventCopy.Round(time.Millisecond),
+		profile.SecurityBulk.ChildPrepare.Round(time.Millisecond),
+		profile.SecurityBulk.ScopeCopy.Round(time.Millisecond),
+		profile.SecurityBulk.FieldCopy.Round(time.Millisecond),
+		selectedSecurityBulk.Name, selectedSecurityBulk.MaxRecords, selectedSecurityBulk.MaxBytes,
+	)
+	fmt.Printf(
+		"INGEST USN COPY source=%s generation=%s change_rows=%d reason_rows=%d change_calls=%d reason_calls=%d copy=%s final_flush=%s\n",
+		result.SourceID, result.GenerationID,
+		usnCopy.changeRows, usnCopy.reasonRows,
+		usnCopy.changeCalls, usnCopy.reasonCalls,
+		usnCopy.duration.Round(time.Millisecond),
+		usnFinalFlush.Round(time.Millisecond),
+	)
+	fmt.Printf(
+		"INGEST ACE COPY source=%s generation=%s dacl_rows=%d sacl_rows=%d calls=%d copy=%s final_flush=%s\n",
+		result.SourceID, result.GenerationID,
+		aceCopy.daclRows, aceCopy.saclRows, aceCopy.calls,
+		aceCopy.duration.Round(time.Millisecond),
+		aceFinalFlush.Round(time.Millisecond),
+	)
+	total := time.Since(started)
+	measured := profile.Read + profile.BatchHash + profile.Prepare +
+		profile.SourceSQL + profile.Projection + commitElapsed +
+		profile.BatchBulk.Prepare + profile.BatchBulk.Copy + profile.BatchBulk.Lookup
+
+	fmt.Printf(
+		"INGEST PROFILE source=%s generation=%s records=%d total=%s read=%s batch_hash=%s prepare=%s source_sql=%s projection=%s commit=%s other=%s\n",
+		result.SourceID, result.GenerationID, result.RecordsSeen,
+		total.Round(time.Millisecond),
+		profile.Read.Round(time.Millisecond),
+		profile.BatchHash.Round(time.Millisecond),
+		profile.Prepare.Round(time.Millisecond),
+		profile.SourceSQL.Round(time.Millisecond),
+		profile.Projection.Round(time.Millisecond),
+		commitElapsed.Round(time.Millisecond),
+		(total - measured).Round(time.Millisecond),
+	)
+
+	accounted := usnTiming.Boundary + usnTiming.Object +
+		usnTiming.Observation + usnTiming.Changes + usnTiming.Nested
+
+	fmt.Printf(
+		"INGEST USN PROFILE source=%s generation=%s observations=%d total=%s boundary=%s object=%s observation_insert=%s changes=%s nested=%s other=%s\n",
+		result.SourceID, result.GenerationID, usnTiming.Observations,
+		usnTiming.Total.Round(time.Millisecond),
+		usnTiming.Boundary.Round(time.Millisecond),
+		usnTiming.Object.Round(time.Millisecond),
+		usnTiming.Observation.Round(time.Millisecond),
+		usnTiming.Changes.Round(time.Millisecond),
+		usnTiming.Nested.Round(time.Millisecond),
+		(usnTiming.Total - accounted).Round(time.Millisecond),
+	)
+	fmt.Printf(
+		"INGEST NTFS CACHE source=%s generation=%s hits=%d misses=%d entries=%d evictions=%d\n",
+		result.SourceID, result.GenerationID,
+		identityCache.hits, identityCache.misses, len(identityCache.objects), identityCache.evictions,
+	)
+	fmt.Printf(
+		"INGEST NTFS STAGES source=%s generation=%s observations=%d total=%s identity=%s file=%s metadata=%s hashes=%s prefix=%s reparse=%s streams=%s security=%s sacl=%s warnings=%s other=%s\n",
+		result.SourceID, result.GenerationID,
+		ntfsStages.Observations,
+		ntfsStages.Total.Round(time.Millisecond),
+		ntfsStages.Identity.Round(time.Millisecond),
+		ntfsStages.File.Round(time.Millisecond),
+		ntfsStages.Metadata.Round(time.Millisecond),
+		ntfsStages.Hashes.Round(time.Millisecond),
+		ntfsStages.Prefix.Round(time.Millisecond),
+		ntfsStages.Reparse.Round(time.Millisecond),
+		ntfsStages.Streams.Round(time.Millisecond),
+		ntfsStages.Security.Round(time.Millisecond),
+		ntfsStages.SACL.Round(time.Millisecond),
+		ntfsStages.Warnings.Round(time.Millisecond),
+		(ntfsStages.Total - ntfsStages.accounted()).Round(time.Millisecond),
+	)
+
+	fmt.Printf(
+		"INGEST SCOPE CACHE source=%s generation=%s volume_hits=%d volume_misses=%d volume_entries=%d root_hits=%d root_misses=%d root_entries=%d\n",
+		result.SourceID, result.GenerationID,
+		scopeCache.volumeHits, scopeCache.volumeMisses, len(scopeCache.volumes),
+		scopeCache.rootHits, scopeCache.rootMisses, len(scopeCache.roots),
+	)
+
 	return result, nil
 }
 
@@ -198,45 +446,10 @@ RETURNING recorded_generation_id
 	return id, nil
 }
 
-func insertSourceBatch(ctx context.Context, tx pgx.Tx, recordedGenerationID int64, batch PreparedBatch) (int64, error) {
-	manifest := batch.Manifest
-	dataSHA, err := decodeHex(manifest.DataSHA256, 32, true, "source_batch.data_sha256")
-	if err != nil {
-		return 0, err
+func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBatchID int64, batch PreparedBatch, profile *ingestStageProfile) (int64, error) {
+	if profile.coverageBuffer == nil {
+		profile.coverageBuffer = newSecurityCoverageBulkState(profile)
 	}
-	collectorSHA, err := decodeHex(manifest.Collector.ExecutableSHA256, 32, true, "source_batch.collector_sha256")
-	if err != nil {
-		return 0, err
-	}
-	manifestSHA, err := decodeHex(batch.ManifestSHA256, 32, true, "source_batch.manifest_sha256")
-	if err != nil {
-		return 0, err
-	}
-	createdAt, err := parseRFC3339(manifest.CreatedAt, "source_batch.created_at")
-	if err != nil {
-		return 0, err
-	}
-	completedAt, err := parseRFC3339(manifest.CompletedAt, "source_batch.completed_at")
-	if err != nil {
-		return 0, err
-	}
-	var id int64
-	err = tx.QueryRow(ctx, `
-INSERT INTO fi.source_batch (
- recorded_generation_id,manifest_artifact_name,data_artifact_name,manifest_version,batch_id,target_batch_size,record_count,data_bytes,data_sha256,
- data_file,collector_executable_path,collector_executable_sha256,created_at,completed_at,manifest_bytes,manifest_sha256
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-RETURNING source_batch_id
-`, recordedGenerationID, batch.ManifestArtifactName, batch.DataArtifactName, manifest.Version, manifest.BatchID, manifest.TargetBatchSize,
-		int64(manifest.RecordCount), manifest.DataBytes, dataSHA, manifest.DataFile, manifest.Collector.ExecutablePath, collectorSHA, createdAt, completedAt,
-		batch.ManifestBytes, manifestSHA).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("insert FI source batch: %w", err)
-	}
-	return id, nil
-}
-
-func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBatchID int64, batch PreparedBatch) (int64, error) {
 	file, err := os.Open(batch.DataPath)
 	if err != nil {
 		return 0, fmt.Errorf("open FI staged source batch: %w", err)
@@ -246,9 +459,136 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 	reader := bufio.NewReader(file)
 	hasher := sha256.New()
 	var ordinal int64
+	progress, _ := ctx.Value(ingestProgressContextKey{}).(*ingestProgress)
+	if progress != nil {
+		// Publish the final partial-batch count even on rejection.
+		defer func() { progress.publish(ordinal) }()
+	}
 	var byteCount int64
+	var pendingSecurity []securityBulkRecord
+	var pendingSecurityBytes int64
+	// This state is provided ONLY by the isolated W128 private benchmark.
+	// It carries bounded typed COPY buffers across intact signed batches,
+	// without creating another durability or trust boundary.
+	chunk, hasChunk := ctx.Value(backlogTypedChunkContextKey{}).(backlogTypedChunkDirective)
+	if err := validatePrivateFamilyRoute(ctx); err != nil {
+		return 0, err
+	}
+	if hasChunk {
+		if chunk.state == nil || chunk.state.fileBulk == nil {
+			return 0, errors.New("FI typed chunk: invalid shared buffer")
+		}
+		pendingSecurity = chunk.state.security
+		pendingSecurityBytes = chunk.state.securityBytes
+	}
+	securityLimits := securityBulkLimitsFromContext(ctx)
+	// This run counter is local to ONE signed source batch, even when the
+	// pending Security COPY buffer flushes several times within that batch.
+	var contiguousSecurity int
+	var pendingFiles []fileSourceBulkRecord
+	var pendingFileBytes int64
+	// A third, independently bounded family queues USN capture boundaries and
+	// dependent objects in original signed order inside the same K32 chunk.
+	var pendingDependencies []privateDependencySourceRecord
+	var pendingDependencyBytes int64
+	fileLimits := fileBulkLimitsFromContext(ctx)
+	fileBulk := newFileObservationBulkState()
+	if hasChunk {
+		pendingFiles = chunk.state.files
+		pendingFileBytes = chunk.state.fileBytes
+		fileBulk = chunk.state.fileBulk
+		pendingDependencies = chunk.state.dependencies
+		pendingDependencyBytes = chunk.state.dependencyBytes
+		defer func() {
+			chunk.state.security, chunk.state.securityBytes = pendingSecurity, pendingSecurityBytes
+			chunk.state.files, chunk.state.fileBytes = pendingFiles, pendingFileBytes
+			chunk.state.dependencies, chunk.state.dependencyBytes = pendingDependencies, pendingDependencyBytes
+		}()
+	}
+	ctx = context.WithValue(ctx, fileObservationBulkContextKey{}, fileBulk)
+	flushFiles := func() error {
+		if len(pendingFiles) == 0 {
+			return nil
+		}
+		first := pendingFiles[0].ordinal
+		last := pendingFiles[len(pendingFiles)-1].ordinal
+		if err := copyFileSourceBulk(ctx, tx, sourceBatchID, pendingFiles, profile); err != nil {
+			return fmt.Errorf("%w: batch %s FileObservation source records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		projectStarted := time.Now()
+		defer func() {
+			elapsed := time.Since(projectStarted)
+			profile.Projection += elapsed
+			profile.FileProjection += elapsed
+		}()
+		for _, item := range pendingFiles {
+			if item.prepared.Record.RecordKind == "USNObjectObservation" {
+				projectCtx := context.WithValue(ctx, fileObservationBulkBytesContextKey{}, item.prepared.RecordBytes)
+				if err := ProjectSourceRecord(projectCtx, tx, sourceID, item.sourceRecordID, item.prepared); err != nil {
+					return fmt.Errorf("%w: batch %s record %d (USNObjectObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
+				}
+				continue
+			}
+			var value fileObservationPayload
+			if err := decodeStrictPayload(item.prepared.Record.Payload, &value); err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, projectionDecodeError("FileObservation", err))
+			}
+			value.NTFS.ContentHashes = &value.ContentHashes
+			if err := ntfs.ValidateObservation(value.NTFS); err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, projectionValidationError("FileObservation", err))
+			}
+			if value.NTFS.GovernedRoot.ScopeID != item.prepared.Record.ScopeID {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): governed-root scope does not match source envelope", ErrSourceRecordRejected, batch.BatchID, item.ordinal)
+			}
+			if err := fileBulk.add(ctx, tx, fileObservationBulkRecord{
+				sourceID: sourceID, sourceRecordID: item.sourceRecordID, ordinal: item.ordinal,
+				value: value.NTFS, hashes: &value.ContentHashes, bytes: int64(item.prepared.RecordBytes),
+			}); err != nil {
+				return fmt.Errorf("%w: batch %s record %d (FileObservation): %v", ErrSourceRecordRejected, batch.BatchID, item.ordinal, err)
+			}
+		}
+		if err := fileBulk.flush(ctx, tx); err != nil {
+			return fmt.Errorf("%w: batch %s FileObservation projection records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		pendingFiles = nil
+		pendingFileBytes = 0
+		return nil
+	}
+	flushSecurity := func() error {
+		if len(pendingSecurity) == 0 {
+			return nil
+		}
+		first := pendingSecurity[0].ordinal
+		last := pendingSecurity[len(pendingSecurity)-1].ordinal
+		if err := copySecurityBulk(ctx, tx, sourceBatchID, pendingSecurity, profile); err != nil {
+			return fmt.Errorf("%w: batch %s Security records %d-%d: %v", ErrSourceRecordRejected, batch.BatchID, first, last, err)
+		}
+		profile.SecurityBulk.SourceBytes += pendingSecurityBytes
+		pendingSecurity = nil
+		pendingSecurityBytes = 0
+		return nil
+	}
+	flushDependencies := func() error {
+		if len(pendingDependencies) == 0 {
+			return nil
+		}
+		// The USN projector may resolve NTFS identities. File writes are
+		// prerequisite work here; unrelated Security/coverage are NOT.
+		if err := flushFiles(); err != nil {
+			return err
+		}
+		if err := flushPrivateDependencies(ctx, tx, sourceID, pendingDependencies, profile); err != nil {
+			return fmt.Errorf("%w: batch %s USN dependency COPY: %v",
+				ErrSourceRecordRejected, batch.BatchID, err)
+		}
+		pendingDependencies = nil
+		pendingDependencyBytes = 0
+		return nil
+	}
 	for {
+		readStarted := time.Now()
 		raw, readErr := reader.ReadBytes('\n')
+		profile.Read += time.Since(readStarted)
 		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
 			break
 		}
@@ -259,18 +599,173 @@ func ingestSourceBatch(ctx context.Context, tx pgx.Tx, sourceID string, sourceBa
 			return ordinal, fmt.Errorf("%w: batch %s record %d is missing final LF", ErrSourceRecordRejected, batch.BatchID, ordinal+1)
 		}
 		ordinal++
-		byteCount += int64(len(raw))
-		_, _ = hasher.Write(raw)
-
-		prepared, err := PrepareSourceRecord(raw)
-		if err != nil {
-			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, err)
+		// Only snapshot at bounded record checkpoints, never log per record.
+		if progress != nil && ordinal%ingestProgressRecordCheckpoint == 0 {
+			progress.publish(ordinal)
 		}
-		digest, err := decodeHex(prepared.RecordSHA256, 32, true, "source_record.record_sha256")
-		if err != nil {
-			return ordinal, err
+		byteCount += int64(len(raw))
+		hashStarted := time.Now()
+		_, _ = hasher.Write(raw)
+		profile.BatchHash += time.Since(hashStarted)
+
+		prepareStarted := time.Now()
+		var prepared SourceRecord
+		var singlePassSecurity securityBulkRecord
+		var selectedSinglePass bool
+		var prepareErr error
+		if usePrivateSinglePassSecurity(ctx) {
+			prepared, singlePassSecurity, selectedSinglePass, prepareErr = tryPrepareSinglePassSecurity(raw)
+		}
+		if prepareErr == nil && !selectedSinglePass {
+			prepared, prepareErr = prepareOwnedSourceRecord(raw)
+		}
+		// For canonical Security events the outer envelope and typed payload
+		// are decoded and validated ONCE. This timer includes both operations,
+		// so no second Security preparation time is counted for fast-path rows.
+		profile.Prepare += time.Since(prepareStarted)
+		if prepareErr != nil {
+			return ordinal, fmt.Errorf("%w: batch %s record %d: %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepareErr)
+		}
+		// PrepareSourceRecord computed this over the exact LF-terminated
+		// signed JSONL bytes. Never decode its hex representation again.
+		digest := prepared.RecordDigest[:]
+		// Coverage records can span source batches. Flush before the next
+		// distinct kind to preserve relational projection order.
+		if joinedSource := joinedBacklogSourceFromContext(ctx); joinedSource != nil {
+			if err := joinedSource.addPrepared(ctx, ordinal, prepared, digest); err != nil {
+				return ordinal, fmt.Errorf("FI joined source: %w", err)
+			}
+		}
+		if prepared.Record.RecordKind != "WindowsSecurityCoverage" &&
+			!privateDependencyBuffersEnabled(ctx) {
+			if err := profile.coverageBuffer.flush(ctx, tx); err != nil {
+				return ordinal, fmt.Errorf("%w: batch %s Security coverage COPY: %v", ErrSourceRecordRejected, batch.BatchID, err)
+			}
+		}
+		// Only the private mixed-family candidate holds File and Security
+		// buffers across each other's record kinds. All remaining record
+		// families remain a hard ordering barrier for USN capture identity.
+		if privateDependencyBuffersEnabled(ctx) &&
+			prepared.Record.RecordKind == "WindowsSecurityCoverage" &&
+			len(pendingSecurity) != 0 {
+			profile.PrivateCoverageSecurityFencesAvoided++
+		}
+		decision := securityFileFlushBeforeKind(ctx, prepared.Record.RecordKind)
+		if decision.security {
+			if privateDependencyBuffersEnabled(ctx) && len(pendingSecurity) != 0 {
+				profile.PrivateSecurityBarrierFlushes++
+			}
+			if err := flushSecurity(); err != nil {
+				return ordinal, err
+			}
+		}
+		if decision.files {
+			if err := flushFiles(); err != nil {
+				return ordinal, err
+			}
+		}
+		// Rare additional families (including continuity gaps) remain strict
+		// source-order fences. Drain queued USN dependencies before projecting
+		// those records; coverage, Security and File retain independent buffers.
+		if privateDependencyBuffersEnabled(ctx) && decision.security && decision.files {
+			if err := flushDependencies(); err != nil {
+				return ordinal, err
+			}
+		}
+		if prepared.Record.RecordKind == "WindowsSecurityEvent" {
+			contiguousSecurity++
+			if contiguousSecurity > profile.SecurityBulk.MaxContiguousSecurity {
+				profile.SecurityBulk.MaxContiguousSecurity = contiguousSecurity
+			}
+			securityPrepareStarted := time.Now()
+			var securityRecord securityBulkRecord
+			var securityErr error
+			if selectedSinglePass {
+				securityRecord = singlePassSecurity
+				securityRecord.ordinal = ordinal
+				profile.SinglePassSecurityRows++
+			} else {
+				securityRecord, securityErr = prepareSecurityBulkRecord(ordinal, prepared, digest)
+			}
+			profile.SecurityBulk.Prepare += time.Since(securityPrepareStarted)
+			if securityErr != nil {
+				return ordinal, fmt.Errorf("%w: batch %s record %d (WindowsSecurityEvent): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, securityErr)
+			}
+			securityRecord.sourceBatchID = sourceBatchID
+			if securityLimits.shouldFlushBefore(
+				len(pendingSecurity), pendingSecurityBytes, int64(prepared.RecordBytes),
+			) {
+				if privateDependencyBuffersEnabled(ctx) && len(pendingSecurity) != 0 {
+					profile.PrivateSecurityCapacityFlushes++
+				}
+				if err := flushSecurity(); err != nil {
+					return ordinal, err
+				}
+			}
+			pendingSecurity = append(pendingSecurity, securityRecord)
+			pendingSecurityBytes += int64(prepared.RecordBytes)
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
+				}
+				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+			}
+			continue
+		}
+		contiguousSecurity = 0
+		if privateDependencyBuffersEnabled(ctx) &&
+			privateUSNDependentKind(prepared.Record.RecordKind) {
+			incoming := int64(prepared.RecordBytes)
+			if privateDependencyShouldFlushBefore(len(pendingDependencies), pendingDependencyBytes, incoming) {
+				if err := flushDependencies(); err != nil {
+					return ordinal, err
+				}
+			}
+			joined := joinedBacklogSourceFromContext(ctx)
+			if joined == nil || joined.batchIndex < 0 {
+				return ordinal, errors.New("FI private dependency: original signed batch index is unavailable")
+			}
+			var queueErr error
+			pendingDependencies, pendingDependencyBytes, queueErr =
+				privateDependencyAppend(pendingDependencies, pendingDependencyBytes,
+					sourceBatchID, joined.batchIndex, ordinal, prepared)
+			if queueErr != nil {
+				return ordinal, queueErr
+			}
+			if pendingDependencyBytes > privateDependencyMaxBytes {
+				if err := flushDependencies(); err != nil {
+					return ordinal, err
+				}
+			}
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
+				}
+				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+			}
+			continue
+		}
+		if prepared.Record.RecordKind == "FileObservation" || prepared.Record.RecordKind == "USNObjectObservation" {
+			if len(pendingFiles) >= fileLimits.SourceMaxRecords ||
+				(len(pendingFiles) > 0 && int64(prepared.RecordBytes) > fileLimits.SourceMaxBytes-pendingFileBytes) {
+				if err := flushFiles(); err != nil {
+					return ordinal, err
+				}
+			}
+			pendingFiles = append(pendingFiles, fileSourceBulkRecord{
+				sourceBatchID: sourceBatchID, ordinal: ordinal, prepared: prepared, digest: digest,
+			})
+			pendingFileBytes += int64(prepared.RecordBytes)
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
+				}
+				return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+			}
+			continue
 		}
 		var sourceRecordID int64
+		sqlStarted := time.Now()
 		err = tx.QueryRow(ctx, `
 INSERT INTO fi.source_record (
  source_batch_id,record_ordinal,version,record_kind,scope_id,written_at,record_bytes,record_sha256,ingest_version
@@ -278,17 +773,57 @@ INSERT INTO fi.source_record (
 RETURNING source_record_id
 `, sourceBatchID, ordinal, prepared.Record.Version, prepared.Record.RecordKind, prepared.Record.ScopeID, prepared.WrittenAtUTC,
 			prepared.RecordBytes, digest, IngestVersion).Scan(&sourceRecordID)
+		profile.SourceSQL += time.Since(sqlStarted)
 		if err != nil {
 			return ordinal, fmt.Errorf("insert FI source record: %w", err)
 		}
-		if err := ProjectSourceRecord(ctx, tx, sourceID, sourceRecordID, prepared); err != nil {
-			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, err)
+		var projectErr error
+		if prepared.Record.RecordKind == "WindowsSecurityCoverage" {
+			projectErr = profile.coverageBuffer.add(ctx, tx, sourceRecordID, prepared)
+		} else {
+			projectStarted := time.Now()
+			projectCtx := ctx
+			if prepared.Record.RecordKind == "USNObjectObservation" {
+				projectCtx = context.WithValue(ctx, fileObservationBulkBytesContextKey{}, prepared.RecordBytes)
+			}
+			projectErr = ProjectSourceRecord(projectCtx, tx, sourceID, sourceRecordID, prepared)
+			elapsed := time.Since(projectStarted)
+			profile.Projection += elapsed
+			profile.OtherProjection += elapsed
+		}
+		if projectErr != nil {
+			return ordinal, fmt.Errorf("%w: batch %s record %d (%s): %v", ErrSourceRecordRejected, batch.BatchID, ordinal, prepared.Record.RecordKind, projectErr)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				return ordinal, fmt.Errorf("%w: batch %s ended without final LF", ErrSourceRecordRejected, batch.BatchID)
 			}
 			return ordinal, fmt.Errorf("read FI source batch: %w", readErr)
+		}
+	}
+	// Retain buffers for the NEXT signed batch only within the SAME selected
+	// processing chunk. On its last batch, flush everything while the outer
+	// W128 transaction is still open; failure rolls back the whole window.
+	if !hasChunk || chunk.finish {
+		if err := flushFiles(); err != nil {
+			return ordinal, err
+		}
+		if privateDependencyBuffersEnabled(ctx) && len(pendingSecurity) != 0 {
+			profile.PrivateSecurityBoundaryFlushes++
+		}
+		if err := flushSecurity(); err != nil {
+			return ordinal, err
+		}
+		if err := flushDependencies(); err != nil {
+			return ordinal, err
+		}
+		fileFlushStarted := time.Now()
+		fileFlushErr := fileBulk.flush(ctx, tx)
+		elapsed := time.Since(fileFlushStarted)
+		profile.Projection += elapsed
+		profile.FileProjection += elapsed
+		if fileFlushErr != nil {
+			return ordinal, fmt.Errorf("%w: batch %s FileObservation final bulk projection: %v", ErrSourceRecordRejected, batch.BatchID, fileFlushErr)
 		}
 	}
 

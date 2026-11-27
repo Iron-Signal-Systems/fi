@@ -229,12 +229,11 @@ func dialAuthenticatedSenderTransport(
 	if err := validateTrustAnchors(root, issuer); err != nil {
 		return nil, func() {}, err
 	}
-	crl, err := loadAndValidateTransportCRL(
-		config.TransportCRLPath,
-		issuer,
-		time.Now(),
-	)
+	crl, err := loadTransportCRL(config.TransportCRLPath)
 	if err != nil {
+		return nil, func() {}, err
+	}
+	if err := validateTransportCRL(crl, issuer, time.Now()); err != nil {
 		return nil, func() {}, err
 	}
 	transportIdentity, err := certstore.LoadLocalMachineSigningIdentity(config.TransportCertificateSHA256)
@@ -250,21 +249,13 @@ func dialAuthenticatedSenderTransport(
 		_ = transportIdentity.Close()
 		return nil, func() {}, err
 	}
-	connection, closeConnection, err := dialReceiver(
-		ctx,
-		config,
-		transportCertificate,
-		root,
-		issuer,
-		crl,
-	)
+	connection, err := dialReceiver(ctx, config, transportCertificate, root, issuer, crl)
 	if err != nil {
 		_ = transportIdentity.Close()
 		return nil, func() {}, err
 	}
-
 	closeTransport := func() {
-		closeConnection()
+		_ = connection.Close()
 		_ = transportIdentity.Close()
 	}
 	return connection, closeTransport, nil

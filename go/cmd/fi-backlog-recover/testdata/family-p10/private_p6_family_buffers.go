@@ -1,0 +1,277 @@
+// Copyright (c) 2026 John Joseph Wood. All rights reserved.
+// Use of this source code is governed by the File Intelligence (FI)
+// Source Review License, Version 1.0, found in the repository root LICENSE file.
+//
+// P6 disposable W512 clone ONLY. Family-capacity handoffs use the existing
+// single, atomic typed-window SQL transaction. This code must not be enabled
+// by ordinary FI or by frozen accepted P5.
+package recordingest
+
+import (
+    "context"
+    "errors"
+    "fmt"
+)
+
+type privateP6WindowContextKey struct{}
+func privateP6BuffersFromContext(ctx context.Context)*privateP6Buffers{
+    if ctx==nil{return nil}
+    b,_:=ctx.Value(privateP6WindowContextKey{}).(*privateP6Buffers)
+    return b
+}
+
+type privateP6Family uint8
+const(
+    privateP6Security privateP6Family=iota
+    privateP6File
+    privateP6Coverage
+    privateP6USN
+    privateP6Other
+    privateP6FamilyCount
+)
+var privateP6FamilyNames=[privateP6FamilyCount]string{
+    "Security","NTFSFile","Coverage","USNDependency","Other",
+}
+
+func privateP6KindFamily(kind string)(privateP6Family,error){
+    switch kind{
+    case "WindowsSecurityEvent":return privateP6Security,nil
+    case "FileObservation":return privateP6File,nil
+    case "WindowsSecurityCoverage","WindowsSecurityContinuityGap":
+        return privateP6Coverage,nil
+    case "USNReadBoundary","USNObjectObservation","USNContinuityGap":
+        return privateP6USN,nil
+    case "CollectorIdentity","DirectoryPrincipalSnapshot","LocalPrincipalSnapshot",
+        "NTFSCollectionError","SMBShareSnapshot","SupportingSourceCollectionError":
+        return privateP6Other,nil
+    default:return 0,fmt.Errorf("FI P6: unreviewed relational record kind %q",kind)
+    }
+}
+
+// The original signed (batch index, ordinal, SHA-256, bytes) is the sole
+// identity. SQL sequences must NOT substitute for signed-source order.
+type privateP6Record struct{
+    signedBatchIndex int
+    sourceBatchID int64
+    ordinal int64
+    prepared SourceRecord
+    selectedSinglePass bool
+    singlePassSecurity securityBulkRecord
+}
+func (r privateP6Record) valid()bool{
+    return r.signedBatchIndex>=0 && r.sourceBatchID>0 && r.ordinal>0 &&
+        r.prepared.RecordBytes>0 &&
+        r.prepared.RecordBytes==len(r.prepared.RawRecordBytes) &&
+        r.prepared.Record.RecordKind!="" && r.prepared.Record.ScopeID!="" &&
+        r.prepared.Record.Version==SpoolRecordVersion
+}
+
+// A new transactional SQL sink is deliberately NOT free to commit each
+// family. All methods execute inside the SAME W512 pgx.Tx; the caller commits
+// once, only after finish() and every existing SQL integrity gate succeeds.
+type privateP6SQLHandoff interface{
+    Source(ctx context.Context, rows []privateP6Record)error
+    Family(ctx context.Context, family privateP6Family, rows []privateP6Record)error
+}
+
+type privateP6Limits struct{
+    rows int
+    bytes int64
+}
+type privateP6Lane struct{
+    limit privateP6Limits
+    pending []privateP6Record
+    bytes int64
+    handoffs int64
+    records int64
+    capacityHandoffs int64
+    dependencyHandoffs int64
+    finalHandoffs int64
+    peakRows int
+    peakBytes int64
+}
+type privateP6Buffers struct{
+    sink privateP6SQLHandoff
+    window int
+    lastBatch int
+    lastOrdinal int64
+    source privateP6Lane
+    lanes [privateP6FamilyCount]privateP6Lane
+    total int64
+    inserted int64
+    finished bool
+    failed error
+}
+
+func newPrivateP6Buffers(window int,sink privateP6SQLHandoff)(*privateP6Buffers,error){
+    if window<1 || sink==nil{return nil,errors.New("FI P6: private window and SQL transaction sink required")}
+    b:=&privateP6Buffers{window:window,sink:sink,lastBatch:-1}
+    // Exact profile bounds; no unbounded per-family memory. A source record
+    // larger than one lane byte ceiling goes as ONE admitted item (bounded
+    // by existing P5 global 256 MiB raw-record admission and source caps).
+    b.source.limit=privateP6Limits{rows:8192,bytes:64<<20}
+    b.lanes[privateP6Security].limit=privateP6Limits{rows:4096,bytes:16<<20}
+    b.lanes[privateP6File].limit=privateP6Limits{rows:8192,bytes:32<<20}
+    b.lanes[privateP6Coverage].limit=privateP6Limits{rows:512,bytes:8<<20}
+    b.lanes[privateP6USN].limit=privateP6Limits{rows:512,bytes:8<<20}
+    b.lanes[privateP6Other].limit=privateP6Limits{rows:512,bytes:8<<20}
+    return b,nil
+}
+
+func privateP6ShouldFlush(l *privateP6Lane,incoming int64)bool{
+    return len(l.pending)>0 &&
+        (len(l.pending)>=l.limit.rows ||
+            incoming>l.limit.bytes-l.bytes)
+}
+func privateP6Full(l *privateP6Lane)bool{
+    return len(l.pending)>=l.limit.rows || l.bytes>=l.limit.bytes
+}
+func privateP6Enqueue(l *privateP6Lane,row privateP6Record){
+    l.pending=append(l.pending,row)
+    l.bytes+=int64(row.prepared.RecordBytes)
+    if len(l.pending)>l.peakRows{l.peakRows=len(l.pending)}
+    if l.bytes>l.peakBytes{l.peakBytes=l.bytes}
+}
+
+func (b *privateP6Buffers) Add(ctx context.Context,row privateP6Record)error{
+    if b==nil||ctx==nil||b.sink==nil||b.finished||b.failed!=nil{
+        return errors.New("FI P6: invalid or previously failed window buffer")
+    }
+    if err:=ctx.Err();err!=nil{b.failed=err;return err}
+    family,err:=privateP6KindFamily(row.prepared.Record.RecordKind)
+    if err!=nil{b.failed=err;return err}
+    if !row.valid() ||
+        row.signedBatchIndex<b.lastBatch ||
+        (row.signedBatchIndex==b.lastBatch && row.ordinal<=b.lastOrdinal){
+        b.failed=errors.New("FI P6: invalid signed identity, bytes or original record order")
+        return b.failed
+    }
+    // Flush the shared source identity ledger before it exceeds its own
+    // capacity. Source rows are inserted in true signed order, so USN's
+    // established preceding-source-record-id relation still works.
+    src:=&b.source
+    if privateP6ShouldFlush(src,int64(row.prepared.RecordBytes)){
+        if err=b.flushSource(ctx);err!=nil{return err}
+    }
+    privateP6Enqueue(src,row)
+    b.inserted++ // admitted, not yet SQL-committed
+    if privateP6Full(src){
+        if err=b.flushSource(ctx);err!=nil{return err}
+    }
+    lane:=&b.lanes[family]
+    if privateP6ShouldFlush(lane,int64(row.prepared.RecordBytes)){
+        if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
+    }
+    privateP6Enqueue(lane,row)
+    b.total++
+    b.lastBatch,b.lastOrdinal=row.signedBatchIndex,row.ordinal
+    if privateP6Full(lane){
+        if err=b.flushFamily(ctx,family,"capacity");err!=nil{return err}
+    }
+    return nil
+}
+
+func(b *privateP6Buffers) flushSource(ctx context.Context)error{
+    l:=&b.source
+    if len(l.pending)==0{return nil}
+    if err:=b.sink.Source(ctx,l.pending);err!=nil{
+        b.failed=fmt.Errorf("FI P6: signed source ledger SQL failed: %w",err)
+        return b.failed
+    }
+    l.records+=int64(len(l.pending))
+    l.handoffs++
+    l.pending=nil
+    l.bytes=0
+    return nil
+}
+
+func(b *privateP6Buffers) flushFamily(ctx context.Context,f privateP6Family,reason string)error{
+    if f>=privateP6FamilyCount{return errors.New("FI P6: unknown flush family")}
+    lane:=&b.lanes[f]
+    if len(lane.pending)==0{return nil}
+    // A relational parent is a prerequisite of every typed child. This is
+    // NOT a family flush: insert the single shared SOURCE identity ledger.
+    if err:=b.flushSource(ctx);err!=nil{return err}
+    // NTFS identities must exist before USN observations can bind to them.
+    // No Security, Coverage or Other drain is allowed as a side effect.
+    if f==privateP6USN && len(b.lanes[privateP6File].pending)>0{
+        if err:=b.flushFamily(ctx,privateP6File,"dependency");err!=nil{return err}
+    }
+    // The five SQL workers commit independently. A File handoff must
+    // become SQL-visible before dependent USN starts; other families
+    // remain queued and are not drained by this dependency.
+    if f==privateP6USN {
+        if wait,ok:=b.sink.(interface{WaitFamily(context.Context,privateP6Family)error});ok{
+            if err:=wait.WaitFamily(ctx,privateP6File);err!=nil{
+                b.failed=fmt.Errorf("FI P6 direct: File prerequisite commit: %w",err)
+                return b.failed
+            }
+        }
+    }
+    if err:=b.sink.Family(ctx,f,lane.pending);err!=nil{
+        b.failed=fmt.Errorf("FI P6: %s relational SQL handoff (%s): %w",
+            privateP6FamilyNames[f],reason,err)
+        return b.failed
+    }
+    lane.records+=int64(len(lane.pending))
+    lane.handoffs++
+    switch reason{
+    case "capacity":lane.capacityHandoffs++
+    case "dependency":lane.dependencyHandoffs++
+    case "window-complete":lane.finalHandoffs++
+    default:panic("FI P6: unsupported flush reason")
+    }
+    lane.pending=nil
+    lane.bytes=0
+    return nil
+}
+
+// This is the only unconditional drain. Signed batch and K32 boundaries
+// DO NOT call Finish. The existing typed W512 transaction still commits
+// atomically only after every table, FK and source-window check passes.
+func(b *privateP6Buffers) Finish(ctx context.Context)error{
+    if b==nil||ctx==nil||b.finished||b.failed!=nil{return errors.New("FI P6: invalid final window barrier")}
+    if err:=b.flushSource(ctx);err!=nil{return err}
+    // File before USN is a real relational prerequisite, not an
+    // arbitrary family transition. Other families are independent.
+    for _,f:=range []privateP6Family{
+        privateP6Security,privateP6File,privateP6Coverage,privateP6USN,privateP6Other,
+    }{
+        if err:=b.flushFamily(ctx,f,"window-complete");err!=nil{return err}
+    }
+    // P6's old coordinator was synchronous. In this P10 private copy,
+    // all five asynchronous PostgreSQL handoffs must acknowledge durable
+    // completion before any typed-window marker can be committed.
+    if wait,ok:=b.sink.(interface{WaitAll(context.Context)error});ok{
+        if err:=wait.WaitAll(ctx);err!=nil{
+            b.failed=fmt.Errorf("FI P6 direct: five-family commit barrier: %w",err)
+            return b.failed
+        }
+    }
+    var complete int64
+    for f:=range b.lanes{
+        l:=&b.lanes[f]
+        if len(l.pending)!=0||l.bytes!=0 {
+            return errors.New("FI P6: typed commit barrier has unfinished family work")
+        }
+        complete+=l.records
+    }
+    if complete!=b.total || b.source.records!=b.inserted ||
+        b.inserted!=b.total || len(b.source.pending)!=0{
+        return fmt.Errorf("FI P6: incomplete source/relational accounting source=%d typed=%d admitted=%d",
+            b.source.records,complete,b.total)
+    }
+    b.finished=true
+    fmt.Printf("FI P6 SOURCE LEDGER window=%d records=%d copy_handoffs=%d bytes_limit=%d complete=true\n",
+        b.window,b.source.records,b.source.handoffs,b.source.limit.bytes)
+    for family:=privateP6Family(0);family<privateP6FamilyCount;family++{
+        lane:=&b.lanes[family]
+        fmt.Printf("FI P6 FAMILY window=%d family=%s rows=%d handoffs=%d capacity=%d dependency=%d final=%d peak_rows=%d peak_bytes=%d complete=true\n",
+            b.window,privateP6FamilyNames[family],lane.records,lane.handoffs,
+            lane.capacityHandoffs,lane.dependencyHandoffs,lane.finalHandoffs,
+            lane.peakRows,lane.peakBytes)
+    }
+    fmt.Printf("FI P6 WINDOW READY window=%d source=%d typed=%d families=5 sql_writers=5 clone_only=true completion=all_families\n",
+        b.window,b.source.records,complete)
+    return nil
+}

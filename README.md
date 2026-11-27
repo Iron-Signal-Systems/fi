@@ -257,7 +257,9 @@ access is permitted.
 
 ## Initial platform scope
 
-Initial development targets **Windows Server and NTFS file services**.
+Initial development targets **Windows Server and NTFS file services** for collectors.
+
+The FI **backend runtime target is FreeBSD**, currently validated in development on the C220 FreeBSD 15.1 host. Linux is **not** an FI backend deployment target. Windows remains the collector target; it is not a PostgreSQL backend requirement. GitHub-hosted Ubuntu jobs may be used only as toolchain/CI hosts to cross-compile binaries for FreeBSD; cross-compilation is not a FreeBSD runtime acceptance test. Backend integration and performance acceptance must run on FreeBSD against disposable PostgreSQL clones before any authoritative changes.
 
 Monitoring is explicitly scope-driven. FI operates only against configured
 **governed roots**. Installing FI on a server does not mean the entire server,
@@ -292,66 +294,6 @@ Other filesystems and operating systems are outside the initial scope.
 Phase 1 has a persistent Windows service runtime with three intentional source
 execution lanes. The lanes are concurrent with one another, but each lane remains
 sequential within its own checkpoint/source boundary.
-
-The current Windows source runtime is deployed as five SCM-managed services with
-separate runtime responsibilities:
-
-```text
-FICollector
-    C:\Program Files\FI\fi-collector.exe -service
-    source collection
-    source interpretation
-    durable spool/checkpoint ownership
-        |
-        +-- FIUSNReader
-        |      C:\Program Files\FI\fi-usn-reader.exe
-        |      bounded raw-volume USN operations
-        |      bounded containment/SACL operations
-        |
-        +-- FIObjReader
-        |      C:\Program Files\FI\fi-obj-reader.exe
-        |      bounded protected-object observation
-        |
-        +-- FICRLRefresher
-        |      C:\Program Files\FI\fi-crl-refresher.exe
-        |      transport-PKI CRL refresh/activation
-        |
-        +-- durable local spool
-               |
-               v
-           FISender
-               C:\Program Files\FI\fi-sender.exe
-               generation rollover/recovery
-               transport ownership
-               receiver delivery
-```
-
-`FISender` is a Windows service, not a scheduled-task-owned production process.
-Production runtime ownership requires exactly one SCM-owned `fi-sender.exe`.
-The legacy `FI-GMSA-Sender-V2-Drain` scheduled task is not an active runtime
-owner. `FISender` does not replace collector source-policy, source-interpretation,
-spool-write, or checkpoint ownership.
-
-The installer may intentionally leave `FISender` Manual/Stopped when receiver
-mTLS activation cannot be established and the operator explicitly selects
-Receiver Pending. The other four services may remain Automatic/Running. The
-installer reports this accepted state as `PASS_WITH_RECEIVER_PENDING`. Rerunning
-`fi-install.exe` must complete receiver activation before the sender is enabled.
-
-The canonical installed executable names are:
-
-```text
-fi-collector.exe
-fi-usn-reader.exe
-fi-obj-reader.exe
-fi-crl-refresher.exe
-fi-sender.exe
-```
-
-The native Windows installer, approval boundaries, service identities,
-receiver-pending behavior, release/package trust, executable-name migration, and
-rollback contract are documented in
-[`docs/WINDOWS-INSTALLER.md`](docs/WINDOWS-INSTALLER.md).
 
 ```text
 FICollector
@@ -414,37 +356,13 @@ The Security worker records the gap, records current Security-specific coverage
 (audit-policy state, Security-log readability, and governed-root SACL coverage),
 then establishes a fresh forward Security boundary. It does not block Security
 collection behind a full file-tree rescan. The one-shot configured
-`fi-collector.exe -run` path retains its existing configured-collection behavior.
+`fi.exe -run` path retains its existing configured-collection behavior.
 
 The independent intervals default to `10m` for USN and `1m` for Windows
 Security. They may be overridden through `FI_SERVICE_USN_EVERY` and
 `FI_SERVICE_WINDOWS_SECURITY_EVERY`. Effective intervals are written to
 `service-runtime.jsonl` in `ServiceStarted`, `USNCatchUp`, and
 `WindowsSecurityCatchUp` records.
-
-On 2026-09-27, the then-current four-service Windows source runtime was live
-validated on Windows Server 2016 host `ISS-FS-01`. All four FI services were
-stopped, a governed-root change was created while FI was completely down, and
-the accepted USN checkpoint remained frozen. A real host reboot then
-auto-started `FICollector`, `FIUSNReader`, `FIObjReader`, and `FISender` under
-SCM ownership. Both broker pipes returned, exactly one SCM-owned sender process
-was present, the legacy sender task remained disabled, all four reviewed binary
-hashes matched, and the USN checkpoint advanced from `847003536` to
-`847014776`.
-
-The exact outage change was recovered into batch
-`20260927T111645.495101800Z-394e6bc0a9947651`, rolled into generation
-`20260927T112641.412434900Z-c3c60a5c545b4ce2`, transported to the receiver,
-and relationally materialized in PostgreSQL as source record `545839` with
-`Observed / CurrentObjectContained` object observations. This establishes
-end-to-end source-runtime continuity across complete FI shutdown, host reboot,
-service recovery, USN catch-up, generation transport, receiver custody, and
-relational ingest.
-
-The later native-installer work added `FICRLRefresher` as a fifth SCM-managed
-service and migrated the collector/helper executable names to their current
-canonical forms. Current installation and reconciliation behavior is documented
-in `docs/WINDOWS-INSTALLER.md`.
 
 On 2026-09-19, the 10-minute USN lane was live validated on the Server 2016 lab.
 A single NTFS object (FRN 45 / sequence 9) was renamed and extended while a long
@@ -550,14 +468,8 @@ See:
 
 FI reads the local Windows Security log as an independent activity source.
 
-The normal FI collector and background services **do not** change Windows
-audit policy or governed-root SACLs. The separately authorized native
-`fi-install.exe` deployment workflow does plan and apply missing Windows
-audit-policy and governed-root SACL prerequisites after administrator Approval 2.
-Those approved host changes may persist after an unrelated installer failure;
-they are not ordinary collector remediation and not part of a blanket FI-owned
-transaction rollback guarantee. See
-`docs/WINDOWS-INSTALLER.md` and `docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md`.
+FI does not automatically enable Windows audit policy or add SACLs to governed
+roots. Those are administrator-controlled deployment settings.
 
 The Security Event Log collection/checkpoint path has been live validated across
 the current Windows Server acceptance set:

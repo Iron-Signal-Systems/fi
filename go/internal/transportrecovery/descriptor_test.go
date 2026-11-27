@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportencoding"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestSignedRecoveryRoundTrip(t *testing.T) {
@@ -58,8 +57,7 @@ func testSigningCertificate(t *testing.T, commonName string) (*rsa.PrivateKey, *
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName:         commonName,
-			OrganizationalUnit: []string{transporttrust.BatchSigningOrganizationalUnit},
+			CommonName: commonName,
 		},
 		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().Add(time.Hour),

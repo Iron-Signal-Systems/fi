@@ -21,7 +21,6 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportbatch"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportencoding"
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportpackage"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
 
 func TestReadHeaderV2(t *testing.T) {
@@ -168,9 +167,6 @@ func newWireTestBatchV2(
 		SerialNumber: big.NewInt(8),
 		Subject: pkix.Name{
 			CommonName: sourceID,
-			OrganizationalUnit: []string{
-				transporttrust.BatchSigningOrganizationalUnit,
-			},
 		},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(time.Hour),

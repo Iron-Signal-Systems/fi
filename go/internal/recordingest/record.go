@@ -11,10 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/spool"
+	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
 const IngestVersion = "fi-postgresql-relational-ingest/0.2"
@@ -40,11 +40,22 @@ var supportedRecordKinds = map[string]struct{}{
 // SourceRecord is the validated common envelope and exact byte identity of one
 // source JSONL record. PostgreSQL stores the byte count and SHA-256 lineage, not
 // a second copy of these JSON bytes.
+type privateFamilyP3CoverageValue struct {
+    value records.WindowsSecurityCoverageObservation
+    observedAt time.Time
+}
+
 type SourceRecord struct {
+    PrivateFamilyP3File *fileObservationPayload
+    PrivateFamilyP3Coverage *privateFamilyP3CoverageValue
 	Record         spool.Record
 	RawRecordBytes []byte
 	RecordBytes    int
 	RecordSHA256   string
+	// RecordDigest is the already-computed SHA-256 of the exact signed
+	// JSONL record, preserving the binary bytes without a hex decode in
+	// the real private and canonical ingest loops.
+	RecordDigest   [32]byte
 	WrittenAtUTC   time.Time
 }
 
@@ -53,6 +64,18 @@ type SourceRecord struct {
 // exact JSONL bytes, including the final LF, so source_record can be proven
 // against immutable recorder custody without storing the JSON again.
 func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
+	return prepareSourceRecord(raw, true)
+}
+
+// prepareOwnedSourceRecord is used only when the ingestion reader already
+// owns a fresh immutable []byte from bufio.ReadBytes. Unlike callers of the
+// exported PrepareSourceRecord, no second byte-for-byte copy is necessary.
+// This retains the same strict JSON, digest, and evidence validations.
+func prepareOwnedSourceRecord(raw []byte) (SourceRecord, error) {
+	return prepareSourceRecord(raw, false)
+}
+
+func prepareSourceRecord(raw []byte, copyBytes bool) (SourceRecord, error) {
 	if len(raw) == 0 {
 		return SourceRecord{}, errors.New("FI ingest source record is empty")
 	}
@@ -68,16 +91,12 @@ func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
 		return SourceRecord{}, errors.New("FI ingest source record contains embedded LF")
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-
+	// The reader already owns the complete LF-terminated JSONL record.
+	// Reuse the strict one-shot decoder; preserve raw bytes for SHA-256
+	// lineage and the typed projection.
 	var record spool.Record
-	if err := decoder.Decode(&record); err != nil {
+	if err := decodeStrictPayload(json.RawMessage(body), &record); err != nil {
 		return SourceRecord{}, fmt.Errorf("decode FI ingest source record: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return SourceRecord{}, errors.New("FI ingest source record contains trailing JSON")
 	}
 
 	if record.Version != SpoolRecordVersion {
@@ -92,7 +111,10 @@ func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
 	if record.WrittenAt == "" {
 		return SourceRecord{}, errors.New("FI ingest source record written_at is required")
 	}
-	if len(record.Payload) == 0 || !json.Valid(record.Payload) {
+	// encoding/json already validated the nested json.RawMessage while
+	// strictly decoding the envelope. A second json.Valid traversal over
+	// every large Security payload duplicates work on the real backlog.
+	if len(record.Payload) == 0 {
 		return SourceRecord{}, errors.New("FI ingest source record payload JSON is required and must be valid")
 	}
 
@@ -102,12 +124,17 @@ func PrepareSourceRecord(raw []byte) (SourceRecord, error) {
 	}
 
 	digest := sha256.Sum256(raw)
+	evidenceBytes := raw
+	if copyBytes {
+		evidenceBytes = append([]byte(nil), raw...)
+	}
 
 	return SourceRecord{
 		Record:         record,
-		RawRecordBytes: append([]byte(nil), raw...),
+		RawRecordBytes: evidenceBytes,
 		RecordBytes:    len(raw),
 		RecordSHA256:   hex.EncodeToString(digest[:]),
+		RecordDigest:   digest,
 		WrittenAtUTC:   writtenAt.UTC(),
 	}, nil
 }

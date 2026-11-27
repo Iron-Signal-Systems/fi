@@ -26,17 +26,33 @@ const (
 )
 
 func AssessCoverage(ctx context.Context, scopes []GovernedScope) (records.WindowsSecurityCoverageObservation, error) {
-	// FICollector cannot query protected system audit policy directly. Request
-	// the four fixed effective subcategories from the authenticated FIUSNReader
-	// broker. An unavailable broker is an explicit Partial condition, never Ready.
-	snapshot, policyErr := queryBrokerRequiredAuditPolicies(ctx)
-	if policyErr != nil {
-		snapshot = unknownBrokerRequiredAuditPolicies(policyErr)
+	fileSystem, fileSystemErr := queryAuditPolicy(fileSystemAuditGUID, FileSystemAuditSubcategoryGUID)
+	if fileSystemErr != nil {
+		fileSystem = records.WindowsSecurityAuditPolicyObservation{
+			SubcategoryGUID: FileSystemAuditSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: fileSystemErr.Error(),
+		}
 	}
-	fileSystem := snapshot.FileSystem
-	handleManipulation := snapshot.HandleManipulation
-	detailedFileShare := snapshot.DetailedFileShare
-	policyChange := snapshot.PolicyChange
+
+	handleManipulation, handleManipulationErr := queryAuditPolicy(handleManipulationAuditGUID, HandleManipulationSubcategoryGUID)
+	if handleManipulationErr != nil {
+		handleManipulation = records.WindowsSecurityAuditPolicyObservation{
+			SubcategoryGUID: HandleManipulationSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: handleManipulationErr.Error(),
+		}
+	}
+
+	detailedFileShare, detailedFileShareErr := queryAuditPolicy(detailedFileShareAuditGUID, DetailedFileShareSubcategoryGUID)
+	if detailedFileShareErr != nil {
+		detailedFileShare = records.WindowsSecurityAuditPolicyObservation{
+			SubcategoryGUID: DetailedFileShareSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: detailedFileShareErr.Error(),
+		}
+	}
+
+	policyChange, policyChangeErr := queryAuditPolicy(auditPolicyChangeGUID, AuditPolicyChangeSubcategoryGUID)
+	if policyChangeErr != nil {
+		policyChange = records.WindowsSecurityAuditPolicyObservation{
+			SubcategoryGUID: AuditPolicyChangeSubcategoryGUID, AuditingInformation: "Unknown", ReasonCode: policyChangeErr.Error(),
+		}
+	}
 
 	logReadable := true
 	if _, err := QueryLogState(); err != nil {
