@@ -92,6 +92,66 @@ ensure_group(){
     fi
   fi
 }
+# Permission boundary: the existing 2770 spool is correct, but 'install -d'
+# creates its two root-owned parent directories at 0700 under umask 077.
+# Permit group traverse ONLY (0710) on those two telemetry-only parents.
+# Never chmod any FI custody, PostgreSQL, or shared data ancestor.
+ensure_telemetry_parent_access(){
+  host_parent=/fast/data/fi/telemetry
+  sor_parent=$sor/var/db/fi/telemetry
+  for scope in host sor; do
+    if [ "$scope" = host ]; then
+      group=$(pw groupshow -n fi-telemetry 2>/dev/null) ||
+        fail 'host telemetry group missing'
+    else
+      group=$(jexec fi-sor pw groupshow -n fi-telemetry 2>/dev/null) ||
+        fail 'fi-sor telemetry group missing'
+    fi
+    [ "$(printf '%s\n' "$group" | cut -d: -f3)" = 46000 ] ||
+      fail "$scope telemetry GID mismatch"
+  done
+  [ -d "$spool" ] && [ ! -L "$spool" ] &&
+  [ -d "$dst" ] && [ ! -L "$dst" ] ||
+    fail 'telemetry spool unavailable or symlink'
+  [ "$(stat -f '%u:%g:%Lp' "$spool")" = '46000:46000:2770' ] ||
+    fail 'telemetry source spool ownership/mode changed'
+  mount -p | awk -v src="$spool" -v dst="$dst" '
+    $1==src && $2==dst && $3=="nullfs" && $4 ~ /(^|,)rw(,|$)/ {found++}
+    END {exit !(found==1)}
+  ' || fail 'verified writable telemetry nullfs mount missing'
+  # Preflight both directories before touching either. If someone changed
+  # ownership/mode, stop rather than widen an unknown filesystem boundary.
+  for path in "$host_parent" "$sor_parent"; do
+    [ -d "$path" ] && [ ! -L "$path" ] ||
+      fail "telemetry parent is missing or symlink: $path"
+    state=$(stat -f '%u:%g:%Lp' "$path")
+    case "$state" in
+      '0:0:700'|'0:46000:710') ;;
+      *) fail "unexpected telemetry parent ownership/mode: $path ($state)" ;;
+    esac
+  done
+  echo '===== REPAIR RESTRICTED TELEMETRY PARENT TRAVERSAL ====='
+  for path in "$host_parent" "$sor_parent"; do
+    if [ "$(stat -f '%u:%g:%Lp' "$path")" = '0:0:700' ]; then
+      chown 0:46000 "$path"
+      chmod 0710 "$path"
+    fi
+    [ "$(stat -f '%u:%g:%Lp' "$path")" = '0:46000:710' ] ||
+      fail "telemetry parent final permissions failed: $path"
+  done
+  su -m fi-telemetry -c 'test -x /fast/data/fi/telemetry &&
+                         test -r /fast/data/fi/telemetry/spool &&
+                         test -w /fast/data/fi/telemetry/spool' ||
+    fail 'host telemetry collector cannot access spool'
+  for account in fi-telemetry-monitor fi-telemetry-recorder; do
+    jexec -U "$account" fi-sor /bin/sh -c '
+      test -x /var/db/fi/telemetry &&
+      test -r /var/db/fi/telemetry/spool &&
+      test -w /var/db/fi/telemetry/spool
+    ' || fail "$account cannot access fi-sor spool"
+  done
+  echo 'FI C220 TELEMETRY SPOOL PERMISSIONS PASS group_traverse_only=true'
+}
 ensure_user(){
   scope=$1; name=$2; uid=$3
   if [ "$scope" = host ];then
@@ -147,6 +207,7 @@ if [ "$mode" = --stage ];then
   else
     mount -t nullfs -o rw "$spool" "$dst"
   fi
+  ensure_telemetry_parent_access
   if ! grep -Fx "$line" "$fstab" >/dev/null;then
     ! grep -F " $dst " "$fstab" >/dev/null || fail "foreign fstab entry"
     cp -p "$fstab" "$fstab.fi-telemetry-before-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -206,6 +267,7 @@ if [ "$mode" = --stage ];then
 fi
 [ -x "$sor/usr/local/sbin/fi-c1-sor-live" ] || fail "C1 binary not staged"
 if [ "$mode" = --start-telemetry ];then
+  ensure_telemetry_parent_access
   jexec -U fi-telemetry-monitor fi-sor psql -X -w -At -v ON_ERROR_STOP=1 \
     -h /var/db/fi/sor/run -p 5432 -U fi-telemetry-monitor -d fi -c 'SELECT current_user' |
       grep -Fx 'fi-telemetry-monitor' >/dev/null ||
