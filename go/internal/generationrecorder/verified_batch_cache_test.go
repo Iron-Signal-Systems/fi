@@ -48,8 +48,8 @@ func TestReceiverVerifiedBatchSharedGroupPermissions(t *testing.T) {
 	writer,err:=newReceiverVerifiedBatchWriter(root)
 	if err!=nil{t.Fatal(err)}
 	consume:=func(_ string,r io.Reader)error{_,e:=io.Copy(io.Discard,r);return e}
-	if err=writer.Consume("batch-a.jsonl",bytes.NewReader([]byte("{\\"record\\":1}\\n")),consume);err!=nil{t.Fatal(err)}
-	if err=writer.Consume("batch-a.manifest.json",bytes.NewReader([]byte("{\\"manifest\\":1}")),consume);err!=nil{t.Fatal(err)}
+	if err=writer.Consume("batch-a.jsonl",bytes.NewReader([]byte("{\"record\":1}\n")),consume);err!=nil{t.Fatal(err)}
+	if err=writer.Consume("batch-a.manifest.json",bytes.NewReader([]byte("{\"manifest\":1}")),consume);err!=nil{t.Fatal(err)}
 	result:=DurableResult{ReceiptSHA256:strings.Repeat("a",64),
 		Receipt:RecordedReceipt{BatchCount:1,RecordCount:1,DataBytes:13,TransferSHA256:strings.Repeat("b",64)}}
 	if err=writer.Publish(result);err!=nil{t.Fatal(err)}
