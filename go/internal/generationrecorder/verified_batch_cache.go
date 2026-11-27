@@ -105,6 +105,15 @@ func(w *receiverVerifiedBatchWriter)Consume(name string,reader io.Reader,
 	}else{
 		w.lastDataID=""
 		w.index++
+		// Per-batch semantic validation is complete, but the WHOLE signed
+		// FIGT is not authenticated until the transport verifier reaches
+		// EOF and verifies its final SHA. Do not label partial output as
+		// accepted or allow the SoR to read it without verified.json.
+		if w.index==1||w.index%128==0{
+			fmt.Fprintf(os.Stderr,
+				"FI RECEIVER CACHE PREPARATION batches=%d signed_transfer_full_verification=pending output_provisional=true\n",
+				w.index)
+		}
 	}
 	return nil
 }
