@@ -12,19 +12,22 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
+	"strconv"
 	"math/big"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/transportbatch"
-	"github.com/Iron-Signal-Systems/fi/go/internal/transporttrust"
 )
+
+const batchSigningTestTemplateOID = "1.3.6.1.4.1.311.21.8.100.2"
 
 // Tests.
 
 func TestNewSignedBatch(t *testing.T) {
-	key, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	key, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 	descriptor := validSignedPackageDescriptor()
 
 	value, err := NewSignedBatch(descriptor, certificate, key)
@@ -67,7 +70,7 @@ func TestNewSignedBatch(t *testing.T) {
 }
 
 func TestNewSignedBatchCopiesCertificateDER(t *testing.T) {
-	key, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	key, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 	original := append([]byte(nil), certificate.Raw...)
 
 	value, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, key)
@@ -85,7 +88,7 @@ func TestNewSignedBatchRejectsCA(t *testing.T) {
 	key, certificate := newBatchSigningIdentityWithOptions(
 		t,
 		"iss-fs-01.iss.local",
-		[]string{transporttrust.BatchSigningOrganizationalUnit},
+		[]string{batchSigningTestTemplateOID},
 		x509.KeyUsageDigitalSignature|x509.KeyUsageCertSign,
 		true,
 	)
@@ -103,7 +106,7 @@ func TestNewSignedBatchRejectsInvalidDescriptor(t *testing.T) {
 	key, certificate := newBatchSigningIdentity(
 		t,
 		"iss-fs-01.iss.local",
-		transporttrust.BatchSigningOrganizationalUnit,
+		batchSigningTestTemplateOID,
 	)
 	descriptor := validSignedPackageDescriptor()
 	descriptor.BatchID = ""
@@ -117,7 +120,7 @@ func TestNewSignedBatchRejectsMissingCertificateDER(t *testing.T) {
 	key, _ := newBatchSigningIdentity(
 		t,
 		"iss-fs-01.iss.local",
-		transporttrust.BatchSigningOrganizationalUnit,
+		batchSigningTestTemplateOID,
 	)
 	certificate := &x509.Certificate{}
 
@@ -134,7 +137,7 @@ func TestNewSignedBatchRejectsMissingDigitalSignatureUsage(t *testing.T) {
 	key, certificate := newBatchSigningIdentityWithOptions(
 		t,
 		"iss-fs-01.iss.local",
-		[]string{transporttrust.BatchSigningOrganizationalUnit},
+		[]string{batchSigningTestTemplateOID},
 		x509.KeyUsageKeyEncipherment,
 		false,
 	)
@@ -148,13 +151,13 @@ func TestNewSignedBatchRejectsMissingDigitalSignatureUsage(t *testing.T) {
 	}
 }
 
-func TestNewSignedBatchRejectsMultipleOrganizationalUnits(t *testing.T) {
+func TestNewSignedBatchRejectsDuplicateTemplateExtensions(t *testing.T) {
 	key, certificate := newBatchSigningIdentityWithOptions(
 		t,
 		"iss-fs-01.iss.local",
 		[]string{
-			transporttrust.BatchSigningOrganizationalUnit,
-			"Unexpected Role",
+			batchSigningTestTemplateOID,
+			batchSigningTestTemplateOID,
 		},
 		x509.KeyUsageDigitalSignature,
 		false,
@@ -162,9 +165,9 @@ func TestNewSignedBatchRejectsMultipleOrganizationalUnits(t *testing.T) {
 
 	_, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, key)
 	if err == nil {
-		t.Fatal("NewSignedBatch() error = nil, want OU-count rejection")
+		t.Fatal("NewSignedBatch() error = nil, want duplicate-template rejection")
 	}
-	if !strings.Contains(err.Error(), "exactly one organizational unit") {
+	if !strings.Contains(err.Error(), "template information extensions") {
 		t.Fatalf("NewSignedBatch() error = %q, want OU-count rejection", err)
 	}
 }
@@ -198,7 +201,7 @@ func TestNewSignedBatchRejectsNonRSASigner(t *testing.T) {
 	_, certificate := newBatchSigningIdentity(
 		t,
 		"iss-fs-01.iss.local",
-		transporttrust.BatchSigningOrganizationalUnit,
+		batchSigningTestTemplateOID,
 	)
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -222,7 +225,7 @@ func TestNewSignedBatchRejectsOversizedCertificateDER(t *testing.T) {
 	key, _ := newBatchSigningIdentity(
 		t,
 		"iss-fs-01.iss.local",
-		transporttrust.BatchSigningOrganizationalUnit,
+		batchSigningTestTemplateOID,
 	)
 	certificate := &x509.Certificate{
 		Raw: make([]byte, MaxBatchSigningCertificateDERBytes+1),
@@ -245,7 +248,7 @@ func TestNewSignedBatchRejectsOversizedCertificateDER(t *testing.T) {
 }
 
 func TestNewSignedBatchRejectsCertificateSourceMismatch(t *testing.T) {
-	key, certificate := newBatchSigningIdentity(t, "other-source.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	key, certificate := newBatchSigningIdentity(t, "other-source.iss.local", batchSigningTestTemplateOID)
 
 	_, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, key)
 	if err == nil {
@@ -256,20 +259,20 @@ func TestNewSignedBatchRejectsCertificateSourceMismatch(t *testing.T) {
 	}
 }
 
-func TestNewSignedBatchRejectsCertificateRole(t *testing.T) {
-	key, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", "Wrong Role")
+func TestNewSignedBatchRejectsMissingTemplateOID(t *testing.T) {
+	key, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", "")
 
 	_, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, key)
 	if err == nil {
-		t.Fatal("NewSignedBatch() error = nil, want certificate role rejection")
+		t.Fatal("NewSignedBatch() error = nil, want absent template-OID rejection")
 	}
-	if !strings.Contains(err.Error(), "organizational unit must be") {
-		t.Fatalf("NewSignedBatch() error = %q, want role rejection", err)
+	if !strings.Contains(err.Error(), "template information extension is required") {
+		t.Fatalf("NewSignedBatch() error = %q, want missing template-OID rejection", err)
 	}
 }
 
 func TestNewSignedBatchRejectsNilCertificate(t *testing.T) {
-	key, _ := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	key, _ := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 
 	if _, err := NewSignedBatch(validSignedPackageDescriptor(), nil, key); err == nil {
 		t.Fatal("NewSignedBatch() error = nil, want nil certificate rejection")
@@ -277,7 +280,7 @@ func TestNewSignedBatchRejectsNilCertificate(t *testing.T) {
 }
 
 func TestNewSignedBatchRejectsNilSigner(t *testing.T) {
-	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 
 	if _, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, nil); err == nil {
 		t.Fatal("NewSignedBatch() error = nil, want nil signer rejection")
@@ -285,8 +288,8 @@ func TestNewSignedBatchRejectsNilSigner(t *testing.T) {
 }
 
 func TestNewSignedBatchRejectsSignerCertificateMismatch(t *testing.T) {
-	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
-	otherKey, _ := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
+	otherKey, _ := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 
 	_, err := NewSignedBatch(validSignedPackageDescriptor(), certificate, otherKey)
 	if err == nil {
@@ -336,7 +339,7 @@ func TestSignedBatchValidateRejectsOversizedCertificate(t *testing.T) {
 }
 
 func TestSignedBatchValidateRejectsMissingSignature(t *testing.T) {
-	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 	value := SignedBatch{
 		Version:                    SignedBatchVersion,
 		Descriptor:                 validSignedPackageDescriptor(),
@@ -349,7 +352,7 @@ func TestSignedBatchValidateRejectsMissingSignature(t *testing.T) {
 }
 
 func TestSignedBatchValidateRejectsOversizedSignature(t *testing.T) {
-	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 	value := SignedBatch{
 		Version:                    SignedBatchVersion,
 		Descriptor:                 validSignedPackageDescriptor(),
@@ -363,7 +366,7 @@ func TestSignedBatchValidateRejectsOversizedSignature(t *testing.T) {
 }
 
 func TestSignedBatchValidateRejectsVersion(t *testing.T) {
-	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", transporttrust.BatchSigningOrganizationalUnit)
+	_, certificate := newBatchSigningIdentity(t, "iss-fs-01.iss.local", batchSigningTestTemplateOID)
 	value := SignedBatch{
 		Version:                    "fi-signed-batch/9.9",
 		Descriptor:                 validSignedPackageDescriptor(),
@@ -389,15 +392,11 @@ func newBatchSigningEd25519Certificate(
 	now := time.Date(2026, 9, 12, 19, 0, 0, 0, time.UTC)
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1002),
-		Subject: pkix.Name{
-			CommonName: commonName,
-			OrganizationalUnit: []string{
-				transporttrust.BatchSigningOrganizationalUnit,
-			},
-		},
+		Subject: pkix.Name{CommonName: commonName},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(24 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: batchSigningTemplateExtensions(t, []string{batchSigningTestTemplateOID}),
 	}
 
 	der, err := x509.CreateCertificate(
@@ -422,14 +421,14 @@ func newBatchSigningEd25519Certificate(
 func newBatchSigningIdentity(
 	t *testing.T,
 	commonName string,
-	organizationalUnit string,
+	templateOID string,
 ) (*rsa.PrivateKey, *x509.Certificate) {
 	t.Helper()
 
 	return newBatchSigningIdentityWithOptions(
 		t,
 		commonName,
-		[]string{organizationalUnit},
+		[]string{templateOID},
 		x509.KeyUsageDigitalSignature,
 		false,
 	)
@@ -438,7 +437,7 @@ func newBatchSigningIdentity(
 func newBatchSigningIdentityWithOptions(
 	t *testing.T,
 	commonName string,
-	organizationalUnits []string,
+	templateOIDs []string,
 	keyUsage x509.KeyUsage,
 	isCA bool,
 ) (*rsa.PrivateKey, *x509.Certificate) {
@@ -453,14 +452,14 @@ func newBatchSigningIdentityWithOptions(
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1001),
 		Subject: pkix.Name{
-			CommonName:         commonName,
-			OrganizationalUnit: organizationalUnits,
+			CommonName: commonName,
 		},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.Add(24 * time.Hour),
 		KeyUsage:              keyUsage,
 		IsCA:                  isCA,
 		BasicConstraintsValid: true,
+		ExtraExtensions: batchSigningTemplateExtensions(t, templateOIDs),
 	}
 
 	der, err := x509.CreateCertificate(
@@ -480,6 +479,38 @@ func newBatchSigningIdentityWithOptions(
 	}
 
 	return key, certificate
+}
+
+
+func batchSigningTemplateExtensions(t *testing.T, templateOIDs []string) []pkix.Extension {
+	t.Helper()
+	result := make([]pkix.Extension, 0, len(templateOIDs))
+	for _, textOID := range templateOIDs {
+		if textOID == "" {
+			continue
+		}
+		parts := strings.Split(textOID, ".")
+		objectID := make(asn1.ObjectIdentifier, len(parts))
+		for i, part := range parts {
+			arc, err := strconv.Atoi(part)
+			if err != nil {
+				t.Fatalf("template OID arc %q: %v", part, err)
+			}
+			objectID[i] = arc
+		}
+		value, err := asn1.Marshal(struct {
+			TemplateID   asn1.ObjectIdentifier
+			MajorVersion int
+		}{TemplateID: objectID, MajorVersion: 1})
+		if err != nil {
+			t.Fatalf("encode AD CS template OID: %v", err)
+		}
+		result = append(result, pkix.Extension{
+			Id: asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 7},
+			Value: value,
+		})
+	}
+	return result
 }
 
 func validSignedPackageDescriptor() transportbatch.Descriptor {
