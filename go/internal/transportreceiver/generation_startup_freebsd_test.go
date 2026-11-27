@@ -384,3 +384,74 @@ func TestRecoverGenerationStartupRejectsUnknownSource(
 		)
 	}
 }
+
+
+func TestRecoverGenerationStartupExistingReceiptDoesNotRebuildVerifiedCache(t *testing.T) {
+ fixture := newGenerationTransactionFixture(t, false)
+ config := listenerGenerationConfigFromFixture(t, fixture)
+ cache := filepath.Join(t.TempDir(), "verified-cache")
+ if err := os.Mkdir(cache, 0700); err != nil { t.Fatal(err) }
+ config.GenerationVerifiedCacheRoot = cache
+ custody := writeStartupGenerationCustody(t, fixture)
+
+ first, err := RecoverGenerationStartup(config,
+  fixture.config.Custody.Receive.CurrentTime)
+ if err != nil { t.Fatal(err) }
+ if first.RecordedNew != 1 { t.Fatalf("first recovery = %#v", first) }
+ entries, err := os.ReadDir(cache)
+ if err != nil { t.Fatal(err) }
+ if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "receipt-") {
+  t.Fatalf("initial verified cache entries = %#v", entries)
+ }
+ // A prior recorded receipt remains authoritative, even when its
+ // optional accelerated cache was not retained. Startup must not spend
+ // minutes restoring old cache merely to start the authenticated listener.
+ if err := os.RemoveAll(filepath.Join(cache, entries[0].Name())); err != nil {
+  t.Fatal(err)
+ }
+ second, err := RecoverGenerationStartup(config,
+  fixture.config.Custody.Receive.CurrentTime)
+ if err != nil { t.Fatal(err) }
+ if second.Discovered != 1 || second.AlreadyRecorded != 1 ||
+  second.RecordedNew != 0 || second.ReadyPublished != 0 {
+  t.Fatalf("second startup = %#v, expected existing receipt fast path", second)
+ }
+ entries, err = os.ReadDir(cache)
+ if err != nil { t.Fatal(err) }
+ if len(entries) != 0 {
+  t.Fatalf("old generation cache reconstructed during startup: %#v", entries)
+ }
+ if _, err := os.Lstat(custody.CustodyPath); err != nil { t.Fatal(err) }
+}
+
+func TestRecoverGenerationStartupExistingReceiptRejectsAlteredCustody(t *testing.T) {
+ fixture := newGenerationTransactionFixture(t, false)
+ config := listenerGenerationConfigFromFixture(t, fixture)
+ custody := writeStartupGenerationCustody(t, fixture)
+ if _, err := RecoverGenerationStartup(config,
+  fixture.config.Custody.Receive.CurrentTime); err != nil { t.Fatal(err) }
+
+ // Preserve the same file name, mode and size; change an interior byte.
+ // A receipt fast path must still fail closed on exact FIGT hash mismatch.
+ if err := os.Chmod(custody.CustodyPath, 0600); err != nil { t.Fatal(err) }
+ file, err := os.OpenFile(custody.CustodyPath, os.O_RDWR, 0)
+ if err != nil { t.Fatal(err) }
+ info, err := file.Stat()
+ if err != nil { _ = file.Close(); t.Fatal(err) }
+ offset := info.Size()/2
+ buf := []byte{0}
+ if _, err := file.ReadAt(buf, offset); err != nil {
+  _ = file.Close(); t.Fatal(err)
+ }
+ buf[0] ^= 0x01
+ if _, err := file.WriteAt(buf, offset); err != nil {
+  _ = file.Close(); t.Fatal(err)
+ }
+ if err := file.Close(); err != nil { t.Fatal(err) }
+ if err := os.Chmod(custody.CustodyPath, 0400); err != nil { t.Fatal(err) }
+ result, err := RecoverGenerationStartup(config,
+  fixture.config.Custody.Receive.CurrentTime)
+ if err == nil || !strings.Contains(err.Error(), "SHA-256") {
+  t.Fatalf("altered custody accepted: result=%#v err=%v", result, err)
+ }
+}
