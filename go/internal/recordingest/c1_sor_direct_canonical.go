@@ -103,6 +103,37 @@ func(s *C1SoRService)bootstrapDirectCanonical(ctx context.Context,
     return append([]int64(nil),ids...),nil
 }
 
+// The direct canonical ledger MUST use the receiver-authenticated manifest
+// roster, not a second complete signed transport extraction. This method
+// neither accesses PostgreSQL nor treats the cache as final authentication:
+// the independent B process validates original signed FIGT before Accepted.
+func c1DirectCanonicalReceiverPlan(ctx context.Context,start c1handoff.Frame,
+    custody c1NativeBCustodyConfig)(*PreparedGeneration,error){
+    if ctx==nil||start.Kind!=c1handoff.Start||
+        custody.BenchmarkClone||custody.VerifiedCacheRoot!=""||
+        custody.ReceiverVerifiedCacheRoot==""{
+        return nil,errors.New("C1 direct: original receiver-authenticated cache required for canonical bootstrap")
+    }
+    if err:=start.Validate();err!=nil{return nil,err}
+    plan,err:=LoadC1SoRReceiverVerifiedCache(ctx,
+        C1SoRLocalConfig{SourceID:start.SourceID,Custody:custody},
+        start.GenerationID)
+    if err!=nil{return nil,fmt.Errorf("C1 direct: receiver-authenticated source manifest: %w",err)}
+    if plan.Receipt.Descriptor.SourceID!=start.SourceID||
+        plan.Receipt.Descriptor.GenerationID!=start.GenerationID||
+        plan.ReceiptSHA256!=start.ReceiptSHA256||
+        int64(plan.Receipt.RecordCount)!=start.ExpectedRecords||
+        len(plan.Batches)!=len(start.BatchIDs){
+        return nil,errors.New("C1 direct: receiver verified cache changed original signed START")
+    }
+    for i,b:=range plan.Batches{
+        if b.BatchID!=start.BatchIDs[i]{
+            return nil,fmt.Errorf("C1 direct: cached signed batch order mismatch at %d",i)
+        }
+    }
+    return plan,nil
+}
+
 func(s *C1SoRService)stageOriginalCanonicalLedger(ctx context.Context,
     start c1handoff.Frame)([]int64,error){
     if err:=start.Validate();err!=nil{return nil,err}
@@ -110,8 +141,13 @@ func(s *C1SoRService)stageOriginalCanonicalLedger(ctx context.Context,
     if s.NativeBCustody.VerifiedCacheRoot!=""{
         return nil,errors.New("C1 direct: original signed custody mandatory; benchmark cache prohibited")
     }
-    original,err:=c1StreamOriginalSignedManifestPlan(ctx,start.SourceID,
-        start.GenerationID,s.NativeBCustody)
+    // The receiver has already authenticated every batch and durably
+    // published its receipt-bound cache. Read this exact bounded manifest
+    // plan instead of decompressing the complete FIGT again BEFORE SQL.
+    // Independent B reopens and cryptographically validates original signed
+    // custody in parallel with the P5/P6 SQL stream; Accepted remains
+    // impossible unless that separate original-custody proof passes.
+    original,err:=c1DirectCanonicalReceiverPlan(ctx,start,s.NativeBCustody)
     if err!=nil{return nil,err}
     if original.Receipt.Descriptor.SourceID!=start.SourceID||
         original.Receipt.Descriptor.GenerationID!=start.GenerationID||
