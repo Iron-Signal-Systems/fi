@@ -300,14 +300,14 @@ ensure_c1_runtime_config_access(){
     state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file") ||
       fail "cannot stat C1 runtime configuration: $file"
     case "$state" in
-      "0:0:600"|"0:${fi_sor_gid}:600"|"0:${fi_sor_gid}:640") ;;
+      "0:0:600"|"0:0:640"|"0:0:644"|"0:${fi_sor_gid}:600"|"0:${fi_sor_gid}:640"|"0:${fi_sor_gid}:644") ;;
       *) fail "unexpected C1 config metadata: $file ($state)" ;;
     esac
   done
   for file in /etc/rc.conf.d/fi_c1_sor /etc/rc.conf.d/fi_c1_sor_live;do
     state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file")
     if [ "$state" != "0:${fi_sor_gid}:640" ];then
-      jexec fi-sor chgrp fi-sor "$file" &&
+      jexec fi-sor chgrp "$fi_sor_gid" "$file" &&
       jexec fi-sor chmod 0640 "$file" ||
         fail "could not restrict C1 runtime config access: $file"
     fi
@@ -369,6 +369,8 @@ if [ "$mode" = --start-ingest ];then
      /usr/local/libexec/fi-c1-sor-live-run ||
      fail "actual signed custody, receiver cache or SQL role preflight failed"
   jexec fi-sor sysrc -f /etc/rc.conf.d/fi_c1_sor_live fi_c1_sor_live_enable=YES
+  # sysrc may replace the file; verify the restrictive ownership again.
+  ensure_c1_runtime_config_access
   jexec fi-sor service fi_c1_sor_live onestart
   jexec fi-sor service fi_c1_sor_live onestatus ||
      fail "C1 exited; preserve READY/Accepted, inspect log"
