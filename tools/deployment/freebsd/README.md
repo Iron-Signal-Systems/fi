@@ -28,8 +28,8 @@ These commands passed CI; they do **not** establish byte-for-byte identity with 
 
 **Not current runtime:** `go/cmd/fi-backlog-recover` (removed), `fi-ingest-worker`, `fi-sor-db`, old three-jail SQL staging or H16/W512 experiments.
 
-## Safety: old host bootstrap remains legacy
+## Safety: obsolete bootstrap retired
 
-`fi-bootstrap.sh` and the original `jail.conf.d`, `fstab.d`, `verify/`, `fi-host-*-apply.sh` material were authored for a different three-jail layout and **are not a validated current C220 installer**. They may be examined as historical/low-level utilities, but must never be applied to C220 as the live service definition.
+The historic three-jail `fi-bootstrap.sh`, `fi-host-*-apply.sh` implementations, `backendinstall` package, fixture templates and Linux ingest-worker service have been removed from the current branch because they do not match the running C220. Do not use an older Git branch for live provisioning.
 
-The current repo retains tested source code and current service scripts. It does not yet prove a complete fresh FreeBSD host bootstrap, source-to-installed ELF identity or recovery of data/secrets. Do not claim otherwise or automatically restart/replace running services.
+Current development retains the receiver, C1 SoR, PostgreSQL schema source and telemetry binary sources, current service definitions and focused operational checks. A full fresh FreeBSD host bootstrap and exact installed-ELF binary comparison have not yet been verified. No source cleanup touches running C220 configuration or data.

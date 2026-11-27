@@ -1,5 +1,0 @@
-# FI-MANAGED: ironsignal-fi-freebsd-lifecycle-v1
-# FI-ROLE: pf-boot-policy
-
-pf_enable="YES"
-pf_rules="/etc/pf.conf"
