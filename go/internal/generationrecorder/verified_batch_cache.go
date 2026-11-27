@@ -91,9 +91,15 @@ func(w *receiverVerifiedBatchWriter)Consume(name string,reader io.Reader,
 	file,err:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,perm)
 	if err!=nil{return err}
 	validateErr:=validate(name,io.TeeReader(reader,file))
-	syncErr:=file.Sync()
+	// The receiver service may run with umask 077. Explicitly restore only
+	// the approved shared-group readability before the durable sync; never
+	// grant any group or world write access to authenticated batch artifacts.
+	chmodErr:=error(nil)
+	if validateErr==nil && w.shared { chmodErr=file.Chmod(0640) }
+	syncErr:=error(nil)
+	if validateErr==nil && chmodErr==nil { syncErr=file.Sync() }
 	closeErr:=file.Close()
-	if err:=errors.Join(validateErr,syncErr,closeErr);err!=nil{return err}
+	if err:=errors.Join(validateErr,chmodErr,syncErr,closeErr);err!=nil{return err}
 	if kind==artifactKindData{
 		w.lastDataID=batchID
 	}else{
@@ -135,9 +141,13 @@ func(w *receiverVerifiedBatchWriter)Publish(result DurableResult)error{
 	file,err:=os.OpenFile(filepath.Join(w.pending,"verified.json"),os.O_WRONLY|os.O_CREATE|os.O_EXCL,perm)
 	if err!=nil{return err}
 	_,writeErr:=file.Write(raw)
-	syncErr:=file.Sync()
+	// Same restrictive-umask rule as the data/manifest artifacts.
+	chmodErr:=error(nil)
+	if writeErr==nil&&w.shared{chmodErr=file.Chmod(0640)}
+	syncErr:=error(nil)
+	if writeErr==nil&&chmodErr==nil{syncErr=file.Sync()}
 	closeErr:=file.Close()
-	if err:=errors.Join(writeErr,syncErr,closeErr);err!=nil{return err}
+	if err:=errors.Join(writeErr,chmodErr,syncErr,closeErr);err!=nil{return err}
 	if err=syncReceiverVerifiedDirectory(w.pending);err!=nil{return err}
 	if err=os.Rename(w.pending,dest);err!=nil{return err}
 	w.pending=""
