@@ -10,6 +10,7 @@ import (
  "context"
  "crypto/sha256"
  "encoding/hex"
+ "encoding/json"
  "errors"
  "flag"
  "fmt"
@@ -78,7 +79,11 @@ func postgresObservation(ctx context.Context,dsn string)map[string]interface{}{
  if err=conn.QueryRow(sub,pgStatsQuery).Scan(&raw);err!=nil{
   return map[string]interface{}{"status":"NOT_OBSERVED","reason":"read-only statistics query unavailable"}
  }
- return map[string]interface{}{"status":"OK","json":raw}
+ var stats interface{}
+ if err:=json.Unmarshal([]byte(raw),&stats);err!=nil{
+  return map[string]interface{}{"status":"NOT_OBSERVED","reason":"invalid PostgreSQL statistics JSON"}
+ }
+ return map[string]interface{}{"status":"OK","data":stats}
 }
 func onceSample(ctx context.Context,spool,host,run,source,revision,pgDSN string,
  sequence uint64,prior time.Time)error{
