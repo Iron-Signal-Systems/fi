@@ -11,6 +11,8 @@ on:
       - 'go/internal/generationrecorder/**'
       - 'go/internal/transportreceiver/**'
       - 'go/cmd/fi-receiver/**'
+      - 'tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh'
+      - 'tools/deployment/freebsd/runtime.d/fi-receiver.rc.conf.template'
       - 'go/internal/recordingest/**'
       - 'go/internal/c1handoff/**'
       - 'go/cmd/fi-ingest-worker/**'
@@ -78,7 +80,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Validate exact FreeBSD C1 native binary stage shell
         working-directory: .
-        run: sh -n tools/deployment/freebsd/build-fi-c1-dev.sh
+        run: |
+          sh -n tools/deployment/freebsd/build-fi-c1-dev.sh
+          sh -n tools/deployment/freebsd/runtime.d/fi-receiver-supervisor.sh
       - name: Verify single-jail host scripts are syntactically valid
         working-directory: .
         run: |

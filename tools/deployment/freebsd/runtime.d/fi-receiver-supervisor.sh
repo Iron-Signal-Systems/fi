@@ -46,6 +46,9 @@ fail()
 [ -n "${fi_receiver_generation_ready_root:-}" ] ||
     fail "fi_receiver_generation_ready_root is required"
 
+[ -n "${fi_receiver_generation_verified_cache_root:-}" ] ||
+    fail "fi_receiver_generation_verified_cache_root is required"
+
 [ -n "${fi_receiver_generation_max_canonical_bytes:-}" ] ||
     fail "fi_receiver_generation_max_canonical_bytes is required"
 
@@ -68,6 +71,7 @@ exec "$BINARY" \
     -generation-custody-root "$fi_receiver_generation_custody_root" \
     -generation-recorded-root "$fi_receiver_generation_recorded_root" \
     -generation-ready-root "$fi_receiver_generation_ready_root" \
+    -generation-verified-cache-root "$fi_receiver_generation_verified_cache_root" \
     -generation-max-canonical-bytes "$fi_receiver_generation_max_canonical_bytes" \
     -generation-max-encoded-bytes "$fi_receiver_generation_max_encoded_bytes" \
     -generation-max-manifest-bytes "$fi_receiver_generation_max_manifest_bytes"
