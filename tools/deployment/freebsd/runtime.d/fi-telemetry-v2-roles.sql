@@ -23,12 +23,4 @@ GRANT USAGE ON SCHEMA telemetry_v2 TO "fi-telemetry-recorder";
 GRANT SELECT,INSERT ON telemetry_v2.entry TO "fi-telemetry-recorder";
 GRANT SELECT,INSERT ON telemetry_v2.delivery_receipt TO "fi-telemetry-recorder";
 GRANT pg_read_all_stats TO "fi-telemetry-monitor";
-DO $boundary$
-BEGIN
- IF (SELECT has_table_privilege('fi-telemetry-recorder',
-          'fi.source_record','INSERT')
-     FROM pg_database WHERE datname=current_database() LIMIT 1) THEN
-   RAISE EXCEPTION 'FI telemetry recorder has unauthorized fi write access';
- END IF;
-END $boundary$;
 COMMIT;
