@@ -1,5 +1,14 @@
 # FI Windows file-auditing example
 
+> **Historical/manual laboratory reference, not the normal installation workflow.**
+> The current native configuration-driven `fi-install.exe` owns the explicitly
+> approved audit-policy and governed-root SACL prerequisite changes, their
+> validation, and failure handling. See
+> [Windows installer](../../../docs/WINDOWS-INSTALLER.md) and
+> [operator guide](../../../docs/WINDOWS-INSTALLER-OPERATOR-GUIDE.md).
+> Do not run the examples in this directory as additional post-install customer
+> steps or assume they describe the current installer's complete requirements.
+
 This folder contains **example administrator actions** that configure the Windows
 advanced audit settings and governed-root SACLs FI currently expects for Windows
 Security activity collection.
