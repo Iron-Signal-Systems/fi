@@ -54,7 +54,7 @@ func newReceiverVerifiedBatchWriter(root string)(*receiverVerifiedBatchWriter,er
 	pending,err:=os.MkdirTemp(root,".fi-verified-cache-pending-")
 	if err!=nil{return nil,err}
 	if shared{
-		if err=os.Chmod(pending,0750);err!=nil{
+		if err=os.Chmod(pending,os.ModeSetgid|0750);err!=nil{
 			_ = os.Remove(pending)
 			return nil,err
 		}
