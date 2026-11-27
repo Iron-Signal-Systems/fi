@@ -452,14 +452,17 @@ func newTransportTestPKI(
 		SerialNumber: big.NewInt(1001),
 		Subject: pkix.Name{
 			CommonName: "iss-fs-01.iss.local",
-			OrganizationalUnit: []string{
-				"FI Shipper Transport",
-			},
 		},
 		NotBefore:   now.Add(-time.Hour),
 		NotAfter:    now.Add(24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: extendedKeyUsage,
+		ExtraExtensions: []pkix.Extension{
+			testCertificateTemplateExtension(
+				t,
+				testTransportTemplateOID,
+			),
+		},
 	}
 
 	leafDER, err := x509.CreateCertificate(
@@ -491,10 +494,10 @@ func newTransportTestPKI(
 		Enabled:  true,
 		SourceID: "iss-fs-01.iss.local",
 		Transport: CertificateIdentity{
-			CertificateSHA256:  certificateSHA256(leaf),
-			CommonName:         "iss-fs-01.iss.local",
-			IssuingCASHA256:    certificateSHA256(issuer),
-			OrganizationalUnit: "FI Shipper Transport",
+			CertificateSHA256: certificateSHA256(leaf),
+			CommonName:        "iss-fs-01.iss.local",
+			IssuingCASHA256:   certificateSHA256(issuer),
+			TemplateOID:       testTransportTemplateOID.String(),
 		},
 	}
 

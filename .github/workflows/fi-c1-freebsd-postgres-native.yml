@@ -1,0 +1,63 @@
+name: FI C1 PostgreSQL 18 native FreeBSD acceptance (disposable VM)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'dev/c1-two-process-20261120'
+      - 'dev/c1-sor-single-jail-20261124'
+    paths:
+      - '.github/workflows/fi-c1-freebsd-postgres-native.yml'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh'
+      - 'tools/deployment/freebsd/build-fi-c1-dev.sh'
+      - 'go/internal/generationrecorder/**'
+      - 'go/internal/transportreceiver/**'
+      - 'go/cmd/fi-receiver/**'
+      - 'go/cmd/fi-c1-sor-local/**'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_direct_canonical_real_generation.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_full_real_run.sh'
+      - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_receiver_sor_readiness_audit.sh'
+      - 'go/internal/recordingest/c1_*.go'
+      - 'go/internal/recordingest/private_c1_*.go'
+      # Signed C1 uses the shared P6 SourceParent/Security/Coverage/
+      # File/USN SQL routines. Their changes MUST re-run native PG18.
+      - 'go/internal/recordingest/private_p6_*.go'
+      - 'go/internal/recordingest/security_bulk*.go'
+      - 'go/internal/recordingest/backlog_incremental_promote*.go'
+      - 'go/internal/recordingest/backlog_bootstrap_promote*.go'
+      - 'go/internal/recordingest/backlog_private_projection_tx.go'
+      - 'go/internal/recordingest/private_c1_async_verify.go'
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-freebsd-postgresql-18:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout FI C1 development branch
+        uses: actions/checkout@v4
+      - name: Reject malformed FreeBSD PostgreSQL and C220 read-only gate shell syntax
+        run: |
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh
+          sh -n go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_full_real_run.sh
+          sh -n tools/deployment/freebsd/build-fi-c1-dev.sh
+      - name: Build and test disposable PG18 recovery/DDL on real FreeBSD 15.1
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '15.1'
+          arch: x86_64
+          mem: 8192
+          sync: rsync
+          prepare: |
+            set -eu
+            env ASSUME_ALWAYS_YES=yes pkg install -y go127 postgresql18-server postgresql18-client
+          run: |
+            set -eu
+            export PATH="/usr/local/go127/bin:$PATH"
+            go version
+            (cd go && go test -count=1 ./internal/generationrecorder ./internal/transportreceiver)
+            GITHUB_ACTIONS=true sh go/cmd/fi-backlog-recover/diagnostics/fi_c1_freebsd_postgres18_native.sh

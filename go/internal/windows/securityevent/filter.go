@@ -15,9 +15,6 @@ import (
 type GovernedScope struct {
 	ScopeID      string
 	GovernedRoot string
-	// Aliases are operating-system-verified paths for the same governed root.
-	// They are used only for matching: the original event path is preserved.
-	Aliases []string
 }
 
 func SelectEvent(value records.WindowsSecurityEventObservation, scopes []GovernedScope) (records.WindowsSecurityEventObservation, bool) {
@@ -114,19 +111,7 @@ func matchPaths(paths []string, scopes []GovernedScope) []records.WindowsSecurit
 			continue
 		}
 		for _, scope := range scopes {
-			if seen[scope.ScopeID] {
-				continue
-			}
-			matched := pathWithinRoot(candidate, scope.GovernedRoot)
-			if !matched {
-				for _, alias := range scope.Aliases {
-					if pathWithinRoot(candidate, alias) {
-						matched = true
-						break
-					}
-				}
-			}
-			if matched {
+			if pathWithinRoot(candidate, scope.GovernedRoot) && !seen[scope.ScopeID] {
 				seen[scope.ScopeID] = true
 				result = append(result, records.WindowsSecurityMatchedScope{ScopeID: scope.ScopeID, GovernedRoot: scope.GovernedRoot})
 			}

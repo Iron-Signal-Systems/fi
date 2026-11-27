@@ -282,55 +282,6 @@ func TestVerifyBatchSigningCertificateRejectsRevokedCertificate(t *testing.T) {
 	}
 }
 
-func TestVerifyBatchSigningCertificateRejectsOrganizationalUnit(t *testing.T) {
-	pki := newBatchSigningTestPKI(t)
-
-	tests := []struct {
-		name               string
-		organizationalUnit []string
-	}{
-		{
-			name:               "missing organizational unit",
-			organizationalUnit: nil,
-		},
-		{
-			name: "wrong organizational unit",
-			organizationalUnit: []string{
-				TransportOrganizationalUnit,
-			},
-		},
-		{
-			name: "multiple organizational units",
-			organizationalUnit: []string{
-				BatchSigningOrganizationalUnit,
-				TransportOrganizationalUnit,
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			candidate := *pki.leaf
-			candidate.Subject = pki.leaf.Subject
-			candidate.Subject.OrganizationalUnit = test.organizationalUnit
-
-			_, err := VerifyBatchSigningCertificate(
-				&candidate,
-				pki.root,
-				pki.issuer,
-				pki.crl,
-				pki.source,
-				pki.now,
-			)
-			if err == nil {
-				t.Fatal(
-					"VerifyBatchSigningCertificate() error = nil, want organizational-unit rejection",
-				)
-			}
-		})
-	}
-}
-
 func TestVerifyBatchSigningCertificateRejectsWrongIssuer(t *testing.T) {
 	pki := newBatchSigningTestPKI(t)
 	other := newBatchSigningTestPKI(t)
@@ -648,13 +599,16 @@ func newBatchSigningTestPKI(t *testing.T) batchSigningTestPKI {
 		SerialNumber: big.NewInt(1001),
 		Subject: pkix.Name{
 			CommonName: "iss-fs-01.iss.local",
-			OrganizationalUnit: []string{
-				BatchSigningOrganizationalUnit,
-			},
 		},
 		NotBefore: now.Add(-time.Hour),
 		NotAfter:  now.Add(24 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtraExtensions: []pkix.Extension{
+			testCertificateTemplateExtension(
+				t,
+				testBatchSigningTemplateOID,
+			),
+		},
 	}
 
 	leafDER, err := x509.CreateCertificate(
@@ -684,10 +638,10 @@ func newBatchSigningTestPKI(t *testing.T) batchSigningTestPKI {
 
 	source := SourceAuthorization{
 		BatchSigning: CertificateIdentity{
-			CertificateSHA256:  batchSigningCertificateSHA256(leaf),
-			CommonName:         "iss-fs-01.iss.local",
-			IssuingCASHA256:    batchSigningCertificateSHA256(issuer),
-			OrganizationalUnit: BatchSigningOrganizationalUnit,
+			CertificateSHA256: batchSigningCertificateSHA256(leaf),
+			CommonName:        "iss-fs-01.iss.local",
+			IssuingCASHA256:   batchSigningCertificateSHA256(issuer),
+			TemplateOID:       testBatchSigningTemplateOID.String(),
 		},
 		Enabled:  true,
 		SourceID: "iss-fs-01.iss.local",

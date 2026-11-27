@@ -41,10 +41,11 @@ func IdentityFromCertificate(
 		return CertificateIdentity{}, errors.New("certificate common name is required")
 	}
 
-	if len(certificate.Subject.OrganizationalUnit) != 1 {
+	templateOID, err := CertificateTemplateOID(certificate)
+	if err != nil {
 		return CertificateIdentity{}, fmt.Errorf(
-			"certificate must contain exactly one organizational unit, got %d",
-			len(certificate.Subject.OrganizationalUnit),
+			"derive certificate template OID: %w",
+			err,
 		)
 	}
 
@@ -52,9 +53,9 @@ func IdentityFromCertificate(
 	issuerSHA256 := sha256.Sum256(issuer.Raw)
 
 	return CertificateIdentity{
-		CertificateSHA256:  hex.EncodeToString(certificateSHA256[:]),
-		CommonName:         certificate.Subject.CommonName,
-		IssuingCASHA256:    hex.EncodeToString(issuerSHA256[:]),
-		OrganizationalUnit: certificate.Subject.OrganizationalUnit[0],
+		CertificateSHA256: hex.EncodeToString(certificateSHA256[:]),
+		CommonName:        certificate.Subject.CommonName,
+		IssuingCASHA256:   hex.EncodeToString(issuerSHA256[:]),
+		TemplateOID:       templateOID,
 	}, nil
 }

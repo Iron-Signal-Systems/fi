@@ -1,0 +1,30 @@
+# FI-MANAGED: ironsignal-fi-freebsd-runtime-v1
+# FI-ROLE: ingest-worker-runtime-config
+
+# C1 runtime is not wired to the service yet. Do not autostart the
+# pre-C1 ingester against an already-populated authoritative SoR.
+# Enable explicitly only after C1 live integration and acceptance.
+fi_ingest_worker_enable="NO"
+
+# Namespaced ingest requires completed migration and operator approval.
+# The installer must not silently activate this mode.
+fi_ingest_worker_namespaces="NO"
+
+fi_ingest_worker_postgres="host=@FI_SOR_DB_WORK_IP@ port=5432 dbname=fi user=fi_ingest sslmode=disable"
+fi_ingest_worker_pgpass="/usr/local/etc/fi/postgres.pgpass"
+fi_ingest_worker_workers="2"
+
+# C1 shared SQL backend connection ceiling, 1-32 (default 5).
+# Backend execution remains in fi-sor PostgreSQL, not in fi-ingest.
+# This setting alone does not activate C1.
+# Separate from fi_ingest_worker_workers (concurrent source generations).
+fi_ingest_worker_sql_workers_max="5"
+
+# P3: tested Windows Security COPY profile, 4096 records / 16 MiB.
+fi_ingest_worker_security_profile="P3"
+
+# Zero disables operator acceptance bounds.
+# Configure explicit values before bounded ingestion testing.
+fi_ingest_worker_max_generation_records="0"
+fi_ingest_worker_max_generation_data_bytes="0"
+fi_ingest_worker_max_attempts="0"

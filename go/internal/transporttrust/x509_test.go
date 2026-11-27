@@ -14,8 +14,13 @@ func TestIdentityFromCertificate(t *testing.T) {
 	certificate := &x509.Certificate{
 		Raw: []byte("FI transport certificate"),
 		Subject: pkix.Name{
-			CommonName:         "iss-fs-01.iss.local",
-			OrganizationalUnit: []string{"FI Shipper Transport"},
+			CommonName: "iss-fs-01.iss.local",
+		},
+		Extensions: []pkix.Extension{
+			testCertificateTemplateExtension(
+				t,
+				testTransportTemplateOID,
+			),
 		},
 	}
 
@@ -36,11 +41,11 @@ func TestIdentityFromCertificate(t *testing.T) {
 		)
 	}
 
-	if identity.OrganizationalUnit != "FI Shipper Transport" {
+	if identity.TemplateOID != testTransportTemplateOID.String() {
 		t.Fatalf(
-			"OrganizationalUnit = %q, want %q",
-			identity.OrganizationalUnit,
-			"FI Shipper Transport",
+			"TemplateOID = %q, want %q",
+			identity.TemplateOID,
+			testTransportTemplateOID.String(),
 		)
 	}
 
@@ -56,26 +61,5 @@ func TestIdentityFromCertificate(t *testing.T) {
 			"IssuingCASHA256 length = %d, want 64",
 			len(identity.IssuingCASHA256),
 		)
-	}
-}
-
-func TestIdentityFromCertificateRejectsAmbiguousOrganizationalUnit(t *testing.T) {
-	certificate := &x509.Certificate{
-		Raw: []byte("FI transport certificate"),
-		Subject: pkix.Name{
-			CommonName: "iss-fs-01.iss.local",
-			OrganizationalUnit: []string{
-				"FI Shipper Transport",
-				"Unexpected OU",
-			},
-		},
-	}
-
-	issuer := &x509.Certificate{
-		Raw: []byte("FI Transport Issuing CA"),
-	}
-
-	if _, err := IdentityFromCertificate(certificate, issuer); err == nil {
-		t.Fatal("IdentityFromCertificate() error = nil, want rejection")
 	}
 }

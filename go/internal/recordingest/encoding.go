@@ -5,13 +5,12 @@
 package recordingest
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -52,16 +51,14 @@ func decodeStrictPayload(raw json.RawMessage, target any) error {
 	if len(raw) == 0 || target == nil {
 		return errors.New("FI relational payload and target are required")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return errors.New("FI relational payload contains trailing JSON")
-	}
-	return nil
+	// Signed source records and relational payloads are complete byte slices.
+	// One-shot decoding avoids the streaming Decoder's extra value buffer.
+	// Retain v1 JSON semantics, reject unknown struct members recursively,
+	// and reject trailing non-whitespace or a second JSON value.
+	return jsonv2.Unmarshal(raw, target,
+		json.DefaultOptionsV1(),
+		jsonv2.RejectUnknownMembers(true),
+	)
 }
 
 func nullString(value string) any {

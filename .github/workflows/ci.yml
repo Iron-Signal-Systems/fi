@@ -1,47 +1,59 @@
-name: CI
+# Windows collector CI only. Backend C1/receiver/SoR changes belong to
+# FreeBSD-specific workflows, not to Windows tests.
+name: FI Windows Collector CI
 
 on:
   push:
-
+    paths:
+      - 'go/cmd/fi/**'
+      - 'go/cmd/fi-sender/**'
+      - 'go/cmd/fi-source/**'
+      - 'go/cmd/fi-usn/**'
+      - 'go/cmd/usnprobe/**'
+      - 'go/cmd/collectorboundaryprobe/**'
+      - 'go/cmd/fi-spool-workdir-check/**'
+      - 'go/internal/windows/**'
+      - 'go/internal/transportsender/**'
+      - 'go/internal/transportrecovery/**'
+      - 'go/internal/config/**'
+      - 'go/internal/records/**'
+      - 'go/internal/spool/**'
+      - 'examples/windows/**'
+      - 'examples/gmsa_provisioning/**'
   pull_request:
+    paths:
+      - 'go/cmd/fi/**'
+      - 'go/cmd/fi-sender/**'
+      - 'go/cmd/fi-source/**'
+      - 'go/cmd/fi-usn/**'
+      - 'go/cmd/usnprobe/**'
+      - 'go/cmd/collectorboundaryprobe/**'
+      - 'go/cmd/fi-spool-workdir-check/**'
+      - 'go/internal/windows/**'
+      - 'go/internal/transportsender/**'
+      - 'go/internal/transportrecovery/**'
+      - 'go/internal/config/**'
+      - 'go/internal/records/**'
+      - 'go/internal/spool/**'
+      - 'examples/windows/**'
+      - 'examples/gmsa_provisioning/**'
+
+permissions:
+  contents: read
 
 jobs:
-  linux:
-    name: Linux Tests
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: go
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.2'
-
-      - name: Test
-        run: go test ./...
-
   windows:
-    name: Windows Tests
+    name: Windows Collector Tests
     runs-on: windows-latest
-
     defaults:
       run:
         working-directory: go
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27.2'
-
+          go-version: '1.27.4'
       - name: Test
         run: go test ./...

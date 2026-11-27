@@ -265,9 +265,6 @@ func validateRecoveryCertificateRole(descriptor Descriptor, certificate *x509.Ce
 	if certificate.IsCA {
 		return errors.New("batch-signing certificate must not be a CA")
 	}
-	if len(certificate.Subject.OrganizationalUnit) != 1 || certificate.Subject.OrganizationalUnit[0] != transporttrust.BatchSigningOrganizationalUnit {
-		return fmt.Errorf("batch-signing certificate organizational unit must be exactly %q", transporttrust.BatchSigningOrganizationalUnit)
-	}
 	if !strings.EqualFold(certificate.Subject.CommonName, descriptor.SourceID) {
 		return fmt.Errorf("batch-signing certificate common name %q does not match source ID %q", certificate.Subject.CommonName, descriptor.SourceID)
 	}

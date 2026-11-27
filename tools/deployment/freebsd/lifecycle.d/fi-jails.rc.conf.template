@@ -1,0 +1,4 @@
+# FI-MANAGED: ironsignal-fi-freebsd-lifecycle-v1
+# FI-ROLE: fi-jails-enable-policy
+
+fi_jails_enable="YES"

@@ -23,10 +23,10 @@ const (
 // CertificateIdentity is the certificate identity material used after
 // cryptographic certificate validation has succeeded.
 type CertificateIdentity struct {
-	CertificateSHA256  string
-	CommonName         string
-	IssuingCASHA256    string
-	OrganizationalUnit string
+	CertificateSHA256 string
+	CommonName        string
+	IssuingCASHA256   string
+	TemplateOID       string
 }
 
 // CertificateUse identifies the FI purpose for which a certificate is being
@@ -74,7 +74,7 @@ func AuthorizeSource(
 		return AuthorizationIdentityMismatch, nil
 	}
 
-	if presented.OrganizationalUnit != expected.OrganizationalUnit {
+	if presented.TemplateOID != expected.TemplateOID {
 		return AuthorizationIdentityMismatch, nil
 	}
 
