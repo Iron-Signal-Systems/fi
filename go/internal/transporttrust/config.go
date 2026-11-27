@@ -16,7 +16,10 @@ import (
 )
 
 const (
-	SourceConfigVersion2 = "2.0"
+	BatchSigningOrganizationalUnit = "FI Batch Signing" // legacy Windows 1.0 authority
+	TransportOrganizationalUnit    = "FI Shipper Transport" // legacy Windows 1.0 authority
+	SourceConfigVersion1           = "1.0"
+	SourceConfigVersion2           = "2.0"
 )
 
 // SourceConfig is one explicitly authorized FI source.
@@ -99,7 +102,7 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 				)
 			}
 
-			if rawValue != SourceConfigVersion2 {
+			if rawValue != SourceConfigVersion1 && rawValue != SourceConfigVersion2 {
 				return SourceConfig{}, fmt.Errorf(
 					"line %d: unsupported version_id %q",
 					lineNumber,
@@ -158,6 +161,9 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 			value.Authorization.BatchSigning.IssuingCASHA256 = normalized
 
 		case "batch_signing_template_oid":
+			if value.VersionID != SourceConfigVersion2 {
+				return SourceConfig{}, fmt.Errorf("line %d: template OIDs require version 2.0", lineNumber)
+			}
 			if err := validateSourceText(
 				"batch_signing_template_oid",
 				rawValue,
@@ -169,6 +175,25 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 				)
 			}
 			value.Authorization.BatchSigning.TemplateOID = rawValue
+
+
+		case "batch_signing_organizational_unit":
+			if value.VersionID != SourceConfigVersion1 {
+				return SourceConfig{}, fmt.Errorf("line %d: organizational-unit directive requires version 1.0", lineNumber)
+			}
+			if err := validateSourceText(key, rawValue); err != nil {
+				return SourceConfig{}, fmt.Errorf("line %d: %w", lineNumber, err)
+			}
+			value.Authorization.BatchSigning.OrganizationalUnit = rawValue
+
+		case "transport_organizational_unit":
+			if value.VersionID != SourceConfigVersion1 {
+				return SourceConfig{}, fmt.Errorf("line %d: organizational-unit directive requires version 1.0", lineNumber)
+			}
+			if err := validateSourceText(key, rawValue); err != nil {
+				return SourceConfig{}, fmt.Errorf("line %d: %w", lineNumber, err)
+			}
+			value.Authorization.Transport.OrganizationalUnit = rawValue
 
 		case "enabled":
 			switch rawValue {
@@ -229,6 +254,9 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 			value.Authorization.Transport.IssuingCASHA256 = normalized
 
 		case "transport_template_oid":
+			if value.VersionID != SourceConfigVersion2 {
+				return SourceConfig{}, fmt.Errorf("line %d: template OIDs require version 2.0", lineNumber)
+			}
 			if err := validateSourceText(
 				"transport_template_oid",
 				rawValue,
@@ -270,13 +298,17 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 		"batch_signing_certificate_sha256",
 		"batch_signing_common_name",
 		"batch_signing_issuing_ca_sha256",
-		"batch_signing_template_oid",
 		"enabled",
 		"source_id",
 		"transport_certificate_sha256",
 		"transport_common_name",
 		"transport_issuing_ca_sha256",
-		"transport_template_oid",
+
+	}
+	if value.VersionID == SourceConfigVersion1 {
+		required = append(required, "batch_signing_organizational_unit", "transport_organizational_unit")
+	} else {
+		required = append(required, "batch_signing_template_oid", "transport_template_oid")
 	}
 
 	for _, directive := range required {
@@ -298,18 +330,23 @@ func ParseSourceConfig(reader io.Reader) (SourceConfig, error) {
 func validateSourceConfig(value SourceConfig) error {
 	authorization := value.Authorization
 
-	if err := validateObjectIdentifier(
-		"transport_template_oid",
-		authorization.Transport.TemplateOID,
-	); err != nil {
-		return err
-	}
-
-	if err := validateObjectIdentifier(
-		"batch_signing_template_oid",
-		authorization.BatchSigning.TemplateOID,
-	); err != nil {
-		return err
+	if value.VersionID == SourceConfigVersion1 {
+		if authorization.Transport.OrganizationalUnit != TransportOrganizationalUnit {
+			return fmt.Errorf("transport_organizational_unit must be %q", TransportOrganizationalUnit)
+		}
+		if authorization.BatchSigning.OrganizationalUnit != BatchSigningOrganizationalUnit {
+			return fmt.Errorf("batch_signing_organizational_unit must be %q", BatchSigningOrganizationalUnit)
+		}
+		if authorization.Transport.IssuingCASHA256 == authorization.BatchSigning.IssuingCASHA256 {
+			return errors.New("transport and batch-signing issuing CAs must be different")
+		}
+	} else {
+		if err := validateObjectIdentifier("transport_template_oid", authorization.Transport.TemplateOID); err != nil {
+			return err
+		}
+		if err := validateObjectIdentifier("batch_signing_template_oid", authorization.BatchSigning.TemplateOID); err != nil {
+			return err
+		}
 	}
 
 	if !strings.EqualFold(

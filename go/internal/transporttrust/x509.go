@@ -42,11 +42,16 @@ func IdentityFromCertificate(
 	}
 
 	templateOID, err := CertificateTemplateOID(certificate)
-	if err != nil {
-		return CertificateIdentity{}, fmt.Errorf(
-			"derive certificate template OID: %w",
-			err,
-		)
+	if err != nil && err.Error() != "certificate template information extension is required" {
+		return CertificateIdentity{}, fmt.Errorf("derive certificate template OID: %w", err)
+	}
+	// Only legacy v1 certificates can lack the template extension.
+	var organizationalUnit string
+	if len(certificate.Subject.OrganizationalUnit) == 1 {
+		organizationalUnit = certificate.Subject.OrganizationalUnit[0]
+	}
+	if templateOID == "" && organizationalUnit == "" {
+		return CertificateIdentity{}, errors.New("certificate must have an AD CS template OID or exactly one organizational unit")
 	}
 
 	certificateSHA256 := sha256.Sum256(certificate.Raw)
@@ -57,5 +62,6 @@ func IdentityFromCertificate(
 		CommonName:        certificate.Subject.CommonName,
 		IssuingCASHA256:   hex.EncodeToString(issuerSHA256[:]),
 		TemplateOID:       templateOID,
+		OrganizationalUnit: organizationalUnit,
 	}, nil
 }
