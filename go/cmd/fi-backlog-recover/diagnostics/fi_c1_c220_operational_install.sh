@@ -307,9 +307,7 @@ ensure_c1_runtime_config_access(){
     state=$(jexec fi-sor stat -f '%u:%g:%Lp' "$file") ||
       fail "cannot stat C1 runtime configuration: $file"
     case "$state" in
-      "0:0:600"|"0:0:640"|"0:0:644"|
-      "0:4100:600"|"0:4100:640"|"0:4100:644"|
-      "0:${c1_gid}:600"|"0:${c1_gid}:640"|"0:${c1_gid}:644") ;;
+      "0:0:600"|"0:0:640"|"0:0:644"|"0:4100:600"|"0:4100:640"|"0:4100:644"|"0:${c1_gid}:600"|"0:${c1_gid}:640"|"0:${c1_gid}:644") ;;
       *) fail "unexpected C1 config metadata: $file ($state)" ;;
     esac
   done
