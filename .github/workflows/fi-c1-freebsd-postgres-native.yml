@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - 'dev/c1-two-process-20261120'
-      - 'dev/c1-sor-single-jail-20261124'
+      - 'dev-backend'
+      - 'main'
     paths:
       - '.github/workflows/fi-c1-freebsd-postgres-native.yml'
       - 'go/cmd/fi-backlog-recover/diagnostics/fi_c1_c220_governed_deploy_gate.sh'

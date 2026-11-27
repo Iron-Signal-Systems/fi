@@ -12,7 +12,7 @@ case "$mode" in --audit|--stage|--start-telemetry|--start-ingest) ;; *) fail "in
 case "$pin" in *[!0123456789abcdef]*|'') fail "invalid SHA";; esac
 [ "${#pin}" -eq 40 ] || fail "full 40-character SHA required"
 repo=/home/jwood/fi-c1-two-process-2a449f1a
-branch=dev/c1-sor-single-jail-20261124
+branch=dev-backend
 dev=/fast/jails/roots/fi-dev
 sor=/fast/jails/roots/fi-sor
 runtime=tools/deployment/freebsd/runtime.d
