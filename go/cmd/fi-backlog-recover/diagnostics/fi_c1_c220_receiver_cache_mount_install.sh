@@ -51,11 +51,14 @@ check_source(){
         fail "cache source owner UID differs from receiver service UID"
     [ "$(stat -f %g "$src")" = "$sgid" ] ||
         fail "cache source group differs from SoR GID"
+    # FreeBSD stat %Lp reports only the low rwx permission bits.
+    # SGID is a separate st_mode "middle" bit; never expect %Lp to
+    # print 2750. Verify ordinary permissions AND SGID independently.
     mode=$(stat -f '%#Lp' "$src")
-    case "$mode" in 02750|2750) ;; *)
-        fail "cache source mode must be 2750; found $mode" ;;
-    esac
+    [ "$mode" = 0750 ] ||
+        fail "cache source permission bits must be 0750; found $mode"
     [ -g "$src" ] || fail 'cache source setgid bit missing'
+    echo "FI_C1_CACHE_SOURCE_MODE=$(stat -f '%Sp' "$src") low=$mode setgid=true"
 }
 check_target(){
     target=$1
