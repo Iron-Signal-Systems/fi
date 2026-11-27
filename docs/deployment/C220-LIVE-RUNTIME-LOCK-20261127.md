@@ -11,11 +11,11 @@ redeployment or changes to PostgreSQL, signed custody, or running services.
 | fi-c1-sor-live | d78e37010389abb4ba9922ab83abb0d2d6bab8a8 | 54ea5cce0538ba0f65cd1d6effc78b695ed44bd2f8257aa14781bf1e58e558b2 |
 | fi-telemetry-backend | 0c2ffb6b32c40e19a3cdc4b0b1cc50e695889fae | dab1deb8cc39ded4c9b293e74bc8c39f30a61393828dc73899a8db560ccf3a11 |
 
-C1's verified source is retained at:
+C1's recorded source snapshot is retained at:
 
 runtime/baselines/c220-20261127/c1/go/
 
-Receiver and telemetry are built from their pinned Git revisions.
+The supplied verifier script proposes rebuilding receiver and telemetry from their pinned Git revisions and C1 from the retained snapshot.
 
 Run on FreeBSD amd64:
 
