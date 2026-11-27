@@ -13,6 +13,7 @@ import (
  "path/filepath"
  "sort"
  "strings"
+ "syscall"
  "time"
 )
 const MaxEntryBytes = 1 << 20
@@ -46,8 +47,8 @@ func IsSafeSpool(dir string)error {
  if !filepath.IsAbs(dir){return errors.New("FI telemetry: spool must be absolute")}
  info,err:=os.Lstat(dir);if err!=nil{return err}
  if !info.IsDir()||info.Mode()&os.ModeSymlink!=0||
-    info.Mode().Perm()&0077!=0 {
-  return errors.New("FI telemetry: spool must be private, real directory (0700)")
+    info.Mode().Perm()&0007!=0 || info.Mode().Perm()&0200==0 {
+  return errors.New("FI telemetry: spool must be private, real directory (0700 or private group 0770)")
  }
  return nil
 }
@@ -80,7 +81,7 @@ func Put(dir string,e Entry)(string,error){
  if _,err:=os.Lstat(path);err==nil{return "",errors.New("FI telemetry: duplicate entry file")}
  tmp,err:=os.CreateTemp(dir,".tmp-");if err!=nil{return "",err}
  defer os.Remove(tmp.Name())
- if err:=tmp.Chmod(0600);err!=nil{tmp.Close();return "",err}
+ if err:=tmp.Chmod(0640);err!=nil{tmp.Close();return "",err}
  if _,err:=tmp.Write(b);err!=nil{tmp.Close();return "",err}
  if err:=tmp.Sync();err!=nil{tmp.Close();return "",err}
  if err:=tmp.Close();err!=nil{return "",err}
@@ -98,7 +99,7 @@ func ReadPending(dir string,limit int)([]Pending,error){
  result:=make([]Pending,0,len(names))
  for _,name:=range names{
   path:=filepath.Join(dir,name)
-  f,err:=os.OpenFile(path,os.O_RDONLY|os.O_NOFOLLOW,0)
+  f,err:=os.OpenFile(path,os.O_RDONLY|syscall.O_NOFOLLOW,0)
   if err!=nil{return nil,err}
   info,err:=f.Stat()
   if err!=nil{f.Close();return nil,err}
@@ -123,7 +124,7 @@ func Retire(dir string,items []Pending)error{
  for _,p:=range items{
   if filepath.Dir(p.Path)!=dir{return errors.New("FI telemetry: foreign retirement path")}
   // Reopen and validate bytes BEFORE unlink. A changed spool remains retained.
-  f,err:=os.OpenFile(p.Path,os.O_RDONLY|os.O_NOFOLLOW,0)
+  f,err:=os.OpenFile(p.Path,os.O_RDONLY|syscall.O_NOFOLLOW,0)
   if err!=nil{return err}
   b,err:=io.ReadAll(io.LimitReader(f,MaxEntryBytes+1));f.Close()
   if err!=nil{return err}
