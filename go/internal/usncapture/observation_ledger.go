@@ -5,6 +5,7 @@
 package usncapture
 
 import (
+    "bufio"
     "bytes"
     "crypto/sha256"
     "encoding/hex"
@@ -13,18 +14,23 @@ import (
     "fmt"
     "io"
     "os"
+    "sort"
     "path/filepath"
     "strconv"
     "strings"
     "sync"
+
+    "github.com/Iron-Signal-Systems/fi/go/internal/spool"
 )
 
 const (
     observationCursorName="observation.json"
     observationReceiptPrefix="observation-receipt-"
     observationProofVersion="fi-usn-observation-published/1"
+    observationIntentPrefix="observation-intent-"
 )
 var ErrObservationPending=errors.New("FI source observation requires original verified NTFS evidence")
+var ErrAmbiguousObservation=errors.New("FI independent NTFS observation publication outcome is ambiguous")
 
 // ObservationLedger is an independent source consumer: it never moves the raw
 // capture cursor or the USNScopedCapture processed cursor. Its original
@@ -102,6 +108,9 @@ func (l *ObservationLedger) Next()(Segment,bool,error){
     l.mu.Lock();defer l.mu.Unlock()
     seg,ok,err:=l.nextLocked()
     if err!=nil||!ok{return seg,ok,err}
+    if _,err:=os.Lstat(filepath.Join(l.store.dir,observationIntentPrefix+seg.Name));err==nil{
+        return Segment{},false,ErrAmbiguousObservation
+    }else if !errors.Is(err,os.ErrNotExist){return Segment{},false,err}
     if _,err:=os.Lstat(filepath.Join(l.store.dir,observationReceiptPrefix+seg.Name));err==nil{
         // The receipt is processed by OpenObservationLedger recovery, never
         // ignored and never automatically overwritten.
@@ -115,6 +124,7 @@ type ObservationPublicationProof struct {
     sourceSHA string
     startUSN string
     nextUSN string
+    spoolPublished bool
 }
 func (p ObservationPublicationProof) Receipt()string{return p.receipt}
 
@@ -135,6 +145,20 @@ func (l *ObservationLedger) CommitObservation(seg Segment,p ObservationPublicati
     }
     if !validObservationProof(p.receipt){
         return errors.New("independent observation needs verified FI evidence")
+    }
+    // No positive observation may advance if it was published without the
+    // prior durable original-source interval intent. A crash after finalizing
+    // FI spool custody but before the receipt must never silently replay.
+    if p.spoolPublished{
+        data,err:=os.ReadFile(filepath.Join(l.store.dir,observationIntentPrefix+seg.Name))
+        if err!=nil{return fmt.Errorf("%w: missing observation publication intent: %v",
+            ErrAmbiguousObservation,err)}
+        var intent observationReceipt
+        if err:=json.Unmarshal(data,&intent);err!=nil{return err}
+        if intent.SourceBatchSHA256!=seg.SHA256 || intent.StartUSN!=seg.Batch.StartUSN ||
+            intent.NextUSN!=seg.Batch.NextUSN || intent.Version!=SchemaVersion {
+            return fmt.Errorf("%w: observation intent source mismatch",ErrCorrupt)
+        }
     }
     receipt:=observationReceipt{
         Version:SchemaVersion,StartUSN:seg.Batch.StartUSN,NextUSN:seg.Batch.NextUSN,
@@ -214,5 +238,117 @@ func VerifyNoWorkObservationProof(seg Segment,roots []GovernedProcessingPlan,pol
     return ObservationPublicationProof{
         receipt:observationProofVersion+":"+hex.EncodeToString(hash.Sum(nil)),
         sourceSHA:seg.SHA256,startUSN:seg.Batch.StartUSN,nextUSN:seg.Batch.NextUSN,
+    },nil
+}
+
+// BeginObservationPublication must precede the FIRST append of independently
+// observed NTFS records to FI spool. On restart an unresolved intent never
+// authorizes another OS re-read or duplicate spool publication.
+func (l *ObservationLedger) BeginObservationPublication(seg Segment)error{
+    if l==nil{return errors.New("independent NTFS observation ledger required")}
+    l.mu.Lock();defer l.mu.Unlock()
+    current,ok,err:=l.nextLocked()
+    if err!=nil{return err}
+    if !ok || current.SHA256!=seg.SHA256 || current.Batch.NextUSN!=seg.Batch.NextUSN{
+        return fmt.Errorf("%w: attempted observation of foreign source",ErrConflict)
+    }
+    path:=filepath.Join(l.store.dir,observationIntentPrefix+seg.Name)
+    if _,err:=os.Lstat(path);err==nil{return ErrAmbiguousObservation
+    }else if !errors.Is(err,os.ErrNotExist){return err}
+    intent:=observationReceipt{Version:SchemaVersion,
+        StartUSN:seg.Batch.StartUSN,NextUSN:seg.Batch.NextUSN,
+        SourceBatchSHA256:seg.SHA256}
+    return atomicWrite(path,mustJSON(intent))
+}
+
+type PublishedNTFSObservation struct {
+    ScopeID string
+    Payload any
+}
+
+// VerifyObservationPublication inspects EXACTLY the original finalized FI
+// FileObservation records, with bytes validated by spool.VerifyManifest.
+// Duplicate, missing, changed, extra or unrelated records cannot move the
+// independent observation cursor. The source hash is an additional local
+// binding; FileObservation remains a CURRENT NTFS fact, not an event-time fact.
+func VerifyObservationPublication(
+    seg Segment,expected []PublishedNTFSObservation,batches []spool.FinalizedBatch,
+)(ObservationPublicationProof,error){
+    if len(expected)==0||len(batches)==0||seg.SHA256==""{
+        return ObservationPublicationProof{},errors.New("verified independent FI observations required")
+    }
+    wanted:=make([][]byte,len(expected))
+    for i,e:=range expected{
+        if e.ScopeID==""||e.Payload==nil{
+            return ObservationPublicationProof{},errors.New("observation missing governed scope or actual facts")
+        }
+        data,err:=json.Marshal(e.Payload)
+        if err!=nil{return ObservationPublicationProof{},err}
+        wanted[i]=data
+    }
+    seen:=map[string]struct{}{}
+    count:=0
+    receipts:=make([]string,0,len(batches))
+    for _,batch:=range batches{
+        if batch.ManifestPath==""{
+            return ObservationPublicationProof{},errors.New("missing observation spool manifest")
+        }
+        verified,err:=spool.VerifyManifest(batch.ManifestPath)
+        if err!=nil||!verified.Verified{
+            return ObservationPublicationProof{},fmt.Errorf("verify observation spool: %w",err)
+        }
+        if verified.Manifest.BatchID!=batch.Manifest.BatchID ||
+            verified.Manifest.DataSHA256!=batch.Manifest.DataSHA256 ||
+            verified.DataPath!=batch.DataPath {
+            return ObservationPublicationProof{},errors.New("changed observation spool metadata")
+        }
+        if _,exists:=seen[verified.Manifest.BatchID];exists{
+            return ObservationPublicationProof{},errors.New("duplicated observation spool batch")
+        }
+        seen[verified.Manifest.BatchID]=struct{}{}
+        file,err:=os.Open(verified.DataPath);if err!=nil{return ObservationPublicationProof{},err}
+        scan:=bufio.NewScanner(file)
+        scan.Buffer(make([]byte,4096),spool.DefaultMaxBatchBytes)
+        batchCount:=0
+        for scan.Scan(){
+            var record spool.Record
+            if err:=json.Unmarshal(scan.Bytes(),&record);err!=nil{
+                _=file.Close();return ObservationPublicationProof{},err
+            }
+            if count>=len(wanted)||record.Version!=spool.RecordVersion ||
+                record.RecordKind!="FileObservation" ||
+                record.ScopeID!=expected[count].ScopeID ||
+                !bytes.Equal(record.Payload,wanted[count]){
+                _=file.Close()
+                return ObservationPublicationProof{},errors.New("FI observation spool has altered, unexpected or extra source facts")
+            }
+            count++
+            batchCount++
+        }
+        scanErr:=scan.Err()
+        closeErr:=file.Close()
+        if scanErr!=nil||closeErr!=nil{
+            return ObservationPublicationProof{},fmt.Errorf("read original observation custody: %v %v",scanErr,closeErr)
+        }
+        if batchCount!=verified.Manifest.RecordCount{
+            return ObservationPublicationProof{},errors.New("FI observation spool source count mismatch")
+        }
+        receipts=append(receipts,verified.Manifest.BatchID+":"+verified.Manifest.DataSHA256)
+    }
+    if count!=len(wanted){
+        return ObservationPublicationProof{},fmt.Errorf("FI observations missing %d required records",len(wanted)-count)
+    }
+    sort.Strings(receipts)
+    hash:=sha256.New()
+    hash.Write([]byte(seg.SHA256))
+    hash.Write([]byte{0})
+    for _,receipt:=range receipts{
+        hash.Write([]byte(receipt))
+        hash.Write([]byte{0})
+    }
+    return ObservationPublicationProof{
+        receipt:observationProofVersion+":"+hex.EncodeToString(hash.Sum(nil)),
+        sourceSHA:seg.SHA256,startUSN:seg.Batch.StartUSN,
+        nextUSN:seg.Batch.NextUSN,spoolPublished:true,
     },nil
 }
