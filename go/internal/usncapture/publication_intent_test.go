@@ -121,7 +121,7 @@ func TestReceiptWithoutDurableIntentCannotRecoverProcessedCursor(t *testing.T) {
 	receipt := map[string]string{
 		"version": SchemaVersion,
 		"source_batch_sha256": seg.SHA256,
-		"spool_proof": testScopedSpoolProof(),
+		"spool_proof": testScopedSpoolProof().Receipt(),
 		"start_usn": seg.Batch.StartUSN,
 		"next_usn": seg.Batch.NextUSN,
 	}
