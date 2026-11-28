@@ -63,6 +63,7 @@ func main() {
 	shares := flag.Bool("shares", false, "show local SMB share state and share security")
 	collectorIdentity := flag.Bool("collector-identity", false, "show FI process identity and token facts")
 	baselineRoot := flag.Bool("baseline-root", false, "collect FI process identity, local SMB shares, and one governed NTFS root")
+	freshVolumeSourceMode := flag.Bool("usn-volume-bootstrap", false, "initialize new one-owner-per-volume raw USN source anchors after all governed verified baselines on an FI-free host")
 	baselineSpoolRootMode := flag.Bool("baseline-spool-root", false, "capture a pre-baseline USN anchor, write a verified hashed baseline, then initialize the checkpoint to that anchor")
 	usnStateMode := flag.Bool("usn-state", false, "show current NTFS USN journal state for the governed-root volume")
 	usnReadMode := flag.Bool("usn-read", false, "read one bounded NTFS USN journal batch from a starting USN")
@@ -99,6 +100,7 @@ func main() {
 		*collectorIdentity,
 		*baselineRoot,
 		*baselineSpoolRootMode,
+        *freshVolumeSourceMode,
 		*usnStateMode,
 		*usnReadMode,
 		*usnReobserveMode,
@@ -133,6 +135,7 @@ func main() {
 		*serviceMode,
 		*supportingRefreshMode,
 		*baselineSpoolRootMode,
+        *freshVolumeSourceMode,
 		*usnCheckpointInitMode,
 		*usnOperationMode,
 		*usnNextMode,
@@ -214,6 +217,19 @@ func main() {
 		}
 		runConfig()
 		return
+
+    case *freshVolumeSourceMode:
+        if flag.NArg()!=0 {
+            printUsage()
+            os.Exit(2)
+        }
+        result,err:=initializeFreshUSNVolumeSources(context.Background())
+        writeIndentedJSON(result)
+        if err!=nil{
+            fmt.Fprintln(os.Stderr,"ERROR:",err)
+            os.Exit(1)
+        }
+        return
 
 	case *baselineSpoolRootMode:
 		if flag.NArg() != 1 {
@@ -552,6 +568,7 @@ func printUsage() {
 	fmt.Println(`  fi-collector.exe -shares`)
 	fmt.Println(`  fi-collector.exe -collector-identity`)
 	fmt.Println(`  fi-collector.exe -baseline-root      <governed-root>`)
+    fmt.Println(`  fi-collector.exe -usn-volume-bootstrap   # ONLY on FI-free, authorized fresh install`)
 	fmt.Println(`  fi-collector.exe -baseline-spool-root <governed-root>`)
 	fmt.Println(`  fi-collector.exe -usn-state          <governed-root>`)
 	fmt.Println(`  fi-collector.exe -usn-read           <governed-root> <start-usn>`)
