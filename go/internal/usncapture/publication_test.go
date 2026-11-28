@@ -41,7 +41,7 @@ func TestVerifiedScopedPublicationRequiresExactSourceAndRoot(t *testing.T){
     p:=onePublishedScopedSource(t)
     batches:=writeScopedTestSpool(t,[]ScopedProjection{p})
     proof,err:=VerifyScopedPublication([]ScopedProjection{p},batches)
-    if err!=nil||!strings.HasPrefix(proof,"verified-fi-usn-scoped-spool/1:"){
+    if err!=nil||!strings.HasPrefix(proof.Receipt(),"verified-fi-usn-scoped-spool/1:"){
         t.Fatalf("failed verified source publication: %q %v",proof,err)
     }
     forged:=p

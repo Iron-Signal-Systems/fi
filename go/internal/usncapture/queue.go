@@ -258,10 +258,10 @@ func (s *Store) Next() (Segment, bool, error) {
 // publishedProof is an opaque nonempty reference to that independently verified
 // publication, or a separately recorded no-governed-object scope decision.
 // After a crash before cursor advancement, reprocessing must be idempotent.
-func (s *Store) CommitProcessed(seg Segment, publishedProof string) error {
+func (s *Store) CommitProcessed(seg Segment, publishedProof ScopedPublicationProof) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !validScopedSpoolProof(publishedProof) {
+	if !validScopedSpoolProof(publishedProof.receipt) {
         return errors.New("exact verified FI scoped USN spool proof required")
     }
 	if seg.Name != segmentNameMust(seg.Batch.StartUSN) || seg.Batch.StartUSN != s.processed.NextUSN || !matchesBatch(s.processed, seg.Batch) {
@@ -289,7 +289,7 @@ func (s *Store) CommitProcessed(seg Segment, publishedProof string) error {
 		SpoolProof        string `json:"spool_proof"`
 		StartUSN          string `json:"start_usn"`
 		NextUSN           string `json:"next_usn"`
-	}{SchemaVersion, seg.SHA256, publishedProof, seg.Batch.StartUSN, seg.Batch.NextUSN}
+	}{SchemaVersion, seg.SHA256, publishedProof.receipt, seg.Batch.StartUSN, seg.Batch.NextUSN}
 	if err := atomicWrite(filepath.Join(s.dir, "receipt-"+seg.Name), mustJSON(receipt)); err != nil {
 		return err
 	}

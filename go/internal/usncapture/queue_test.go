@@ -19,7 +19,7 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
-func testScopedSpoolProof() string { return scopedProofPrefix + strings.Repeat("a",64) }
+func testScopedSpoolProof() ScopedPublicationProof { return ScopedPublicationProof{receipt: scopedProofPrefix + strings.Repeat("a",64)} }
 
 func exampleAnchor() Cursor {
 	return Cursor{Version: SchemaVersion, ScopeID: "root-test", JournalID: "19", VolumeIdentity: records.VolumeIdentity{MethodVersion: "ntfs-volume/1", VolumeGUID: `\\?\Volume{11111111-2222-3333-4444-555555555555}\`, VolumeSerial: "9"}, NextUSN: "100"}
@@ -57,7 +57,7 @@ func TestSeparateCaptureAndProcessingCheckpoints(t *testing.T) {
 	if err != nil || !ok || item.Batch.NextUSN != "200" {
 		t.Fatalf("recovery: %+v %t %v", item, ok, err)
 	}
-	if err := recovered.CommitProcessed(item, ""); err == nil {
+	if err := recovered.CommitProcessed(item, ScopedPublicationProof{}); err == nil {
 		t.Fatal("accepted missing spool proof")
 	}
 	if recovered.ProcessingCursor().NextUSN != "100" {

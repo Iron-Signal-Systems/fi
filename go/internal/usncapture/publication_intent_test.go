@@ -165,3 +165,17 @@ func TestReclaimRejectsInvalidSpoolReceiptAndRetainsSource(t *testing.T) {
 		t.Fatalf("original captured source lost after invalid reclaim: %v", err)
 	}
 }
+
+func TestUnverifiedScopedPublicationCapabilityIsRejected(t *testing.T) {
+	store, _ := exampleStore(t, DefaultMaxPendingBytes)
+	if err := store.Append(exampleBatch(exampleAnchor(), 100, 200)); err != nil { t.Fatal(err) }
+	seg, ok, err := store.Next()
+	if err != nil || !ok { t.Fatal("missing captured source", err) }
+	if err := store.BeginScopedPublication(seg); err != nil { t.Fatal(err) }
+	if err := store.CommitProcessed(seg, ScopedPublicationProof{}); err == nil {
+		t.Fatal("zero-value publication capability advanced processed cursor")
+	}
+	if store.ProcessingCursor().NextUSN != "100" {
+		t.Fatal("processed source advanced without verified local publication")
+	}
+}
