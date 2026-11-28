@@ -222,35 +222,26 @@ func (s *Store) Append(batch records.USNReadBatch) error {
 // its underlying change records out of the live journal. The immutable cached
 // records can still be processed, but re-observation sees current NTFS state.
 func (s *Store) Next() (Segment, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	items, err := s.listLocked()
-	if err != nil {
-		return Segment{}, false, err
-	}
-	for _, name := range items {
-		value, err := s.loadSegmentLocked(name)
-		if err != nil {
-			return Segment{}, false, err
-		}
-		start, _ := strconv.ParseUint(value.Batch.StartUSN, 10, 64)
-		processed, _ := strconv.ParseUint(s.processed.NextUSN, 10, 64)
-		if start < processed {
-			end, _ := strconv.ParseUint(value.Batch.NextUSN, 10, 64)
-			if end > processed {
-				return Segment{}, false, fmt.Errorf("%w: segment overlaps processing cursor", ErrCorrupt)
-			}
-			continue // acknowledged but not yet garbage collected
-		}
-		if start != processed {
-			return Segment{}, false, ErrGap
-		}
-		return value, true, nil
-	}
-	if s.processed.NextUSN != s.capture.NextUSN {
-		return Segment{}, false, ErrGap
-	}
-	return Segment{}, false, nil
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    // The durable processed cursor determines exactly one next filename.
+    // Do not re-list and rehash every earlier segment for every processing
+    // batch: sustained 20M-file tests can produce tens of thousands of files.
+    if s.processed.NextUSN == s.capture.NextUSN {
+        return Segment{}, false, nil
+    }
+    name := segmentNameMust(s.processed.NextUSN)
+    seg, err := s.loadSegmentLocked(name)
+    if errors.Is(err, os.ErrNotExist) {
+        return Segment{}, false, fmt.Errorf("%w: source segment %s not found", ErrGap, name)
+    }
+    if err != nil {
+        return Segment{}, false, err
+    }
+    if seg.Batch.StartUSN != s.processed.NextUSN {
+        return Segment{}, false, fmt.Errorf("%w: processed cursor and segment start diverged", ErrCorrupt)
+    }
+    return seg, true, nil
 }
 
 // CommitProcessed is ONLY for a consumer that has already durably finalized
