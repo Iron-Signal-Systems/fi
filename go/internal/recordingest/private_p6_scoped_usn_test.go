@@ -13,7 +13,7 @@ import "testing"
 // or shunted into an unrelated unordered family.
 func TestC1ScopedUSNSourceAdmissionThroughOrderedP6(t *testing.T) {
     kind:="USNScopedCapture"
-    if !IsSupportedRecordKind(kind){
+    if _,ok:=supportedRecordKinds[kind];!ok{
         t.Fatal("USNScopedCapture rejected before original SourceParent")
     }
     if !backlogTypedKindAllowed(kind){
