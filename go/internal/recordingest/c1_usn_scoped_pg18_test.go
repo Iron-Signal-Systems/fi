@@ -167,6 +167,7 @@ SELECT (SELECT count(*) FROM fi.usn_scoped_capture WHERE source_record_id=$1),
     // volume/journal/root interval. No source reread, raw record replay or
     // canonical mutation is necessary for independent relational B detection.
     if _,err:=tx.Exec(ctx,"SAVEPOINT ci_cross_generation_replay");err!=nil{t.Fatal(err)}
+    replayHash:=sha256.Sum256([]byte("distinct second signed USN generation transfer fixture"))
     var replayGen int64
     err=tx.QueryRow(ctx,`
 INSERT INTO fi.recorded_generation (
@@ -177,7 +178,7 @@ INSERT INTO fi.recorded_generation (
  batch_count,data_bytes,record_count,receipt_bytes,receipt_sha256,ingest_version)
 VALUES ('ci/1','ci/1',$1,$2,'fi-canonical/0.1','none',2,128,
  128,$3,64,$3,32,$3,116,$3,1,64,1,120,$3,'ci-only')
-RETURNING recorded_generation_id`,source,generation+"-replay",hash[:]).Scan(&replayGen)
+RETURNING recorded_generation_id`,source,generation+"-replay",replayHash[:]).Scan(&replayGen)
     if err!=nil{t.Fatalf("second isolated signed-generation fixture: %v",err)}
     var replayBatch int64
     err=tx.QueryRow(ctx,`
@@ -189,7 +190,7 @@ INSERT INTO fi.source_batch (
 VALUES ($1,'ci-usn-replay.manifest.json','ci-usn-replay.jsonl','fi-spool-manifest/0.1',
  'ci-usn-replay',512,1,64,$2,'ci-usn-replay.jsonl',
  'CI-FICollector.exe',$2,$3,$3,120,$2)
-RETURNING source_batch_id`,replayGen,hash[:],time.Now().UTC()).Scan(&replayBatch)
+RETURNING source_batch_id`,replayGen,replayHash[:],time.Now().UTC()).Scan(&replayBatch)
     if err!=nil{t.Fatalf("re-signed replay batch: %v",err)}
     var replayRecord int64
     err=tx.QueryRow(ctx,`
@@ -199,7 +200,7 @@ INSERT INTO fi.source_record (
 VALUES ($1,1,$2,'USNScopedCapture',$3,$4,512,$5,$6)
 RETURNING source_record_id`,
         replayBatch,SpoolRecordVersion,first.GovernedScopeID,
-        time.Now().UTC(),hash[:],IngestVersion).Scan(&replayRecord)
+        time.Now().UTC(),replayHash[:],IngestVersion).Scan(&replayRecord)
     if err!=nil{t.Fatalf("re-signed replay source record: %v",err)}
     if err:=projectUSNScopedCapture(ctx,tx,source,replayRecord,
         first.GovernedScopeID,first);err!=nil{
