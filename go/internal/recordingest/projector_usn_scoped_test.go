@@ -7,6 +7,7 @@ package recordingest
 import (
     "crypto/sha256"
     "encoding/hex"
+    "encoding/json"
     "strings"
     "testing"
     "time"
@@ -15,7 +16,7 @@ import (
 )
 
 func testUSNScopedCapturePayload() usnScopedCapturePayload {
-    stamp:=time.Now().UTC().Format(time.RFC3339Nano)
+    stamp:=time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
     volume:=records.VolumeIdentity{MethodVersion:"ntfs-volume/1",VolumeGUID:`\\?\Volume{11111111-2222-3333-4444-555555555555}\`,VolumeSerial:"123"}
     root:=records.NTFSObjectIdentity{MethodVersion:"ntfs-file-id/1",FileReferenceNumber:"101",SequenceNumber:"1"}
     child:=records.NTFSObjectIdentity{MethodVersion:"ntfs-file-id/1",FileReferenceNumber:"102",SequenceNumber:"1"}
@@ -26,15 +27,26 @@ func testUSNScopedCapturePayload() usnScopedCapturePayload {
         USN:"104",Timestamp:stamp,ReasonRaw:"256",SourceInfoRaw:"0",
         SecurityID:"0",FileAttributesRaw:"32",FileNameUTF16LEBase64URL:"YQA",
     }
-    return usnScopedCapturePayload{
+    v:=usnScopedCapturePayload{
         Version:usnScopedCaptureVersion, CaptureScopeID:"volume-"+hex.EncodeToString(sum[:16]),
         GovernedScopeID:"root-test",RootIdentity:root,CapturedAt:stamp,
         CollectionMethod:records.WindowsUSNCollectionMethod,VolumeIdentity:volume,
         JournalID:"55",StartUSN:"100",NextUSN:"200",
-        SourceBatchSHA256:strings.Repeat("b",64),SourceRecordCount:1,
+        SourceRecordCount:1,
         IncludedRecordCount:1,GovernedRecordCount:1,
         Included:[]usnScopedChangePayload{{Source:change,Class:"Governed",Reason:"RecordedAncestry"}},
     }
+    raw:=records.USNReadBatch{
+        ObservedAt:v.CapturedAt,CollectionMethod:v.CollectionMethod,
+        ScopeID:v.CaptureScopeID,VolumeIdentity:v.VolumeIdentity,
+        JournalID:v.JournalID,StartUSN:v.StartUSN,NextUSN:v.NextUSN,
+        Records:[]records.USNChangeObservation{change},
+    }
+    buf,err:=json.Marshal(raw)
+    if err!=nil{panic(err)}
+    rawSHA:=sha256.Sum256(buf)
+    v.SourceBatchSHA256=hex.EncodeToString(rawSHA[:])
+    return v
 }
 func TestUSNScopedCaptureValidatesOnlySourceFacts(t *testing.T){
     v:=testUSNScopedCapturePayload()
@@ -47,6 +59,8 @@ func TestUSNScopedCaptureRejectsScopeLossOrForgedMetadata(t *testing.T){
         "bad-capture-scope":func(v *usnScopedCapturePayload){v.CaptureScopeID="root-abc"},
         "wrong-valid-volume-digest":func(v *usnScopedCapturePayload){v.CaptureScopeID="volume-"+strings.Repeat("a",32)},
         "bad-digest":func(v *usnScopedCapturePayload){v.SourceBatchSHA256="abcd"},
+        "valid-but-false-digest":func(v *usnScopedCapturePayload){v.SourceBatchSHA256=strings.Repeat("b",64)},
+        "altered-valid-raw-reason":func(v *usnScopedCapturePayload){v.Included[0].Source.ReasonRaw="512"},
         "timestamp":func(v *usnScopedCapturePayload){v.CapturedAt="bad"},
         "unknown-method":func(v *usnScopedCapturePayload){v.CollectionMethod="AlteredUSN"},
         "journal":func(v *usnScopedCapturePayload){v.JournalID="01"},
@@ -68,4 +82,47 @@ func TestUSNScopedCaptureUnresolvedIsRetained(t *testing.T){
     v:=testUSNScopedCapturePayload()
     v.GovernedRecordCount=0;v.UnresolvedRecordCount=1;v.Included[0].Class="Unresolved"
     if err:=validateUSNScopedCapture("root-test",v);err!=nil{t.Fatalf("unresolved source evidence lost: %v",err)}
+}
+
+func TestUSNScopedCaptureOriginalDigestRejectsDroppedOrReorderedFacts(t *testing.T) {
+    v:=testUSNScopedCapturePayload()
+    second:=v.Included[0]
+    second.Source.USN="108"
+    second.Source.FileIdentity.FileReferenceNumber="103"
+    v.Included=append(v.Included,second)
+    v.SourceRecordCount=2
+    v.IncludedRecordCount=2
+    v.GovernedRecordCount=2
+    raw:=records.USNReadBatch{
+        ObservedAt:v.CapturedAt,CollectionMethod:v.CollectionMethod,
+        ScopeID:v.CaptureScopeID,VolumeIdentity:v.VolumeIdentity,
+        JournalID:v.JournalID,StartUSN:v.StartUSN,NextUSN:v.NextUSN,
+        Records:[]records.USNChangeObservation{v.Included[0].Source,v.Included[1].Source},
+    }
+    b,err:=json.Marshal(raw);if err!=nil{t.Fatal(err)}
+    sum:=sha256.Sum256(b)
+    v.SourceBatchSHA256=hex.EncodeToString(sum[:])
+    if err:=validateUSNScopedCapture("root-test",v);err!=nil{t.Fatalf("original source facts rejected: %v",err)}
+    v.Included[0],v.Included[1]=v.Included[1],v.Included[0]
+    if err:=validateUSNScopedCapture("root-test",v);err==nil{
+        t.Fatal("source facts reordered without changing custody digest")
+    }
+}
+func TestUSNScopedCaptureZeroEventBatchDigestVerifiesBothGoSliceEncodings(t *testing.T) {
+    for _,recordsSlice:=range [][]records.USNChangeObservation{nil, {}} {
+        v:=testUSNScopedCapturePayload()
+        v.Included=nil
+        v.SourceRecordCount=0;v.IncludedRecordCount=0;v.GovernedRecordCount=0
+        raw:=records.USNReadBatch{
+            ObservedAt:v.CapturedAt,CollectionMethod:v.CollectionMethod,
+            ScopeID:v.CaptureScopeID,VolumeIdentity:v.VolumeIdentity,
+            JournalID:v.JournalID,StartUSN:v.StartUSN,NextUSN:v.NextUSN,
+            Records:recordsSlice,
+        }
+        b,err:=json.Marshal(raw);if err!=nil{t.Fatal(err)}
+        sum:=sha256.Sum256(b);v.SourceBatchSHA256=hex.EncodeToString(sum[:])
+        if err:=validateUSNScopedCapture("root-test",v);err!=nil{
+            t.Fatalf("zero source facts rejected: %v",err)
+        }
+    }
 }
