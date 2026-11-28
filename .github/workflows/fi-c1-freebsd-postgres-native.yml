@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - 'dev-backend'
+      - 'backend-usn'
       - 'main'
     paths:
       - '.github/workflows/fi-c1-freebsd-postgres-native.yml'
@@ -16,6 +17,9 @@ on:
       - 'go/cmd/fi-c1-sor-local/**'
       - 'tools/deployment/freebsd/operations/fi_c1_c220_receiver_sor_readiness_audit.sh'
       - 'go/internal/recordingest/c1_*.go'
+      - 'go/internal/recordingest/projector_usn_scoped*.go'
+      - 'go/internal/recordingest/record.go'
+      - 'database/schema/**'
       - 'go/internal/recordingest/private_c1_*.go'
       # Signed C1 uses the shared P6 SourceParent/Security/Coverage/
       # File/USN SQL routines. Their changes MUST re-run native PG18.

@@ -2,7 +2,7 @@ name: FI FreeBSD C220 Runtime Build
 
 on:
   push:
-    branches: [dev-backend, main]
+    branches: [dev-backend, backend-usn, main]
     paths:
       - 'go/cmd/fi-receiver/**'
       - 'go/cmd/fi-c1-sor-local/**'
@@ -14,6 +14,7 @@ on:
       - 'go/internal/transportpackage/**'
       - 'go/internal/transportwire/**'
       - 'go/internal/recordingest/**'
+      - 'database/schema/**'
       - 'go/internal/c1handoff/**'
       - 'go/internal/telemetrybackend/**'
       - 'go/go.mod'
