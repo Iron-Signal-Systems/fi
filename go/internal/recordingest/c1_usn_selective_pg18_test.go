@@ -37,6 +37,16 @@ FROM fi.source_record
 WHERE source_record_id=$1
 `,originalRecordID).Scan(&batchID);err!=nil{t.Fatal(err)}
     payload:=testUSNSelectiveSourceOutcome()
+    // The source fixture uses a fresh timestamp for each signed record.
+    // Bind the independently observed outcome to the EXACT original
+    // already-projected USN source, not a new logically similar batch.
+    if err:=tx.QueryRow(ctx,`
+SELECT encode(source_batch_sha256,'hex')
+FROM fi.usn_scoped_capture
+WHERE source_record_id=$1
+`,originalRecordID).Scan(&payload.SourceBatchSHA256);err!=nil{
+        t.Fatalf("lookup exact original signed USN source SHA-256: %v",err)
+    }
     digest:=sha256.Sum256([]byte("fi real postgres18 independently observed outcome fixture"))
     var observedRecordID int64
     err:=tx.QueryRow(ctx,`

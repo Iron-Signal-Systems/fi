@@ -157,6 +157,7 @@ func SupportedRecordKinds() []string {
 		"USNObjectObservation",
 		"USNReadBoundary",
 		"USNScopedCapture",
+        "USNSelectiveObservation",
 		"WindowsSecurityContinuityGap",
 		"WindowsSecurityCoverage",
 		"WindowsSecurityEvent",
