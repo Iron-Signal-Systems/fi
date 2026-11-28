@@ -9,6 +9,7 @@ import (
     "crypto/sha256"
     "encoding/base64"
     "encoding/hex"
+    "encoding/json"
     "errors"
     "fmt"
     "strconv"
@@ -106,6 +107,43 @@ func validateUSNScopedCapture(scopeID string, v usnScopedCapturePayload) error {
     }
     if governed!=v.GovernedRecordCount||unresolved!=v.UnresolvedRecordCount{
         return errors.New("scoped event classification count mismatch")
+    }
+    // The publisher claims this is the complete original volume-wide USN
+    // batch. Since v1 forbids exclusions, rebuild the exact raw source
+    // envelope and verify its SHA-256, rather than trusting only counters.
+    // Original records are not deduplicated or re-observed.
+    original:=records.USNReadBatch{
+        ObservedAt:v.CapturedAt,
+        CollectionMethod:v.CollectionMethod,
+        ScopeID:v.CaptureScopeID,
+        VolumeIdentity:v.VolumeIdentity,
+        JournalID:v.JournalID,
+        StartUSN:v.StartUSN,
+        NextUSN:v.NextUSN,
+    }
+    for _,entry:=range v.Included {
+        original.Records=append(original.Records,entry.Source)
+    }
+    if err:=records.ValidateUSNReadBatch(original);err!=nil{
+        return fmt.Errorf("invalid reconstructed raw USN source: %w",err)
+    }
+    originalJSON,err:=json.Marshal(original)
+    if err!=nil{return fmt.Errorf("marshal reconstructed USN source: %w",err)}
+    rawDigest:=sha256.Sum256(originalJSON)
+    if hex.EncodeToString(rawDigest[:])!=v.SourceBatchSHA256{
+        // The Windows USN reader can emit an empty non-nil records slice;
+        // JSON encodes that as [] instead of null. Accept either encoding
+        // only for zero-record batches; both represent zero source facts.
+        if len(original.Records)!=0{
+            return errors.New("FI scoped USN batch digest differs from original records")
+        }
+        original.Records=[]records.USNChangeObservation{}
+        rawJSON,err:=json.Marshal(original)
+        if err!=nil{return err}
+        rawDigest=sha256.Sum256(rawJSON)
+        if hex.EncodeToString(rawDigest[:])!=v.SourceBatchSHA256{
+            return errors.New("FI scoped USN empty-batch digest differs from original source")
+        }
     }
     return nil
 }
