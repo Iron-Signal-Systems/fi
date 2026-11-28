@@ -210,6 +210,36 @@ LIMIT 1`,generationID).Scan(&overlapID,&priorID,&overlapStart,&priorEnd)
             overlapID,overlapStart,priorID,priorEnd)
     }
     if !errors.Is(err,pgx.ErrNoRows){return err}
+    // B independently rejects re-signed or conflicting source history across
+    // separate generations from the same source and exact NTFS volume. A
+    // previous generation must not make an overlapping interval acceptable
+    // merely because the new receipt, manifest and source SHA are different.
+    var newRecordID,oldRecordID int64
+    err=tx.QueryRow(ctx,`
+SELECT newer.source_record_id,older.source_record_id
+FROM fi.usn_scoped_capture newer
+JOIN fi.source_record nsr ON nsr.source_record_id=newer.source_record_id
+JOIN fi.source_batch nsb ON nsb.source_batch_id=nsr.source_batch_id
+JOIN fi.recorded_generation ng ON ng.recorded_generation_id=nsb.recorded_generation_id
+JOIN fi.usn_scoped_capture older
+  ON older.ntfs_volume_id=newer.ntfs_volume_id
+ AND older.governed_scope_id=newer.governed_scope_id
+ AND older.journal_id=newer.journal_id
+ AND older.start_usn<newer.next_usn
+ AND newer.start_usn<older.next_usn
+JOIN fi.source_record osr ON osr.source_record_id=older.source_record_id
+JOIN fi.source_batch osb ON osb.source_batch_id=osr.source_batch_id
+JOIN fi.recorded_generation og ON og.recorded_generation_id=osb.recorded_generation_id
+WHERE nsb.recorded_generation_id=$1
+ AND osb.recorded_generation_id<>nsb.recorded_generation_id
+ AND og.source_id=ng.source_id
+LIMIT 1`,generationID).Scan(&newRecordID,&oldRecordID)
+    if err==nil{
+        return fmt.Errorf("FI scoped USN: source interval conflicts across signed generations new=%d prior=%d",
+            newRecordID,oldRecordID)
+    }
+    if !errors.Is(err,pgx.ErrNoRows){return err}
+
     var id int64
     var expected,got,governed,unresolved int64
     err=tx.QueryRow(ctx,`
