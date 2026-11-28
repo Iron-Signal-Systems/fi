@@ -41,6 +41,14 @@ func processCapturedUSNVolumeOnce(
     if err:=ctx.Err();err!=nil{return false,err}
     writer,err:=spool.NewWriter(spoolDir,spool.DefaultBatchSize,collector)
     if err!=nil{return false,err}
+    // The writer has passed all preflight checks, but has published NOTHING
+    // yet. Durably mark this exact source interval before its first spool
+    // append, so restart cannot send it twice if publication succeeds but
+    // the processed-cursor receipt is interrupted.
+    if err:=store.BeginScopedPublication(seg);err!=nil{
+        _ = writer.Abandon()
+        return false,fmt.Errorf("begin fail-closed scoped USN publication: %w",err)
+    }
     // No source cursor is touched until every governed root is written
     // to immutable FI custody and independently proven.
     for _,p:=range projections{

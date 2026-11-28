@@ -8,6 +8,8 @@ package main
 
 import (
     "context"
+    "errors"
+    "os"
     "path/filepath"
     "strings"
     "testing"
@@ -118,4 +120,59 @@ func TestUSNProcessingPublishesHistoricalEventWithoutFileReobservation(t *testin
     if store.ProcessingCursor().NextUSN!="150"{
         t.Fatal("verified historical source event failed to advance the processing cursor")
     }
+}
+
+func TestUSNProcessingTwoConsecutiveSourceBatchesArePublishedOnce(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    first,ok,err:=store.Next()
+    if err!=nil||!ok{t.Fatalf("missing first source: %v",err)}
+    next:=first.Batch
+    next.StartUSN="150"
+    next.NextUSN="200"
+    next.Records[0].USN="154"
+    next.Records[0].FileIdentity.FileReferenceNumber="7"
+    if err:=store.Append(next);err!=nil{t.Fatalf("append second captured interval: %v",err)}
+    spoolDir:=filepath.Join(t.TempDir(),"spool")
+    collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",
+        ExecutableSHA256:strings.Repeat("a",64)}
+    for i:=0;i<2;i++{
+        processed,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,spoolDir,collector)
+        if err!=nil||!processed{t.Fatalf("process source interval %d: worked=%t err=%v",i,processed,err)}
+    }
+    if store.CaptureCursor().NextUSN!="200"||store.ProcessingCursor().NextUSN!="200"{
+        t.Fatal("source intervals did not retain independent source and processed cursors")
+    }
+    processed,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,spoolDir,collector)
+    if err!=nil||processed{t.Fatalf("duplicate publication after both intervals: worked=%t err=%v",processed,err)}
+    entries,err:=os.ReadDir(spoolDir)
+    if err!=nil{t.Fatal(err)}
+    manifests:=0
+    for _,entry:=range entries{
+        if strings.HasSuffix(entry.Name(),".manifest.json"){manifests++}
+    }
+    if manifests!=2{
+        t.Fatalf("expected one verified FI batch per captured interval; got %d",manifests)
+    }
+}
+
+func TestUSNProcessingRefusesAmbiguousPublicationWithoutRewritingSpool(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    seg,ok,err:=store.Next()
+    if err!=nil||!ok{t.Fatal("missing raw source",err)}
+    if err:=store.BeginScopedPublication(seg);err!=nil{t.Fatal(err)}
+    // Simulate restart with a durable publishing intent but no receipt.
+    // A first writer could already have finalized a sender-visible manifest.
+    spoolDir:=filepath.Join(t.TempDir(),"spool")
+    collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",
+        ExecutableSHA256:strings.Repeat("a",64)}
+    worked,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,spoolDir,collector)
+    if worked||!errors.Is(err,usncapture.ErrAmbiguousPublication){
+        t.Fatalf("uncertain source interval replayed: worked=%t err=%v",worked,err)
+    }
+    if store.ProcessingCursor().NextUSN!="100"{
+        t.Fatal("source checkpoint advanced without verified publication outcome")
+    }
+    if entries,err:=os.ReadDir(spoolDir);err==nil&&len(entries)>0{
+        t.Fatalf("ambiguous interval created new FI spool data: %d entries",len(entries))
+    }else if err!=nil&&!os.IsNotExist(err){t.Fatal(err)}
 }
