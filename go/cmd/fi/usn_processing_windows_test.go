@@ -36,7 +36,7 @@ func testVolumeCaptureForProcessing(t *testing.T) (*usncapture.Store,[]usncaptur
     store,err:=usncapture.Open(dir,usncapture.DefaultMaxPendingBytes)
     if err!=nil{t.Fatal(err)}
     batch:=records.USNReadBatch{
-        ObservedAt:time.Now().UTC().Format(time.RFC3339Nano),
+        ObservedAt:time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"),
         CollectionMethod:records.WindowsUSNCollectionMethod,
         ScopeID:scope,VolumeIdentity:volume,JournalID:"999",
         StartUSN:"100",NextUSN:"150",
