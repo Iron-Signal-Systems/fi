@@ -269,3 +269,78 @@ func TestUSNProcessingMissingRootScopeEvidenceLeavesQueueReplayable(t *testing.T
         }
     }else if !os.IsNotExist(err){t.Fatal(err)}
 }
+
+func publishCapturedWithoutProcessingReceipt(
+    t *testing.T, store *usncapture.Store, roots []usncapture.GovernedProcessingPlan,
+    dir string, firstRootOnly bool,
+) {
+    t.Helper()
+    seg,ok,err:=store.Next()
+    if err!=nil||!ok{t.Fatalf("no original source segment: %v",err)}
+    projections,err:=usncapture.BuildVolumeProjections(seg,roots)
+    if err!=nil{t.Fatal(err)}
+    writer,err:=spool.NewWriter(dir,spool.DefaultBatchSize,spool.CollectorIdentity{
+        ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64),
+    })
+    if err!=nil{t.Fatal(err)}
+    if err:=store.BeginScopedPublication(seg);err!=nil{t.Fatal(err)}
+    if firstRootOnly{projections=projections[:1]}
+    for _,pr:=range projections{
+        if err:=writer.Append("USNScopedCapture",pr.GovernedScopeID,pr);err!=nil{t.Fatal(err)}
+    }
+    if err:=writer.Close();err!=nil{t.Fatal(err)}
+}
+
+func TestInterruptedVerifiedSpoolCompletesOriginalReceiptWithoutSecondPublication(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    dir:=filepath.Join(t.TempDir(),"spool")
+    publishCapturedWithoutProcessingReceipt(t,store,roots,dir,false)
+    before,err:=os.ReadDir(dir);if err!=nil{t.Fatal(err)}
+    worked,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,dir,
+        spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)})
+    if err!=nil||!worked{t.Fatalf("original spool not reconciled: worked=%t err=%v",worked,err)}
+    if store.ProcessingCursor().NextUSN!="150" {t.Fatal("original capture receipt not committed")}
+    after,err:=os.ReadDir(dir);if err!=nil{t.Fatal(err)}
+    if len(after)!=len(before){t.Fatalf("reconciliation wrote duplicate spool: %d -> %d",len(before),len(after))}
+    worked,err=processCapturedUSNVolumeOnce(context.Background(),store,roots,dir,
+        spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)})
+    if worked||err!=nil{t.Fatalf("completed interval replayed: worked=%t err=%v",worked,err)}
+}
+
+func TestInterruptedPartialMultiRootSpoolNeverAdvancesProcessed(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    root2:=records.NTFSObjectIdentity{MethodVersion:"ntfs-file-id/1",
+        FileReferenceNumber:"55",SequenceNumber:"1"}
+    roots=append(roots,usncapture.GovernedProcessingPlan{
+        ScopeID:"root-second",RootIdentity:root2,
+        Resolve:usncapture.DirectRootScopeResolver("root-second","999",root2),
+    })
+    dir:=filepath.Join(t.TempDir(),"spool")
+    publishCapturedWithoutProcessingReceipt(t,store,roots,dir,true)
+    worked,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,dir,
+        spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)})
+    if worked||!errors.Is(err,usncapture.ErrAmbiguousPublication){
+        t.Fatalf("partial source publication accepted: worked=%t err=%v",worked,err)
+    }
+    if store.ProcessingCursor().NextUSN!="100"{t.Fatal("partial root custody advanced source")}
+}
+
+func TestTransferredUnverifiableSpoolNeverReplaysOriginalSource(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    dir:=filepath.Join(t.TempDir(),"spool")
+    publishCapturedWithoutProcessingReceipt(t,store,roots,dir,false)
+    // A sender may move the finalized files before the local receipt. Without
+    // a persisted remote acknowledgement the outcome MUST remain ambiguous.
+    entries,err:=os.ReadDir(dir);if err!=nil{t.Fatal(err)}
+    for _,entry:=range entries{
+        if !entry.IsDir(){
+            if err:=os.Remove(filepath.Join(dir,entry.Name()));err!=nil{t.Fatal(err)}
+        }
+    }
+    worked,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,dir,
+        spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)})
+    if worked||!errors.Is(err,usncapture.ErrAmbiguousPublication){
+        t.Fatalf("unverifiable published source was duplicated: worked=%t err=%v",worked,err)
+    }
+    if store.ProcessingCursor().NextUSN!="100"{t.Fatal("missing custody advanced cursor")}
+}
