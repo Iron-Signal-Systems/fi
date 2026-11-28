@@ -161,7 +161,7 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
       (SELECT count(*) FROM information_schema.tables
        WHERE table_schema='fi')`).
        Scan(&pendingTables,&canonicalTables);err!=nil{t.Fatal(err)}
-    if pendingTables!=50||canonicalTables!=49{
+    if pendingTables!=52||canonicalTables!=51{
         t.Fatalf("one-shot governed install altered canonical schema or omitted Pending: pending=%d canonical=%d",
             pendingTables,canonicalTables)
     }
@@ -227,6 +227,6 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
     if generations2,accepted2,e:=before();e!=nil||generations2!=1||accepted2!=1{
         t.Fatal("second offline C1 governed installation mutated canonical Accepted")
     }
-    t.Log("PASS: fresh offline canonical 49-table database + existing Accepted preserved; forced DDL/role rollback, successful governed Pending publisher install and exact repeat refusal")
+    t.Log("PASS: fresh offline canonical 51-table database + existing Accepted preserved; forced DDL/role rollback, successful governed Pending publisher install and exact repeat refusal")
 }
 
