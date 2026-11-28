@@ -284,6 +284,30 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
         // service startup checks the same cursor against FirstUSN again.
         result.Volumes[i].CapturedNextUSN=cursor.NextUSN
     }
+    // Only a fully verified multi-root bootstrap may authorize activation.
+    // A failure before this final marker retains raw source custody, but the
+    // FI service cannot treat an incomplete install as a completed baseline.
+    witness:=volumeBootstrapWitness{Version:volumeBootstrapWitnessVersion,
+        Volumes:make([]volumeBootstrapWitnessVolume,0,len(preparedGroups))}
+    for _,group:=range preparedGroups {
+        v:=volumeBootstrapWitnessVolume{
+            CaptureScopeID:group.group.CaptureScopeID,
+            JournalID:group.group.JournalID,
+            VolumeIdentity:group.group.VolumeIdentity,
+            OriginalNextUSN:group.anchor.JournalState.NextUSN,
+            Roots:make([]volumeBootstrapRoot,0,len(group.group.GovernedRoots)),
+        }
+        for i,root:=range group.group.GovernedRoots {
+            v.Roots=append(v.Roots,volumeBootstrapRoot{
+                Path:root,ScopeID:configuredScopeID(root),
+                Identity:group.rootAnchors[i].GovernedRoot.ObjectIdentity,
+            })
+        }
+        witness.Volumes=append(witness.Volumes,v)
+    }
+    if err:=commitVolumeBootstrapWitness(value.Storage.USNCaptureDir,witness);err!=nil{
+        return result,fmt.Errorf("persist fully accepted original FI bootstrap boundary: %w",err)
+    }
     result.Status="SourceAnchorsInitialized"
     return result,nil
 }

@@ -15,6 +15,7 @@ import (
     "reflect"
     "time"
 
+    "github.com/Iron-Signal-Systems/fi/go/internal/records"
     "github.com/Iron-Signal-Systems/fi/go/internal/runtimeidentity"
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
     "github.com/Iron-Signal-Systems/fi/go/internal/usncapture"
@@ -43,6 +44,9 @@ func runServiceUSNVolumeSourceLoop(
     }
     groups,err:=resolveServiceUSNVolumeCaptures(ctx,snapshot.GovernedRoots,usn.QueryJournal)
     if err!=nil{return fmt.Errorf("discover original NTFS volume source ownership: %w",err)}
+    // A partially initialized fresh source, even with two readable cursors,
+    // MUST NOT activate service workers until every baseline has completed.
+    if _,err:=loadVolumeBootstrapWitness(snapshot.USNCaptureDir);err!=nil{return err}
     spoolDir,err:=spool.DefaultDir()
     if err!=nil{return err}
     executable,err:=runtimeidentity.CurrentExecutable()
@@ -51,6 +55,7 @@ func runServiceUSNVolumeSourceLoop(
         ExecutablePath:executable.Path,ExecutableSHA256:executable.SHA256,
     }
     bundles:=make([]serviceUSNSourceBundle,0,len(groups))
+    currentRoots:=make(map[string]records.NTFSObjectIdentity,len(snapshot.GovernedRoots))
     defer func(){
         for _,bundle:=range bundles{_ =bundle.owner.Close()}
     }()
@@ -80,6 +85,7 @@ func runServiceUSNVolumeSourceLoop(
                 return fmt.Errorf("%w: governed root %q changed NTFS volume",usncapture.ErrConflict,root)
             }
             rootID:=observation.GovernedRoot.ObjectIdentity
+            currentRoots[root]=rootID
             plans=append(plans,usncapture.GovernedProcessingPlan{
                 ScopeID:scope,RootIdentity:rootID,
                 Resolve:usncapture.DirectRootScopeResolver(scope,group.JournalID,rootID),
@@ -87,6 +93,8 @@ func runServiceUSNVolumeSourceLoop(
         }
         item.roots=plans
     }
+    if err:=verifyVolumeBootstrapServiceAuthority(
+        snapshot.USNCaptureDir,groups,currentRoots);err!=nil{return err}
 
     workers,stop:=context.WithCancel(ctx)
     defer stop()
