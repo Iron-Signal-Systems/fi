@@ -23,6 +23,9 @@ const (
 )
 
 type CollectorSettings struct {
+    USNMode string
+    USNCaptureMaxBytes uint64
+    USNProcessingEvery time.Duration
 	CollectionEvery        time.Duration
 	SupportingRefreshEvery time.Duration
 	USNEvery               time.Duration
@@ -68,6 +71,7 @@ type SpoolSettings struct {
 }
 
 type StorageSettings struct {
+    USNCaptureDir string
 	SpoolDir string
 	StageDir string
 	StateDir string
@@ -234,6 +238,19 @@ func assignSetting(value *Config, key string, rawValue string) error {
 			return err
 		}
 		value.Collector.SupportingRefreshEvery = duration
+	case "collector.usn_mode":
+        if rawValue!="legacy" && rawValue!="volume-source-v1" {
+            return fmt.Errorf("%s must be legacy or volume-source-v1",key)
+        }
+        value.Collector.USNMode=rawValue
+    case "collector.usn_capture_max_bytes":
+        bytes,err:=parsePositiveUint64(key,rawValue)
+        if err!=nil{return err}
+        value.Collector.USNCaptureMaxBytes=bytes
+    case "collector.usn_processing_every":
+        every,err:=parsePositiveDuration(key,rawValue)
+        if err!=nil{return err}
+        value.Collector.USNProcessingEvery=every
 	case "collector.usn_every":
 		duration, err := parsePositiveDuration(key, rawValue)
 		if err != nil {
@@ -321,6 +338,9 @@ func assignSetting(value *Config, key string, rawValue string) error {
 			return fmt.Errorf("%s must be a positive base-10 integer", key)
 		}
 		value.Spool.TargetBatchBytes = number
+	case "storage.usn_capture_dir":
+        if err:=validateWindowsPath(rawValue);err!=nil{return fmt.Errorf("%s: %w",key,err)}
+        value.Storage.USNCaptureDir=rawValue
 	case "storage.spool_dir":
 		if err := validateWindowsPath(rawValue); err != nil {
 			return fmt.Errorf("%s: %w", key, err)
@@ -472,6 +492,25 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
 	if _, ok := seen["sender.recovery_timeout"]; !ok {
 		value.Sender.RecoveryTimeout = 2 * time.Hour
 	}
+	if value.Collector.USNMode=="" {value.Collector.USNMode="legacy"}
+    if value.Collector.USNMode=="volume-source-v1" {
+        for _,key:=range []string{"storage.usn_capture_dir",
+            "collector.usn_capture_max_bytes","collector.usn_processing_every"} {
+            if _,ok:=seen[key];!ok{return fmt.Errorf("%s required for volume-source-v1",key)}
+        }
+        queue:=strings.ToLower(strings.TrimRight(value.Storage.USNCaptureDir,"\\"))
+        spool:=strings.ToLower(strings.TrimRight(value.Storage.SpoolDir,"\\"))
+        stage:=strings.ToLower(strings.TrimRight(value.Storage.StageDir,"\\"))
+        if queue==spool || strings.HasPrefix(queue,spool+"\\") ||
+            spool==queue || strings.HasPrefix(spool,queue+"\\") ||
+            queue==stage || strings.HasPrefix(queue,stage+"\\") ||
+            stage==queue || strings.HasPrefix(stage,queue+"\\") {
+            return errors.New("volume USN capture custody must be separate from FI spool and stage directories")
+        }
+    } else if value.Storage.USNCaptureDir!="" || value.Collector.USNCaptureMaxBytes!=0 ||
+        value.Collector.USNProcessingEvery!=0 {
+        return errors.New("volume USN capture settings require collector.usn_mode=volume-source-v1")
+    }
 	if value.Sender.RecoveryThresholdBytes != 0 && value.Sender.RecoveryTimeout <= 0 {
 		return errors.New("sender.recovery_timeout must be greater than zero when recovery is enabled")
 	}
