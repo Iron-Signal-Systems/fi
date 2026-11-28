@@ -103,6 +103,18 @@ func OpenDirectoryHistoryIndex(dir string,anchor Cursor)(*DirectoryHistoryIndex,
         if _,ok:=h.seen[v.StartUSN];ok{
             return nil,fmt.Errorf("%w: duplicate original directory history",ErrCorrupt)
         }
+        // Replay is untrusted until every recorded positive ancestry edge
+        // is independently reconstructed from the original, still-durable
+        // source segment. A forged index must never invent root membership.
+        source:=&Store{dir:dir,capture:anchor}
+        seg,err:=source.loadSegmentLocked(segmentNameMust(v.StartUSN))
+        if err!=nil{return nil,fmt.Errorf("%w: original USN source missing for directory history: %v",
+            ErrCorrupt,err)}
+        expected,err:=h.buildHistory(seg)
+        if err!=nil{return nil,err}
+        if !reflect.DeepEqual(expected,v){
+            return nil,fmt.Errorf("%w: historical directory events differ from exact original NTFS capture",ErrCorrupt)
+        }
         if err:=h.applyLocked(v);err!=nil{return nil,err}
     }
     return h,nil
@@ -167,33 +179,8 @@ func (h *DirectoryHistoryIndex) AddSegment(seg Segment)error{
         seg.Name!=segmentNameMust(seg.Batch.StartUSN){
         return fmt.Errorf("%w: unverified or foreign original source history",ErrConflict)
     }
-    v:=directorySegmentHistory{
-        Version:historyIndexVersion,CaptureScopeID:seg.Batch.ScopeID,
-        JournalID:seg.Batch.JournalID,VolumeIdentity:seg.Batch.VolumeIdentity,
-        SourceBatchSHA256:seg.SHA256,
-        StartUSN:seg.Batch.StartUSN,NextUSN:seg.Batch.NextUSN,
-        Changes:make([]directoryLinkTransition,0),
-    }
-    observedInSegment:=make(map[records.NTFSObjectIdentity]bool)
-    for _,change:=range seg.Batch.Records{
-        reason,err:=strconv.ParseUint(change.ReasonRaw,10,32)
-        if err!=nil{return fmt.Errorf("%w: directory record reason not decimal",ErrCorrupt)}
-        attrs,err:=strconv.ParseUint(change.FileAttributesRaw,10,32)
-        if err!=nil{return fmt.Errorf("%w: directory record attributes not decimal",ErrCorrupt)}
-        hasKnownLink:=attrs&ntfsAttributeDirectory!=0 && attrs&ntfsAttributeReparse==0
-        knownPreviously:=len(h.transitions[change.FileIdentity])>0||
-            observedInSegment[change.FileIdentity]
-        // A previously known directory may be deleted/renamed with missing
-        // attribute bits. Conservatively retire its previous positive link.
-        removed:=reason&(usnReasonFileDelete|usnReasonRenameOldName|usnReasonHardLinkChange)!=0
-        if !hasKnownLink && !(removed&&knownPreviously){continue}
-        v.Changes=append(v.Changes,directoryLinkTransition{
-            EventUSN:change.USN,Directory:change.FileIdentity,
-            Parent:change.ParentIdentity,LinkKnown:hasKnownLink&&!removed,
-        })
-        observedInSegment[change.FileIdentity]=true
-    }
-    if _,err:=parseHistorySource(v);err!=nil{return err}
+    v,err:=h.buildHistory(seg)
+    if err!=nil{return err}
     if existing,ok:=h.seen[v.StartUSN];ok{
         if existing!=v.SourceBatchSHA256{
             return fmt.Errorf("%w: directory history source batch changed",ErrCorrupt)
@@ -214,6 +201,39 @@ func (h *DirectoryHistoryIndex) AddSegment(seg Segment)error{
     if len(raw)>int(maxEnvelopeBytes){return fmt.Errorf("%w: directory history segment too large",ErrCapacity)}
     if err:=atomicWrite(path,raw);err!=nil{return err}
     return h.applyLocked(v)
+}
+
+// buildHistory derives every directory transition deterministically from a
+// verified source segment and the earlier immutable source index. It is shared
+// by live publication and cold-start independent replay validation.
+func (h *DirectoryHistoryIndex) buildHistory(seg Segment)(directorySegmentHistory,error){
+    v:=directorySegmentHistory{
+        Version:historyIndexVersion,CaptureScopeID:seg.Batch.ScopeID,
+        JournalID:seg.Batch.JournalID,VolumeIdentity:seg.Batch.VolumeIdentity,
+        SourceBatchSHA256:seg.SHA256,
+        StartUSN:seg.Batch.StartUSN,NextUSN:seg.Batch.NextUSN,
+        Changes:make([]directoryLinkTransition,0),
+    }
+    for _,change:=range seg.Batch.Records{
+        reason,err:=strconv.ParseUint(change.ReasonRaw,10,32)
+        if err!=nil{return fmt.Errorf("%w: directory record reason not decimal",ErrCorrupt)}
+        attrs,err:=strconv.ParseUint(change.FileAttributesRaw,10,32)
+        if err!=nil{return fmt.Errorf("%w: directory record attributes not decimal",ErrCorrupt)}
+        hasKnownLink:=attrs&ntfsAttributeDirectory!=0 && attrs&ntfsAttributeReparse==0
+        knownPreviously:=len(h.transitions[change.FileIdentity])>0||
+            observedInSegment[change.FileIdentity]
+        // A previously known directory may be deleted/renamed with missing
+        // attribute bits. Conservatively retire its previous positive link.
+        removed:=reason&(usnReasonFileDelete|usnReasonRenameOldName|usnReasonHardLinkChange)!=0
+        if !hasKnownLink && !(removed&&knownPreviously){continue}
+        v.Changes=append(v.Changes,directoryLinkTransition{
+            EventUSN:change.USN,Directory:change.FileIdentity,
+            Parent:change.ParentIdentity,LinkKnown:hasKnownLink&&!removed,
+        })
+        observedInSegment[change.FileIdentity]=true
+    }
+    if _,err:=parseHistorySource(v);err!=nil{return v,err}
+    return v,nil
 }
 
 func (h *DirectoryHistoryIndex) applyLocked(v directorySegmentHistory)error{
