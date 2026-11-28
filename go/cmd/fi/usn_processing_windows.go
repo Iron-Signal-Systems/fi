@@ -35,6 +35,17 @@ func processCapturedUSNVolumeOnce(
     spoolDir string,
     collector spool.CollectorIdentity,
 ) (bool,error) {
+    return processCapturedUSNVolumeOnceWithHistory(ctx,store,roots,spoolDir,collector,nil)
+}
+
+func processCapturedUSNVolumeOnceWithHistory(
+    ctx context.Context,
+    store *usncapture.Store,
+    roots []usncapture.GovernedProcessingPlan,
+    spoolDir string,
+    collector spool.CollectorIdentity,
+    history *usncapture.DirectoryHistoryIndex,
+) (bool,error) {
     if ctx == nil || store == nil || len(roots)==0 || spoolDir=="" {
         return false,errors.New("FI USN processing requires capture store, governed roots and spool")
     }
@@ -44,6 +55,9 @@ func processCapturedUSNVolumeOnce(
         pending,hasIntent,readErr:=store.PendingAmbiguousPublication()
         if readErr!=nil{return false,readErr}
         if !hasIntent{return false,err}
+        if history!=nil{
+            if err:=history.AddSegment(pending);err!=nil{return false,err}
+        }
         expected,buildErr:=usncapture.BuildVolumeProjections(pending,roots)
         if buildErr!=nil{return false,buildErr}
         published,recoverErr:=findPublishedScopedUSNBatches(ctx,spoolDir,expected)
@@ -58,6 +72,9 @@ func processCapturedUSNVolumeOnce(
         return true,nil
     }
     if err!=nil||!ok{return false,err}
+    if history!=nil{
+        if err:=history.AddSegment(seg);err!=nil{return false,err}
+    }
     projections,err:=usncapture.BuildVolumeProjections(seg,roots)
     if err!=nil{return false,err}
     if err:=ctx.Err();err!=nil{return false,err}

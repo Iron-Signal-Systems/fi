@@ -30,6 +30,7 @@ type serviceUSNSourceBundle struct {
     group serviceUSNVolumeCapture
     owner io.Closer
     store *usncapture.Store
+    history *usncapture.DirectoryHistoryIndex
     roots []usncapture.GovernedProcessingPlan
 }
 
@@ -80,7 +81,10 @@ func runServiceUSNVolumeSourceLoop(
             volumeSourceAvailableFreeBytes);err!=nil{
             return fmt.Errorf("preflight original NTFS capture disk reserve: %w",err)
         }
+        index,err:=usncapture.OpenDirectoryHistoryIndex(queueDir,store.CaptureCursor())
+        if err!=nil{return fmt.Errorf("open durable native-USN directory ancestry: %w",err)}
         item.store=store
+        item.history=index
         plans:=make([]usncapture.GovernedProcessingPlan,0,len(group.GovernedRoots))
         for _,root:=range group.GovernedRoots{
             scope:=configuredScopeID(root)
@@ -93,7 +97,7 @@ func runServiceUSNVolumeSourceLoop(
             currentRoots[root]=rootID
             plans=append(plans,usncapture.GovernedProcessingPlan{
                 ScopeID:scope,RootIdentity:rootID,
-                Resolve:usncapture.DirectRootScopeResolver(scope,group.JournalID,rootID),
+                Resolve:index.Resolver(scope,group.JournalID,rootID),
             })
         }
         item.roots=plans
@@ -116,7 +120,7 @@ func runServiceUSNVolumeSourceLoop(
         go func(){
             done<-runServiceUSNSourceProcessingLoop(workers,snapshot.USNProcessingEvery,
                 item.store,item.roots,spoolDir,collector,item.group.CaptureScopeID,
-                appendRecord)
+                appendRecord,item.history)
         }()
     }
     var failures error
@@ -139,7 +143,10 @@ func runServiceUSNSourceProcessingLoop(
     roots []usncapture.GovernedProcessingPlan,spoolDir string,
     collector spool.CollectorIdentity,volumeScopeID string,
     appendRecord serviceAppendRecordFunc,
+    optionalHistory ...*usncapture.DirectoryHistoryIndex,
 ) error {
+    var history *usncapture.DirectoryHistoryIndex
+    if len(optionalHistory)>0{history=optionalHistory[0]}
     if ctx==nil||store==nil||interval<=0||len(roots)==0||
         spoolDir==""||volumeScopeID==""||appendRecord==nil{
         return errors.New("FI scoped processing worker requires independent source and custody")
@@ -149,7 +156,7 @@ func runServiceUSNSourceProcessingLoop(
     lastWarning:=time.Time{}
     for{
         if err:=ctx.Err();err!=nil{return nil}
-        worked,err:=processCapturedUSNVolumeOnce(ctx,store,roots,spoolDir,collector)
+        worked,err:=processCapturedUSNVolumeOnceWithHistory(ctx,store,roots,spoolDir,collector,history)
         if err!=nil {
             if ctx.Err()!=nil{return nil}
             // Source corruption or a missing segment is not a recoverable
