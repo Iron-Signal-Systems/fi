@@ -10,7 +10,6 @@ import (
     "context"
     "errors"
     "fmt"
-    "reflect"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
@@ -49,10 +48,9 @@ func observeCurrentSelectedNTFS(
 // processIndependentNTFSObservationsOnce consumes ONE already durably captured
 // source segment through a THIRD independent cursor, never the journal or
 // scoped-source cursor. It can be scheduled at a deliberately slower rate.
-// A missing/deleted/moved/inaccessible file remains an explicit failure and
-// cannot produce a fabricated FileObservation or advance its observation
-// cursor. A separate outcome record/receiver contract is required before
-// those statuses can be accepted instead of held for recovery.
+// A missing/deleted/moved/inaccessible file becomes an explicit source-bound
+// Unavailable/Outside/Error outcome, not a fabricated successful FileObservation.
+// All selected source facts are spool-verified before its cursor advances.
 func processIndependentNTFSObservationsOnce(
     ctx context.Context,source *usncapture.Store,
     observations *usncapture.ObservationLedger,
@@ -89,23 +87,20 @@ func processIndependentNTFSObservationsOnce(
             _=writer.Abandon()
             return false,fmt.Errorf("missing governed source path for scope %s",request.RootScopeID)
         }
-        actual,err:=read(ctx,request.RootScopeID,path,request.ObjectIdentity)
+        actual,readErr:=read(ctx,request.RootScopeID,path,request.ObjectIdentity)
+        // Context cancellation is control flow, never a permanent journal
+        // fact or a spurious unavailable NTFS result.
+        if ctx.Err()!=nil{
+            _=writer.Abandon()
+            return false,ctx.Err()
+        }
+        outcome,err:=makeUSNSelectiveOutcome(request,seg.Batch.VolumeIdentity,actual,readErr)
         if err!=nil{
             _=writer.Abandon()
-            return false,fmt.Errorf(
-                "actual selective NTFS read unavailable scope=%s volume=%s source=%s:%s object=%s/%s: %w",
-                request.RootScopeID,request.CaptureScopeID,request.StartUSN,request.NextUSN,
-                request.ObjectIdentity.FileReferenceNumber,request.ObjectIdentity.SequenceNumber,err)
-        }
-        if actual.NTFS.ObjectIdentity!=request.ObjectIdentity ||
-            actual.NTFS.GovernedRoot.ScopeID!=request.RootScopeID ||
-            actual.NTFS.GovernedRoot.ObjectIdentity!=request.RootIdentity ||
-            !reflect.DeepEqual(actual.NTFS.VolumeIdentity,seg.Batch.VolumeIdentity){
-            _=writer.Abandon()
-            return false,errors.New("FI independent NTFS read changed exact governed object or NTFS volume")
+            return false,fmt.Errorf("construct verified independent source outcome: %w",err)
         }
         expected=append(expected,usncapture.PublishedNTFSObservation{
-            ScopeID:request.RootScopeID,Payload:actual,
+            ScopeID:request.RootScopeID,Payload:outcome,
         })
     }
     // New spool bytes are prohibited until this exact source-bound intent
@@ -117,9 +112,9 @@ func processIndependentNTFSObservationsOnce(
     }
     for _,entry:=range expected{
         if err:=ctx.Err();err!=nil{_ =writer.Abandon();return false,err}
-        if err:=writer.Append("FileObservation",entry.ScopeID,entry.Payload);err!=nil{
+        if err:=writer.Append("USNSelectiveObservation",entry.ScopeID,entry.Payload);err!=nil{
             _=writer.Abandon()
-            return false,fmt.Errorf("publish original independent FI NTFS fact: %w",err)
+            return false,fmt.Errorf("publish original source-bound FI NTFS observation outcome: %w",err)
         }
     }
     if err:=writer.Close();err!=nil{return false,err}

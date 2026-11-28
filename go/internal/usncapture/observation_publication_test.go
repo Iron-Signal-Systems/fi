@@ -33,7 +33,7 @@ func TestObservationSpoolVerifiedBeforeIndependentCursorAdvances(t *testing.T){
     })
     if err!=nil{t.Fatal(err)}
     if err:=ledger.BeginObservationPublication(seg);err!=nil{t.Fatal(err)}
-    if err:=writer.Append("FileObservation",expected[0].ScopeID,expected[0].Payload);err!=nil{t.Fatal(err)}
+    if err:=writer.Append("USNSelectiveObservation",expected[0].ScopeID,expected[0].Payload);err!=nil{t.Fatal(err)}
     if err:=writer.Close();err!=nil{t.Fatal(err)}
     proof,err:=VerifyObservationPublication(seg,expected,writer.FinalizedBatches())
     if err!=nil{t.Fatal(err)}
@@ -55,7 +55,7 @@ func TestObservationChangedExtraOrMissingSourceRecordsNeverYieldProof(t *testing
     })
     if err!=nil{t.Fatal(err)}
     payload:=map[string]string{"root":"genuine"}
-    if err:=writer.Append("FileObservation","root-1",payload);err!=nil{t.Fatal(err)}
+    if err:=writer.Append("USNSelectiveObservation","root-1",payload);err!=nil{t.Fatal(err)}
     if err:=writer.Close();err!=nil{t.Fatal(err)}
     batches:=writer.FinalizedBatches()
     for name,expected:=range map[string][]PublishedNTFSObservation{

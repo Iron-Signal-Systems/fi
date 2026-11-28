@@ -11,6 +11,8 @@ import (
     "errors"
     "path/filepath"
     "strings"
+    "syscall"
+    "time"
     "testing"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
@@ -62,52 +64,63 @@ func testIndependentObservationPlan(t *testing.T)(
     }}
     return store,ledger,plan,map[string]string{"governed-root":`G:\FI-Test`},obj,filepath.Join(t.TempDir(),"spool")
 }
-func TestIndependentNTFSWorkerNeverBlocksCaptureCursorOnMissingObject(t *testing.T){
+func TestIndependentNTFSMissingFilePublishesExplicitBoundSourceOutcome(t *testing.T){
     store,ledger,plan,paths,object,dir:=testIndependentObservationPlan(t)
     policy:=usncapture.ObservationPolicy{
         Version:usncapture.ObservationPolicyVersion,MaxObjectsPerSegment:32,
     }
     collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)}
     calls:=0
-    missing:=errors.New("exact file ID no longer exists after original USN")
+    missing:=&ntfs.Error{Stage:ntfs.StageOpen,Op:"OpenFileById",Err:syscall.ERROR_FILE_NOT_FOUND}
     worked,err:=processIndependentNTFSObservationsOnce(context.Background(),
         store,ledger,plan,paths,dir,collector,policy,
         func(_ context.Context,scope,root string,id records.NTFSObjectIdentity)(spooledFileObservation,error){
             calls++
-            if id!=object{t.Fatal("worker did not use exact original File ID")}
+            if id!=object{t.Fatal("worker did not use original File-ID")}
             return spooledFileObservation{},missing
         })
-    if worked||!errors.Is(err,missing)||calls!=1{
-        t.Fatalf("missing NTFS file was falsely observed: %v %v calls=%d",worked,err,calls)
+    if err!=nil||!worked||calls!=1{
+        t.Fatalf("unavailable original File-ID lost from selective source: %t %v calls=%d",worked,err,calls)
     }
-    if ledger.Cursor().NextUSN!="100"||store.CaptureCursor().NextUSN!="150"||
+    if ledger.Cursor().NextUSN!="150"||store.CaptureCursor().NextUSN!="150"||
         store.ProcessingCursor().NextUSN!="100"{
-        t.Fatal("slow NTFS observation moved source-only or independent cursor")
-    }
-    // The injected fixture is intentionally not a real accepted NTFS snapshot.
-    // This tests source-bound custody mechanics; backend acceptance independently
-    // validates the full FileObservation contents from actual Windows.
-    read:=func(_ context.Context,scope,rootPath string,id records.NTFSObjectIdentity)(
-        spooledFileObservation,error,
-    ){
-        calls++
-        return spooledFileObservation{NTFS:ntfs.Observation{
-            ObjectIdentity:id,VolumeIdentity:store.CaptureCursor().VolumeIdentity,
-            GovernedRoot:records.GovernedRootIdentity{
-                ScopeID:scope,ObjectIdentity:plan[0].RootIdentity,
-            },
-        }},nil
+        t.Fatal("selective outcome changed source-only and observation cursor separation")
     }
     worked,err=processIndependentNTFSObservationsOnce(context.Background(),
-        store,ledger,plan,paths,dir,collector,policy,read)
-    if !worked||err!=nil{t.Fatalf("complete independent spool could not commit: %t %v",worked,err)}
-    if ledger.Cursor().NextUSN!="150"||store.ProcessingCursor().NextUSN!="100"{
-        t.Fatal("successful observation advanced wrong cursor")
-    }
-    worked,err=processIndependentNTFSObservationsOnce(context.Background(),
-        store,ledger,plan,paths,dir,collector,policy,read)
-    if worked||err!=nil{t.Fatalf("observed original interval was processed twice: %t %v",worked,err)}
+        store,ledger,plan,paths,dir,collector,policy,
+        func(context.Context,string,string,records.NTFSObjectIdentity)(spooledFileObservation,error){
+            t.Fatal("re-observed acknowledged missing NTFS file identity")
+            return spooledFileObservation{},nil
+        })
+    if worked||err!=nil{t.Fatalf("accepted source was re-observed: %t %v",worked,err)}
 }
+
+func TestIndependentNTFSSourceIdentityMismatchCannotPublish(t *testing.T){
+    store,ledger,plan,paths,_,dir:=testIndependentObservationPlan(t)
+    policy:=usncapture.ObservationPolicy{Version:usncapture.ObservationPolicyVersion,MaxObjectsPerSegment:32}
+    collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)}
+    worked,err:=processIndependentNTFSObservationsOnce(context.Background(),
+        store,ledger,plan,paths,dir,collector,policy,
+        func(_ context.Context,scope,root string,id records.NTFSObjectIdentity)(
+            spooledFileObservation,error,
+        ){
+            return spooledFileObservation{NTFS:ntfs.Observation{
+                ObjectIdentity:records.NTFSObjectIdentity{
+                    MethodVersion:"ntfs-file-id/1",FileReferenceNumber:"999",SequenceNumber:"1",
+                },VolumeIdentity:store.CaptureCursor().VolumeIdentity,
+                GovernedRoot:records.GovernedRootIdentity{ScopeID:scope,
+                    ObjectIdentity:plan[0].RootIdentity},
+                ObservedAt:time.Now().UTC().Format(time.RFC3339Nano),
+            },ContentHashes:records.ContentHashObservation{State:records.ContentHashNotApplicable}},nil
+        })
+    if err==nil||worked{
+        t.Fatal("independent NTFS source mismatch published as a valid outcome")
+    }
+    if ledger.Cursor().NextUSN!="100"||store.ProcessingCursor().NextUSN!="100"{
+        t.Fatal("unverified current NTFS identity advanced original source")
+    }
+}
+
 func TestIndependentObservationPolicyNoWorkRequiresNoLiveReads(t *testing.T){
     store,ledger,plan,paths,_,dir:=testIndependentObservationPlan(t)
     // Complete raw USN history is still stored, but no policy-required object

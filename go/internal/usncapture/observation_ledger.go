@@ -316,7 +316,7 @@ func VerifyObservationPublication(
                 _=file.Close();return ObservationPublicationProof{},err
             }
             if count>=len(wanted)||record.Version!=spool.RecordVersion ||
-                record.RecordKind!="FileObservation" ||
+                record.RecordKind!="USNSelectiveObservation" ||
                 record.ScopeID!=expected[count].ScopeID ||
                 !bytes.Equal(record.Payload,wanted[count]){
                 _=file.Close()
