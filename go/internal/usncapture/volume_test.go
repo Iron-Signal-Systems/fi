@@ -18,7 +18,7 @@ func TestOneRawCaptureOwnerPerVolume(t *testing.T) {
         t.Fatalf("invalid volume capture scope: %q %v", a, err)
     }
     upper := volume
-    upper.VolumeGUID = strings.ToUpper(upper.VolumeGUID)
+    upper.VolumeGUID = strings.Replace(upper.VolumeGUID, "11111111-2222", "A1B2C3D4-2222", 1)
     b, err := VolumeCaptureScopeID(upper)
     if err != nil || a != b {
         t.Fatalf("case difference duplicated a volume queue: %q %q %v", a, b, err)
