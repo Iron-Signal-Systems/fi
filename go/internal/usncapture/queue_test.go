@@ -63,6 +63,7 @@ func TestSeparateCaptureAndProcessingCheckpoints(t *testing.T) {
 	if recovered.ProcessingCursor().NextUSN != "100" {
 		t.Fatal("processed before durable FI publication")
 	}
+	if err := recovered.BeginScopedPublication(item); err != nil { t.Fatal(err) }
 	if err := recovered.CommitProcessed(item, testScopedSpoolProof()); err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +180,7 @@ func TestMultiBatchReplayAndConsumerOrdering(t *testing.T) {
 		if seg.Batch.StartUSN != strconv.FormatUint(i, 10) {
 			t.Fatalf("wrong order %s", seg.Batch.StartUSN)
 		}
+		if err := recovered.BeginScopedPublication(seg); err != nil { t.Fatal(err) }
 		if err := recovered.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
 			t.Fatal(err)
 		}
@@ -226,6 +228,7 @@ func TestReclaimOnlyAfterAcknowledgement(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
+	if err := s.BeginScopedPublication(seg); err != nil { t.Fatal(err) }
 	if err := s.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +249,7 @@ func TestCrashAfterVerifiedReceiptBeforeProcessedCursorRecoversWithoutReplay(t *
     if err:=s.Append(exampleBatch(exampleAnchor(),100,200));err!=nil{t.Fatal(err)}
     seg,ok,err:=s.Next()
     if err!=nil||!ok{t.Fatalf("source segment missing: %v",err)}
+    if err:=s.BeginScopedPublication(seg);err!=nil{t.Fatal(err)}
     if err:=s.CommitProcessed(seg,testScopedSpoolProof());err!=nil{t.Fatal(err)}
     // Simulate crash at the instant after durable receipt and before the
     // independently synced processed.json update reached disk.
@@ -266,6 +270,7 @@ func TestForgedProcessingReceiptFailsClosedOnRestart(t *testing.T){
     if err:=s.Append(exampleBatch(exampleAnchor(),100,200));err!=nil{t.Fatal(err)}
     seg,ok,err:=s.Next()
     if err!=nil||!ok{t.Fatal("no segment",err)}
+    if err:=s.BeginScopedPublication(seg);err!=nil{t.Fatal(err)}
     if err:=s.CommitProcessed(seg,testScopedSpoolProof());err!=nil{t.Fatal(err)}
     receiptPath:=filepath.Join(dir,"receipt-"+seg.Name)
     raw,err:=os.ReadFile(receiptPath);if err!=nil{t.Fatal(err)}

@@ -67,6 +67,11 @@ decoupled from file-ID re-observation and sender/network availability.
   configured governed roots on one volume, with journal change detection.
 - Added a fail-closed local scope-decision contract. Unknown, ambiguous and
   current-path-only evidence cannot silently discard historical USN changes.
+- Added durable per-segment spool-publication intents. Processing now refuses
+  automatic replay if a crash leaves a publication outcome ambiguous; capture
+  continues independently. A durable intent is required before recording the
+  processed cursor. This is a fail-closed recovery guard, not yet automated
+  reconciliation or service activation.
 - Added an immutable-source-digest-bound scoped projection candidate and
   tests for retained change order and explicit rejection of unproved losses.
   This projection is NOT a sender or backend record type.

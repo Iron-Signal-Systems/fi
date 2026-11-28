@@ -244,6 +244,12 @@ func (s *Store) Next() (Segment, bool, error) {
     if seg.Batch.StartUSN != s.processed.NextUSN {
         return Segment{}, false, fmt.Errorf("%w: processed cursor and segment start diverged", ErrCorrupt)
     }
+    // A previous process may have published this source interval to the FI
+    // sender spool before it could durably record a processing receipt.
+    // Never silently publish that interval again. Capture remains independent.
+    if err := s.blockUnresolvedPublicationLocked(seg); err != nil {
+        return Segment{}, false, err
+    }
     return seg, true, nil
 }
 
@@ -267,6 +273,11 @@ func (s *Store) CommitProcessed(seg Segment, publishedProof string) error {
 	}
 	if current.SHA256 != seg.SHA256 || current.Batch.NextUSN != seg.Batch.NextUSN {
 		return fmt.Errorf("%w: processing segment changed", ErrCorrupt)
+	}
+	// Publishing a segment without an earlier durable intent creates an
+	// unbounded duplicate window between spool finalization and this receipt.
+	if err := s.requirePublicationIntentLocked(current); err != nil {
+		return err
 	}
 	next := s.processed
 	next.NextUSN = current.Batch.NextUSN
