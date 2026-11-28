@@ -86,3 +86,24 @@ func TestCaptureAdapterRejectsChangedJournalIdentity(t *testing.T) {
 		t.Fatalf("expected journal identity conflict: %v", err)
 	}
 }
+
+func TestCaptureAdapterRejectsBrokerAdvancingBeyondJournalHead(t *testing.T) {
+    store,state:=testUSNCapture(t)
+    state.NextUSN="200"
+    changed,err:=captureUSNOnceWithReaders(context.Background(),"root-test",`F:\Governed`,store,
+        func(context.Context,string,string)(records.USNJournalState,error){return state,nil},
+        func(_ context.Context,scope,root,start string)(records.USNReadBatch,error){
+            return records.USNReadBatch{
+                ObservedAt:state.ObservedAt,CollectionMethod:state.CollectionMethod,
+                ScopeID:scope,VolumeIdentity:state.VolumeIdentity,JournalID:state.JournalID,
+                StartUSN:start,NextUSN:"201",
+            },nil
+        },
+    )
+    if changed||!errors.Is(err,usncapture.ErrConflict){
+        t.Fatalf("broker advanced beyond verified journal head: changed=%t err=%v",changed,err)
+    }
+    if store.CaptureCursor().NextUSN!="100"||store.ProcessingCursor().NextUSN!="100"{
+        t.Fatal("untrusted journal head advanced FI source custody")
+    }
+}

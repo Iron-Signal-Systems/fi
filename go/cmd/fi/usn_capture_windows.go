@@ -92,6 +92,12 @@ func captureUSNOnceWithReaders(
 	if batch.NextUSN == cursor.NextUSN {
 		return false, nil
 	}
+    // Never trust the broker to advance our durable cursor beyond the head
+    // actually observed from NTFS, even when source identity is consistent.
+    returnedHead, err := strconv.ParseUint(batch.NextUSN, 10, 64)
+    if err != nil || returnedHead > head {
+        return false,fmt.Errorf("%w: broker returned USN beyond sampled journal head",usncapture.ErrConflict)
+    }
 	if err := store.Append(batch); err != nil {
 		return false, err
 	}
