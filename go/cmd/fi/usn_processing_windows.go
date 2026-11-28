@@ -45,11 +45,11 @@ func processCapturedUSNVolumeOnce(
     // to immutable FI custody and independently proven.
     for _,p:=range projections{
         if err:=ctx.Err();err!=nil{
-            _=writer.Close() // preserves incomplete work for forensic review
+            _ = writer.Abandon() // retain .open work without publishing partial source
             return false,err
         }
         if err:=writer.Append("USNScopedCapture",p.GovernedScopeID,p);err!=nil{
-            _=writer.Close()
+            _ = writer.Abandon()
             return false,fmt.Errorf("append scoped USN source: %w",err)
         }
     }
