@@ -6,7 +6,11 @@
 
 package install
 
-import "testing"
+import (
+    "testing"
+    "golang.org/x/sys/windows/svc"
+    "golang.org/x/sys/windows/svc/mgr"
+)
 
 func TestApproval2ServiceStabilityRequiredForServiceAffectingMutations(
 	t *testing.T,
@@ -108,4 +112,22 @@ func TestWaitForFIServiceStabilityRejectsNonPositiveWindow(
 	if err := waitForFIServiceStability(0); err == nil {
 		t.Fatal("zero service stability window unexpectedly accepted")
 	}
+}
+
+func TestApproval2StagedVolumeSourceCollectorOnlyManualStopped(t *testing.T){
+    for _,tc:=range []struct{name string;state svc.State;start uint32;allow bool}{
+        {"FICollector",svc.Stopped,mgr.StartManual,true},
+        {"FISender",svc.Stopped,mgr.StartManual,true},
+        {"FICollector",svc.Stopped,mgr.StartAutomatic,false},
+        {"FIUSNReader",svc.Stopped,mgr.StartManual,false},
+        {"FIObjReader",svc.Stopped,mgr.StartManual,false},
+        {"FICRLRefresher",svc.Stopped,mgr.StartManual,false},
+        {"FICollector",svc.Running,mgr.StartManual,false},
+        {"FICollector",svc.Stopped,mgr.StartDisabled,false},
+    }{
+        if got:=approval2ManualStagingPermitted(tc.name,tc.state,tc.start);got!=tc.allow{
+            t.Fatalf("staged first-run service contract name=%s state=%d start=%d got=%t want=%t",
+                tc.name,tc.state,tc.start,got,tc.allow)
+        }
+    }
 }

@@ -395,7 +395,13 @@ func applyServer2016Approval2RemainingLocal(
 			)
 		}
 
-		if approval2CollectorRuntimeReadinessRequired(plan) {
+        // Source mode intentionally installs FICollector Manual/Stopped:
+        // the first start will perform the immutable NTFS baseline under
+        // its gMSA. Requiring ServiceStarted during this installer transaction
+        // would falsely time out a legitimate multi-hour first baseline.
+        // Legacy installs still demand the exact existing runtime gate.
+		if approval2CollectorRuntimeReadinessRequired(plan) &&
+            Discover().Config.USNMode!="volume-source-v1" {
 			if err := waitForFICollectorRuntimeReadinessFromRediscovery(
 				Discover,
 				transactionID,

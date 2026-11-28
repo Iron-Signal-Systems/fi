@@ -112,18 +112,22 @@ func waitForFIServiceStability(
 				)
 			}
 
-			if current.name == "FISender" && status.State == svc.Stopped {
-				config, err := current.service.Config()
-				if err != nil {
-					return fmt.Errorf(
-						"query FISender configuration during receiver-pending stability verification: %w",
-						err,
-					)
-				}
-				if config.StartType == mgr.StartManual {
-					continue
-				}
-			}
+            // An explicitly staged FI-free volume-source install has a
+            // Manual FICollector awaiting its first gMSA-owned NTFS baseline
+            // and a Manual FISender awaiting source/receiver readiness.
+            // Their Stopped state is intentional; all broker/CRL services
+            // must still remain Running throughout the stability interval.
+            if (current.name=="FISender"||current.name=="FICollector") &&
+                status.State==svc.Stopped{
+                config,err:=current.service.Config()
+                if err!=nil{
+                    return fmt.Errorf("query staged FI service %s configuration: %w",
+                        current.name,err)
+                }
+                if approval2ManualStagingPermitted(current.name,status.State,config.StartType){
+                    continue
+                }
+            }
 
 			if status.State != svc.Running {
 				return fmt.Errorf(
@@ -161,4 +165,9 @@ func waitForFIServiceStability(
 			delay,
 		)
 	}
+}
+
+func approval2ManualStagingPermitted(name string,state svc.State,startType uint32)bool{
+    return state==svc.Stopped && startType==mgr.StartManual &&
+        (name=="FICollector"||name=="FISender")
 }
