@@ -63,6 +63,15 @@ func runServiceUSNRawCapture(
         return errors.New("invalid USN capture worker configuration")
     }
 
+    // The queue is a volume-owned source journal, not a root-specific
+    // work directory. Hold its kernel file lock for the ENTIRE worker
+    // lifetime, including recovery and every cursor publication.
+    // Acquiring it BEFORE Open rules out a second collector racing recovery.
+    owner, err := usncapture.AcquireCaptureOwner(queueDir)
+    if err != nil {
+        return fmt.Errorf("acquire exclusive NTFS volume source owner: %w", err)
+    }
+    defer owner.Close()
     store, err := usncapture.Open(queueDir, maxPendingBytes)
     if err != nil {
         return fmt.Errorf("open durable raw USN capture queue: %w", err)
@@ -72,8 +81,8 @@ func runServiceUSNRawCapture(
     }
     // Deliberately no serviceRootLocks.lockFor(): baseline / re-observation
     // must not make raw source capture wait behind a long-running root lock.
-    // Cross-process queue ownership and volume deduplication remain release
-    // gates; this worker MUST NOT be activated before they are implemented.
+    // Cross-process exclusion is held above. Multi-root volume deduplication,
+    // separately governed processing and service migration remain release gates.
     const burst = 512
     const reportInterval = 10 * time.Second
 
