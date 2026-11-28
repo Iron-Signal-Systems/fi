@@ -15,7 +15,6 @@ import (
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
-    "github.com/Iron-Signal-Systems/fi/go/internal/usncapture"
 )
 
 func testSourceServiceCollector() spool.CollectorIdentity {
