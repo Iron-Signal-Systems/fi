@@ -214,11 +214,12 @@ func (h *DirectoryHistoryIndex) buildHistory(seg Segment)(directorySegmentHistor
         StartUSN:seg.Batch.StartUSN,NextUSN:seg.Batch.NextUSN,
         Changes:make([]directoryLinkTransition,0),
     }
+    observedInSegment:=make(map[records.NTFSObjectIdentity]bool)
     for _,change:=range seg.Batch.Records{
         reason,err:=strconv.ParseUint(change.ReasonRaw,10,32)
-        if err!=nil{return fmt.Errorf("%w: directory record reason not decimal",ErrCorrupt)}
+        if err!=nil{return v,fmt.Errorf("%w: directory record reason not decimal",ErrCorrupt)}
         attrs,err:=strconv.ParseUint(change.FileAttributesRaw,10,32)
-        if err!=nil{return fmt.Errorf("%w: directory record attributes not decimal",ErrCorrupt)}
+        if err!=nil{return v,fmt.Errorf("%w: directory record attributes not decimal",ErrCorrupt)}
         hasKnownLink:=attrs&ntfsAttributeDirectory!=0 && attrs&ntfsAttributeReparse==0
         knownPreviously:=len(h.transitions[change.FileIdentity])>0||
             observedInSegment[change.FileIdentity]

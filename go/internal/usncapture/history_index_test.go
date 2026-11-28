@@ -58,6 +58,12 @@ func nativeHistorySource(t *testing.T)(Cursor,Segment,records.NTFSObjectIdentity
 func TestDirectoryIndexProvesOnlySourceNativeNestedAncestryAndReplays(t *testing.T){
     anchor,seg,root,events:=nativeHistorySource(t)
     dir:=t.TempDir()
+    // Source segment stays immutable and is independently revalidated on
+    // restart; an index alone is never accepted as historical evidence.
+    if err:=atomicWrite(filepath.Join(dir,seg.Name),mustJSON(Envelope{
+        Version:SchemaVersion,Batch:seg.Batch,Work:DistinctWork(seg.Batch),
+        SHA256:seg.SHA256,
+    }));err!=nil{t.Fatal(err)}
     h,err:=OpenDirectoryHistoryIndex(dir,anchor)
     if err!=nil{t.Fatal(err)}
     if err:=h.AddSegment(seg);err!=nil{t.Fatal(err)}
@@ -90,12 +96,29 @@ func TestDirectoryIndexProvesOnlySourceNativeNestedAncestryAndReplays(t *testing
 func TestDirectoryHistorySourceCorruptionAndWrongJournalFailClosed(t *testing.T){
     anchor,seg,_,_:=nativeHistorySource(t)
     dir:=t.TempDir()
+    // Source segment stays immutable and is independently revalidated on
+    // restart; an index alone is never accepted as historical evidence.
+    if err:=atomicWrite(filepath.Join(dir,seg.Name),mustJSON(Envelope{
+        Version:SchemaVersion,Batch:seg.Batch,Work:DistinctWork(seg.Batch),
+        SHA256:seg.SHA256,
+    }));err!=nil{t.Fatal(err)}
     h,err:=OpenDirectoryHistoryIndex(dir,anchor);if err!=nil{t.Fatal(err)}
     if err:=h.AddSegment(seg);err!=nil{t.Fatal(err)}
     wrong:=anchor
     wrong.JournalID="2000"
     if _,err:=OpenDirectoryHistoryIndex(dir,wrong);!errors.Is(err,ErrConflict){
         t.Fatalf("history index silently crossed journal boundary: %v",err)
+    }
+    path:=filepath.Join(dir,historyFilePrefix+seg.Name)
+    authentic,err:=readHistoryFile(path)
+    if err!=nil{t.Fatal(err)}
+    if len(authentic.Changes)==0{t.Fatal("missing directory edges")}
+    forged:=authentic
+    forged.Changes=append([]directoryLinkTransition(nil),authentic.Changes...)
+    forged.Changes[0].Parent=scopeTestIdentity("777")
+    if err:=atomicWrite(path,mustJSON(forged));err!=nil{t.Fatal(err)}
+    if _,err:=OpenDirectoryHistoryIndex(dir,anchor);!errors.Is(err,ErrCorrupt){
+        t.Fatalf("forged positive historical ancestry passed source replay: %v",err)
     }
     if err:=os.WriteFile(filepath.Join(dir,historyFilePrefix+seg.Name),
         []byte(`{"Version":"forged"}{}`),0600);err!=nil{t.Fatal(err)}
