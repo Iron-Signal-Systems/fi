@@ -12,11 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+    "strings"
 	"testing"
 	"time"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
+
+func testScopedSpoolProof() string { return scopedProofPrefix + strings.Repeat("a",64) }
 
 func exampleAnchor() Cursor {
 	return Cursor{Version: SchemaVersion, ScopeID: "root-test", JournalID: "19", VolumeIdentity: records.VolumeIdentity{MethodVersion: "ntfs-volume/1", VolumeGUID: `\\?\Volume{11111111-2222-3333-4444-555555555555}\`, VolumeSerial: "9"}, NextUSN: "100"}
@@ -60,7 +63,7 @@ func TestSeparateCaptureAndProcessingCheckpoints(t *testing.T) {
 	if recovered.ProcessingCursor().NextUSN != "100" {
 		t.Fatal("processed before durable FI publication")
 	}
-	if err := recovered.CommitProcessed(item, "verified-FI-batch-manifest:example"); err != nil {
+	if err := recovered.CommitProcessed(item, testScopedSpoolProof()); err != nil {
 		t.Fatal(err)
 	}
 	if recovered.ProcessingCursor().NextUSN != "200" {
@@ -176,7 +179,7 @@ func TestMultiBatchReplayAndConsumerOrdering(t *testing.T) {
 		if seg.Batch.StartUSN != strconv.FormatUint(i, 10) {
 			t.Fatalf("wrong order %s", seg.Batch.StartUSN)
 		}
-		if err := recovered.CommitProcessed(seg, "spool-verified"); err != nil {
+		if err := recovered.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,7 +226,7 @@ func TestReclaimOnlyAfterAcknowledgement(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if err := s.CommitProcessed(seg, "verified-spool-generation"); err != nil {
+	if err := s.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
 		t.Fatal(err)
 	}
 	count, bytes, err := s.ReclaimAcknowledged()
@@ -236,4 +239,42 @@ func TestReclaimOnlyAfterAcknowledgement(t *testing.T) {
 	if _, err := Open(dir, DefaultMaxPendingBytes); err != nil {
 		t.Fatalf("restart following reclaim must work: %v", err)
 	}
+}
+
+func TestCrashAfterVerifiedReceiptBeforeProcessedCursorRecoversWithoutReplay(t *testing.T){
+    s,dir:=exampleStore(t,DefaultMaxPendingBytes)
+    if err:=s.Append(exampleBatch(exampleAnchor(),100,200));err!=nil{t.Fatal(err)}
+    seg,ok,err:=s.Next()
+    if err!=nil||!ok{t.Fatalf("source segment missing: %v",err)}
+    if err:=s.CommitProcessed(seg,testScopedSpoolProof());err!=nil{t.Fatal(err)}
+    // Simulate crash at the instant after durable receipt and before the
+    // independently synced processed.json update reached disk.
+    if err:=atomicWrite(filepath.Join(dir,processedName),mustJSON(exampleAnchor()));err!=nil{
+        t.Fatal(err)
+    }
+    recovered,err:=Open(dir,DefaultMaxPendingBytes)
+    if err!=nil{t.Fatalf("verified processing receipt was not recovered: %v",err)}
+    if recovered.ProcessingCursor().NextUSN!="200" {
+        t.Fatalf("recovered processed cursor did not reflect durable receipt: %s",recovered.ProcessingCursor().NextUSN)
+    }
+    if _,pending,err:=recovered.Next();err!=nil||pending{
+        t.Fatalf("already published original USN interval was replayed: pending=%t err=%v",pending,err)
+    }
+}
+func TestForgedProcessingReceiptFailsClosedOnRestart(t *testing.T){
+    s,dir:=exampleStore(t,DefaultMaxPendingBytes)
+    if err:=s.Append(exampleBatch(exampleAnchor(),100,200));err!=nil{t.Fatal(err)}
+    seg,ok,err:=s.Next()
+    if err!=nil||!ok{t.Fatal("no segment",err)}
+    if err:=s.CommitProcessed(seg,testScopedSpoolProof());err!=nil{t.Fatal(err)}
+    receiptPath:=filepath.Join(dir,"receipt-"+seg.Name)
+    raw,err:=os.ReadFile(receiptPath);if err!=nil{t.Fatal(err)}
+    var receipt map[string]any
+    if err:=json.Unmarshal(raw,&receipt);err!=nil{t.Fatal(err)}
+    receipt["spool_proof"]="a string that has not been verified"
+    if err:=atomicWrite(receiptPath,mustJSON(receipt));err!=nil{t.Fatal(err)}
+    if err:=atomicWrite(filepath.Join(dir,processedName),mustJSON(exampleAnchor()));err!=nil{t.Fatal(err)}
+    if _,err:=Open(dir,DefaultMaxPendingBytes);!errors.Is(err,ErrCorrupt){
+        t.Fatalf("forged publication receipt advanced source: %v",err)
+    }
 }
