@@ -51,3 +51,41 @@ func TestSoRRemapSQLRejectsUnknownAndNaturalTables(t *testing.T){
   t.Fatal("source_record identity could be omitted")
  }
 }
+
+func TestSoRRemapSupportsScopedUSNParentAndEventFKs(t *testing.T){
+    parent:=[]bootstrapColumn{
+        {name:"source_record_id",notNull:true},
+        {name:"ntfs_volume_id",notNull:true},
+        {name:"root_ntfs_object_id",notNull:true},
+        {name:"source_batch_sha256",notNull:true},
+    }
+    query,err:=compileSoRRemapSelect("usn_scoped_capture",parent)
+    if err!=nil{t.Fatal(err)}
+    for _,want:=range []string{
+        `"fi"."usn_scoped_capture"`,
+        `JOIN "pg_temp"."fi_promote_map_source_record"`,
+        `JOIN "pg_temp"."fi_promote_map_ntfs_volume"`,
+        `JOIN "pg_temp"."fi_promote_map_ntfs_object" AS m_root_ntfs_object_id`,
+        `src."source_batch_sha256"`,
+    }{
+        if !strings.Contains(query,want){t.Fatalf("missing scoped parent remap %s in %s",want,query)}
+    }
+    child:=[]bootstrapColumn{
+        {name:"source_record_id",notNull:true},
+        {name:"change_ordinal",notNull:true},
+        {name:"file_ntfs_object_id",notNull:true},
+        {name:"parent_ntfs_object_id",notNull:true},
+        {name:"usn",notNull:true},
+    }
+    q,err:=compileSoRRemapSelect("usn_scoped_change",child)
+    if err!=nil{t.Fatal(err)}
+    for _,want:=range []string{
+        `"fi"."usn_scoped_change"`,
+        `JOIN "pg_temp"."fi_promote_map_source_record"`,
+        `JOIN "pg_temp"."fi_promote_map_ntfs_object" AS m_file_ntfs_object_id`,
+        `JOIN "pg_temp"."fi_promote_map_ntfs_object" AS m_parent_ntfs_object_id`,
+        `src."usn"`,
+    }{
+        if !strings.Contains(q,want){t.Fatalf("missing scoped child FK remap %s in %s",want,q)}
+    }
+}

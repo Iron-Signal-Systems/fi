@@ -11,7 +11,7 @@ import (
 )
 
 // Canonical FK IDs are different from the private recovery sequence values.
-// These are the ONLY identity-bearing columns in the governed 49-table model.
+// These are the ONLY identity-bearing columns in the governed 51-table development model.
 // Do not add a guessed mapping when the relational schema changes.
 var sorPromotionFKMap = map[string]string{
  "recorded_generation_id":"recorded_generation",

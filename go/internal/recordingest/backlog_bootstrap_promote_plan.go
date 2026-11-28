@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-// Canonical and private schemas currently contain exactly these 49 historical
+// Canonical and private schemas currently contain exactly these 51 development
 // relational tables. An unexpected DDL change MUST fail promotion preflight.
 // A missing or extra table never becomes an implicit silent data-loss path.
 var bootstrapSoRTables = []string{
@@ -28,7 +28,7 @@ var bootstrapSoRTables = []string{
 	"windows_security_continuity_gap", "ntfs_collection_error",
 	"supporting_source_collection_error", "usn_read_boundary",
 	"usn_object_observation", "usn_object_change", "usn_object_change_reason",
-	"usn_continuity_gap",
+	"usn_continuity_gap", "usn_scoped_capture", "usn_scoped_change",
 }
 
 var bootstrapIdentityColumns = map[string]string{
@@ -83,8 +83,8 @@ func bootstrapSoRPromotionOrder(tables []string, foreignKeys [][2]string) ([]str
 		sort.Strings(eligible)
 		for _,n:=range eligible {out=append(out,n);delete(remaining,n)}
 	}
-	if len(out)!=48 || out[0]!="recorded_generation" {
-		return nil,errors.New("FI SoR bootstrap: invalid parent-first 48-table plan")
+	if len(out)!=50 || out[0]!="recorded_generation" {
+		return nil,errors.New("FI SoR bootstrap: invalid parent-first 50-table plan")
 	}
 	return out,nil
 }
