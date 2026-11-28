@@ -31,6 +31,7 @@ type serviceUSNSourceBundle struct {
     owner io.Closer
     store *usncapture.Store
     history *usncapture.DirectoryHistoryIndex
+    observations *usncapture.ObservationLedger
     roots []usncapture.GovernedProcessingPlan
 }
 
@@ -83,8 +84,11 @@ func runServiceUSNVolumeSourceLoop(
         }
         index,err:=usncapture.OpenDirectoryHistoryIndex(queueDir,store.CaptureCursor())
         if err!=nil{return fmt.Errorf("open durable native-USN directory ancestry: %w",err)}
+        observations,err:=usncapture.OpenObservationLedger(store)
+        if err!=nil{return fmt.Errorf("open independent original NTFS observation custody: %w",err)}
         item.store=store
         item.history=index
+        item.observations=observations
         plans:=make([]usncapture.GovernedProcessingPlan,0,len(group.GovernedRoots))
         for _,root:=range group.GovernedRoots{
             scope:=configuredScopeID(root)

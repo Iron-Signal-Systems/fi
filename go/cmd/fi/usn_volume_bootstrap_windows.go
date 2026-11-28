@@ -154,6 +154,12 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
         if err:=usncapture.Initialize(dir,cursor);err!=nil{
             return result,fmt.Errorf("create original pre-baseline USN cursor %s: %w",dir,err)
         }
+        // Observation and source-processing checkpoints are independent. Both
+        // start at the exact PRE-baseline NTFS journal position; never derive
+        // missing observation state from a later live journal head.
+        if err:=usncapture.InitializeObservationCursor(dir,cursor);err!=nil{
+            return result,fmt.Errorf("initialize independent original NTFS observation cursor: %w",err)
+        }
         owner,err:=usncapture.AcquireCaptureOwner(dir)
         if err!=nil{return result,fmt.Errorf("lock pre-baseline source %s: %w",dir,err)}
         jobs=append(jobs,captureJob{owner:owner})
