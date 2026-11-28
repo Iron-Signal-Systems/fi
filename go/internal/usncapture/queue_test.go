@@ -292,3 +292,34 @@ func TestForgedProcessingReceiptFailsClosedOnRestart(t *testing.T){
         t.Fatalf("forged publication receipt advanced source: %v",err)
     }
 }
+
+func TestSourceFreeSpacePolicyFailsClosedBeforeDurableCapture(t *testing.T){
+    s,_:=exampleStore(t,DefaultMaxPendingBytes)
+    if err:=s.SetFreeSpacePolicy(1024,func(string)(uint64,error){return 1023,nil});!errors.Is(err,ErrCapacity){
+        t.Fatalf("insufficient disk reserve was accepted: %v",err)
+    }
+    if err:=s.SetFreeSpacePolicy(1024,func(string)(uint64,error){return 1200,nil});err!=nil{
+        t.Fatalf("valid disk reserve rejected: %v",err)
+    }
+    err:=s.Append(exampleBatch(exampleAnchor(),100,150))
+    if !errors.Is(err,ErrCapacity){t.Fatalf("writing below disk reserve permitted: %v",err)}
+    if s.CaptureCursor().NextUSN!="100"||s.ProcessingCursor().NextUSN!="100"{
+        t.Fatal("disk low-water advanced FI USN capture")
+    }
+    if err:=s.SetFreeSpacePolicy(1024,func(string)(uint64,error){return 1<<30,nil});err!=nil{t.Fatal(err)}
+    if err:=s.Append(exampleBatch(exampleAnchor(),100,150));err!=nil{
+        t.Fatalf("disk capacity restored but source remained permanently stalled: %v",err)
+    }
+}
+func TestSourceFreeSpaceProbeFailurePreservesHistory(t *testing.T){
+    s,_:=exampleStore(t,DefaultMaxPendingBytes)
+    initial:=true
+    if err:=s.SetFreeSpacePolicy(4096,func(string)(uint64,error){
+        if initial{initial=false;return 1<<30,nil}
+        return 0,errors.New("disk probe unavailable")
+    });err!=nil{t.Fatal(err)}
+    if err:=s.Append(exampleBatch(exampleAnchor(),100,150));!errors.Is(err,ErrCapacity){
+        t.Fatalf("unavailable free-space probe did not block source: %v",err)
+    }
+    if s.CaptureCursor().NextUSN!="100"{t.Fatal("source skipped on probe failure")}
+}

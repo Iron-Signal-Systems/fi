@@ -78,6 +78,8 @@ type Store struct {
 	dir       string
 	maxBytes  uint64
 	bytesUsed uint64 // counted at Open, maintained O(1) for high-rate capture
+    minFreeBytes uint64
+    freeBytes func(string)(uint64,error)
 	capture   Cursor
 	processed Cursor
 }
@@ -165,6 +167,27 @@ func (s *Store) PendingBytes() uint64 {
 	return s.bytesUsed
 }
 
+// SetFreeSpacePolicy applies an additional host-availability low-water floor.
+// Source capture must never consume the OS volume's last configured reserve.
+// It is a checked policy rather than a guarantee against concurrent non-FI
+// writes. A failed space query blocks capture without changing either cursor.
+func (s *Store) SetFreeSpacePolicy(minFreeBytes uint64,available func(string)(uint64,error))error{
+    if s==nil||minFreeBytes==0||available==nil{
+        return errors.New("FI USN source requires a positive free-space reserve and disk probe")
+    }
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    free,err:=available(s.dir)
+    if err!=nil{return fmt.Errorf("FI source free-space preflight: %w",err)}
+    if free<minFreeBytes{
+        return fmt.Errorf("%w: available free bytes %d less than source reserve %d",
+            ErrCapacity,free,minFreeBytes)
+    }
+    s.minFreeBytes=minFreeBytes
+    s.freeBytes=available
+    return nil
+}
+
 // Append durably saves one complete, volume-wide USN batch BEFORE advancing
 // the capture cursor. Replayed segments at the same start are accepted only
 // when every original byte agrees. No historical source record is deduplicated.
@@ -201,6 +224,16 @@ func (s *Store) Append(batch records.USNReadBatch) error {
 	if uint64(len(encoded)) > s.maxBytes || s.bytesUsed > s.maxBytes-uint64(len(encoded)) {
 		return ErrCapacity
 	}
+    if s.freeBytes!=nil{
+        free,err:=s.freeBytes(s.dir)
+        if err!=nil{return fmt.Errorf("%w: original NTFS source free-space query failed: %v",
+            ErrCapacity,err)}
+        if free<uint64(len(encoded)) ||
+            free-uint64(len(encoded))<s.minFreeBytes{
+            return fmt.Errorf("%w: source custody disk reserve %d bytes (free=%d batch=%d)",
+                ErrCapacity,s.minFreeBytes,free,len(encoded))
+        }
+    }
 	path := filepath.Join(s.dir, segmentName(start))
 	// An orphaned segment must be recovered by Open, rather than replaced.
 	if _, err := os.Lstat(path); err == nil {
