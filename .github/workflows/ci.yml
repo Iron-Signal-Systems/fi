@@ -18,6 +18,7 @@ on:
       - 'go/internal/config/**'
       - 'go/internal/records/**'
       - 'go/internal/spool/**'
+      - 'go/internal/usncapture/**'
       - 'examples/windows/**'
       - 'examples/gmsa_provisioning/**'
       - 'go/cmd/fi-install/**'
@@ -30,6 +31,7 @@ on:
       - 'go/internal/releaselab/**'
       - 'go/internal/releasecms/**'
       - 'go/internal/spool/**'
+      - 'go/internal/usncapture/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
@@ -46,6 +48,7 @@ on:
       - 'go/internal/config/**'
       - 'go/internal/records/**'
       - 'go/internal/spool/**'
+      - 'go/internal/usncapture/**'
       - 'examples/windows/**'
       - 'examples/gmsa_provisioning/**'
       - 'go/cmd/fi-install/**'
@@ -58,6 +61,7 @@ on:
       - 'go/internal/releaselab/**'
       - 'go/internal/releasecms/**'
       - 'go/internal/spool/**'
+      - 'go/internal/usncapture/**'
       - '.github/workflows/ci.yml'
 
 permissions:
@@ -83,7 +87,7 @@ jobs:
         run: >-
           go test -count=1
           ./cmd/fi ./cmd/fi-sender ./cmd/fi-install ./cmd/fi-crl-refresh
-          ./internal/windows/... ./internal/transportcrl ./internal/transportpackage
+          ./internal/windows/... ./internal/usncapture ./internal/transportcrl ./internal/transportpackage
           ./internal/transporttrust ./internal/transportsender
           ./internal/transportwire ./internal/releaselab ./internal/releasecms
 
