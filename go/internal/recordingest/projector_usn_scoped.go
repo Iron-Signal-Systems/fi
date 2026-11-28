@@ -70,8 +70,8 @@ func validateUSNScopedCapture(scopeID string, v usnScopedCapturePayload) error {
         return errors.New("unsupported scoped USN collection method")
     }
     if err:=records.ValidateVolumeIdentity(v.VolumeIdentity);err!=nil{return err}
-    canonicalVolume := "fi-volume-usn-capture/1\\x00" + v.VolumeIdentity.MethodVersion + "\\x00" +
-        strings.ToLower(v.VolumeIdentity.VolumeGUID) + "\\x00" + v.VolumeIdentity.VolumeSerial
+    canonicalVolume := "fi-volume-usn-capture/1\x00" + v.VolumeIdentity.MethodVersion + "\x00" +
+        strings.ToLower(v.VolumeIdentity.VolumeGUID) + "\x00" + v.VolumeIdentity.VolumeSerial
     sum:=sha256.Sum256([]byte(canonicalVolume))
     if v.CaptureScopeID != "volume-"+hex.EncodeToString(sum[:16]){
         return errors.New("FI scoped capture identity does not match exact NTFS volume")
