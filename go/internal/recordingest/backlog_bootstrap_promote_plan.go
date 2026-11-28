@@ -84,8 +84,8 @@ func bootstrapSoRPromotionOrder(tables []string, foreignKeys [][2]string) ([]str
 		sort.Strings(eligible)
 		for _,n:=range eligible {out=append(out,n);delete(remaining,n)}
 	}
-	if len(out)!=50 || out[0]!="recorded_generation" {
-		return nil,errors.New("FI SoR bootstrap: invalid parent-first 50-table plan")
+	if len(out)!=52 || out[0]!="recorded_generation" {
+		return nil,errors.New("FI SoR bootstrap: invalid parent-first 52-table plan")
 	}
 	return out,nil
 }
