@@ -39,7 +39,7 @@ func runServiceUSNVolumeSourceLoop(
 ) error {
     if ctx==nil || appendRecord==nil || snapshot.USNMode!="volume-source-v1" ||
         snapshot.USNCaptureDir=="" || snapshot.USNCaptureMaxBytes==0 ||
-        snapshot.USNProcessingEvery<=0 || snapshot.USNInterval<=0 {
+        snapshot.USNProcessingEvery<=0 || snapshot.USNCaptureEvery<=0 {
         return errors.New("FI volume source service requires explicit and complete configuration")
     }
     groups,err:=resolveServiceUSNVolumeCaptures(ctx,snapshot.GovernedRoots,usn.QueryJournal)
@@ -104,7 +104,7 @@ func runServiceUSNVolumeSourceLoop(
     for _,bundle:=range bundles{
         item:=bundle
         go func(){
-            done<-runServiceUSNRawCaptureStore(workers,snapshot.USNInterval,
+            done<-runServiceUSNRawCaptureStore(workers,snapshot.USNCaptureEvery,
                 item.group.CaptureScopeID,item.group.RepresentativeRoot,
                 item.store,appendRecord)
         }()

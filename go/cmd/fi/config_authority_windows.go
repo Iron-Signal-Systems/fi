@@ -22,6 +22,7 @@ type serviceOperationalSnapshot struct {
     USNMode string
     USNCaptureDir string
     USNCaptureMaxBytes uint64
+    USNCaptureEvery time.Duration
     USNProcessingEvery time.Duration
 	ConfigPath              string
 	GovernedRoots           []string
@@ -85,6 +86,7 @@ func resolveServiceConfiguration(
         USNMode: value.Collector.USNMode,
         USNCaptureDir: value.Storage.USNCaptureDir,
         USNCaptureMaxBytes: value.Collector.USNCaptureMaxBytes,
+        USNCaptureEvery: value.Collector.USNCaptureEvery,
         USNProcessingEvery: value.Collector.USNProcessingEvery,
 		ConfigPath:              configPath,
 		GovernedRoots:           append([]string(nil), value.GovernedRoots...),

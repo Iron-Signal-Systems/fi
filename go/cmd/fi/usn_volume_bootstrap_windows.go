@@ -44,7 +44,8 @@ func preflightFreshUSNVolumeBootstrap(value config.Config) error {
     if value.VersionID!=config.Version11 ||
         value.Collector.USNMode!="volume-source-v1" ||
         value.Storage.USNCaptureDir=="" ||
-        value.Collector.USNCaptureMaxBytes==0 {
+        value.Collector.USNCaptureMaxBytes==0 ||
+        value.Collector.USNCaptureEvery<=0 {
         return errors.New("FI fresh volume bootstrap requires explicit volume-source-v1 authority")
     }
     root,err:=os.Lstat(value.Storage.USNCaptureDir)
@@ -173,7 +174,7 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
         captureWait.Add(1)
         go func(){
             defer captureWait.Done()
-            err:=runServiceUSNRawCaptureStore(captureCtx,value.Collector.USNEvery,
+            err:=runServiceUSNRawCaptureStore(captureCtx,value.Collector.USNCaptureEvery,
                 group.group.CaptureScopeID,group.group.RepresentativeRoot,
                 jobs[i].store,func(record serviceRuntimeRecord)error {
                     return appendServiceRuntimeRecordAt(value.Storage.StateDir,record)

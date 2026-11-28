@@ -25,6 +25,7 @@ const (
 type CollectorSettings struct {
     USNMode string
     USNCaptureMaxBytes uint64
+    USNCaptureEvery time.Duration
     USNProcessingEvery time.Duration
 	CollectionEvery        time.Duration
 	SupportingRefreshEvery time.Duration
@@ -243,6 +244,10 @@ func assignSetting(value *Config, key string, rawValue string) error {
             return fmt.Errorf("%s must be legacy or volume-source-v1",key)
         }
         value.Collector.USNMode=rawValue
+    case "collector.usn_capture_every":
+        every,err:=parsePositiveDuration(key,rawValue)
+        if err!=nil{return err}
+        value.Collector.USNCaptureEvery=every
     case "collector.usn_capture_max_bytes":
         bytes,err:=parsePositiveUint64(key,rawValue)
         if err!=nil{return err}
@@ -497,8 +502,12 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
     // lossless round-tripping of the original immutable config values.
     if value.Collector.USNMode=="volume-source-v1" {
         for _,key:=range []string{"storage.usn_capture_dir",
-            "collector.usn_capture_max_bytes","collector.usn_processing_every"} {
+            "collector.usn_capture_max_bytes","collector.usn_capture_every",
+            "collector.usn_processing_every"} {
             if _,ok:=seen[key];!ok{return fmt.Errorf("%s required for volume-source-v1",key)}
+        }
+        if value.Collector.USNCaptureEvery>time.Second {
+            return errors.New("volume source raw journal polling may not exceed 1s; legacy 10m USN interval is unsafe under sustained change")
         }
         queue:=strings.ToLower(strings.TrimRight(value.Storage.USNCaptureDir,"\\"))
         spool:=strings.ToLower(strings.TrimRight(value.Storage.SpoolDir,"\\"))
@@ -510,7 +519,8 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
             return errors.New("volume USN capture custody must be separate from FI spool and stage directories")
         }
     } else if value.Storage.USNCaptureDir!="" || value.Collector.USNCaptureMaxBytes!=0 ||
-        value.Collector.USNProcessingEvery!=0 {
+        value.Collector.USNProcessingEvery!=0 ||
+        value.Collector.USNCaptureEvery!=0 {
         return errors.New("volume USN capture settings require collector.usn_mode=volume-source-v1")
     }
 	if value.Sender.RecoveryThresholdBytes != 0 && value.Sender.RecoveryTimeout <= 0 {
