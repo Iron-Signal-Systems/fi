@@ -163,6 +163,59 @@ SELECT (SELECT count(*) FROM fi.usn_scoped_capture WHERE source_record_id=$1),
 		t.Fatalf("independent B proof did not recover after restoring the second batch: %v", err)
 	}
 
+    // Generate a DISTINCT signed-looking generation that reuses an original
+    // volume/journal/root interval. No source reread, raw record replay or
+    // canonical mutation is necessary for independent relational B detection.
+    if _,err:=tx.Exec(ctx,"SAVEPOINT ci_cross_generation_replay");err!=nil{t.Fatal(err)}
+    var replayGen int64
+    err=tx.QueryRow(ctx,`
+INSERT INTO fi.recorded_generation (
+ receipt_version,descriptor_version,source_id,generation_id,
+ canonical_version,data_encoding,artifact_count,source_bytes,
+ canonical_bytes,canonical_sha256,encoded_data_bytes,encoded_data_sha256,
+ metadata_bytes,metadata_sha256,transfer_bytes,transfer_sha256,
+ batch_count,data_bytes,record_count,receipt_bytes,receipt_sha256,ingest_version)
+VALUES ('ci/1','ci/1',$1,$2,'fi-canonical/0.1','none',2,128,
+ 128,$3,64,$3,32,$3,116,$3,1,64,1,120,$3,'ci-only')
+RETURNING recorded_generation_id`,source,generation+"-replay",hash[:]).Scan(&replayGen)
+    if err!=nil{t.Fatalf("second isolated signed-generation fixture: %v",err)}
+    var replayBatch int64
+    err=tx.QueryRow(ctx,`
+INSERT INTO fi.source_batch (
+ recorded_generation_id,manifest_artifact_name,data_artifact_name,manifest_version,
+ batch_id,target_batch_size,record_count,data_bytes,data_sha256,data_file,
+ collector_executable_path,collector_executable_sha256,created_at,completed_at,
+ manifest_bytes,manifest_sha256)
+VALUES ($1,'ci-usn-replay.manifest.json','ci-usn-replay.jsonl','fi-spool-manifest/0.1',
+ 'ci-usn-replay',512,1,64,$2,'ci-usn-replay.jsonl',
+ 'CI-FICollector.exe',$2,$3,$3,120,$2)
+RETURNING source_batch_id`,replayGen,hash[:],time.Now().UTC()).Scan(&replayBatch)
+    if err!=nil{t.Fatalf("re-signed replay batch: %v",err)}
+    var replayRecord int64
+    err=tx.QueryRow(ctx,`
+INSERT INTO fi.source_record (
+ source_batch_id,record_ordinal,version,record_kind,scope_id,written_at,
+ record_bytes,record_sha256,ingest_version)
+VALUES ($1,1,$2,'USNScopedCapture',$3,$4,512,$5,$6)
+RETURNING source_record_id`,
+        replayBatch,SpoolRecordVersion,first.GovernedScopeID,
+        time.Now().UTC(),hash[:],IngestVersion).Scan(&replayRecord)
+    if err!=nil{t.Fatalf("re-signed replay source record: %v",err)}
+    if err:=projectUSNScopedCapture(ctx,tx,source,replayRecord,
+        first.GovernedScopeID,first);err!=nil{
+        t.Fatalf("re-signed conflicting source setup: %v",err)
+    }
+    if err:=verifyScopedUSNCapturesComplete(ctx,tx,replayGen);err==nil{
+        t.Fatal("independent B accepted overlapping original USN under another signed generation")
+    }
+    if err:=verifyScopedUSNCapturesComplete(ctx,tx,genID);err==nil{
+        t.Fatal("independent B did not detect historical cross-generation conflict")
+    }
+    if _,err:=tx.Exec(ctx,"ROLLBACK TO SAVEPOINT ci_cross_generation_replay");err!=nil{t.Fatal(err)}
+    if err:=verifyScopedUSNCapturesComplete(ctx,tx,genID);err!=nil{
+        t.Fatalf("independent B failed after discarded conflicting generation: %v",err)
+    }
+
 	if err := tx.Rollback(ctx); err != nil { t.Fatal(err) }
 	var remainingCaptures, remainingChanges int64
 	if err := admin.QueryRow(ctx, `
