@@ -4,6 +4,10 @@ Status: **UNRELEASED / NOT ACCEPTED / NOT SAFE TO INSTALL ON ISS-FS-22B**
 Branch: `windows-usn`  
 Source: current FI `main` with the 2026-10-20 durable capture foundation restored
 
+The current, explicit release/installation evidence gate is
+[FI USN fresh-install readiness](../acceptance/FI-USN-2026-FRESH-INSTALL-READINESS.md).
+It remains **NO GO** until all evidence gates pass.
+
 ## Observed failure on ISS-FS-22B (2026-11-28)
 
 A sustained G:\\FI-Test file-generation campaign exposed the historical
