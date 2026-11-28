@@ -127,6 +127,28 @@ SELECT (SELECT count(*) FROM fi.usn_scoped_capture WHERE source_record_id=$1),
 		t.Fatalf("independent B relational USN proof failed for two batches: %v", err)
 	}
 
+	// B must reject an overlap even though both source digests are
+	// different and their original event checksums remain plausible.
+	if _, err := tx.Exec(ctx, "SAVEPOINT ci_usn_overlap"); err != nil { t.Fatal(err) }
+	if _, err := tx.Exec(ctx,
+		"UPDATE fi.usn_scoped_capture SET start_usn=150 WHERE source_record_id=$1",
+		recordIDs[1]); err != nil { t.Fatal(err) }
+	if err := verifyScopedUSNCapturesComplete(ctx, tx, genID); err == nil {
+		t.Fatal("independent B accepted overlapping scoped USN source intervals")
+	}
+	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT ci_usn_overlap"); err != nil { t.Fatal(err) }
+
+	// Exactly matching totals are insufficient when source child ordinals
+	// contain a hole. Detect it without rebuilding or replaying the source.
+	if _, err := tx.Exec(ctx, "SAVEPOINT ci_usn_ordinal_gap"); err != nil { t.Fatal(err) }
+	if _, err := tx.Exec(ctx,
+		"UPDATE fi.usn_scoped_change SET change_ordinal=2 WHERE source_record_id=$1",
+		recordIDs[1]); err != nil { t.Fatal(err) }
+	if err := verifyScopedUSNCapturesComplete(ctx, tx, genID); err == nil {
+		t.Fatal("independent B accepted a missing source change ordinal")
+	}
+	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT ci_usn_ordinal_gap"); err != nil { t.Fatal(err) }
+
 	// Prove B rejects an event missing from the SECOND batch even though the
 	// first remains perfectly valid. Roll back the fault before completion.
 	if _, err := tx.Exec(ctx, "SAVEPOINT ci_usn_missing_child"); err != nil { t.Fatal(err) }

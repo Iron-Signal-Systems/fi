@@ -179,6 +179,37 @@ LIMIT 1`,generationID).Scan(&duplicateScope,&digest,&duplicates)
         return fmt.Errorf("FI scoped USN: duplicate source batch scope=%s SHA=%s count=%d",duplicateScope,digest,duplicates)
     }
     if !errors.Is(err,pgx.ErrNoRows){return err}
+    // B compares historical interval boundaries using PostgreSQL itself,
+    // independently of the Windows uploader and the A projector. Repeated
+    // event ranges with different SHA-256 values are still contradictions.
+    // Multiple governed roots may share a volume-wide raw source interval;
+    // each root is intentionally verified in its own partition.
+    var overlapID,priorID int64
+    var overlapStart,priorEnd string
+    err=tx.QueryRow(ctx,`
+WITH ordered AS (
+ SELECT c.source_record_id,c.start_usn,c.next_usn,
+        lag(c.source_record_id) OVER w AS prior_id,
+        lag(c.next_usn) OVER w AS prior_end
+ FROM fi.usn_scoped_capture c
+ JOIN fi.source_record sr ON sr.source_record_id=c.source_record_id
+ JOIN fi.source_batch sb ON sb.source_batch_id=sr.source_batch_id
+ JOIN fi.recorded_generation rg ON rg.recorded_generation_id=sb.recorded_generation_id
+ WHERE sb.recorded_generation_id=$1
+ WINDOW w AS (
+  PARTITION BY rg.source_id,c.ntfs_volume_id,c.governed_scope_id,c.journal_id
+  ORDER BY c.start_usn,c.next_usn,c.source_record_id
+ )
+)
+SELECT source_record_id,prior_id,start_usn::text,prior_end::text
+FROM ordered
+WHERE prior_end>start_usn
+LIMIT 1`,generationID).Scan(&overlapID,&priorID,&overlapStart,&priorEnd)
+    if err==nil{
+        return fmt.Errorf("FI scoped USN: overlapping source intervals record=%d start=%s previous_record=%d previous_end=%s",
+            overlapID,overlapStart,priorID,priorEnd)
+    }
+    if !errors.Is(err,pgx.ErrNoRows){return err}
     var id int64
     var expected,got,governed,unresolved int64
     err=tx.QueryRow(ctx,`
@@ -193,6 +224,8 @@ WHERE sb.recorded_generation_id=$1
 GROUP BY c.source_record_id,c.included_record_count,c.governed_record_count,
          c.unresolved_record_count,sr.scope_id,c.governed_scope_id
 HAVING count(ch.change_ordinal)<>c.included_record_count
+   OR (count(ch.change_ordinal)>0 AND
+       (min(ch.change_ordinal)<>1 OR max(ch.change_ordinal)<>c.included_record_count))
    OR count(ch.change_ordinal) FILTER (WHERE ch.scope_class='Governed')<>c.governed_record_count
    OR count(ch.change_ordinal) FILTER (WHERE ch.scope_class='Unresolved')<>c.unresolved_record_count
    OR sr.scope_id<>c.governed_scope_id
