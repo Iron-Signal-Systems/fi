@@ -165,6 +165,13 @@ func ProjectSourceRecord(ctx context.Context, tx pgx.Tx, sourceID string, source
 		}
 		return projectUSNObjectObservation(ctx, tx, sourceID, sourceRecordID, record.Record.ScopeID, value)
 
+	case "USNScopedCapture":
+		var value usnScopedCapturePayload
+		if err := decodeStrictPayload(record.Record.Payload, &value); err != nil {
+			return projectionDecodeError(record.Record.RecordKind, err)
+		}
+		return projectUSNScopedCapture(ctx, tx, sourceID, sourceRecordID, record.Record.ScopeID, value)
+
 	case "USNReadBoundary":
 		var value usnReadBoundaryPayload
 		if err := decodeStrictPayload(record.Record.Payload, &value); err != nil {
