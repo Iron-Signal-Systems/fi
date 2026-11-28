@@ -33,6 +33,7 @@ var supportedRecordKinds = map[string]struct{}{
 	"USNObjectObservation":            {},
 	"USNReadBoundary":                 {},
 	"USNScopedCapture":               {},
+    "USNSelectiveObservation":        {},
 	"WindowsSecurityContinuityGap":    {},
 	"WindowsSecurityCoverage":         {},
 	"WindowsSecurityEvent":            {},

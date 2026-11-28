@@ -44,7 +44,7 @@ func privateP6KindFamily(kind string)(privateP6Family,error){
     case "FileObservation":return privateP6File,nil
     case "WindowsSecurityCoverage","WindowsSecurityContinuityGap":
         return privateP6Coverage,nil
-    case "USNReadBoundary","USNObjectObservation","USNScopedCapture","USNContinuityGap":
+    case "USNReadBoundary","USNObjectObservation","USNScopedCapture","USNSelectiveObservation","USNContinuityGap":
         return privateP6USN,nil
     case "CollectorIdentity","DirectoryPrincipalSnapshot","LocalPrincipalSnapshot",
         "NTFSCollectionError","SMBShareSnapshot","SupportingSourceCollectionError":
