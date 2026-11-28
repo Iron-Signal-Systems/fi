@@ -76,6 +76,24 @@ func runServiceUSNRawCapture(
     if err != nil {
         return fmt.Errorf("open durable raw USN capture queue: %w", err)
     }
+    return runServiceUSNRawCaptureStore(
+        ctx,interval,scopeID,governedRoot,store,appendRecord,
+    )
+}
+
+// runServiceUSNRawCaptureStore holds no ownership lock itself: its caller
+// must hold the exact per-volume owner for the entire worker lifetime. The
+// same Store pointer may be shared with the independent processing worker.
+func runServiceUSNRawCaptureStore(
+    ctx context.Context,
+    interval time.Duration,
+    scopeID,governedRoot string,
+    store *usncapture.Store,
+    appendRecord serviceAppendRecordFunc,
+) error {
+    if ctx==nil||interval<=0||store==nil||scopeID==""||governedRoot==""||appendRecord==nil {
+        return errors.New("FI raw capture worker requires original owner, source and telemetry")
+    }
     if store.CaptureCursor().ScopeID != scopeID {
         return fmt.Errorf("%w: capture queue scope mismatch", usncapture.ErrConflict)
     }
