@@ -253,7 +253,9 @@ func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T)
         "collector.usn_capture_max_bytes = 17179869184\n"+
         "collector.usn_capture_min_free_bytes = 2147483648\n"+
         "collector.usn_capture_every = 100ms\n"+
-        "collector.usn_processing_every = 100ms",1)
+        "collector.usn_processing_every = 100ms\n"+
+        "collector.usn_observation_every = 2s\n"+
+        "collector.usn_observation_max_objects_per_segment = 2048",1)
     source=strings.Replace(source,"storage.state_dir = C:\\ProgramData\\FI\\state",
         "storage.state_dir = C:\\ProgramData\\FI\\state\n"+
         "storage.usn_capture_dir = D:\\FI\\volume-source",1)
@@ -264,6 +266,8 @@ func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T)
         v.Collector.USNCaptureMinFreeBytes!=2147483648 ||
         v.Collector.USNCaptureEvery!=100*time.Millisecond ||
         v.Collector.USNProcessingEvery!=100*time.Millisecond ||
+        v.Collector.USNObservationEvery!=2*time.Second ||
+        v.Collector.USNObservationMaxObjectsPerSegment!=2048 ||
         v.Storage.USNCaptureDir!=`D:\FI\volume-source`{
         t.Fatalf("incorrect volume-capture authority: %+v %+v",v.Collector,v.Storage)
     }
@@ -271,6 +275,11 @@ func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T)
         "unknown-mode":strings.Replace(source,"volume-source-v1","unreviewed-activation",1),
         "missing-capture-cadence":strings.Replace(source,"collector.usn_capture_every = 100ms\n","",1),
         "unsafe-legacy-cadence":strings.Replace(source,"collector.usn_capture_every = 100ms","collector.usn_capture_every = 10m",1),
+        "missing-observation-interval":strings.Replace(source,
+            "collector.usn_observation_every = 2s\n","",1),
+        "unbounded-observation-work":strings.Replace(source,
+            "collector.usn_observation_max_objects_per_segment = 2048",
+            "collector.usn_observation_max_objects_per_segment = 2000000",1),
         "missing-reserve":strings.Replace(source,"collector.usn_capture_min_free_bytes = 2147483648\n","",1),
         "missing-capacity":strings.Replace(source,"collector.usn_capture_max_bytes = 17179869184\n","",1),
         "missing-queue":strings.Replace(source,"storage.usn_capture_dir = D:\\FI\\volume-source\n","",1),

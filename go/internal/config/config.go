@@ -27,6 +27,8 @@ type CollectorSettings struct {
     USNCaptureMaxBytes uint64
     USNCaptureMinFreeBytes uint64
     USNCaptureEvery time.Duration
+    USNObservationEvery time.Duration
+    USNObservationMaxObjectsPerSegment int
     USNProcessingEvery time.Duration
 	CollectionEvery        time.Duration
 	SupportingRefreshEvery time.Duration
@@ -245,6 +247,16 @@ func assignSetting(value *Config, key string, rawValue string) error {
             return fmt.Errorf("%s must be legacy or volume-source-v1",key)
         }
         value.Collector.USNMode=rawValue
+    case "collector.usn_observation_every":
+        period,err:=parsePositiveDuration(key,rawValue)
+        if err!=nil{return err}
+        value.Collector.USNObservationEvery=period
+    case "collector.usn_observation_max_objects_per_segment":
+        count,err:=strconv.ParseInt(rawValue,10,32)
+        if err!=nil||count<1||count>65536{
+            return fmt.Errorf("%s must be a positive bounded integer <=65536",key)
+        }
+        value.Collector.USNObservationMaxObjectsPerSegment=int(count)
     case "collector.usn_capture_every":
         every,err:=parsePositiveDuration(key,rawValue)
         if err!=nil{return err}
@@ -509,7 +521,9 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
         for _,key:=range []string{"storage.usn_capture_dir",
             "collector.usn_capture_max_bytes","collector.usn_capture_min_free_bytes",
             "collector.usn_capture_every",
-            "collector.usn_processing_every"} {
+            "collector.usn_processing_every",
+            "collector.usn_observation_every",
+            "collector.usn_observation_max_objects_per_segment"} {
             if _,ok:=seen[key];!ok{return fmt.Errorf("%s required for volume-source-v1",key)}
         }
         if value.Collector.USNCaptureEvery>time.Second {
@@ -527,7 +541,9 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
     } else if value.Storage.USNCaptureDir!="" || value.Collector.USNCaptureMaxBytes!=0 ||
         value.Collector.USNProcessingEvery!=0 ||
         value.Collector.USNCaptureEvery!=0 ||
-        value.Collector.USNCaptureMinFreeBytes!=0 {
+        value.Collector.USNCaptureMinFreeBytes!=0 ||
+        value.Collector.USNObservationEvery!=0 ||
+        value.Collector.USNObservationMaxObjectsPerSegment!=0 {
         return errors.New("volume USN capture settings require collector.usn_mode=volume-source-v1")
     }
 	if value.Sender.RecoveryThresholdBytes != 0 && value.Sender.RecoveryTimeout <= 0 {
