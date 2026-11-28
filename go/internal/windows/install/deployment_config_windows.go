@@ -134,6 +134,12 @@ func LoadDeploymentConfigProposal(
 		SpoolDir:        strings.TrimSpace(parsed.Storage.SpoolDir),
 		StageDir:        strings.TrimSpace(parsed.Storage.StageDir),
 		StateDir:        strings.TrimSpace(parsed.Storage.StateDir),
+        USNMode:parsed.Collector.USNMode,
+        USNCaptureDir:parsed.Storage.USNCaptureDir,
+        USNCaptureEvery:parsed.Collector.USNCaptureEvery,
+        USNProcessingEvery:parsed.Collector.USNProcessingEvery,
+        USNCaptureMaxBytes:parsed.Collector.USNCaptureMaxBytes,
+        USNCaptureMinFreeBytes:parsed.Collector.USNCaptureMinFreeBytes,
 	}
 
 	digest := sha256.Sum256(raw)
@@ -159,6 +165,12 @@ func LoadDeploymentConfigProposal(
 			SpoolDir:        inputs.SpoolDir,
 			StageDir:        inputs.StageDir,
 			StateDir:        inputs.StateDir,
+            USNMode:inputs.USNMode,
+            USNCaptureDir:inputs.USNCaptureDir,
+            USNCaptureEvery:inputs.USNCaptureEvery,
+            USNProcessingEvery:inputs.USNProcessingEvery,
+            USNCaptureMaxBytes:inputs.USNCaptureMaxBytes,
+            USNCaptureMinFreeBytes:inputs.USNCaptureMinFreeBytes,
 		},
 	)
 	if err != nil {

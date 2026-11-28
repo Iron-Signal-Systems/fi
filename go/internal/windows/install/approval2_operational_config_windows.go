@@ -226,6 +226,26 @@ func approval2OperationalConfigValue(
 		},
 		Troubleshoot: config.TroubleshootSettings{},
 	}
+    if proposal.USNMode!=""{
+        if proposal.USNMode!="volume-source-v1"{
+            return config.Config{},fmt.Errorf("unapproved FI USN source mode %q",proposal.USNMode)
+        }
+        if strings.TrimSpace(proposal.USNCaptureDir)=="" ||
+            proposal.USNCaptureEvery<=0 || proposal.USNProcessingEvery<=0 ||
+            proposal.USNCaptureMaxBytes==0 || proposal.USNCaptureMinFreeBytes==0{
+            return config.Config{},errors.New("FI source-volume fresh install requires explicit custody, capacity, free-space and independent schedules")
+        }
+        value.Collector.USNMode=proposal.USNMode
+        value.Collector.USNCaptureEvery=proposal.USNCaptureEvery
+        value.Collector.USNProcessingEvery=proposal.USNProcessingEvery
+        value.Collector.USNCaptureMaxBytes=proposal.USNCaptureMaxBytes
+        value.Collector.USNCaptureMinFreeBytes=proposal.USNCaptureMinFreeBytes
+        value.Storage.USNCaptureDir=proposal.USNCaptureDir
+    }else if proposal.USNCaptureDir!="" || proposal.USNCaptureEvery!=0 ||
+        proposal.USNProcessingEvery!=0 || proposal.USNCaptureMaxBytes!=0 ||
+        proposal.USNCaptureMinFreeBytes!=0{
+        return config.Config{},errors.New("FI source mode values cannot activate without explicit versioned opt-in")
+    }
 
 	if _, err := renderApproval2OperationalConfig(value); err != nil {
 		return config.Config{}, err
@@ -796,6 +816,13 @@ func renderApproval2OperationalConfig(
 		value.Collector.USNEvery,
 		value.Collector.WindowsSecurityEvery,
 	)
+    if value.Collector.USNMode=="volume-source-v1"{
+        fmt.Fprintf(&builder,
+            "collector.usn_mode = %s\ncollector.usn_capture_every = %s\ncollector.usn_processing_every = %s\ncollector.usn_capture_max_bytes = %d\ncollector.usn_capture_min_free_bytes = %d\n",
+            value.Collector.USNMode,value.Collector.USNCaptureEvery,
+            value.Collector.USNProcessingEvery,value.Collector.USNCaptureMaxBytes,
+            value.Collector.USNCaptureMinFreeBytes)
+    }
 	fmt.Fprintf(
 		&builder,
 		"\nspool.target_batch_bytes = %d\nspool.max_record_bytes = %d\nspool.max_batch_records = %d\n",
@@ -810,6 +837,9 @@ func renderApproval2OperationalConfig(
 		value.Storage.StageDir,
 		value.Storage.StateDir,
 	)
+    if value.Collector.USNMode=="volume-source-v1"{
+        fmt.Fprintf(&builder,"storage.usn_capture_dir = %s\n",value.Storage.USNCaptureDir)
+    }
 	fmt.Fprintf(&builder, "\nsource.id = %s\n", value.Source.ID)
 	fmt.Fprintf(
 		&builder,

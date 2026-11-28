@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+    "time"
 )
 
 const (
@@ -40,6 +41,12 @@ type PlanInputs struct {
 	SpoolDir        string
 	StageDir        string
 	StateDir        string
+    USNMode string
+    USNCaptureDir string
+    USNCaptureEvery time.Duration
+    USNProcessingEvery time.Duration
+    USNCaptureMaxBytes uint64
+    USNCaptureMinFreeBytes uint64
 }
 
 func (inputs PlanInputs) ConfigEmpty() bool {
@@ -48,7 +55,10 @@ func (inputs PlanInputs) ConfigEmpty() bool {
 		strings.TrimSpace(inputs.ReceiverName) == "" &&
 		strings.TrimSpace(inputs.SpoolDir) == "" &&
 		strings.TrimSpace(inputs.StageDir) == "" &&
-		strings.TrimSpace(inputs.StateDir) == ""
+		strings.TrimSpace(inputs.StateDir) == "" &&
+        inputs.USNMode=="" && inputs.USNCaptureDir=="" &&
+        inputs.USNCaptureEvery==0 && inputs.USNProcessingEvery==0 &&
+        inputs.USNCaptureMaxBytes==0 && inputs.USNCaptureMinFreeBytes==0
 }
 
 func (inputs PlanInputs) Empty() bool {
@@ -393,6 +403,12 @@ func planConfiguration(
 		SpoolDir:      strings.TrimSpace(inputs.SpoolDir),
 		StageDir:      strings.TrimSpace(inputs.StageDir),
 		StateDir:      strings.TrimSpace(inputs.StateDir),
+        USNMode: strings.TrimSpace(inputs.USNMode),
+        USNCaptureDir: strings.TrimSpace(inputs.USNCaptureDir),
+        USNCaptureEvery: inputs.USNCaptureEvery,
+        USNProcessingEvery: inputs.USNProcessingEvery,
+        USNCaptureMaxBytes: inputs.USNCaptureMaxBytes,
+        USNCaptureMinFreeBytes: inputs.USNCaptureMinFreeBytes,
 	}
 
 	if proposal.StageDir == "" {
@@ -583,6 +599,11 @@ func validateProposedConfigPaths(
 			path:  proposal.StateDir,
 			allow: true,
 		},
+        {
+            name:"volume USN source directory",
+            path:proposal.USNCaptureDir,
+            allow:proposal.USNMode=="volume-source-v1",
+        },
 	}
 
 	for _, value := range values {

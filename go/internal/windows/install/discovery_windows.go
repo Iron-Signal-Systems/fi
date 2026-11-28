@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+    "time"
 	"unsafe"
 
 	"github.com/Iron-Signal-Systems/fi/go/internal/config"
@@ -69,6 +70,12 @@ type ConfigState struct {
 	SpoolDir        string
 	StageDir        string
 	StateDir        string
+    USNMode string
+    USNCaptureDir string
+    USNCaptureEvery time.Duration
+    USNProcessingEvery time.Duration
+    USNCaptureMaxBytes uint64
+    USNCaptureMinFreeBytes uint64
 	VersionID       string
 }
 
@@ -306,6 +313,12 @@ func discoverConfig(report *Report) {
 		SpoolDir:        value.Storage.SpoolDir,
 		StageDir:        value.Storage.StageDir,
 		StateDir:        value.Storage.StateDir,
+        USNMode: value.Collector.USNMode,
+        USNCaptureDir: value.Storage.USNCaptureDir,
+        USNCaptureEvery: value.Collector.USNCaptureEvery,
+        USNProcessingEvery: value.Collector.USNProcessingEvery,
+        USNCaptureMaxBytes: value.Collector.USNCaptureMaxBytes,
+        USNCaptureMinFreeBytes: value.Collector.USNCaptureMinFreeBytes,
 		VersionID:       value.VersionID,
 	}
 
@@ -321,6 +334,9 @@ func discoverConfig(report *Report) {
 	discoverPath(report, "spool directory", value.Storage.SpoolDir)
 	discoverPath(report, "stage directory", value.Storage.StageDir)
 	discoverPath(report, "state directory", value.Storage.StateDir)
+    if value.Collector.USNMode=="volume-source-v1"{
+        discoverPath(report,"original volume USN source directory",value.Storage.USNCaptureDir)
+    }
 }
 
 func discoverHost(report *Report) {
