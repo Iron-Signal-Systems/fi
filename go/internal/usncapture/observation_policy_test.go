@@ -18,11 +18,22 @@ func TestSelectiveObservationCoalescesSourceFactsWithoutInventingFileState(t *te
     seg:=exampleScopedSegment(t)
     root:=scopeTestIdentity("11")
     file:=scopeTestIdentity("22")
+    // Preserve the fully validated v2 USN source fields from a real-format
+    // fixture; only change the original reason, exact identity and USN.
+    original:=seg.Batch.Records[0]
+    sourceEvent:=func(usn,reason string,id records.NTFSObjectIdentity)records.USNChangeObservation{
+        v:=original
+        v.FileIdentity=id
+        v.ParentIdentity=root
+        v.USN=usn
+        v.ReasonRaw=reason
+        return v
+    }
     seg.Batch.Records=[]records.USNChangeObservation{
-        {FileIdentity:file,ParentIdentity:root,USN:"110",ReasonRaw:"2"},
-        {FileIdentity:file,ParentIdentity:root,USN:"120",ReasonRaw:"2147483650"},
-        {FileIdentity:file,ParentIdentity:root,USN:"125",ReasonRaw:"2048"},
-        {FileIdentity:scopeTestIdentity("33"),ParentIdentity:root,USN:"130",ReasonRaw:"512"},
+        sourceEvent("110","2",file),
+        sourceEvent("120","2147483650",file),
+        sourceEvent("125","2048",file),
+        sourceEvent("130","512",scopeTestIdentity("33")),
     }
     rehashObservationPolicyFixture(t,&seg)
     plan:=GovernedProcessingPlan{
