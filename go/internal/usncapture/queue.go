@@ -253,6 +253,29 @@ func (s *Store) Next() (Segment, bool, error) {
     return seg, true, nil
 }
 
+// PendingAmbiguousPublication exposes the exact already-captured source
+// interval ONLY for read-only reconciliation of a prior publication attempt.
+// It cannot grant permission to republish or bypass source custody.
+func (s *Store) PendingAmbiguousPublication() (Segment, bool, error) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.processed.NextUSN == s.capture.NextUSN {
+        return Segment{},false,nil
+    }
+    name:=segmentNameMust(s.processed.NextUSN)
+    seg,err:=s.loadSegmentLocked(name)
+    if errors.Is(err,os.ErrNotExist){
+        return Segment{},false,fmt.Errorf("%w: source segment %s not found",ErrGap,name)
+    }
+    if err!=nil{return Segment{},false,err}
+    if !matchesBatch(s.processed,seg.Batch) || seg.Batch.StartUSN!=s.processed.NextUSN {
+        return Segment{},false,fmt.Errorf("%w: ambiguous source interval identity mismatch",ErrCorrupt)
+    }
+    intent,err:=s.readPublicationIntentLocked(seg)
+    if err!=nil{return Segment{},false,err}
+    return seg,intent,nil
+}
+
 // CommitProcessed is ONLY for a consumer that has already durably finalized
 // and verified all FI spool batches and necessary correlation state. The
 // publishedProof is an opaque nonempty reference to that independently verified
