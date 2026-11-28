@@ -263,6 +263,8 @@ LIMIT 1`,generationID).Scan(&id,&expected,&got,&governed,&unresolved)
     if err==nil {
         return fmt.Errorf("FI scoped USN: incomplete source capture record=%d events=%d/%d governed=%d unresolved=%d",id,got,expected,governed,unresolved)
     }
-    if errors.Is(err,pgx.ErrNoRows){return nil}
+    if errors.Is(err,pgx.ErrNoRows){
+        return verifyUSNSelectiveObservationsComplete(ctx,tx,generationID)
+    }
     return err
 }
