@@ -62,7 +62,8 @@ func BuildScopedProjection(seg Segment, selection ScopeSelection) (ScopedProject
     if hex.EncodeToString(digest[:]) != seg.SHA256 {
         return ScopedProjection{}, errors.New("raw capture source digest mismatch")
     }
-    if selection.Total != len(seg.Batch.Records) ||
+    if selection.Governed < 0 || selection.Unresolved < 0 || selection.Excluded < 0 ||
+        selection.Total != len(seg.Batch.Records) ||
         selection.Governed+selection.Unresolved != len(selection.Included) ||
         selection.Excluded+len(selection.Included) != selection.Total {
         return ScopedProjection{}, errors.New("scoped capture record conservation failed")
@@ -70,10 +71,12 @@ func BuildScopedProjection(seg Segment, selection ScopeSelection) (ScopedProject
     // Preserve original event order and multiplicity, including repeated USNs
     // or repeated File IDs. Never convert a change event to a file observation.
     index := 0
+    governed, unresolved := 0, 0
     for _, change := range selection.Included {
         if change.Class != ScopeGoverned && change.Class != ScopeUnresolved {
             return ScopedProjection{}, errors.New("unsupported scoped change classification")
         }
+        if change.Class == ScopeGoverned { governed++ } else { unresolved++ }
         for index < len(seg.Batch.Records) && !reflect.DeepEqual(seg.Batch.Records[index], change.Source) {
             index++
         }
@@ -81,6 +84,9 @@ func BuildScopedProjection(seg Segment, selection ScopeSelection) (ScopedProject
             return ScopedProjection{}, errors.New("included scoped USN change is not an ordered source event")
         }
         index++
+    }
+    if governed != selection.Governed || unresolved != selection.Unresolved {
+        return ScopedProjection{}, errors.New("scoped capture classification totals mismatch")
     }
     if selection.Excluded > 0 {
         // Until excluded-event proof is durably persisted and independently
