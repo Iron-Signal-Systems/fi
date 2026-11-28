@@ -32,29 +32,33 @@ test, with corresponding complete CI evidence.
 
 | Gate | Required objective evidence | Current disposition |
 | --- | --- | --- |
-| W1 Volume raw capture | One journal owner and durable source cursor per NTFS volume; capture independent of NTFS reopen, hashing, network and governed-root processing | Implemented in inactive development code; physical throughput unaccepted |
-| W2 Journal continuity | Exact volume GUID/serial, journal ID, capture NextUSN, FirstUSN and LowestValidUSN; wrap, reset, full queue, disk full and broker failure fail closed | Unit tests partial; power-loss/stress evidence missing |
-| W3 Baseline anchor | Journal cursor established before verified baseline, no historical interval invented; complete tested baseline-to-index handoff, never adopt an aged-out old checkpoint | **Blocked: missing governed migration** |
-| W4 Historical scope | Persistent replayable time-indexed directory + hard-link identity evidence; negative decisions require exact complete historical proof; no exclusion of Unresolved | **Blocked: index and exclusion ledger missing** |
-| W5 Selective NTFS observation | Separate bounded worker performs policy-required file-ID/ACL/SACL/ADS/content hash observations with actual observation timestamps; source-only USN never impersonates these observations | **Blocked: independent observation worker missing** |
-| W6 Spool custody | All roots published exactly once per original source segment; verified manifest, source SHA, receipt and cursor ordering; crash windows recover without duplicates or unproved retirement | In development: durable intent and fail-closed ambiguity; **automatic safe reconciliation missing** |
-| W7 Windows service / installer | Explicit versioned, opt-in service configuration; disable conflicting legacy USN cursor owner; install/upgrade/rollback ACL and queue capacity gates; Security and supporting workers preserved | **Blocked: service activation and fresh-install gates missing** |
-| B1 Source wire and C1 | Sender, receiver, ordered C1 USN P6 and PostgreSQL 18 recognize same exact source-only contract; unknown kinds fail; source and event conservation | Implemented in separate development branch; real cross-branch transport acceptance missing |
-| B2 Verifier B | B separately checks relational counts, identities, ordered ordinals and inconsistent/overlapping intervals within generation, without source reread | New native acceptance tests pending on exact backend commit |
-| B3 Replay/continuity | Exact signed generation idempotence, conflicting duplicates, cross-generation source overlap/restart, tamper and failure proofs | **Blocked: full cross-generation acceptance missing** |
+| W1 Volume raw capture | One journal owner and durable source cursor per NTFS volume; capture independent of NTFS reopen, hashing, network and governed-root processing | Integrated opt-in service volume owner and independent raw capture; measured 20M-file physical throughput unaccepted |
+| W2 Journal continuity | Exact volume GUID/serial, journal ID, capture NextUSN, FirstUSN and LowestValidUSN; wrap, reset, full queue, disk full and broker failure fail closed | Subsecond capture schedule, source free-space floor, fail-closed wrap/capacity tests; actual power-loss and journal-wrap acceptance missing |
+| W3 Baseline anchor | Journal cursor established before verified baseline, no historical interval invented; complete tested baseline-to-index handoff, never adopt an aged-out old checkpoint | Bootstrap captures source before/during all verified roots, requires immutable completion witness; product installer still lacks governed automatic bootstrap transition |
+| W4 Historical scope | Persistent replayable time-indexed directory + hard-link identity evidence; negative decisions require exact complete historical proof; no exclusion of Unresolved | Source-verified forward directory USN history index implemented and replay-tested; baseline ancestry/hard-link completeness and negative-proof ledger still missing; never exclude Unresolved |
+| W5 Selective NTFS observation | Separate bounded worker performs policy-required file-ID/ACL/SACL/ADS/content hash observations with actual observation timestamps; source-only USN never impersonates these observations | Third independent File-ID observation worker, source-bound spool verification and durable observation cursor are in CI; failures remain pending, missing-object outcome acceptance and stress proof missing |
+| W6 Spool custody | All roots published exactly once per original source segment; verified manifest, source SHA, receipt and cursor ordering; crash windows recover without duplicates or unproved retirement | Locally finalized spool crash recovery verified; transferred/missing spool fails closed; remote-ack reconciliation and authorized custody retention missing |
+| W7 Windows service / installer | Explicit versioned, opt-in service configuration; disable conflicting legacy USN cursor owner; install/upgrade/rollback ACL and queue capacity gates; Security and supporting workers preserved | Exact opt-in installer config, secured source root, gMSA ACL, manual staged collector/sender and distinct service workers; governed installer bootstrap/activation and physical rollback gates missing |
+| B1 Source wire and C1 | Sender, receiver, ordered C1 USN P6 and PostgreSQL 18 recognize same exact source-only contract; unknown kinds fail; source and event conservation | Source-only USN P6/PostgreSQL 18 proof green at backend 491eda9; signed Windows-to-backend acceptance still missing |
+| B2 Verifier B | B separately checks relational counts, identities, ordered ordinals and inconsistent/overlapping intervals within generation, without source reread | Independent B source/child counts, source ordinals, overlap and missing-child rejection green on disposable native PostgreSQL 18 at backend 491eda9 |
+| B3 Replay/continuity | Exact signed generation idempotence, conflicting duplicates, cross-generation source overlap/restart, tamper and failure proofs | Native PostgreSQL 18 B cross-generation duplicate/overlap rejection green at backend 491eda9; Windows-signed transport outage/replay acceptance outstanding |
 | F1 Fresh Windows installation | AdminBox reproducible Windows binaries, FI-free AD-joined host, helper/gMSA service controls, installer, uninstall/rollback, new state and receiver wiring | **Not performed** |
 | F2 Stress / recovery | Measured sustained 20-million-event/file workload, capture lag vs journal retention, transport down/up, crash/power loss at each durable boundary, disk limits and restart | **Not performed** |
-| F3 End-to-end SoR | Exact Windows source batch -> spool -> sender -> signed receiver custody -> P5/P6 -> 51-table disposable PostgreSQL readback -> independent B proof, no fabricated success | **Not performed on a fresh Windows installation** |
+| F3 End-to-end SoR | Exact fresh Windows source -> actual local spool -> signed sender/receiver custody -> P5/P6 -> disposable PostgreSQL readback -> independent B proof, no fabricated success | **Not performed on a fresh Windows installation** |
 
 ## Source and verification invariants
 
 1. Keep original USN observations in exact journal order and preserve every
    occurrence. Deduplicate **observation work only**, never original source
    records. One volume capture may feed many governed roots.
-2. A local capture cursor advances only after immutable original source
-   segment persistence. A processed cursor advances only after complete
-   governed-root source decisions, required separate observations when
-   applicable, durable verified spool custody, and a bound publication receipt.
+2. A local **capture cursor** advances only after immutable original
+   volume-source segment persistence. The separate **scoped-source processed
+   cursor** advances only after verified scoped source publication; it **never
+   waits for NTFS file re-observation**. A third independently scheduled
+   **observation cursor** advances only after real policy-required current
+   NTFS evidence and a verified spool witness (or verified no-work decision).
+   Original raw source retirement is prohibited until downstream acceptance
+   AND all independently required observation-consumption evidence exist.
 3. Incomplete spool work is never finalized as successful output. An ambiguous
    publication must not be blindly replayed: retain source and fail closed
    until verified spool/receiver custody can reconcile it.
@@ -71,15 +75,29 @@ test, with corresponding complete CI evidence.
 
 ## Current development evidence (2026-11-28)
 
-- Windows `b9fff2f`: Windows Collector CI, CodeQL and Security Validation
-  passed. Later window-source proof binding and multi-root test commits are
-  development candidates **pending their own complete CI**.
-- Backend `d774b3a`: native disposable FreeBSD/PostgreSQL acceptance passed.
-  Backend `f1ce48f` adds two-source-batch and independent B overlap/ordinal
-  tampering tests; the latest native run must pass before its acceptance is
-  claimed.
-- The live C220 and ISS-FS-22B deployments have not been used as test data
-  sources by this development work.
+- Windows latest **development candidate** `54291f6` adds the third scheduled
+  File-ID observation worker, source-hash-bound policy, observation cursor,
+  manifest verification and installer configuration. CI runs on this exact
+  candidate are **not yet accepted**; check all Windows Collector, CodeQL,
+  Security Validation (including race/vulnerability) conclusions.
+- Windows `b634e65` passed all three CI gates after disabling unsafe original
+  source reclamation. Windows `74e4358` passed the same gates after verifying
+  restart directory ancestry against original immutable USN evidence.
+  Later new observation worker commits must be tested independently.
+- Backend `491eda9` passed its **four** CI gates, including native disposable
+  FreeBSD 15.1/PostgreSQL 18 relational source/child/ordinal/overlap and
+  signed cross-generation conflict proofs. No fresh Windows-signed real
+  receiver-to-SoR acceptance exists.
+- The Windows installer can stage services and protected source custody, but
+  it does not yet perform an automatic gMSA-run initial bootstrap and governed
+  service activation. Do not mistake `-usn-volume-bootstrap` source code
+  existing for a completed FI-free, one-installer deployment.
+- W4's directory index only makes **positive** source-native ancestry claims.
+  Complete historical hard-link membership and negative exclusion proof are
+  unaccepted. The selective observer treats unknown membership as a candidate
+  and retries instead of reporting invented current file state.
+- All changes are development-only. The live C220 and ISS-FS-22B have not
+  been used as validation or migration targets.
 
 ## Installation-release decision
 
