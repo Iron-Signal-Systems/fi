@@ -260,13 +260,26 @@ func c1DirectWriteAccepted(ctx context.Context,dsn string,
       WHERE n.nspname='fi' AND c.relkind IN ('r','p') AND NOT c.relispartition
       ORDER BY c.relname`)
     if err!=nil{return err}
-    names:=make([]string,0,49)
-    for rows.Next(){var name string;if err=rows.Scan(&name);err!=nil{break}
-        names=append(names,pgx.Identifier{"fi",name}.Sanitize())}
+    allowed:=make(map[string]bool,len(bootstrapSoRTables))
+    for _,name:=range bootstrapSoRTables {allowed[name]=true}
+    names:=make([]string,0,len(allowed))
+    seen:=make(map[string]bool,len(allowed))
+    for rows.Next(){
+        var name string
+        if err=rows.Scan(&name);err!=nil{break}
+        if !allowed[name] || seen[name] {
+            err=fmt.Errorf("C1 direct: unapproved or repeated canonical relation %q",name)
+            break
+        }
+        seen[name]=true
+        names=append(names,pgx.Identifier{"fi",name}.Sanitize())
+    }
     if err==nil{err=rows.Err()}
     rows.Close()
     if err!=nil{return err}
-    if len(names)!=49{return errors.New("C1 direct: canonical relation set changed")}
+    if len(names)!=len(allowed){
+        return errors.New("C1 direct: canonical relation set changed")
+    }
     if _,err=tx.Exec(ctx,"LOCK TABLE "+strings.Join(names,",")+" IN SHARE MODE");err!=nil{return err}
 
     var id,count,batchCount,persisted,accepted int64
