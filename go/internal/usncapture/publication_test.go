@@ -76,3 +76,18 @@ func TestScopedPublicationRejectsMixedOriginalSourceIntervals(t *testing.T) {
 		t.Fatal("verified publication combined unrelated source ranges")
 	}
 }
+
+func TestVerifiedScopedPublicationRejectsUnrelatedSpoolRecords(t *testing.T) {
+    p:=onePublishedScopedSource(t)
+    dir:=filepath.Join(t.TempDir(),"spool")
+    writer,err:=spool.NewWriter(dir,spool.DefaultBatchSize,spool.CollectorIdentity{
+        ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64),
+    })
+    if err!=nil{t.Fatal(err)}
+    if err:=writer.Append("USNScopedCapture",p.GovernedScopeID,p);err!=nil{t.Fatal(err)}
+    if err:=writer.Append("UnreviewedMixedSource",p.GovernedScopeID,map[string]any{"mixed":true});err!=nil{t.Fatal(err)}
+    if err:=writer.Close();err!=nil{t.Fatal(err)}
+    if _,err:=VerifyScopedPublication([]ScopedProjection{p},writer.FinalizedBatches());err==nil{
+        t.Fatal("verified scoped USN-only publication accepted unrelated source kind")
+    }
+}

@@ -100,7 +100,10 @@ func VerifyScopedPublication(expected []ScopedProjection, batches []spool.Finali
                 var extra any
                 if err:=decoder.Decode(&extra);err!=io.EOF{file.Close();return ScopedPublicationProof{},errors.New("trailing JSON in FI spool record")}
                 count++
-                if record.RecordKind!="USNScopedCapture"{continue}
+                if record.RecordKind!="USNScopedCapture"{
+                    file.Close()
+                    return ScopedPublicationProof{},fmt.Errorf("unreviewed FI record kind %q in scoped USN-only publication",record.RecordKind)
+                }
                 if record.Version!=spool.RecordVersion {
                     file.Close();return ScopedPublicationProof{},errors.New("invalid USN spool version")
                 }
