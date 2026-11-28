@@ -174,6 +174,16 @@ func reconcileServer2016ACLs(report Report, identities DesiredFIIdentities, plan
 		},
 		{path: report.Config.StageDir, sddl: writableCollector, target: valueOrNotKnown(report.Config.StageDir)},
 	}
+    if report.Config.USNMode=="volume-source-v1"{
+        if strings.TrimSpace(report.Config.USNCaptureDir)==""{
+            return nil,errors.New("FI source custody ACL requires explicit original queue root")
+        }
+        contracts=append(contracts,contract{
+            path:report.Config.USNCaptureDir,
+            sddl:writableCollector,
+            target:report.Config.USNCaptureDir,
+        })
+    }
 	if legacyTransportTrustDirectoryRequired(
 		report,
 	) {

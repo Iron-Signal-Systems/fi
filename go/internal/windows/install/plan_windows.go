@@ -1372,6 +1372,12 @@ func planACLs(
 		},
 	}
 
+    if report.Config.USNMode=="volume-source-v1"{
+        contracts=append(contracts,struct{check,target string}{
+            check:"FI original volume USN source custody desired ACL contract",
+            target:valueOrNotKnown(report.Config.USNCaptureDir),
+        })
+    }
 	for _, contract := range contracts {
 		if contract.check ==
 			"FI PKI trust directory desired ACL contract" &&

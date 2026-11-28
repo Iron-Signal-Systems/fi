@@ -51,6 +51,12 @@ func approval2OperationalDirectoryPaths(
 		proposal.StateDir,
 	}
 
+    if proposal.USNMode=="volume-source-v1"{
+        if strings.TrimSpace(proposal.USNCaptureDir)==""{
+            return nil,errors.New("FI new source mode requires secure source custody root")
+        }
+        directories=append(directories,proposal.USNCaptureDir)
+    }
 	if handoff.complete() {
 		directories = append(
 			directories,
