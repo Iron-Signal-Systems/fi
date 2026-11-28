@@ -200,7 +200,7 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
         select{
         case failure:=<-captureFailures:return failure
         default:
-            if captureCtx.Err()!=nil && ctx.Err()==nil {
+            if !captureStopped && captureCtx.Err()!=nil && ctx.Err()==nil {
                 return errors.New("FI pre-baseline source capture was canceled before acceptance")
             }
             return nil
