@@ -174,7 +174,20 @@ func (service *fiWindowsService) Execute(
 			service.supportingRefreshInterval,
 			func() error { return nil },
 			func(ctx context.Context) (configuredRunSummary, error) {
-				return writeServiceRootCollector(
+				if service.operationalSnapshot.USNMode=="volume-source-v1"{
+                    // The source-only pre-alpha worker must NEVER run the
+                    // old checkpoint-owning USN catch-up/baseline concurrently.
+                    // This is deliberately Partial: a complete independent
+                    // NTFS observation worker is still an acceptance gate.
+                    return configuredRunSummary{
+                        VersionID:service.operationalSnapshot.VersionID,
+                        ConfigPath:service.operationalSnapshot.ConfigPath,
+                        ConfiguredRoots:len(service.operationalSnapshot.GovernedRoots),
+                        Complete:false,
+                        Semantics:"FI source-only volume capture; legacy root checkpoint owner disabled; independent full NTFS observations not yet enabled",
+                    },nil
+                }
+                return writeServiceRootCollector(
 					ctx,
 					service.operationalSnapshot,
 				)
@@ -185,17 +198,18 @@ func (service *fiWindowsService) Execute(
 	}()
 
 	go func() {
-		done <- runServiceUSNLoop(
-			ctx,
-			service.usnInterval,
-			func(ctx context.Context) (serviceUSNCatchUpSummary, error) {
-				return writeServiceUSNCatchUp(
-					ctx,
-					service.operationalSnapshot,
-				)
-			},
-			appendRecord,
-		)
+		if service.operationalSnapshot.USNMode=="volume-source-v1"{
+            done<-runServiceUSNVolumeSourceLoop(
+                ctx,service.operationalSnapshot,appendRecord)
+        }else{
+            done <- runServiceUSNLoop(
+                ctx,service.usnInterval,
+                func(ctx context.Context)(serviceUSNCatchUpSummary,error){
+                    return writeServiceUSNCatchUp(ctx,service.operationalSnapshot)
+                },
+                appendRecord,
+            )
+        }
 	}()
 
 	go func() {
