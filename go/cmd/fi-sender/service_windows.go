@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 
+    "github.com/Iron-Signal-Systems/fi/go/internal/usncapture"
 	"github.com/Iron-Signal-Systems/fi/go/internal/windows/runtimeowner"
 	"golang.org/x/sys/windows/svc"
 )
@@ -72,6 +73,11 @@ func runSenderRuntimeOwned(
 		return errors.New("context is required")
 	}
 
+    if config.USNMode=="volume-source-v1"{
+        if err:=usncapture.VerifyVolumeBootstrapReady(config.USNCaptureDir);err!=nil{
+            return fmt.Errorf("FI source-mode sender cannot start without original verified NTFS baseline: %w",err)
+        }
+    }
 	if config.SpoolDir != "" {
 		return runSenderQueue(
 			ctx,
