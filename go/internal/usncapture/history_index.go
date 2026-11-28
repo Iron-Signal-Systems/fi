@@ -174,13 +174,15 @@ func (h *DirectoryHistoryIndex) AddSegment(seg Segment)error{
         StartUSN:seg.Batch.StartUSN,NextUSN:seg.Batch.NextUSN,
         Changes:make([]directoryLinkTransition,0),
     }
+    observedInSegment:=make(map[records.NTFSObjectIdentity]bool)
     for _,change:=range seg.Batch.Records{
         reason,err:=strconv.ParseUint(change.ReasonRaw,10,32)
         if err!=nil{return fmt.Errorf("%w: directory record reason not decimal",ErrCorrupt)}
         attrs,err:=strconv.ParseUint(change.FileAttributesRaw,10,32)
         if err!=nil{return fmt.Errorf("%w: directory record attributes not decimal",ErrCorrupt)}
         hasKnownLink:=attrs&ntfsAttributeDirectory!=0 && attrs&ntfsAttributeReparse==0
-        knownPreviously:=len(h.transitions[change.FileIdentity])>0
+        knownPreviously:=len(h.transitions[change.FileIdentity])>0||
+            observedInSegment[change.FileIdentity]
         // A previously known directory may be deleted/renamed with missing
         // attribute bits. Conservatively retire its previous positive link.
         removed:=reason&(usnReasonFileDelete|usnReasonRenameOldName|usnReasonHardLinkChange)!=0
@@ -189,6 +191,7 @@ func (h *DirectoryHistoryIndex) AddSegment(seg Segment)error{
             EventUSN:change.USN,Directory:change.FileIdentity,
             Parent:change.ParentIdentity,LinkKnown:hasKnownLink&&!removed,
         })
+        observedInSegment[change.FileIdentity]=true
     }
     if _,err:=parseHistorySource(v);err!=nil{return err}
     if existing,ok:=h.seen[v.StartUSN];ok{
