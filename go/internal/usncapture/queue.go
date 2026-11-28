@@ -153,6 +153,15 @@ func (s *Store) ProcessingCursor() Cursor {
 	return s.processed
 }
 
+// PendingBytes reports the accounted durable source segments, including
+// acknowledged segments not yet reclaimed. It does not walk the directory
+// during steady-state high-rate capture.
+func (s *Store) PendingBytes() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bytesUsed
+}
+
 // Append durably saves one complete, volume-wide USN batch BEFORE advancing
 // the capture cursor. Replayed segments at the same start are accepted only
 // when every original byte agrees. No historical source record is deduplicated.
