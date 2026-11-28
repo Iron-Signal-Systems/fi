@@ -492,7 +492,9 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
 	if _, ok := seen["sender.recovery_timeout"]; !ok {
 		value.Sender.RecoveryTimeout = 2 * time.Hour
 	}
-	if value.Collector.USNMode=="" {value.Collector.USNMode="legacy"}
+	// Omitted USN mode is the exact legacy v1.1 wire/configuration default.
+    // Do not normalize it to a nonempty string: installer approval requires
+    // lossless round-tripping of the original immutable config values.
     if value.Collector.USNMode=="volume-source-v1" {
         for _,key:=range []string{"storage.usn_capture_dir",
             "collector.usn_capture_max_bytes","collector.usn_processing_every"} {

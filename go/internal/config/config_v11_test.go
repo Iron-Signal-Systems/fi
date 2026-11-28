@@ -244,7 +244,7 @@ troubleshoot.allow_trust_cli_override = false
 
 func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T) {
     legacy,err:=Parse(strings.NewReader(validVersion11OperationalConfiguration()))
-    if err!=nil||legacy.Collector.USNMode!="legacy"{
+    if err!=nil||legacy.Collector.USNMode!=""{
         t.Fatalf("existing FI service compatibility changed: %q %v",legacy.Collector.USNMode,err)
     }
     source:=strings.Replace(validVersion11OperationalConfiguration(),
