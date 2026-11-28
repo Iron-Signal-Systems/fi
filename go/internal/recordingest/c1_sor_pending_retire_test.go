@@ -16,8 +16,8 @@ func TestC1PendingRetirementOnlyTouchesFrozenPendingRelationalTables(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(names) != 50 {
-		t.Fatalf("C1 pending must retire exactly 49 relations + one control, got %d",len(names))
+	if len(names) != 52 {
+		t.Fatalf("C1 pending must retire exactly 51 relations + one control, got %d",len(names))
 	}
 	seen := map[string]bool{}
 	for _, name := range names {
@@ -31,7 +31,9 @@ func TestC1PendingRetirementOnlyTouchesFrozenPendingRelationalTables(t *testing.
 	}
 	if !seen["\"fi_c1_pending\".\"generation_control\""] ||
 		!seen["\"fi_c1_pending\".\"windows_security_event_field\""] ||
-		!seen["\"fi_c1_pending\".\"source_record\""] {
+		!seen["\"fi_c1_pending\".\"source_record\""] ||
+        !seen["\"fi_c1_pending\".\"usn_scoped_capture\""] ||
+        !seen["\"fi_c1_pending\".\"usn_scoped_change\""] {
 		t.Fatal("C1 retirement omitted the control, SourceParent or Security child rows")
 	}
 }
