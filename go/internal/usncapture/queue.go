@@ -43,6 +43,7 @@ var (
 	ErrConflict = errors.New("FI USN capture cursor or identity conflict")
 	ErrCorrupt  = errors.New("FI USN capture queue corruption")
 	ErrGap      = errors.New("FI USN capture queue is not contiguous")
+    ErrRetentionNotAuthorized = errors.New("FI USN source retention requires verified downstream acknowledgment and independent observation completion")
 )
 
 type Cursor struct {
@@ -658,10 +659,11 @@ func mustJSON(value any) []byte {
 	return raw
 }
 
-// ReclaimAcknowledged removes only source segments whose captured range is
-// behind the processing cursor and whose durable receipt matches the original
-// batch checksum. Receipts stay available for recovery and later inspection.
-// Run only after verified FI spool publication and recorded scope decisions.
+// ReclaimAcknowledged is deliberately NOT an authorization to erase original
+// NTFS source history. A local FI spool proof only proves local publication,
+// not sender/receiver acknowledgment, verified C1 custody or the independent
+// observation cursor. This dev API checks receipt corruption but then rejects
+// retirement until a full downstream/observation retention contract exists.
 func (s *Store) ReclaimAcknowledged() (int, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -670,12 +672,11 @@ func (s *Store) ReclaimAcknowledged() (int, uint64, error) {
 		return 0, 0, err
 	}
 	processed, _ := strconv.ParseUint(s.processed.NextUSN, 10, 64)
-	count := 0
-	var reclaimed uint64
+    hasCandidates:=false
 	for _, name := range items {
 		seg, err := s.loadSegmentLocked(name)
 		if err != nil {
-			return count, reclaimed, err
+			return 0,0,err
 		}
 		end, _ := strconv.ParseUint(seg.Batch.NextUSN, 10, 64)
 		if end > processed {
@@ -684,7 +685,7 @@ func (s *Store) ReclaimAcknowledged() (int, uint64, error) {
 		path := filepath.Join(s.dir, "receipt-"+name)
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return count, reclaimed, fmt.Errorf("%w: missing durable processing receipt for %s: %v", ErrCorrupt, name, err)
+			return 0,0,fmt.Errorf("%w: missing durable processing receipt for %s: %v", ErrCorrupt, name, err)
 		}
 		var receipt struct {
 			Version           string `json:"version"`
@@ -694,27 +695,18 @@ func (s *Store) ReclaimAcknowledged() (int, uint64, error) {
 			NextUSN           string `json:"next_usn"`
 		}
 		if err := json.Unmarshal(raw, &receipt); err != nil {
-			return count, reclaimed, fmt.Errorf("%w: processing receipt invalid JSON", ErrCorrupt)
+			return 0,0,fmt.Errorf("%w: processing receipt invalid JSON", ErrCorrupt)
 		}
 		if receipt.Version != SchemaVersion || receipt.SourceBatchSHA256 != seg.SHA256 || !validScopedSpoolProof(receipt.SpoolProof) || receipt.StartUSN != seg.Batch.StartUSN || receipt.NextUSN != seg.Batch.NextUSN {
-			return count, reclaimed, fmt.Errorf("%w: processing receipt mismatch for %s", ErrCorrupt, name)
+			return 0,0,fmt.Errorf("%w: processing receipt mismatch for %s", ErrCorrupt, name)
 		}
 		if err := s.requirePublicationIntentLocked(seg); err != nil {
-			return count, reclaimed, fmt.Errorf("%w: cannot reclaim %s without publication intent: %v", ErrCorrupt, name, err)
+			return 0,0,fmt.Errorf("%w: cannot reclaim %s without publication intent: %v", ErrCorrupt, name, err)
 		}
-		info, err := os.Stat(filepath.Join(s.dir, name))
-		if err != nil {
-			return count, reclaimed, err
-		}
-		if err := os.Remove(filepath.Join(s.dir, name)); err != nil {
-			return count, reclaimed, err
-		}
-		if uint64(info.Size()) > s.bytesUsed {
-			return count, reclaimed, fmt.Errorf("%w: capture queue accounted bytes underflow", ErrCorrupt)
-		}
-		s.bytesUsed -= uint64(info.Size())
-		count++
-		reclaimed += uint64(info.Size())
-	}
-	return count, reclaimed, nil
+        hasCandidates=true
+    }
+    if hasCandidates{
+        return 0,0,ErrRetentionNotAuthorized
+    }
+    return 0,0,nil
 }

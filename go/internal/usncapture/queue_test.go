@@ -241,16 +241,16 @@ func TestReclaimOnlyAfterAcknowledgement(t *testing.T) {
 	if err := s.CommitProcessed(seg, testScopedSpoolProof(seg)); err != nil {
 		t.Fatal(err)
 	}
-	count, bytes, err := s.ReclaimAcknowledged()
-	if err != nil || count != 1 || bytes == 0 {
-		t.Fatalf("acknowledged reclaim %d %d %v", count, bytes, err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, seg.Name)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("acknowledged batch not removed")
-	}
-	if _, err := Open(dir, DefaultMaxPendingBytes); err != nil {
-		t.Fatalf("restart following reclaim must work: %v", err)
-	}
+    count,bytes,err:=s.ReclaimAcknowledged()
+    if count!=0||bytes!=0||!errors.Is(err,ErrRetentionNotAuthorized){
+        t.Fatalf("local spool proof permitted unacknowledged original source retirement: %d %d %v",count,bytes,err)
+    }
+    if _,err:=os.Stat(filepath.Join(dir,seg.Name));err!=nil{
+        t.Fatal("original source removed without receiver/observation proof",err)
+    }
+    if _,err:=Open(dir,DefaultMaxPendingBytes);err!=nil{
+        t.Fatalf("restart must preserve original unreclaimed source: %v",err)
+    }
 }
 
 func TestCrashAfterVerifiedReceiptBeforeProcessedCursorRecoversWithoutReplay(t *testing.T){
