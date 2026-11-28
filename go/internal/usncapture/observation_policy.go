@@ -5,6 +5,9 @@
 package usncapture
 
 import (
+    "crypto/sha256"
+    "encoding/hex"
+    "encoding/json"
     "errors"
     "fmt"
     "strconv"
@@ -76,6 +79,15 @@ func SelectPolicyObservations(
     if len(roots)==0{return ObservationSelection{},errors.New("FI independent observation requires governed roots")}
     if seg.SHA256=="" || seg.Name!=segmentNameMust(seg.Batch.StartUSN){
         return ObservationSelection{},errors.New("FI observation must refer to an immutable original source")
+    }
+    if err:=validateBatch(seg.Batch);err!=nil{
+        return ObservationSelection{},fmt.Errorf("%w: observation original source format: %v",ErrCorrupt,err)
+    }
+    raw,err:=json.Marshal(seg.Batch)
+    if err!=nil{return ObservationSelection{},err}
+    digest:=sha256.Sum256(raw)
+    if hex.EncodeToString(digest[:])!=seg.SHA256{
+        return ObservationSelection{},fmt.Errorf("%w: observation source batch SHA-256 mismatch",ErrCorrupt)
     }
     result:=ObservationSelection{Requests:make([]SelectedObjectObservation,0,64)}
     for _,root:=range roots{

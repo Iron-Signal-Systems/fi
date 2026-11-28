@@ -5,6 +5,9 @@
 package usncapture
 
 import (
+    "crypto/sha256"
+    "encoding/hex"
+    "encoding/json"
     "errors"
     "testing"
 
@@ -21,6 +24,7 @@ func TestSelectiveObservationCoalescesSourceFactsWithoutInventingFileState(t *te
         {FileIdentity:file,ParentIdentity:root,USN:"125",ReasonRaw:"2048"},
         {FileIdentity:scopeTestIdentity("33"),ParentIdentity:root,USN:"130",ReasonRaw:"512"},
     }
+    rehashObservationPolicyFixture(t,&seg)
     plan:=GovernedProcessingPlan{
         ScopeID:"root-test",RootIdentity:root,
         Resolve:DirectRootScopeResolver("root-test",seg.Batch.JournalID,root),
@@ -45,6 +49,7 @@ func TestSelectiveObservationRetainsUnresolvedAndEnforcesBatchLimit(t *testing.T
     for i:=range seg.Batch.Records{
         seg.Batch.Records[i].ReasonRaw="256"
     }
+    rehashObservationPolicyFixture(t,&seg)
     plan:=GovernedProcessingPlan{
         ScopeID:"root-test",RootIdentity:root,
         Resolve:func(records.USNChangeObservation)(ScopeEvidence,error){return ScopeEvidence{},nil},
@@ -55,6 +60,7 @@ func TestSelectiveObservationRetainsUnresolvedAndEnforcesBatchLimit(t *testing.T
         t.Fatalf("unresolved object was silently interpreted as excluded: %+v %v",got,err)
     }
     seg.Batch.Records[1].FileIdentity=scopeTestIdentity("55")
+    rehashObservationPolicyFixture(t,&seg)
     if _,err:=SelectPolicyObservations(seg,[]GovernedProcessingPlan{plan},
         ObservationPolicy{Version:ObservationPolicyVersion,MaxObjectsPerSegment:1});!errors.Is(err,ErrCapacity){
         t.Fatalf("batch overrun silently discarded required object: %v",err)
@@ -63,6 +69,7 @@ func TestSelectiveObservationRetainsUnresolvedAndEnforcesBatchLimit(t *testing.T
 func TestSelectiveObservationRejectsUnreviewedPolicyAndUnprovedExclusion(t *testing.T){
     seg:=exampleScopedSegment(t)
     root:=scopeTestIdentity("5")
+    rehashObservationPolicyFixture(t,&seg)
     plan:=GovernedProcessingPlan{ScopeID:"root-test",RootIdentity:root,
         Resolve:func(c records.USNChangeObservation)(ScopeEvidence,error){
             return ScopeEvidence{Class:ScopeOutside,ScopeID:"root-test",
@@ -79,4 +86,14 @@ func TestSelectiveObservationRejectsUnreviewedPolicyAndUnprovedExclusion(t *test
         ObservationPolicy{Version:"unknown",MaxObjectsPerSegment:4});err==nil{
         t.Fatal("policy accepted unknown version")
     }
+}
+
+// Synthetic tests may change source records ONLY after recomputing the
+// fixture digest. Production observes the Store.Next SHA-256; the policy
+// independently refuses to trust any changed raw source or reason bits.
+func rehashObservationPolicyFixture(t *testing.T,seg *Segment){
+    t.Helper()
+    raw,err:=json.Marshal(seg.Batch);if err!=nil{t.Fatal(err)}
+    hash:=sha256.Sum256(raw)
+    seg.SHA256=hex.EncodeToString(hash[:])
 }

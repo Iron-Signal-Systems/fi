@@ -115,15 +115,26 @@ func TestIndependentObservationPolicyNoWorkRequiresNoLiveReads(t *testing.T){
     // The first source segment is left untouched by the independent worker.
     seg,ok,err:=ledger.Next()
     if err!=nil||!ok{t.Fatal(err)}
-    seg.Batch.Records[0].ReasonRaw="512"
-    _=seg // source bytes are immutable: do NOT rewrite to fake a delete.
     policy:=usncapture.ObservationPolicy{Version:usncapture.ObservationPolicyVersion,MaxObjectsPerSegment:16}
-    // A policy that lacks any governed object selection is still required
-    // to pass the no-work source validation. This source has a FileCreate,
-    // therefore zero-work publication must be rejected.
+    // The true original FileCreate requires current NTFS observation and
+    // cannot advance through the no-work path.
     _,err=usncapture.VerifyNoWorkObservationProof(seg,plan,policy)
     if !errors.Is(err,usncapture.ErrObservationPending){
         t.Fatalf("selected FI object incorrectly declared no-work: %v",err)
     }
+    // Mutating a USN reason after capture MUST NOT permit a false no-work
+    // receipt against the original source's immutable SHA-256.
+    seg.Batch.Records[0].ReasonRaw="512"
+    if _,err:=usncapture.VerifyNoWorkObservationProof(seg,plan,policy);!errors.Is(err,usncapture.ErrCorrupt){
+        t.Fatalf("tampered raw USN reason falsely changed observation policy decision: %v",err)
+    }
     _=store;_=paths;_=dir
+}
+
+func testObservationSourceUSNEvent(t *testing.T)records.USNChangeObservation{
+    t.Helper()
+    original,_:=testVolumeCaptureForProcessing(t)
+    seg,ok,err:=original.Next()
+    if err!=nil||!ok||len(seg.Batch.Records)==0{t.Fatalf("no valid original USN test event: %v",err)}
+    return seg.Batch.Records[0]
 }
