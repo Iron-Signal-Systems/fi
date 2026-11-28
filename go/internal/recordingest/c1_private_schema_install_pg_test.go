@@ -63,6 +63,11 @@ func TestC1PrivateSchemaRealPostgres18AtomicDDL(t *testing.T){
             t.Fatalf("canonical fixture migration %s: %v",m.Name,err)
         }
     }
+    // Exercise one actual source-only USN event and its child relational
+    // projection under the disposable PostgreSQL 18 engine. The helper
+    // rolls back all source rows and asserts no canonical residue.
+    proveScopedUSNPostgres18Projection(t,ctx,admin)
+
     // A signed generation that has not been published must remain
     // FinalVerified, not FinalAccepted. Exercise the SAME read-only SQL
     // and columns against the actual 49-table FI PostgreSQL18 DDL.
