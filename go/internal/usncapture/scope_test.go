@@ -20,6 +20,7 @@ func scopeTestBatch() (records.USNReadBatch, records.NTFSObjectIdentity) {
     parent := scopeTestIdentity("2")
     obj := scopeTestIdentity("3")
     batch := exampleBatch(exampleAnchor(), 100, 180)
+    batch.ScopeID = "volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     batch.Records = []records.USNChangeObservation{{
         FileIdentity: obj, ParentIdentity: parent, USN: "151",
     }}
@@ -29,7 +30,7 @@ func scopeTestBatch() (records.USNReadBatch, records.NTFSObjectIdentity) {
 func scopeEvidenceFor(batch records.USNReadBatch, root records.NTFSObjectIdentity, change records.USNChangeObservation, class ScopeClass) ScopeEvidence {
     return ScopeEvidence{
         Class: class,
-        ScopeID: batch.ScopeID, JournalID: batch.JournalID,
+        ScopeID: "root-test", JournalID: batch.JournalID,
         RootIdentity: root, FileIdentity: change.FileIdentity,
         ParentIdentity: change.ParentIdentity, EventUSN: change.USN,
         HistoricalAncestry: true, CompleteLinkCoverage: true,
@@ -39,7 +40,7 @@ func scopeEvidenceFor(batch records.USNReadBatch, root records.NTFSObjectIdentit
 
 func TestScopeAllowsHistoricalInside(t *testing.T) {
     batch, root := scopeTestBatch()
-    result, err := SelectCapturedScope(batch, root, func(c records.USNChangeObservation) (ScopeEvidence, error) {
+    result, err := SelectCapturedScope(batch, "root-test", root, func(c records.USNChangeObservation) (ScopeEvidence, error) {
         return scopeEvidenceFor(batch, root, c, ScopeGoverned), nil
     })
     if err != nil || result.Governed != 1 || result.Excluded != 0 || len(result.Included) != 1 {
@@ -49,7 +50,7 @@ func TestScopeAllowsHistoricalInside(t *testing.T) {
 
 func TestScopeExcludesOnlyVerifiedHistoricalOutside(t *testing.T) {
     batch, root := scopeTestBatch()
-    result, err := SelectCapturedScope(batch, root, func(c records.USNChangeObservation) (ScopeEvidence, error) {
+    result, err := SelectCapturedScope(batch, "root-test", root, func(c records.USNChangeObservation) (ScopeEvidence, error) {
         return scopeEvidenceFor(batch, root, c, ScopeOutside), nil
     })
     if err != nil || result.Excluded != 1 || len(result.Included) != 0 {
@@ -71,7 +72,7 @@ func TestScopeCannotDropStaleOrUnprovedOutside(t *testing.T) {
     }
     for name, modify := range cases {
         t.Run(name, func(t *testing.T) {
-            result, err := SelectCapturedScope(batch, root, func(c records.USNChangeObservation) (ScopeEvidence, error) {
+            result, err := SelectCapturedScope(batch, "root-test", root, func(c records.USNChangeObservation) (ScopeEvidence, error) {
                 p := scopeEvidenceFor(batch, root, c, ScopeOutside)
                 modify(&p)
                 return p, nil
@@ -88,7 +89,7 @@ func TestScopeMustPreserveEveryUnresolvedEventIncludingRepeatedFileIDs(t *testin
     second := batch.Records[0]
     second.USN = "160"
     batch.Records = append(batch.Records, second)
-    result, err := SelectCapturedScope(batch, root, func(records.USNChangeObservation) (ScopeEvidence, error) {
+    result, err := SelectCapturedScope(batch, "root-test", root, func(records.USNChangeObservation) (ScopeEvidence, error) {
         return ScopeEvidence{}, nil
     })
     if err != nil || result.Total != 2 || result.Unresolved != 2 || len(result.Included) != 2 ||
@@ -100,7 +101,7 @@ func TestScopeMustPreserveEveryUnresolvedEventIncludingRepeatedFileIDs(t *testin
 func TestScopeResolverFailureFailsClosed(t *testing.T) {
     batch, root := scopeTestBatch()
     marker := errors.New("ancestry index damaged")
-    _, err := SelectCapturedScope(batch, root, func(records.USNChangeObservation) (ScopeEvidence, error) {
+    _, err := SelectCapturedScope(batch, "root-test", root, func(records.USNChangeObservation) (ScopeEvidence, error) {
         return ScopeEvidence{}, marker
     })
     if !errors.Is(err, marker) {

@@ -15,9 +15,8 @@ import (
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
-// ScopedProjectionVersion is intentionally not a FI spool record kind.
-// A new source-bound sender and backend contract must be reviewed before
-// these projection files are published to FISender or the C220 receiver.
+// This is the Windows producer of the independent backend-usn v1 contract.
+// Service activation remains gated on durable filtering and verified spool proof.
 const ScopedProjectionVersion = "fi-usn-scoped-projection/1"
 
 // ScopedProjection is a locally derived transport candidate, bound to one
@@ -28,7 +27,11 @@ const ScopedProjectionVersion = "fi-usn-scoped-projection/1"
 // hashes are separate evidence, never invented from journal-only facts.
 type ScopedProjection struct {
     Version string `json:"version"`
-    ScopeID string `json:"scope_id"`
+    CaptureScopeID string `json:"capture_scope_id"`
+    GovernedScopeID string `json:"governed_scope_id"`
+    RootIdentity records.NTFSObjectIdentity `json:"root_identity"`
+    CapturedAt string `json:"captured_at"`
+    CollectionMethod string `json:"collection_method"`
     JournalID string `json:"journal_id"`
     VolumeIdentity records.VolumeIdentity `json:"volume_identity"`
     StartUSN string `json:"start_usn"`
@@ -44,7 +47,17 @@ type ScopedProjection struct {
 
 // BuildScopedProjection fails closed when source history, filtering decisions,
 // or segment custody disagree. The sole input is a verified Store.Next segment.
-func BuildScopedProjection(seg Segment, selection ScopeSelection) (ScopedProjection, error) {
+func BuildScopedProjection(seg Segment, governedScopeID string, root records.NTFSObjectIdentity, selection ScopeSelection) (ScopedProjection, error) {
+    if governedScopeID == "" {
+        return ScopedProjection{}, errors.New("governed scope ID required")
+    }
+    if err := records.ValidateNTFSObjectIdentity(root); err != nil {
+        return ScopedProjection{}, fmt.Errorf("invalid governed root identity: %w", err)
+    }
+    volumeScope, err := VolumeCaptureScopeID(seg.Batch.VolumeIdentity)
+    if err != nil || volumeScope != seg.Batch.ScopeID {
+        return ScopedProjection{}, errors.New("raw capture scope is not the exact NTFS volume identity")
+    }
     if seg.SHA256 == "" || len(seg.SHA256) != 64 {
         return ScopedProjection{}, errors.New("verified raw capture segment SHA-256 required")
     }
@@ -96,7 +109,11 @@ func BuildScopedProjection(seg Segment, selection ScopeSelection) (ScopedProject
     included := append([]ScopedChange(nil), selection.Included...)
     return ScopedProjection{
         Version: ScopedProjectionVersion,
-        ScopeID: seg.Batch.ScopeID,
+        CaptureScopeID: seg.Batch.ScopeID,
+        GovernedScopeID: governedScopeID,
+        RootIdentity: root,
+        CapturedAt: seg.Batch.ObservedAt,
+        CollectionMethod: seg.Batch.CollectionMethod,
         JournalID: seg.Batch.JournalID,
         VolumeIdentity: seg.Batch.VolumeIdentity,
         StartUSN: seg.Batch.StartUSN,

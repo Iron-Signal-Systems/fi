@@ -42,9 +42,9 @@ type ScopeEvidence struct {
 type ScopeResolver func(records.USNChangeObservation) (ScopeEvidence, error)
 
 type ScopedChange struct {
-    Source records.USNChangeObservation
-    Class  ScopeClass
-    Reason string
+    Source records.USNChangeObservation `json:"source"`
+    Class  ScopeClass `json:"class"`
+    Reason string `json:"reason"`
 }
 
 type ScopeSelection struct {
@@ -62,8 +62,8 @@ type ScopeSelection struct {
 // A historical outside decision requires a complete link+ancestry proof for
 // the exact object, parent, scope, journal and USN position. Current containment
 // by itself can never satisfy these requirements.
-func SelectCapturedScope(batch records.USNReadBatch, root records.NTFSObjectIdentity, resolve ScopeResolver) (ScopeSelection, error) {
-    if batch.ScopeID == "" || batch.JournalID == "" {
+func SelectCapturedScope(batch records.USNReadBatch, governedScopeID string, root records.NTFSObjectIdentity, resolve ScopeResolver) (ScopeSelection, error) {
+    if batch.ScopeID == "" || governedScopeID == "" || batch.JournalID == "" {
         return ScopeSelection{}, errors.New("FI scoped USN capture requires source scope and journal")
     }
     if err := records.ValidateNTFSObjectIdentity(root); err != nil {
@@ -80,7 +80,7 @@ func SelectCapturedScope(batch records.USNReadBatch, root records.NTFSObjectIden
         }
 
         // A scope proof must be bound to the precise historical event.
-        bound := evidence.ScopeID == batch.ScopeID &&
+        bound := evidence.ScopeID == governedScopeID &&
             evidence.JournalID == batch.JournalID &&
             evidence.RootIdentity == root &&
             evidence.FileIdentity == change.FileIdentity &&

@@ -17,6 +17,9 @@ import (
 func exampleScopedSegment(t *testing.T) Segment {
     t.Helper()
     batch := exampleBatch(exampleAnchor(), 100, 200)
+    volumeScope, err := VolumeCaptureScopeID(batch.VolumeIdentity)
+    if err != nil { t.Fatal(err) }
+    batch.ScopeID = volumeScope
     batch.Records = []records.USNChangeObservation{
         { MajorVersion: "2", MinorVersion: "0",
           FileIdentity: records.NTFSObjectIdentity{MethodVersion: "ntfs/1", FileReferenceNumber: "22", SequenceNumber: "1"},
@@ -47,12 +50,13 @@ func TestBuildScopedProjectionPreservesEveryUnresolvedChange(t *testing.T) {
             {Source: seg.Batch.Records[1], Class: ScopeUnresolved},
         },
     }
-    projection, err := BuildScopedProjection(seg, selection)
+    projection, err := BuildScopedProjection(seg, "root-test", scopeTestIdentity("1"), selection)
     if err != nil || projection.SourceRecordCount != 2 ||
         projection.IncludedRecordCount != 2 || projection.UnresolvedRecordCount != 2 ||
         projection.Included[0].Source.USN != "111" || projection.Included[1].Source.USN != "120" {
         t.Fatalf("lost raw USN history: %+v %v", projection, err)
     }
+    if projection.CaptureScopeID != seg.Batch.ScopeID || projection.GovernedScopeID != "root-test" || projection.CapturedAt != seg.Batch.ObservedAt || projection.RootIdentity != scopeTestIdentity("1") {t.Fatal("contract is not bound to governed root and original volume")}
     if projection.SourceBatchSHA256 != seg.SHA256 {
         t.Fatal("projection detached from durable raw source")
     }
@@ -62,7 +66,7 @@ func TestBuildScopedProjectionRejectsUnprovedExclusion(t *testing.T) {
     selection := ScopeSelection{Total: 2, Excluded: 1, Governed: 1,
         Included: []ScopedChange{{Source: seg.Batch.Records[0], Class: ScopeGoverned}},
     }
-    if _, err := BuildScopedProjection(seg, selection); err == nil {
+    if _, err := BuildScopedProjection(seg, "root-test", scopeTestIdentity("1"), selection); err == nil {
         t.Fatal("accepted dropped historical USN event without durable proof")
     }
 }
@@ -75,14 +79,14 @@ func TestBuildScopedProjectionRejectsForgedOrReorderedChanges(t *testing.T) {
         "reordered": {{Source: seg.Batch.Records[1], Class: ScopeUnresolved}, {Source: seg.Batch.Records[0], Class: ScopeUnresolved}},
     } {
         t.Run(name, func(t *testing.T) {
-            _, err := BuildScopedProjection(seg, ScopeSelection{Total: 2, Unresolved: 2, Included: included})
+            _, err := BuildScopedProjection(seg, "root-test", scopeTestIdentity("1"), ScopeSelection{Total: 2, Unresolved: 2, Included: included})
             if err == nil {
                 t.Fatal("accepted source event mutation")
             }
         })
     }
     seg.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
-    _, err := BuildScopedProjection(seg, ScopeSelection{Total: 2, Unresolved: 2, Included: []ScopedChange{
+    _, err := BuildScopedProjection(seg, "root-test", scopeTestIdentity("1"), ScopeSelection{Total: 2, Unresolved: 2, Included: []ScopedChange{
         {Source: seg.Batch.Records[0], Class: ScopeUnresolved},
         {Source: seg.Batch.Records[1], Class: ScopeUnresolved},
     }})
