@@ -126,6 +126,11 @@ SELECT (SELECT count(*) FROM fi.usn_scoped_capture WHERE source_record_id=$1),
 	if err := verifyScopedUSNCapturesComplete(ctx, tx, genID); err != nil {
 		t.Fatalf("independent B relational USN proof failed for two batches: %v", err)
 	}
+    // The same disposable SQL transaction proves asynchronous File-ID
+    // source binding and verifier-B failure injections without leaving
+    // any additional canonical source rows in the surrounding fixture.
+    proveSelectiveUSNPostgres18Outcome(t,ctx,tx,genID,recordIDs[0])
+
 
 	// B must reject an overlap even though both source digests are
 	// different and their original event checksums remain plausible.
