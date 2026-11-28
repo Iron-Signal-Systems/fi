@@ -152,7 +152,54 @@ LIMIT 1
 			boundaryID, gotObjects, expectedObjects, gotChanges, expectedChanges)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	return err
+        return verifyScopedUSNCapturesComplete(ctx,tx,shadowGenerationID)
+    }
+    return err
+}
+
+// verifyScopedUSNCapturesComplete independently checks the new source-fact
+// family in durable SQL, not the Windows publisher's in-memory counters.
+// C1 B invokes this through the same read-only snapshot as the old USN proof.
+func verifyScopedUSNCapturesComplete(ctx context.Context, tx pgx.Tx, generationID int64) error {
+    if ctx==nil || tx==nil || generationID<=0 {
+        return errors.New("FI scoped USN: invalid independent SQL verification context")
+    }
+    var duplicateScope,digest string
+    var duplicates int64
+    err:=tx.QueryRow(ctx,`
+SELECT sr.scope_id,encode(c.source_batch_sha256,'hex'),count(*)
+FROM fi.usn_scoped_capture c
+JOIN fi.source_record sr ON sr.source_record_id=c.source_record_id
+JOIN fi.source_batch sb ON sb.source_batch_id=sr.source_batch_id
+WHERE sb.recorded_generation_id=$1
+GROUP BY sr.scope_id,c.source_batch_sha256
+HAVING count(*)<>1
+LIMIT 1`,generationID).Scan(&duplicateScope,&digest,&duplicates)
+    if err==nil{
+        return fmt.Errorf("FI scoped USN: duplicate source batch scope=%s SHA=%s count=%d",duplicateScope,digest,duplicates)
+    }
+    if !errors.Is(err,pgx.ErrNoRows){return err}
+    var id int64
+    var expected,got,governed,unresolved int64
+    err=tx.QueryRow(ctx,`
+SELECT c.source_record_id,c.included_record_count,count(ch.change_ordinal),
+       count(ch.change_ordinal) FILTER (WHERE ch.scope_class='Governed'),
+       count(ch.change_ordinal) FILTER (WHERE ch.scope_class='Unresolved')
+FROM fi.usn_scoped_capture c
+JOIN fi.source_record sr ON sr.source_record_id=c.source_record_id
+JOIN fi.source_batch sb ON sb.source_batch_id=sr.source_batch_id
+LEFT JOIN fi.usn_scoped_change ch ON ch.source_record_id=c.source_record_id
+WHERE sb.recorded_generation_id=$1
+GROUP BY c.source_record_id,c.included_record_count,c.governed_record_count,
+         c.unresolved_record_count,sr.scope_id,c.governed_scope_id
+HAVING count(ch.change_ordinal)<>c.included_record_count
+   OR count(ch.change_ordinal) FILTER (WHERE ch.scope_class='Governed')<>c.governed_record_count
+   OR count(ch.change_ordinal) FILTER (WHERE ch.scope_class='Unresolved')<>c.unresolved_record_count
+   OR sr.scope_id<>c.governed_scope_id
+LIMIT 1`,generationID).Scan(&id,&expected,&got,&governed,&unresolved)
+    if err==nil {
+        return fmt.Errorf("FI scoped USN: incomplete source capture record=%d events=%d/%d governed=%d unresolved=%d",id,got,expected,governed,unresolved)
+    }
+    if errors.Is(err,pgx.ErrNoRows){return nil}
+    return err
 }
