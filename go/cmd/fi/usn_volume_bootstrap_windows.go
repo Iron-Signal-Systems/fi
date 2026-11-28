@@ -13,6 +13,8 @@ import (
     "os"
     "path/filepath"
     "reflect"
+    "strconv"
+    "sync"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/config"
     "github.com/Iron-Signal-Systems/fi/go/internal/usncapture"
@@ -30,6 +32,7 @@ type freshVolumeBootstrap struct {
     RootCount int `json:"root_count"`
     VerifiedBaselines int `json:"verified_baselines"`
     Initialized bool `json:"initialized"`
+    CapturedNextUSN string `json:"captured_next_usn,omitempty"`
 }
 type freshUSNBootstrapSummary struct {
     Status string `json:"status"`
@@ -80,9 +83,10 @@ func preflightFreshUSNVolumeBootstrap(value config.Config) error {
 
 // initializeFreshUSNVolumeSources uses existing governed baseline collection,
 // but does NOT run or create the old root-owned USN catch-up checkpoint. A
-// successful baseline is necessary yet never sufficient: the exact PRE-
-// baseline journal anchor must still exist after ALL roots finish. No queue
-// is created until every independent root/volume continuity check passes.
+// successful baseline is necessary yet never sufficient. The original
+// journal anchor is durably initialized BEFORE baseline work, and an
+// independent raw capture worker runs DURING every expensive baseline.
+// Processing stays disabled until all baselines and source custody pass.
 func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSummary,error){
     result:=freshUSNBootstrapSummary{Status:"Rejected",Version:"fi-usn-volume-bootstrap/1",
         Volumes:[]freshVolumeBootstrap{}}
@@ -123,44 +127,19 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
             group:group,anchor:anchors[0],rootAnchors:anchors,
         })
     }
-    // Run verified baseline collection for EVERY root, never the legacy
-    // checkpoint writer. No source queue moves during this stage.
-    for i,group:=range preparedGroups {
-        for _,root:=range group.group.GovernedRoots {
-            if err:=ctx.Err();err!=nil{return result,err}
-            scope:=configuredScopeID(root)
-            baseline,err:=writeSpoolRoot(ctx,scope,root)
-            if err!=nil{return result,fmt.Errorf("verified baseline %q: %w",root,err)}
-            if err:=validateBaselineSpoolForCheckpoint(baseline);err!=nil{
-                return result,fmt.Errorf("incomplete baseline %q: %w",root,err)
-            }
-            if baseline.SupportingSourceErrors!=0 {
-                return result,fmt.Errorf("FI baseline %q has %d unresolved supporting-source errors",
-                    root,baseline.SupportingSourceErrors)
-            }
-            result.Volumes[i].VerifiedBaselines++
-        }
+    // Establish one owner-only immutable capture queue BEFORE any expensive
+    // baseline. Capture begins at the original PRE-baseline USN for each
+    // volume. Baseline may take hours; it must NEVER stall raw journal reads.
+    // If baseline or capture fails the queue is retained for forensic review.
+    type captureJob struct {
+        store *usncapture.Store
+        owner interface{ Close() error }
     }
-    // Validate BOTH volume and per-root original anchors after all baselines.
-    // A journal wrap, root move, recreated journal or identity reuse is a
-    // failure, never permission to advance to today's live journal head.
-    for _,group:=range preparedGroups {
-        for i,root:=range group.group.GovernedRoots {
-            _,_,err:=prepareCheckpointFromBaselineAnchor(ctx,
-                configuredScopeID(root),root,group.rootAnchors[i])
-            if err!=nil{return result,fmt.Errorf("original root USN continuity %q: %w",root,err)}
-        }
-        _,_,err:=prepareCheckpointFromBaselineAnchor(ctx,
-            configuredScopeID(group.group.RepresentativeRoot),
-            group.group.RepresentativeRoot,group.anchor)
-        if err!=nil{
-            return result,fmt.Errorf("original volume pre-baseline journal continuity: %w",err)
-        }
-    }
-    // Two-phase preflight has passed. The only permitted new mutable objects
-    // are one independently captured cursor pair per previously FI-free
-    // volume. No previous queue/checkpoint is overwritten.
-    for i,group:=range preparedGroups {
+    jobs:=make([]captureJob,0,len(preparedGroups))
+    defer func(){
+        for _,job:=range jobs{_ =job.owner.Close()}
+    }()
+    for i,group:=range preparedGroups{
         a:=group.anchor
         cursor:=usncapture.Cursor{
             Version:usncapture.SchemaVersion,
@@ -171,15 +150,139 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
         }
         dir:=result.Volumes[i].QueueDir
         if err:=usncapture.Initialize(dir,cursor);err!=nil{
-            return result,fmt.Errorf("create fresh volume source cursor %s: %w",dir,err)
+            return result,fmt.Errorf("create original pre-baseline USN cursor %s: %w",dir,err)
         }
-        reopened,err:=usncapture.Open(dir,value.Collector.USNCaptureMaxBytes)
+        owner,err:=usncapture.AcquireCaptureOwner(dir)
+        if err!=nil{return result,fmt.Errorf("lock pre-baseline source %s: %w",dir,err)}
+        jobs=append(jobs,captureJob{owner:owner})
+        store,err:=usncapture.Open(dir,value.Collector.USNCaptureMaxBytes)
         if err!=nil{return result,err}
-        if !reflect.DeepEqual(reopened.CaptureCursor(),cursor)||
-            !reflect.DeepEqual(reopened.ProcessingCursor(),cursor){
-            return result,errors.New("FI initialized volume source anchors did not survive durable readback")
+        if !reflect.DeepEqual(store.CaptureCursor(),cursor) ||
+            !reflect.DeepEqual(store.ProcessingCursor(),cursor){
+            return result,errors.New("pre-baseline volume source cursor failed durable readback")
         }
+        jobs[len(jobs)-1].store=store
         result.Volumes[i].Initialized=true
+    }
+
+    captureCtx,stopCapture:=context.WithCancel(ctx)
+    var captureWait sync.WaitGroup
+    captureFailures:=make(chan error,len(preparedGroups))
+    for i,group:=range preparedGroups{
+        i,group:=i,group
+        captureWait.Add(1)
+        go func(){
+            defer captureWait.Done()
+            err:=runServiceUSNRawCaptureStore(captureCtx,value.Collector.USNEvery,
+                group.group.CaptureScopeID,group.group.RepresentativeRoot,
+                jobs[i].store,func(record serviceRuntimeRecord)error {
+                    return appendServiceRuntimeRecordAt(value.Storage.StateDir,record)
+                })
+            if err!=nil{
+                captureFailures<-fmt.Errorf("pre-baseline volume %s capture: %w",
+                    group.group.CaptureScopeID,err)
+                stopCapture()
+            }
+        }()
+    }
+    // Cancellation must always finish before releasing owners (including
+    // failures in the baseline stage). Do not leave a detached capture
+    // process running past bootstrap.
+    captureStopped:=false
+    stopAndJoin:=func(){
+        if captureStopped{return}
+        captureStopped=true
+        stopCapture()
+        captureWait.Wait()
+    }
+    defer stopAndJoin()
+    checkCaptureFailure:=func()error{
+        select{
+        case failure:=<-captureFailures:return failure
+        default:
+            if captureCtx.Err()!=nil && ctx.Err()==nil {
+                return errors.New("FI pre-baseline source capture was canceled before acceptance")
+            }
+            return nil
+        }
+    }
+
+    // Run every governed-root baseline while the raw journal worker is
+    // independently preserving ORIGINAL source facts and capture cursor.
+    // The processing cursor remains at the exact pre-baseline anchor.
+    for i,group:=range preparedGroups {
+        for _,root:=range group.group.GovernedRoots{
+            if err:=captureCtx.Err();err!=nil{
+                if failed:=checkCaptureFailure();failed!=nil{return result,failed}
+                return result,err
+            }
+            scope:=configuredScopeID(root)
+            baseline,err:=writeSpoolRoot(captureCtx,scope,root)
+            if failed:=checkCaptureFailure();failed!=nil{return result,failed}
+            if err!=nil{return result,fmt.Errorf("verified baseline %q: %w",root,err)}
+            if err:=validateBaselineSpoolForCheckpoint(baseline);err!=nil{
+                return result,fmt.Errorf("incomplete baseline %q: %w",root,err)
+            }
+            if baseline.SupportingSourceErrors!=0{
+                return result,fmt.Errorf("FI baseline %q has %d unresolved supporting-source errors",
+                    root,baseline.SupportingSourceErrors)
+            }
+            result.Volumes[i].VerifiedBaselines++
+        }
+    }
+    // Finish the raw capture workers. The queue can only be activated by
+    // the separately installed SCM service later, with the same immutable
+    // source cursor. This bootstrap never starts sender or processing.
+    stopAndJoin()
+    if failed:=checkCaptureFailure();failed!=nil{return result,failed}
+
+    // Exact root identities and journal IDs must survive the baseline.
+    // Unlike the OLD checkpoint semantics, original NextUSN may now be
+    // older than FirstUSN: that history is safely in our immutable queue.
+    // The CURRENT durable capture cursor must still be in NTFS retention.
+    for i,group:=range preparedGroups{
+        for j,root:=range group.group.GovernedRoots{
+            current,err:=captureBaselineAnchor(ctx,configuredScopeID(root),root)
+            if err!=nil{return result,err}
+            original:=group.rootAnchors[j]
+            if current.GovernedRoot.ObjectIdentity!=original.GovernedRoot.ObjectIdentity ||
+                !reflect.DeepEqual(current.GovernedRoot.VolumeIdentity,original.GovernedRoot.VolumeIdentity) ||
+                current.JournalState.JournalID!=original.JournalState.JournalID ||
+                !reflect.DeepEqual(current.JournalState.VolumeIdentity,original.JournalState.VolumeIdentity){
+                return result,fmt.Errorf("%w: root or journal changed during baseline %q",
+                    usncapture.ErrConflict,root)
+            }
+        }
+        cursor:=jobs[i].store.CaptureCursor()
+        processed:=jobs[i].store.ProcessingCursor()
+        if processed.NextUSN!=group.anchor.JournalState.NextUSN ||
+            cursor.ScopeID!=group.group.CaptureScopeID ||
+            cursor.JournalID!=group.group.JournalID ||
+            !reflect.DeepEqual(cursor.VolumeIdentity,group.group.VolumeIdentity){
+            return result,fmt.Errorf("%w: pre-baseline source custody moved or changed identity",
+                usncapture.ErrConflict)
+        }
+        current,err:=usn.QueryJournal(ctx,group.group.CaptureScopeID,
+            group.group.RepresentativeRoot)
+        if err!=nil{return result,err}
+        first,err:=strconv.ParseUint(current.FirstUSN,10,64)
+        if err!=nil{return result,err}
+        lowest,err:=strconv.ParseUint(current.LowestValidUSN,10,64)
+        if err!=nil{return result,err}
+        captured,err:=strconv.ParseUint(cursor.NextUSN,10,64)
+        if err!=nil{return result,err}
+        if current.JournalID!=cursor.JournalID ||
+            !reflect.DeepEqual(current.VolumeIdentity,cursor.VolumeIdentity){
+            return result,fmt.Errorf("%w: original NTFS journal changed during bootstrap",
+                usncapture.ErrConflict)
+        }
+        if captured<first || (lowest!=0 && captured<lowest){
+            return result,fmt.Errorf("%w: journal outran durable pre-baseline capture",
+                usncapture.ErrGap)
+        }
+        // Avoid claiming unmeasured service-start continuity. The next
+        // service startup checks the same cursor against FirstUSN again.
+        result.Volumes[i].CapturedNextUSN=cursor.NextUSN
     }
     result.Status="SourceAnchorsInitialized"
     return result,nil
