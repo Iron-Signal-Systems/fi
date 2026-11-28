@@ -52,7 +52,7 @@ func c1PreflightDirectCanonicalSQL(ctx context.Context,dsn string)error{
     err=tx.QueryRow(ctx,`SELECT has_table_privilege(current_user,'fi.ingest_journal','INSERT'),
       has_schema_privilege(current_user,'fi','CREATE')`).Scan(&journalWrite,&schemaCreate)
     if err!=nil{return err}
-    if role!="fi_ingest"||tables!=51||denied!=0||seqDenied!=0||journalWrite||schemaCreate {
+    if role!="fi_ingest"||tables!=len(bootstrapSoRTables)||denied!=0||seqDenied!=0||journalWrite||schemaCreate {
         return fmt.Errorf("C1 direct: canonical insert-only worker permissions missing/unsafe role=%s tables=%d denied=%d sequences_denied=%d journal_insert=%t schema_create=%t",
             role,tables,denied,seqDenied,journalWrite,schemaCreate)
     }

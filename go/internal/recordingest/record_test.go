@@ -60,13 +60,14 @@ func TestPrepareSourceRecordRejectsUnknownKind(t *testing.T) {
 
 func TestSupportedRecordKindsExact(t *testing.T) {
 	kinds := SupportedRecordKinds()
-	if len(kinds) != 14 {
-		t.Fatalf("supported kinds = %d, want 14", len(kinds))
+	if len(kinds) != 15 {
+		t.Fatalf("supported kinds = %d, want 15", len(kinds))
 	}
 	joined := strings.Join(kinds, "\n")
 	for _, want := range []string{
 		"FileObservation",
 		"USNObjectObservation",
+        "USNSelectiveObservation",
 		"WindowsSecurityEvent",
 	} {
 		if !strings.Contains(joined, want) {
