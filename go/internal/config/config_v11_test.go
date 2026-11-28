@@ -251,6 +251,7 @@ func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T)
         "collector.usn_every = 10m",
         "collector.usn_every = 10m\ncollector.usn_mode = volume-source-v1\n"+
         "collector.usn_capture_max_bytes = 17179869184\n"+
+        "collector.usn_capture_min_free_bytes = 2147483648\n"+
         "collector.usn_capture_every = 100ms\n"+
         "collector.usn_processing_every = 100ms",1)
     source=strings.Replace(source,"storage.state_dir = C:\\ProgramData\\FI\\state",
@@ -260,6 +261,7 @@ func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T)
     if err!=nil{t.Fatalf("valid explicit FI source mode rejected: %v",err)}
     if v.Collector.USNMode!="volume-source-v1" ||
         v.Collector.USNCaptureMaxBytes!=17179869184 ||
+        v.Collector.USNCaptureMinFreeBytes!=2147483648 ||
         v.Collector.USNCaptureEvery!=100*time.Millisecond ||
         v.Collector.USNProcessingEvery!=100*time.Millisecond ||
         v.Storage.USNCaptureDir!=`D:\FI\volume-source`{
@@ -269,6 +271,7 @@ func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T)
         "unknown-mode":strings.Replace(source,"volume-source-v1","unreviewed-activation",1),
         "missing-capture-cadence":strings.Replace(source,"collector.usn_capture_every = 100ms\n","",1),
         "unsafe-legacy-cadence":strings.Replace(source,"collector.usn_capture_every = 100ms","collector.usn_capture_every = 10m",1),
+        "missing-reserve":strings.Replace(source,"collector.usn_capture_min_free_bytes = 2147483648\n","",1),
         "missing-capacity":strings.Replace(source,"collector.usn_capture_max_bytes = 17179869184\n","",1),
         "missing-queue":strings.Replace(source,"storage.usn_capture_dir = D:\\FI\\volume-source\n","",1),
         "overlap-spool":strings.Replace(source,"storage.usn_capture_dir = D:\\FI\\volume-source",

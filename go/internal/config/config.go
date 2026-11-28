@@ -25,6 +25,7 @@ const (
 type CollectorSettings struct {
     USNMode string
     USNCaptureMaxBytes uint64
+    USNCaptureMinFreeBytes uint64
     USNCaptureEvery time.Duration
     USNProcessingEvery time.Duration
 	CollectionEvery        time.Duration
@@ -248,6 +249,10 @@ func assignSetting(value *Config, key string, rawValue string) error {
         every,err:=parsePositiveDuration(key,rawValue)
         if err!=nil{return err}
         value.Collector.USNCaptureEvery=every
+    case "collector.usn_capture_min_free_bytes":
+        reserve,err:=parsePositiveUint64(key,rawValue)
+        if err!=nil{return err}
+        value.Collector.USNCaptureMinFreeBytes=reserve
     case "collector.usn_capture_max_bytes":
         bytes,err:=parsePositiveUint64(key,rawValue)
         if err!=nil{return err}
@@ -502,7 +507,8 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
     // lossless round-tripping of the original immutable config values.
     if value.Collector.USNMode=="volume-source-v1" {
         for _,key:=range []string{"storage.usn_capture_dir",
-            "collector.usn_capture_max_bytes","collector.usn_capture_every",
+            "collector.usn_capture_max_bytes","collector.usn_capture_min_free_bytes",
+            "collector.usn_capture_every",
             "collector.usn_processing_every"} {
             if _,ok:=seen[key];!ok{return fmt.Errorf("%s required for volume-source-v1",key)}
         }
@@ -520,7 +526,8 @@ func validateVersion11(value *Config, seen map[string]struct{}) error {
         }
     } else if value.Storage.USNCaptureDir!="" || value.Collector.USNCaptureMaxBytes!=0 ||
         value.Collector.USNProcessingEvery!=0 ||
-        value.Collector.USNCaptureEvery!=0 {
+        value.Collector.USNCaptureEvery!=0 ||
+        value.Collector.USNCaptureMinFreeBytes!=0 {
         return errors.New("volume USN capture settings require collector.usn_mode=volume-source-v1")
     }
 	if value.Sender.RecoveryThresholdBytes != 0 && value.Sender.RecoveryTimeout <= 0 {

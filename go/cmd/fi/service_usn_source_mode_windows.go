@@ -39,6 +39,7 @@ func runServiceUSNVolumeSourceLoop(
 ) error {
     if ctx==nil || appendRecord==nil || snapshot.USNMode!="volume-source-v1" ||
         snapshot.USNCaptureDir=="" || snapshot.USNCaptureMaxBytes==0 ||
+        snapshot.USNCaptureMinFreeBytes==0 ||
         snapshot.USNProcessingEvery<=0 || snapshot.USNCaptureEvery<=0 {
         return errors.New("FI volume source service requires explicit and complete configuration")
     }
@@ -74,6 +75,10 @@ func runServiceUSNVolumeSourceLoop(
             !reflect.DeepEqual(cursor.VolumeIdentity,group.VolumeIdentity){
             return fmt.Errorf("%w: volume source/journal changed since its verified baseline",
                 usncapture.ErrConflict)
+        }
+        if err:=store.SetFreeSpacePolicy(snapshot.USNCaptureMinFreeBytes,
+            volumeSourceAvailableFreeBytes);err!=nil{
+            return fmt.Errorf("preflight original NTFS capture disk reserve: %w",err)
         }
         item.store=store
         plans:=make([]usncapture.GovernedProcessingPlan,0,len(group.GovernedRoots))

@@ -22,6 +22,7 @@ type serviceOperationalSnapshot struct {
     USNMode string
     USNCaptureDir string
     USNCaptureMaxBytes uint64
+    USNCaptureMinFreeBytes uint64
     USNCaptureEvery time.Duration
     USNProcessingEvery time.Duration
 	ConfigPath              string
@@ -86,6 +87,7 @@ func resolveServiceConfiguration(
         USNMode: value.Collector.USNMode,
         USNCaptureDir: value.Storage.USNCaptureDir,
         USNCaptureMaxBytes: value.Collector.USNCaptureMaxBytes,
+        USNCaptureMinFreeBytes: value.Collector.USNCaptureMinFreeBytes,
         USNCaptureEvery: value.Collector.USNCaptureEvery,
         USNProcessingEvery: value.Collector.USNProcessingEvery,
 		ConfigPath:              configPath,

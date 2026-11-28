@@ -28,6 +28,7 @@ func TestFreshVolumeBootstrapRejectsNonFreshOrExistingSourceCustody(t *testing.T
         GovernedRoots:[]string{root},
         Collector:config.CollectorSettings{
             USNMode:"volume-source-v1",USNCaptureMaxBytes:16*1024*1024*1024,
+            USNCaptureEvery:100*1000*1000,USNCaptureMinFreeBytes:2*1024*1024*1024,
         },
         Storage:config.StorageSettings{
             USNCaptureDir:queue,SpoolDir:spoolDir,StateDir:stateDir,

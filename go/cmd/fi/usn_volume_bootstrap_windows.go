@@ -45,6 +45,7 @@ func preflightFreshUSNVolumeBootstrap(value config.Config) error {
         value.Collector.USNMode!="volume-source-v1" ||
         value.Storage.USNCaptureDir=="" ||
         value.Collector.USNCaptureMaxBytes==0 ||
+        value.Collector.USNCaptureMinFreeBytes==0 ||
         value.Collector.USNCaptureEvery<=0 {
         return errors.New("FI fresh volume bootstrap requires explicit volume-source-v1 authority")
     }
@@ -162,6 +163,8 @@ func initializeFreshUSNVolumeSources(ctx context.Context)(freshUSNBootstrapSumma
             !reflect.DeepEqual(store.ProcessingCursor(),cursor){
             return result,errors.New("pre-baseline volume source cursor failed durable readback")
         }
+        if err:=store.SetFreeSpacePolicy(value.Collector.USNCaptureMinFreeBytes,
+            volumeSourceAvailableFreeBytes);err!=nil{return result,err}
         jobs[len(jobs)-1].store=store
         result.Volumes[i].Initialized=true
     }
