@@ -289,6 +289,7 @@ func TestPrivateContinuousDependencyAndGapQueuesKeepTheirOriginalFamily(t *testi
         "USNObjectObservation":privateFamilyUSN,
         "USNContinuityGap":privateFamilyUSN,
         "USNScopedCapture":privateFamilyUSN,
+        "USNSelectiveObservation":privateFamilyUSN,
         "WindowsSecurityCoverage":privateFamilyCoverage,
         "WindowsSecurityContinuityGap":privateFamilyCoverage,
         "FileObservation":privateFamilyFile,

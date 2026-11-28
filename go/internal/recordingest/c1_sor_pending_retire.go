@@ -22,15 +22,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// c1PendingRetireTables is built only from the governed 51-table allowlist
+// c1PendingRetireTables is built only from the governed 53-table allowlist
 // plus the single control relation. No table name comes from a sender,
 // receipt, environmental input or untrusted catalog record.
 func c1PendingRetireTables() ([]string, error) {
-	if len(bootstrapSoRTables) != 51 {
+	if len(bootstrapSoRTables) != 53 {
 		return nil, errors.New("C1 pending retire: frozen canonical table count changed")
 	}
-	seen := make(map[string]bool, 52)
-	names := make([]string, 0, 52)
+	seen := make(map[string]bool, 54)
+	names := make([]string, 0, 54)
 	for _, table := range bootstrapSoRTables {
 		if table == "" || table == "generation_control" || seen[table] {
 			return nil, errors.New("C1 pending retire: invalid frozen relational table")
@@ -71,7 +71,7 @@ func c1RetireAcceptedPendingTx(ctx context.Context, tx pgx.Tx,
 	if err != nil {
 		return err
 	}
-	expected := make(map[string]bool, 50)
+	expected := make(map[string]bool, 54)
 	for _, name := range bootstrapSoRTables {
 		expected[name] = true
 	}

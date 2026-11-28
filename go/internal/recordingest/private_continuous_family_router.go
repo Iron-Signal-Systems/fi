@@ -52,7 +52,7 @@ func privateFamilyForRecordKind(kind string) (privateContinuousFamily, error) {
         return privateFamilyCoverage, nil
     // Preserve the original ordered USN stream, including continuity loss.
     // A gap must never be delayed behind unrelated Security/File commits.
-    case "USNReadBoundary", "USNObjectObservation", "USNScopedCapture", "USNContinuityGap":
+    case "USNReadBoundary", "USNObjectObservation", "USNScopedCapture", "USNSelectiveObservation", "USNContinuityGap":
         return privateFamilyUSN, nil
     case "CollectorIdentity", "DirectoryPrincipalSnapshot", "LocalPrincipalSnapshot",
         "NTFSCollectionError", "SMBShareSnapshot", "SupportingSourceCollectionError":
