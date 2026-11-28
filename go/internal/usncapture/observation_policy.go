@@ -96,9 +96,9 @@ func SelectPolicyObservations(
                 obsReasonBasicInfo|obsReasonHardLink|obsReasonEAChange|obsReasonStream)!=0
             content:=reason&(obsReasonDataOverwrite|obsReasonDataExtend|
                 obsReasonDataTruncate|obsReasonNamedData)!=0
-            request:=(immediate || (content && reason&obsReasonClose!=0)) &&
+            selectNow:=(immediate || (content && reason&obsReasonClose!=0)) &&
                 reason&obsReasonDelete==0
-            if !request {
+            if !selectNow {
                 result.DeferredEvents++
                 continue
             }
