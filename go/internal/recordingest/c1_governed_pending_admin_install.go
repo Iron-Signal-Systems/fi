@@ -68,8 +68,8 @@ func InstallC1GovernedPendingOnExistingSoR(ctx context.Context,admin *pgx.Conn)e
     }
     canonicalTables,err:=bootstrapListTables(ctx,tx,"fi")
     if err!=nil{return err}
-    if len(canonicalTables)!=len(bootstrapSoRTables)||len(canonicalTables)!=49{
-        return errors.New("C1 governed install: populated FI canonical 49-table contract changed")
+    if len(canonicalTables)!=len(bootstrapSoRTables){
+        return errors.New("C1 governed install: populated FI canonical approved-table contract changed")
     }
     if _,err=bootstrapSoRPromotionOrder(canonicalTables,nil);err!=nil{
         return fmt.Errorf("C1 governed install: canonical relational table graph mismatch: %w",err)
@@ -115,7 +115,7 @@ func InstallC1GovernedPendingOnExistingSoR(ctx context.Context,admin *pgx.Conn)e
     pendingTables,err:=bootstrapListTables(ctx,tx,c1GovernedPendingSchema)
     if err!=nil{return err}
     if len(pendingTables)!=len(canonicalTables)+1{
-        return errors.New("C1 governed install: incomplete 49-table Pending mirror or governing control")
+        return errors.New("C1 governed install: incomplete approved-table Pending mirror or governing control")
     }
     hasControl:=false
     for _,table:=range pendingTables{
