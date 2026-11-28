@@ -10,11 +10,12 @@ import (
 func TestC1PrivateSchemaPlanOnlyExactPrivateMigrations(t *testing.T){
     plan,err:=C1PrivateSchemaPlan()
     if err!=nil{t.Fatal(err)}
-    if len(plan)!=7{t.Fatalf("expected six canonical migrations and recovery ledger, got %d",len(plan))}
+    if len(plan)!=8{t.Fatalf("expected seven canonical migrations and recovery ledger, got %d",len(plan))}
     if plan[0].Name!="0001_relational.sql"||
         plan[4].Name!="0005_usn_capture_binding.sql"||
         plan[5].Name!="0006_usn_scoped_capture.sql"||
-        plan[6].Name!="fi_recovery_private_ledger"{
+        plan[6].Name!="0007_usn_selective_observation.sql"||
+        plan[7].Name!="fi_recovery_private_ledger"{
         t.Fatal("native private schemas lost exact six FI DDL source order")
     }
     for _,item:=range plan{
@@ -41,7 +42,8 @@ func TestC1PrivateSchemaPlanOnlyExactPrivateMigrations(t *testing.T){
     }
     if !strings.Contains(plan[0].SQL,
         "CREATE SCHEMA fi_recovery_projection AUTHORIZATION fi_owner")||
-        !strings.Contains(plan[6].SQL,"CREATE TABLE fi_recovery.typed_window")||
+        !strings.Contains(plan[7].SQL,"CREATE TABLE fi_recovery.typed_window")||
+        !strings.Contains(plan[6].SQL,"fi_recovery_projection.usn_selective_observation")||
         !strings.Contains(plan[5].SQL,"fi_recovery_projection.usn_scoped_capture")||
         !strings.Contains(plan[4].SQL,"fi_recovery_projection.usn_read_boundary"){
         t.Fatal("C1 private schema lacks original FI relational, USN or recovery tables")

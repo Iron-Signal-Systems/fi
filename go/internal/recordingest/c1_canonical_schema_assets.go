@@ -14,6 +14,7 @@ const (
 	sorPostgreSQLDatabaseMigration0004SHA256 = "9a2a54875828e82eed9dbbb36ddaa0b6886bdc43789f1a220f41bf40cd1460dc"
 	sorPostgreSQLDatabaseMigration0005SHA256 = "687f45c9229e7c3cfd9edca51b565e17b8c3f3b9ca3d674a44787b632d438fab"
 	sorPostgreSQLDatabaseMigration0006SHA256 = "0afc7fb2229062bbf91c8d749f1956cdc3f40f2257a314c8605d52f12f3d953e"
+    sorPostgreSQLDatabaseMigration0007SHA256 = "1285c6e9f4aacfcf2c1d68f89182ca096c7a75d1e23f355857b5c148baf5a3d3"
 )
 
 
@@ -55,5 +56,8 @@ func sorPostgreSQLDatabaseMigrationAssets() []sorPostgreSQLDatabaseMigrationAsse
 			SHA256: sorPostgreSQLDatabaseMigration0006SHA256,
 			SQL:    sorPostgreSQLDatabaseMigration0006Asset,
 		},
+        {Name: "0007_usn_selective_observation.sql",
+         SHA256: sorPostgreSQLDatabaseMigration0007SHA256,
+         SQL: sorPostgreSQLDatabaseMigration0007Asset},
 	}
 }
