@@ -6,6 +6,7 @@ package recordingest
 
 import (
     "context"
+    "crypto/sha256"
     "encoding/base64"
     "encoding/hex"
     "errors"
@@ -69,6 +70,12 @@ func validateUSNScopedCapture(scopeID string, v usnScopedCapturePayload) error {
         return errors.New("unsupported scoped USN collection method")
     }
     if err:=records.ValidateVolumeIdentity(v.VolumeIdentity);err!=nil{return err}
+    canonicalVolume := "fi-volume-usn-capture/1\\x00" + v.VolumeIdentity.MethodVersion + "\\x00" +
+        strings.ToLower(v.VolumeIdentity.VolumeGUID) + "\\x00" + v.VolumeIdentity.VolumeSerial
+    sum:=sha256.Sum256([]byte(canonicalVolume))
+    if v.CaptureScopeID != "volume-"+hex.EncodeToString(sum[:16]){
+        return errors.New("FI scoped capture identity does not match exact NTFS volume")
+    }
     if err:=records.ValidateNTFSObjectIdentity(v.RootIdentity);err!=nil{return err}
     if _,err:=time.Parse(time.RFC3339Nano,v.CapturedAt);err!=nil{return fmt.Errorf("invalid capture timestamp: %w",err)}
     start,err:=strictScopedDecimal(v.StartUSN);if err!=nil{return err}
