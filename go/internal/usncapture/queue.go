@@ -70,9 +70,9 @@ type Segment struct {
 	SHA256 string
 }
 
-// Store requires one process owner per scope. The FI collector's existing
-// process ownership provides that exclusion; this package does not implement
-// cross-process locking. Never place its directory in the FI sender spool.
+// Store requires one process owner per NTFS volume. On Windows the service
+// must hold AcquireCaptureOwner for the entire Store lifetime. Never place
+// this directory in the FI sender spool.
 type Store struct {
 	mu        sync.Mutex
 	dir       string
@@ -112,6 +112,9 @@ func Open(dir string, maxPendingBytes uint64) (*Store, error) {
 		return nil, fmt.Errorf("%w: capture and processing source identity", ErrConflict)
 	}
 	if err := s.recoverLocked(); err != nil {
+		return nil, err
+	}
+	if err := s.recoverProcessedReceiptsLocked(); err != nil {
 		return nil, err
 	}
 	// Scan the queue once on startup, not once per captured USN batch.
@@ -252,9 +255,9 @@ func (s *Store) Next() (Segment, bool, error) {
 func (s *Store) CommitProcessed(seg Segment, publishedProof string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimSpace(publishedProof) == "" {
-		return errors.New("verified FI publication proof is required")
-	}
+	if !validScopedSpoolProof(publishedProof) {
+        return errors.New("exact verified FI scoped USN spool proof required")
+    }
 	if seg.Name != segmentNameMust(seg.Batch.StartUSN) || seg.Batch.StartUSN != s.processed.NextUSN || !matchesBatch(s.processed, seg.Batch) {
 		return fmt.Errorf("%w: unexpected processing segment", ErrConflict)
 	}
@@ -422,6 +425,65 @@ func (s *Store) recoverLocked() error {
 		s.capture = updated
 	}
 	return nil
+}
+
+const scopedProofPrefix = "verified-fi-usn-scoped-spool/1:"
+
+// A receipt asserts that verified FI spool publication completed. This string
+// is produced by VerifyScopedPublication only after hashing all finalized
+// manifests, and the queue's owner-only state directory protects the receipt.
+func validScopedSpoolProof(proof string) bool {
+    if !strings.HasPrefix(proof,scopedProofPrefix) || len(proof)!=len(scopedProofPrefix)+64 {
+        return false
+    }
+    digest:=strings.TrimPrefix(proof,scopedProofPrefix)
+    raw,err:=hex.DecodeString(digest)
+    return err==nil && len(raw)==32 && hex.EncodeToString(raw)==digest
+}
+
+// If a crash happened AFTER CommitProcessed wrote its immutable receipt but
+// BEFORE its processed.json cursor update, finish exactly that recorded
+// transition without republishing the same USN interval. Never replay a
+// receipt that is malformed, from another source or missing a source segment.
+func (s *Store) recoverProcessedReceiptsLocked() error {
+    for s.processed.NextUSN != s.capture.NextUSN {
+        name:=segmentNameMust(s.processed.NextUSN)
+        receiptPath:=filepath.Join(s.dir,"receipt-"+name)
+        raw,err:=os.ReadFile(receiptPath)
+        if errors.Is(err,os.ErrNotExist){return nil}
+        if err!=nil{return err}
+        var receipt struct{
+            Version string `json:"version"`
+            SourceBatchSHA256 string `json:"source_batch_sha256"`
+            SpoolProof string `json:"spool_proof"`
+            StartUSN string `json:"start_usn"`
+            NextUSN string `json:"next_usn"`
+        }
+        decoder:=json.NewDecoder(strings.NewReader(string(raw)))
+        decoder.DisallowUnknownFields()
+        if err:=decoder.Decode(&receipt);err!=nil{
+            return fmt.Errorf("%w: invalid processing receipt %s: %v",ErrCorrupt,name,err)
+        }
+        var trailing any
+        if err:=decoder.Decode(&trailing);err!=io.EOF{
+            return fmt.Errorf("%w: trailing processing receipt data %s",ErrCorrupt,name)
+        }
+        seg,err:=s.loadSegmentLocked(name)
+        if err!=nil{return err}
+        if receipt.Version!=SchemaVersion ||
+            receipt.SourceBatchSHA256!=seg.SHA256 ||
+            !validScopedSpoolProof(receipt.SpoolProof) ||
+            receipt.StartUSN!=s.processed.NextUSN ||
+            receipt.StartUSN!=seg.Batch.StartUSN ||
+            receipt.NextUSN!=seg.Batch.NextUSN {
+            return fmt.Errorf("%w: processing receipt cannot prove source custody %s",ErrCorrupt,name)
+        }
+        next:=s.processed
+        next.NextUSN=receipt.NextUSN
+        if err:=atomicWrite(filepath.Join(s.dir,processedName),mustJSON(next));err!=nil{return err}
+        s.processed=next
+    }
+    return nil
 }
 
 func atomicWrite(path string, data []byte) (retErr error) {
