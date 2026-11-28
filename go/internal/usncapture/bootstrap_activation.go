@@ -90,11 +90,24 @@ func VerifyVolumeBootstrapReady(custodyRoot string)error{
             cursor.VolumeIdentity!=v.VolumeIdentity{
             return fmt.Errorf("%w: captured source differs from immutable bootstrap witness",ErrConflict)
         }
-        if _,err:=readCursor(filepath.Join(custodyRoot,derived,processedName));err!=nil{
+        processed,err:=readCursor(filepath.Join(custodyRoot,derived,processedName))
+        if err!=nil{
             return fmt.Errorf("FI sender original volume has no durable processing cursor: %w",err)
         }
-        if _,err:=readCursor(filepath.Join(custodyRoot,derived,observationCursorName));err!=nil{
+        observed,err:=readCursor(filepath.Join(custodyRoot,derived,observationCursorName))
+        if err!=nil{
             return fmt.Errorf("FI sender original volume has no separate NTFS observation cursor: %w",err)
+        }
+        if !sameIdentity(cursor,processed)||!sameIdentity(cursor,observed){
+            return fmt.Errorf("%w: collector source and observation cursors belong to different NTFS journals",ErrConflict)
+        }
+        capUSN,_:=strictDecimalUSN(cursor.NextUSN)
+        procUSN,_:=strictDecimalUSN(processed.NextUSN)
+        obsUSN,_:=strictDecimalUSN(observed.NextUSN)
+        originalUSN,_:=strictDecimalUSN(v.OriginalNextUSN)
+        if originalUSN>capUSN||procUSN>capUSN||obsUSN>capUSN||
+            procUSN<originalUSN||obsUSN<originalUSN{
+            return fmt.Errorf("%w: FI sender cursor sequence is outside original pre-baseline USN custody",ErrConflict)
         }
     }
     return nil
