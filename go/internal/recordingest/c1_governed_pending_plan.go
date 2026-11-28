@@ -82,10 +82,10 @@ func C1GovernedPendingPlan() ([]C1GovernedPendingStatement, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(originals) != 6 {
+	if len(originals) != 7 {
 		return nil, errors.New("C1 pending: canonical migration count drift")
 	}
-	plan := make([]C1GovernedPendingStatement, 0, 7)
+	plan := make([]C1GovernedPendingStatement, 0, 8)
 	for _, src := range originals {
 		ddl, err := RewritePrivateProjectionMigration(src.Name, src.SQL)
 		if err != nil {

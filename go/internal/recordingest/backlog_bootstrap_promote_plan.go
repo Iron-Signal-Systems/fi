@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-// Canonical and private schemas currently contain exactly these 51 development
+// Canonical and private schemas currently contain exactly these 53 development
 // relational tables. An unexpected DDL change MUST fail promotion preflight.
 // A missing or extra table never becomes an implicit silent data-loss path.
 var bootstrapSoRTables = []string{
@@ -29,6 +29,7 @@ var bootstrapSoRTables = []string{
 	"supporting_source_collection_error", "usn_read_boundary",
 	"usn_object_observation", "usn_object_change", "usn_object_change_reason",
 	"usn_continuity_gap", "usn_scoped_capture", "usn_scoped_change",
+    "usn_selective_observation", "usn_selective_observation_trigger",
 }
 
 var bootstrapIdentityColumns = map[string]string{

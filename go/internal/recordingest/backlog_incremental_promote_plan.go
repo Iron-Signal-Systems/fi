@@ -24,6 +24,7 @@ var sorPromotionFKMap = map[string]string{
  "root_ntfs_object_id":"ntfs_object",
  "governed_root_id":"governed_root",
  "usn_read_boundary_source_record_id":"source_record",
+ "original_capture_source_record_id":"source_record",
 }
 
 // Only frozen FI staging namespaces are approved for remapped publication.
