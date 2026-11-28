@@ -185,6 +185,8 @@ func TestFreshSourceModeFileApprovalRoundTripsEveryExactCustodySetting(t *testin
     inputs.USNProcessingEvery=250*time.Millisecond
     inputs.USNCaptureMaxBytes=64<<30
     inputs.USNCaptureMinFreeBytes=8<<30
+    inputs.USNObservationEvery=2*time.Second
+    inputs.USNObservationMaxObjectsPerSegment=2048
     proposal,err:=BuildManualDeploymentConfigProposal(report,inputs)
     if err!=nil{t.Fatalf("fresh source installer config not valid: %v",err)}
     path:=filepath.Join(t.TempDir(),"fresh-fi.conf")
@@ -200,7 +202,9 @@ func TestFreshSourceModeFileApprovalRoundTripsEveryExactCustodySetting(t *testin
     if loaded.Inputs.USNCaptureEvery!=100*time.Millisecond ||
         loaded.Inputs.USNProcessingEvery!=250*time.Millisecond ||
         loaded.Inputs.USNCaptureMaxBytes!=64<<30 ||
-        loaded.Inputs.USNCaptureMinFreeBytes!=8<<30{
+        loaded.Inputs.USNCaptureMinFreeBytes!=8<<30 ||
+        loaded.Inputs.USNObservationEvery!=2*time.Second ||
+        loaded.Inputs.USNObservationMaxObjectsPerSegment!=2048 {
         t.Fatalf("FI installer lost reviewed source capacity/interval authority: %+v",loaded.Inputs)
     }
     mutated:=strings.Replace(string(proposal.Normalized),

@@ -47,6 +47,8 @@ type PlanInputs struct {
     USNProcessingEvery time.Duration
     USNCaptureMaxBytes uint64
     USNCaptureMinFreeBytes uint64
+    USNObservationEvery time.Duration
+    USNObservationMaxObjectsPerSegment int
 }
 
 func (inputs PlanInputs) ConfigEmpty() bool {
@@ -58,7 +60,9 @@ func (inputs PlanInputs) ConfigEmpty() bool {
 		strings.TrimSpace(inputs.StateDir) == "" &&
         inputs.USNMode=="" && inputs.USNCaptureDir=="" &&
         inputs.USNCaptureEvery==0 && inputs.USNProcessingEvery==0 &&
-        inputs.USNCaptureMaxBytes==0 && inputs.USNCaptureMinFreeBytes==0
+        inputs.USNCaptureMaxBytes==0 && inputs.USNCaptureMinFreeBytes==0 &&
+        inputs.USNObservationEvery==0 &&
+        inputs.USNObservationMaxObjectsPerSegment==0
 }
 
 func (inputs PlanInputs) Empty() bool {
@@ -409,6 +413,8 @@ func planConfiguration(
         USNProcessingEvery: inputs.USNProcessingEvery,
         USNCaptureMaxBytes: inputs.USNCaptureMaxBytes,
         USNCaptureMinFreeBytes: inputs.USNCaptureMinFreeBytes,
+        USNObservationEvery:inputs.USNObservationEvery,
+        USNObservationMaxObjectsPerSegment:inputs.USNObservationMaxObjectsPerSegment,
 	}
 
 	if proposal.StageDir == "" {

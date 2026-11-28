@@ -140,6 +140,8 @@ func LoadDeploymentConfigProposal(
         USNProcessingEvery:parsed.Collector.USNProcessingEvery,
         USNCaptureMaxBytes:parsed.Collector.USNCaptureMaxBytes,
         USNCaptureMinFreeBytes:parsed.Collector.USNCaptureMinFreeBytes,
+        USNObservationEvery:parsed.Collector.USNObservationEvery,
+        USNObservationMaxObjectsPerSegment:parsed.Collector.USNObservationMaxObjectsPerSegment,
 	}
 
 	digest := sha256.Sum256(raw)
@@ -171,6 +173,8 @@ func LoadDeploymentConfigProposal(
             USNProcessingEvery:inputs.USNProcessingEvery,
             USNCaptureMaxBytes:inputs.USNCaptureMaxBytes,
             USNCaptureMinFreeBytes:inputs.USNCaptureMinFreeBytes,
+            USNObservationEvery:inputs.USNObservationEvery,
+            USNObservationMaxObjectsPerSegment:inputs.USNObservationMaxObjectsPerSegment,
 		},
 	)
 	if err != nil {

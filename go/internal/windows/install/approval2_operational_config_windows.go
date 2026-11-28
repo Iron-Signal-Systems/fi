@@ -232,7 +232,9 @@ func approval2OperationalConfigValue(
         }
         if strings.TrimSpace(proposal.USNCaptureDir)=="" ||
             proposal.USNCaptureEvery<=0 || proposal.USNProcessingEvery<=0 ||
-            proposal.USNCaptureMaxBytes==0 || proposal.USNCaptureMinFreeBytes==0{
+            proposal.USNCaptureMaxBytes==0 || proposal.USNCaptureMinFreeBytes==0 ||
+            proposal.USNObservationEvery<=0 ||
+            proposal.USNObservationMaxObjectsPerSegment<=0 {
             return config.Config{},errors.New("FI source-volume fresh install requires explicit custody, capacity, free-space and independent schedules")
         }
         value.Collector.USNMode=proposal.USNMode
@@ -240,10 +242,14 @@ func approval2OperationalConfigValue(
         value.Collector.USNProcessingEvery=proposal.USNProcessingEvery
         value.Collector.USNCaptureMaxBytes=proposal.USNCaptureMaxBytes
         value.Collector.USNCaptureMinFreeBytes=proposal.USNCaptureMinFreeBytes
+        value.Collector.USNObservationEvery=proposal.USNObservationEvery
+        value.Collector.USNObservationMaxObjectsPerSegment=proposal.USNObservationMaxObjectsPerSegment
         value.Storage.USNCaptureDir=proposal.USNCaptureDir
     }else if proposal.USNCaptureDir!="" || proposal.USNCaptureEvery!=0 ||
         proposal.USNProcessingEvery!=0 || proposal.USNCaptureMaxBytes!=0 ||
-        proposal.USNCaptureMinFreeBytes!=0{
+        proposal.USNCaptureMinFreeBytes!=0 ||
+        proposal.USNObservationEvery!=0 ||
+        proposal.USNObservationMaxObjectsPerSegment!=0 {
         return config.Config{},errors.New("FI source mode values cannot activate without explicit versioned opt-in")
     }
 
@@ -818,10 +824,12 @@ func renderApproval2OperationalConfig(
 	)
     if value.Collector.USNMode=="volume-source-v1"{
         fmt.Fprintf(&builder,
-            "collector.usn_mode = %s\ncollector.usn_capture_every = %s\ncollector.usn_processing_every = %s\ncollector.usn_capture_max_bytes = %d\ncollector.usn_capture_min_free_bytes = %d\n",
+            "collector.usn_mode = %s\ncollector.usn_capture_every = %s\ncollector.usn_processing_every = %s\ncollector.usn_capture_max_bytes = %d\ncollector.usn_capture_min_free_bytes = %d\ncollector.usn_observation_every = %s\ncollector.usn_observation_max_objects_per_segment = %d\n",
             value.Collector.USNMode,value.Collector.USNCaptureEvery,
             value.Collector.USNProcessingEvery,value.Collector.USNCaptureMaxBytes,
-            value.Collector.USNCaptureMinFreeBytes)
+            value.Collector.USNCaptureMinFreeBytes,
+            value.Collector.USNObservationEvery,
+            value.Collector.USNObservationMaxObjectsPerSegment)
     }
 	fmt.Fprintf(
 		&builder,

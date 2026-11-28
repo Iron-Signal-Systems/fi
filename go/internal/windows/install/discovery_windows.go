@@ -76,6 +76,8 @@ type ConfigState struct {
     USNProcessingEvery time.Duration
     USNCaptureMaxBytes uint64
     USNCaptureMinFreeBytes uint64
+    USNObservationEvery time.Duration
+    USNObservationMaxObjectsPerSegment int
 	VersionID       string
 }
 
@@ -319,6 +321,8 @@ func discoverConfig(report *Report) {
         USNProcessingEvery: value.Collector.USNProcessingEvery,
         USNCaptureMaxBytes: value.Collector.USNCaptureMaxBytes,
         USNCaptureMinFreeBytes: value.Collector.USNCaptureMinFreeBytes,
+        USNObservationEvery:value.Collector.USNObservationEvery,
+        USNObservationMaxObjectsPerSegment:value.Collector.USNObservationMaxObjectsPerSegment,
 		VersionID:       value.VersionID,
 	}
 
