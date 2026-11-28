@@ -5,6 +5,8 @@
 package recordingest
 
 import (
+    "crypto/sha256"
+    "encoding/hex"
     "strings"
     "testing"
     "time"
@@ -17,13 +19,15 @@ func testUSNScopedCapturePayload() usnScopedCapturePayload {
     volume:=records.VolumeIdentity{MethodVersion:"ntfs-volume/1",VolumeGUID:`\\?\Volume{11111111-2222-3333-4444-555555555555}\`,VolumeSerial:"123"}
     root:=records.NTFSObjectIdentity{MethodVersion:"ntfs-file-id/1",FileReferenceNumber:"101",SequenceNumber:"1"}
     child:=records.NTFSObjectIdentity{MethodVersion:"ntfs-file-id/1",FileReferenceNumber:"102",SequenceNumber:"1"}
+    volumeKey := "fi-volume-usn-capture/1" + string(byte(0)) + volume.MethodVersion + string(byte(0)) + strings.ToLower(volume.VolumeGUID) + string(byte(0)) + volume.VolumeSerial
+    sum := sha256.Sum256([]byte(volumeKey))
     change:=records.USNChangeObservation{
         MajorVersion:"2",MinorVersion:"0",FileIdentity:child,ParentIdentity:root,
         USN:"104",Timestamp:stamp,ReasonRaw:"256",SourceInfoRaw:"0",
         SecurityID:"0",FileAttributesRaw:"32",FileNameUTF16LEBase64URL:"YQA",
     }
     return usnScopedCapturePayload{
-        Version:usnScopedCaptureVersion, CaptureScopeID:"volume-"+strings.Repeat("a",32),
+        Version:usnScopedCaptureVersion, CaptureScopeID:"volume-"+hex.EncodeToString(sum[:16]),
         GovernedScopeID:"root-test",RootIdentity:root,CapturedAt:stamp,
         CollectionMethod:records.WindowsUSNCollectionMethod,VolumeIdentity:volume,
         JournalID:"55",StartUSN:"100",NextUSN:"200",
@@ -41,6 +45,7 @@ func TestUSNScopedCaptureRejectsScopeLossOrForgedMetadata(t *testing.T){
         "wrong-root-envelope":func(v *usnScopedCapturePayload){v.GovernedScopeID="root-other"},
         "bad-version":func(v *usnScopedCapturePayload){v.Version="fi-usn-scoped-projection/0"},
         "bad-capture-scope":func(v *usnScopedCapturePayload){v.CaptureScopeID="root-abc"},
+        "wrong-valid-volume-digest":func(v *usnScopedCapturePayload){v.CaptureScopeID="volume-"+strings.Repeat("a",32)},
         "bad-digest":func(v *usnScopedCapturePayload){v.SourceBatchSHA256="abcd"},
         "timestamp":func(v *usnScopedCapturePayload){v.CapturedAt="bad"},
         "unknown-method":func(v *usnScopedCapturePayload){v.CollectionMethod="AlteredUSN"},
