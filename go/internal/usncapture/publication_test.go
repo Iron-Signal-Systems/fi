@@ -64,3 +64,15 @@ func TestVerifiedScopedPublicationDoesNotAcceptMissingOrDuplicateRoot(t *testing
         t.Fatal("duplicate governed source was accepted")
     }
 }
+
+func TestScopedPublicationRejectsMixedOriginalSourceIntervals(t *testing.T) {
+	p:=onePublishedScopedSource(t)
+	other:=p
+	other.GovernedScopeID="root-second"
+	other.StartUSN="201"
+	other.NextUSN="300"
+	batches:=writeScopedTestSpool(t,[]ScopedProjection{p,other})
+	if _,err:=VerifyScopedPublication([]ScopedProjection{p,other},batches);err==nil{
+		t.Fatal("verified publication combined unrelated source ranges")
+	}
+}

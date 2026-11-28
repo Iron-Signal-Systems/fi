@@ -25,7 +25,14 @@ import (
 // verification. Other packages cannot construct a nonzero valid proof string
 // directly; CommitProcessed refuses the zero value. It is not a claim of
 // downstream C220 acceptance, only local durable publication.
-type ScopedPublicationProof struct { receipt string }
+type ScopedPublicationProof struct {
+	receipt           string
+	captureScopeID     string
+	journalID          string
+	sourceBatchSHA256  string
+	startUSN           string
+	nextUSN            string
+}
 
 // Receipt is the immutable publication witness persisted in the source queue.
 func (p ScopedPublicationProof) Receipt() string { return p.receipt }
@@ -38,10 +45,25 @@ func VerifyScopedPublication(expected []ScopedProjection, batches []spool.Finali
     if len(expected)==0 || len(batches)==0{
         return ScopedPublicationProof{},errors.New("scoped source publication requires governed projections and verified FI batches")
     }
+    // A publication is exactly ONE captured volume/journal/USN interval
+    // potentially fan-out to several governed roots. Mixing unrelated source
+    // intervals would create a witness that could advance the wrong cursor.
+    anchor:=expected[0]
+    if anchor.CaptureScopeID=="" || anchor.JournalID=="" ||
+        anchor.SourceBatchSHA256=="" || anchor.StartUSN=="" || anchor.NextUSN=="" {
+        return ScopedPublicationProof{},errors.New("scoped publication missing original source identity")
+    }
     want:=make(map[string]ScopedProjection,len(expected))
     for _,p:=range expected{
         if p.GovernedScopeID=="" || p.Version!=ScopedProjectionVersion{
             return ScopedPublicationProof{},errors.New("invalid expected USN source projection")
+        }
+        if p.CaptureScopeID!=anchor.CaptureScopeID ||
+            p.JournalID!=anchor.JournalID ||
+            p.SourceBatchSHA256!=anchor.SourceBatchSHA256 ||
+            p.StartUSN!=anchor.StartUSN || p.NextUSN!=anchor.NextUSN ||
+            p.VolumeIdentity!=anchor.VolumeIdentity {
+            return ScopedPublicationProof{},errors.New("mixed original USN source intervals in one FI publication")
         }
         if _,ok:=want[p.GovernedScopeID];ok{return ScopedPublicationProof{},errors.New("duplicate expected governed source")}
         want[p.GovernedScopeID]=p
@@ -109,5 +131,10 @@ func VerifyScopedPublication(expected []ScopedProjection, batches []spool.Finali
     }
     sort.Strings(receipts)
     digest:=sha256.Sum256([]byte(strings.Join(receipts,"\n")))
-    return ScopedPublicationProof{receipt: "verified-fi-usn-scoped-spool/1:"+hex.EncodeToString(digest[:])},nil
+    return ScopedPublicationProof{
+        receipt:"verified-fi-usn-scoped-spool/1:"+hex.EncodeToString(digest[:]),
+        captureScopeID:anchor.CaptureScopeID,journalID:anchor.JournalID,
+        sourceBatchSHA256:anchor.SourceBatchSHA256,
+        startUSN:anchor.StartUSN,nextUSN:anchor.NextUSN,
+    },nil
 }

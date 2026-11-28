@@ -62,13 +62,13 @@ func TestScopedPublicationCommitRequiresPriorDurableIntent(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal("missing captured source", err)
 	}
-	if err := store.CommitProcessed(seg, testScopedSpoolProof()); !errors.Is(err, ErrConflict) {
+	if err := store.CommitProcessed(seg, testScopedSpoolProof(seg)); !errors.Is(err, ErrConflict) {
 		t.Fatalf("processed without pre-publication intent: %v", err)
 	}
 	if err := store.BeginScopedPublication(seg); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
+	if err := store.CommitProcessed(seg, testScopedSpoolProof(seg)); err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := Open(dir, DefaultMaxPendingBytes)
@@ -121,7 +121,7 @@ func TestReceiptWithoutDurableIntentCannotRecoverProcessedCursor(t *testing.T) {
 	receipt := map[string]string{
 		"version": SchemaVersion,
 		"source_batch_sha256": seg.SHA256,
-		"spool_proof": testScopedSpoolProof().Receipt(),
+		"spool_proof": testScopedSpoolProof(seg).Receipt(),
 		"start_usn": seg.Batch.StartUSN,
 		"next_usn": seg.Batch.NextUSN,
 	}
@@ -145,7 +145,7 @@ func TestReclaimRejectsInvalidSpoolReceiptAndRetainsSource(t *testing.T) {
 	if err := store.BeginScopedPublication(seg); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
+	if err := store.CommitProcessed(seg, testScopedSpoolProof(seg)); err != nil {
 		t.Fatal(err)
 	}
 	receipt := map[string]string{
@@ -178,4 +178,27 @@ func TestUnverifiedScopedPublicationCapabilityIsRejected(t *testing.T) {
 	if store.ProcessingCursor().NextUSN != "100" {
 		t.Fatal("processed source advanced without verified local publication")
 	}
+}
+
+func TestSourceBoundSpoolCapabilityCannotCommitAnotherInterval(t *testing.T) {
+	store, _ := exampleStore(t, DefaultMaxPendingBytes)
+	if err := store.Append(exampleBatch(exampleAnchor(), 100, 200)); err != nil { t.Fatal(err) }
+	seg, ok, err := store.Next()
+	if err != nil || !ok { t.Fatal("missing raw source", err) }
+	if err := store.BeginScopedPublication(seg); err != nil { t.Fatal(err) }
+	valid := testScopedSpoolProof(seg)
+	wrong := valid
+	wrong.sourceBatchSHA256 = strings.Repeat("b", 64)
+	if err := store.CommitProcessed(seg, wrong); err == nil {
+		t.Fatal("unrelated source digest advanced processed cursor")
+	}
+	wrong = valid
+	wrong.startUSN = "101"
+	if err := store.CommitProcessed(seg, wrong); err == nil {
+		t.Fatal("unrelated journal interval advanced processed cursor")
+	}
+	if store.ProcessingCursor().NextUSN != "100" {
+		t.Fatal("source cursor moved on mismatched spool proof")
+	}
+	if err := store.CommitProcessed(seg, valid); err != nil { t.Fatal(err) }
 }

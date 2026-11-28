@@ -261,8 +261,13 @@ func (s *Store) Next() (Segment, bool, error) {
 func (s *Store) CommitProcessed(seg Segment, publishedProof ScopedPublicationProof) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !validScopedSpoolProof(publishedProof.receipt) {
-        return errors.New("exact verified FI scoped USN spool proof required")
+	if !validScopedSpoolProof(publishedProof.receipt) ||
+        publishedProof.sourceBatchSHA256!=seg.SHA256 ||
+        publishedProof.captureScopeID!=seg.Batch.ScopeID ||
+        publishedProof.journalID!=seg.Batch.JournalID ||
+        publishedProof.startUSN!=seg.Batch.StartUSN ||
+        publishedProof.nextUSN!=seg.Batch.NextUSN {
+        return errors.New("exact source-bound verified FI scoped USN spool proof required")
     }
 	if seg.Name != segmentNameMust(seg.Batch.StartUSN) || seg.Batch.StartUSN != s.processed.NextUSN || !matchesBatch(s.processed, seg.Batch) {
 		return fmt.Errorf("%w: unexpected processing segment", ErrConflict)

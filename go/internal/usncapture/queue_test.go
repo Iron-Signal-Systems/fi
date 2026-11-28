@@ -19,7 +19,16 @@ import (
 	"github.com/Iron-Signal-Systems/fi/go/internal/records"
 )
 
-func testScopedSpoolProof() ScopedPublicationProof { return ScopedPublicationProof{receipt: scopedProofPrefix + strings.Repeat("a",64)} }
+func testScopedSpoolProof(seg Segment) ScopedPublicationProof {
+	return ScopedPublicationProof{
+		receipt: scopedProofPrefix + strings.Repeat("a",64),
+		captureScopeID: seg.Batch.ScopeID,
+		journalID: seg.Batch.JournalID,
+		sourceBatchSHA256: seg.SHA256,
+		startUSN: seg.Batch.StartUSN,
+		nextUSN: seg.Batch.NextUSN,
+	}
+}
 
 func exampleAnchor() Cursor {
 	return Cursor{Version: SchemaVersion, ScopeID: "root-test", JournalID: "19", VolumeIdentity: records.VolumeIdentity{MethodVersion: "ntfs-volume/1", VolumeGUID: `\\?\Volume{11111111-2222-3333-4444-555555555555}\`, VolumeSerial: "9"}, NextUSN: "100"}
@@ -64,7 +73,7 @@ func TestSeparateCaptureAndProcessingCheckpoints(t *testing.T) {
 		t.Fatal("processed before durable FI publication")
 	}
 	if err := recovered.BeginScopedPublication(item); err != nil { t.Fatal(err) }
-	if err := recovered.CommitProcessed(item, testScopedSpoolProof()); err != nil {
+	if err := recovered.CommitProcessed(item, testScopedSpoolProof(item)); err != nil {
 		t.Fatal(err)
 	}
 	if recovered.ProcessingCursor().NextUSN != "200" {
@@ -181,7 +190,7 @@ func TestMultiBatchReplayAndConsumerOrdering(t *testing.T) {
 			t.Fatalf("wrong order %s", seg.Batch.StartUSN)
 		}
 		if err := recovered.BeginScopedPublication(seg); err != nil { t.Fatal(err) }
-		if err := recovered.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
+		if err := recovered.CommitProcessed(seg, testScopedSpoolProof(seg)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -229,7 +238,7 @@ func TestReclaimOnlyAfterAcknowledgement(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.BeginScopedPublication(seg); err != nil { t.Fatal(err) }
-	if err := s.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
+	if err := s.CommitProcessed(seg, testScopedSpoolProof(seg)); err != nil {
 		t.Fatal(err)
 	}
 	count, bytes, err := s.ReclaimAcknowledged()
@@ -250,7 +259,7 @@ func TestCrashAfterVerifiedReceiptBeforeProcessedCursorRecoversWithoutReplay(t *
     seg,ok,err:=s.Next()
     if err!=nil||!ok{t.Fatalf("source segment missing: %v",err)}
     if err:=s.BeginScopedPublication(seg);err!=nil{t.Fatal(err)}
-    if err:=s.CommitProcessed(seg,testScopedSpoolProof());err!=nil{t.Fatal(err)}
+    if err:=s.CommitProcessed(seg,testScopedSpoolProof(seg));err!=nil{t.Fatal(err)}
     // Simulate crash at the instant after durable receipt and before the
     // independently synced processed.json update reached disk.
     if err:=atomicWrite(filepath.Join(dir,processedName),mustJSON(exampleAnchor()));err!=nil{
@@ -271,7 +280,7 @@ func TestForgedProcessingReceiptFailsClosedOnRestart(t *testing.T){
     seg,ok,err:=s.Next()
     if err!=nil||!ok{t.Fatal("no segment",err)}
     if err:=s.BeginScopedPublication(seg);err!=nil{t.Fatal(err)}
-    if err:=s.CommitProcessed(seg,testScopedSpoolProof());err!=nil{t.Fatal(err)}
+    if err:=s.CommitProcessed(seg,testScopedSpoolProof(seg));err!=nil{t.Fatal(err)}
     receiptPath:=filepath.Join(dir,"receipt-"+seg.Name)
     raw,err:=os.ReadFile(receiptPath);if err!=nil{t.Fatal(err)}
     var receipt map[string]any
