@@ -161,7 +161,7 @@ func TestC1GovernedPendingOfflineInstallerFreshPostgres18(t *testing.T){
       (SELECT count(*) FROM information_schema.tables
        WHERE table_schema='fi')`).
        Scan(&pendingTables,&canonicalTables);err!=nil{t.Fatal(err)}
-    if pendingTables!=52||canonicalTables!=51{
+    if pendingTables!=54||canonicalTables!=53{
         t.Fatalf("one-shot governed install altered canonical schema or omitted Pending: pending=%d canonical=%d",
             pendingTables,canonicalTables)
     }
