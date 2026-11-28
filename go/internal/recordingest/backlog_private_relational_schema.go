@@ -23,9 +23,10 @@ var privateProjectionApprovedFiles = map[string]struct{}{
 	"0003_usn_relational_identity.sql":   {},
 	"0004_security_field_name_index.sql": {},
 	"0005_usn_capture_binding.sql":       {},
+	"0006_usn_scoped_capture.sql":        {},
 }
 
-// RewritePrivateProjectionMigration is restricted to the five audited FI
+// RewritePrivateProjectionMigration is restricted to the six audited FI
 // relational migrations. It is a FIXTURE constructor, not a general SQL
 // rewriting API, and does not authorize migrations against the production SoR.
 //

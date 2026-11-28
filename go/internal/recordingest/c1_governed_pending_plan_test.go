@@ -29,12 +29,13 @@ func TestC1GovernedPendingPlanContainsOnlyAdditiveIsolatedDDL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan) != 6 {
-		t.Fatalf("expected five checksum-pinned migrations and lifecycle DDL, got %d", len(plan))
+	if len(plan) != 7 {
+		t.Fatalf("expected six checksum-pinned migrations and lifecycle DDL, got %d", len(plan))
 	}
 	if plan[0].Name != "0001_relational.sql" ||
 		plan[4].Name != "0005_usn_capture_binding.sql" ||
-		plan[5].Name != "c1_governed_pending_control" {
+		plan[5].Name != "0006_usn_scoped_capture.sql" ||
+		plan[6].Name != "c1_governed_pending_control" {
 		t.Fatal("C1 pending: unapproved source migration order")
 	}
 	for _, step := range plan {
@@ -57,6 +58,7 @@ func TestC1GovernedPendingPlanContainsOnlyAdditiveIsolatedDDL(t *testing.T) {
 		t.Fatal("C1 pending: missing complete FK substrate")
 	}
 	if !strings.Contains(plan[4].SQL, "fi_c1_pending.usn_read_boundary") ||
+        !strings.Contains(plan[5].SQL, "fi_c1_pending.usn_scoped_capture") ||
 		!strings.Contains(plan[3].SQL,
 			"DROP INDEX fi_c1_pending.windows_security_event_field_name_idx;") {
 		t.Fatal("C1 pending: USN/Security DDL drift")

@@ -4,7 +4,7 @@
 // Use of this source code is governed by the File Intelligence (FI)
 // Source Review License, Version 1.0, found in the repository root LICENSE file.
 //
-// EXPLICIT OFFLINE C1 schema installer. Five checksum-validated canonical
+// EXPLICIT OFFLINE C1 schema installer. Six checksum-validated canonical
 // FI DDL files are rewritten to private fi_recovery_projection; the
 // existing independently audited recovery ledger schema is unchanged.
 // This does NOT modify existing populated canonical fi tables, accept a
@@ -87,7 +87,7 @@ func C1PrivateSchemaPlan()([]C1PrivateSchemaStatement,error){
         return nil,errors.New("C1 schema: unapproved private recovery ledger")
     }
     plan=append(plan,C1PrivateSchemaStatement{Name:"fi_recovery_private_ledger",SQL:ledger})
-    if len(plan)!=6{return nil,errors.New("C1 schema: missing full private staging DDL")}
+    if len(plan)!=7{return nil,errors.New("C1 schema: missing full private staging DDL")}
     return plan,nil
 }
 
