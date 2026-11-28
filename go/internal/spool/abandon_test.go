@@ -12,7 +12,6 @@ import (
 )
 
 func TestAbandonDoesNotPublishIncompleteSourceBatch(t *testing.T){
-    ResetPolicyForTesting(t)
     dir:=filepath.Join(t.TempDir(),"fi-spool")
     writer,err:=NewWriter(dir,512,CollectorIdentity{
         ExecutablePath:"CI-FICollector",
