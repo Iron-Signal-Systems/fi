@@ -489,6 +489,9 @@ func (s *Store) recoverProcessedReceiptsLocked() error {
             receipt.NextUSN!=seg.Batch.NextUSN {
             return fmt.Errorf("%w: processing receipt cannot prove source custody %s",ErrCorrupt,name)
         }
+        if err:=s.requirePublicationIntentLocked(seg);err!=nil{
+            return fmt.Errorf("%w: recovered processing receipt lacks matching durable intent %s: %v",ErrCorrupt,name,err)
+        }
         next:=s.processed
         next.NextUSN=receipt.NextUSN
         if err:=atomicWrite(filepath.Join(s.dir,processedName),mustJSON(next));err!=nil{return err}
@@ -632,8 +635,11 @@ func (s *Store) ReclaimAcknowledged() (int, uint64, error) {
 		if err := json.Unmarshal(raw, &receipt); err != nil {
 			return count, reclaimed, fmt.Errorf("%w: processing receipt invalid JSON", ErrCorrupt)
 		}
-		if receipt.Version != SchemaVersion || receipt.SourceBatchSHA256 != seg.SHA256 || strings.TrimSpace(receipt.SpoolProof) == "" || receipt.StartUSN != seg.Batch.StartUSN || receipt.NextUSN != seg.Batch.NextUSN {
+		if receipt.Version != SchemaVersion || receipt.SourceBatchSHA256 != seg.SHA256 || !validScopedSpoolProof(receipt.SpoolProof) || receipt.StartUSN != seg.Batch.StartUSN || receipt.NextUSN != seg.Batch.NextUSN {
 			return count, reclaimed, fmt.Errorf("%w: processing receipt mismatch for %s", ErrCorrupt, name)
+		}
+		if err := s.requirePublicationIntentLocked(seg); err != nil {
+			return count, reclaimed, fmt.Errorf("%w: cannot reclaim %s without publication intent: %v", ErrCorrupt, name, err)
 		}
 		info, err := os.Stat(filepath.Join(s.dir, name))
 		if err != nil {

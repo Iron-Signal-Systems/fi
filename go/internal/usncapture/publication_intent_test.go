@@ -106,3 +106,62 @@ func TestCorruptScopedPublicationIntentFailsClosed(t *testing.T) {
 		t.Fatalf("corrupt intent permitted replay: pending=%t err=%v", ok, err)
 	}
 }
+
+func TestReceiptWithoutDurableIntentCannotRecoverProcessedCursor(t *testing.T) {
+	store, dir := exampleStore(t, DefaultMaxPendingBytes)
+	if err := store.Append(exampleBatch(exampleAnchor(), 100, 200)); err != nil {
+		t.Fatal(err)
+	}
+	seg, ok, err := store.Next()
+	if err != nil || !ok {
+		t.Fatal("missing source", err)
+	}
+	// An attacker or interrupted legacy publisher cannot write a plausible
+	// receipt and skip the required pre-publication ordering barrier.
+	receipt := map[string]string{
+		"version": SchemaVersion,
+		"source_batch_sha256": seg.SHA256,
+		"spool_proof": testScopedSpoolProof(),
+		"start_usn": seg.Batch.StartUSN,
+		"next_usn": seg.Batch.NextUSN,
+	}
+	if err := atomicWrite(filepath.Join(dir, "receipt-"+seg.Name), mustJSON(receipt)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir, DefaultMaxPendingBytes); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("receipt without prior publication intent advanced processed cursor: %v", err)
+	}
+}
+
+func TestReclaimRejectsInvalidSpoolReceiptAndRetainsSource(t *testing.T) {
+	store, dir := exampleStore(t, DefaultMaxPendingBytes)
+	if err := store.Append(exampleBatch(exampleAnchor(), 100, 200)); err != nil {
+		t.Fatal(err)
+	}
+	seg, ok, err := store.Next()
+	if err != nil || !ok {
+		t.Fatal("missing source", err)
+	}
+	if err := store.BeginScopedPublication(seg); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitProcessed(seg, testScopedSpoolProof()); err != nil {
+		t.Fatal(err)
+	}
+	receipt := map[string]string{
+		"version": SchemaVersion,
+		"source_batch_sha256": seg.SHA256,
+		"spool_proof": "unverified source",
+		"start_usn": seg.Batch.StartUSN,
+		"next_usn": seg.Batch.NextUSN,
+	}
+	if err := atomicWrite(filepath.Join(dir, "receipt-"+seg.Name), mustJSON(receipt)); err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed, _, err := store.ReclaimAcknowledged(); reclaimed != 0 || !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("malformed publication receipt reclaimed original source: count=%d err=%v", reclaimed, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, seg.Name)); err != nil {
+		t.Fatalf("original captured source lost after invalid reclaim: %v", err)
+	}
+}
