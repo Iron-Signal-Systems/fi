@@ -325,6 +325,23 @@ func (w *Writer) Close() error {
 	return nil
 }
 
+// Abandon ends a failed or interrupted writer WITHOUT publishing its open
+// partial batch. The .open work object is deliberately retained for the
+// normal interrupted-artifact recovery/quarantine path. Close MUST NOT be
+// used for abort: Close would finalize and publish partial source evidence.
+func (w *Writer) Abandon() error {
+    if w == nil || w.closed {
+        return nil
+    }
+    w.closed=true
+    if w.file==nil{
+        return nil
+    }
+    file:=w.file
+    w.file=nil
+    return file.Close()
+}
+
 func (w *Writer) FinalizedBatches() []FinalizedBatch {
 	if w == nil {
 		return nil
