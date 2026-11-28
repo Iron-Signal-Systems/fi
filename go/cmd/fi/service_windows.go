@@ -148,6 +148,13 @@ func (service *fiWindowsService) Execute(
 
 	const workerCount = 3
 	done := make(chan error, workerCount)
+    // Fresh volume-source baselines must complete before root/security
+    // collection publishes any spool records. The volume capture worker
+    // owns the first source anchor while FIUSNReader is already running.
+    sourceReady:=make(chan struct{})
+    if service.operationalSnapshot.USNMode!="volume-source-v1"{
+        close(sourceReady)
+    }
 
 	// Publish ServiceStarted before the Security worker can report Ready.
 	// The root worker owns that record; this barrier closes only after its
@@ -168,6 +175,10 @@ func (service *fiWindowsService) Execute(
 	}
 
 	go func() {
+        select{
+        case <-sourceReady:
+        case <-ctx.Done():done<-nil;return
+        }
 		done <- runServiceLoop(
 			ctx,
 			service.collectionInterval,
@@ -175,16 +186,16 @@ func (service *fiWindowsService) Execute(
 			func() error { return nil },
 			func(ctx context.Context) (configuredRunSummary, error) {
 				if service.operationalSnapshot.USNMode=="volume-source-v1"{
-                    // The source-only pre-alpha worker must NEVER run the
-                    // old checkpoint-owning USN catch-up/baseline concurrently.
-                    // This is deliberately Partial: a complete independent
-                    // NTFS observation worker is still an acceptance gate.
+                    // The new volume-first service must NEVER race its
+                    // legacy per-root USN checkpoint or duplicate a baseline.
+                    // Source processing and independent selective File-ID
+                    // observations run in separate bounded workers.
                     return configuredRunSummary{
                         VersionID:service.operationalSnapshot.VersionID,
                         ConfigPath:service.operationalSnapshot.ConfigPath,
                         ConfiguredRoots:len(service.operationalSnapshot.GovernedRoots),
                         Complete:false,
-                        Semantics:"FI source-only volume capture; legacy root checkpoint owner disabled; independent full NTFS observations not yet enabled",
+                        Semantics:"FI volume-source capture with independent scoped processing and policy-driven File-ID observations; legacy USN checkpoint owner disabled",
                     },nil
                 }
                 return writeServiceRootCollector(
@@ -199,6 +210,15 @@ func (service *fiWindowsService) Execute(
 
 	go func() {
 		if service.operationalSnapshot.USNMode=="volume-source-v1"{
+            // Only the gMSA service identity may establish the initial
+            // immutable pre-baseline NTFS source and verification witness.
+            // The installer stages this service Manual, not Automatic.
+            if err:=ensureServiceUSNVolumeSourceBootstrap(
+                ctx,service.operationalSnapshot,initializeFreshUSNVolumeSources);err!=nil{
+                done<-err
+                return
+            }
+            close(sourceReady)
             done<-runServiceUSNVolumeSourceLoop(
                 ctx,service.operationalSnapshot,appendRecord)
         }else{
