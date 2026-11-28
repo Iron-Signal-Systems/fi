@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+    "time"
 )
 
 func TestDeploymentConfigFileProposalNormalizesExactInstallerContract(t *testing.T) {
@@ -173,4 +174,40 @@ func deploymentConfigTestReport() Report {
 			DomainDNS: "iss.local",
 		},
 	}
+}
+
+func TestFreshSourceModeFileApprovalRoundTripsEveryExactCustodySetting(t *testing.T){
+    report:=deploymentConfigTestReport()
+    inputs:=deploymentConfigTestInputs()
+    inputs.USNMode="volume-source-v1"
+    inputs.USNCaptureDir=`D:\FI\volume-source`
+    inputs.USNCaptureEvery=100*time.Millisecond
+    inputs.USNProcessingEvery=250*time.Millisecond
+    inputs.USNCaptureMaxBytes=64<<30
+    inputs.USNCaptureMinFreeBytes=8<<30
+    proposal,err:=BuildManualDeploymentConfigProposal(report,inputs)
+    if err!=nil{t.Fatalf("fresh source installer config not valid: %v",err)}
+    path:=filepath.Join(t.TempDir(),"fresh-fi.conf")
+    if err:=os.WriteFile(path,proposal.Normalized,0600);err!=nil{t.Fatal(err)}
+    loaded,err:=LoadDeploymentConfigProposal(report,path)
+    if err!=nil{t.Fatalf("installer rejected its own approved source contract: %v",err)}
+    if !strings.Contains(string(loaded.Normalized),"collector.usn_mode = volume-source-v1") ||
+        !strings.Contains(string(loaded.Normalized),"collector.usn_capture_every = 100ms") ||
+        !strings.Contains(string(loaded.Normalized),"storage.usn_capture_dir = D:\\FI\\volume-source") ||
+        !strings.EqualFold(proposal.NormalizedSHA256,loaded.NormalizedSHA256){
+        t.Fatalf("source authority or exact approved bytes did not survive installer: %s",loaded.Normalized)
+    }
+    if loaded.Inputs.USNCaptureEvery!=100*time.Millisecond ||
+        loaded.Inputs.USNProcessingEvery!=250*time.Millisecond ||
+        loaded.Inputs.USNCaptureMaxBytes!=64<<30 ||
+        loaded.Inputs.USNCaptureMinFreeBytes!=8<<30{
+        t.Fatalf("FI installer lost reviewed source capacity/interval authority: %+v",loaded.Inputs)
+    }
+    mutated:=strings.Replace(string(proposal.Normalized),
+        "collector.usn_capture_every = 100ms",
+        "collector.usn_capture_every = 10m",1)
+    if err:=os.WriteFile(path,[]byte(mutated),0600);err!=nil{t.Fatal(err)}
+    if _,err:=LoadDeploymentConfigProposal(report,path);err==nil{
+        t.Fatal("unsafe legacy source capture interval accepted in exact installer file")
+    }
 }
