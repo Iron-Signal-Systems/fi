@@ -13,6 +13,7 @@ import (
     "time"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/usncapture"
+    "github.com/Iron-Signal-Systems/fi/go/internal/windows/usn"
 )
 
 // usnRawCaptureOnce is the fast, source-only capture boundary. It MUST NEVER
@@ -79,6 +80,7 @@ func runServiceUSNRawCapture(
     ticker := time.NewTicker(interval)
     defer ticker.Stop()
     lastReport := time.Now().Add(-reportInterval)
+    capturedSinceReport := 0
 
     captureOnce := func(ctx context.Context) (bool, error) {
         return captureUSNOnce(ctx, scopeID, governedRoot, store)
@@ -91,26 +93,44 @@ func runServiceUSNRawCapture(
         if captureErr != nil && ctx.Err() != nil {
             return nil
         }
+        capturedSinceReport += count
         now := time.Now()
-        if captureErr != nil || count > 0 && now.Sub(lastReport) >= reportInterval {
+        if captureErr != nil || now.Sub(lastReport) >= reportInterval {
             outcome := serviceOutcomeComplete
             if captureErr != nil {
                 outcome = serviceOutcomeFailed
             }
             record := serviceRuntimeRecord{
-                Version:     serviceRuntimeVersion,
-                RecordKind:  "USNRawCapture",
-                ObservedAt:  serviceNow(),
-                USNInterval: interval.String(),
-                Outcome:     outcome,
+                Version:          serviceRuntimeVersion,
+                RecordKind:       "USNRawCapture",
+                ObservedAt:       serviceNow(),
+                USNInterval:      interval.String(),
+                Outcome:          outcome,
+                ScopeID:          scopeID,
+                CapturedBatches:  capturedSinceReport,
+                CaptureNextUSN:   store.CaptureCursor().NextUSN,
+                ProcessedNextUSN: store.ProcessingCursor().NextUSN,
+                CaptureQueueBytes: store.PendingBytes(),
             }
             if captureErr != nil {
                 record.Error = captureErr.Error()
+            }
+            // Operator telemetry needs live FirstUSN to prove capture is
+            // keeping ahead of Windows journal retention. Telemetry failure
+            // is visible but must not advance or rebase either cursor.
+            state, queryErr := usn.QueryJournal(ctx, scopeID, governedRoot)
+            if queryErr == nil {
+                record.JournalFirstUSN = state.FirstUSN
+                record.JournalNextUSN = state.NextUSN
+            } else if captureErr == nil {
+                record.Outcome = serviceOutcomePartial
+                record.Error = fmt.Sprintf("USN capture health query: %v", queryErr)
             }
             if err := appendRecord(record); err != nil {
                 return fmt.Errorf("persist USN raw capture runtime result: %w", err)
             }
             lastReport = now
+            capturedSinceReport = 0
         }
         if captureErr != nil {
             // Preserve both queue cursors; never advance or silently rebase.
