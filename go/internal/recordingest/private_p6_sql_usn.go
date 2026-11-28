@@ -17,6 +17,7 @@ func(w *privateP6SQLCoordinator) usn(ctx context.Context,
         if ids[i]<=0{return errors.New("FI P6 USN: missing signed source FK")}
         if r.prepared.Record.RecordKind!="USNReadBoundary" &&
             r.prepared.Record.RecordKind!="USNObjectObservation" &&
+            r.prepared.Record.RecordKind!="USNScopedCapture" &&
             r.prepared.Record.RecordKind!="USNContinuityGap"{
             return errors.New("FI P6 USN: unreviewed dependent kind")
         }
