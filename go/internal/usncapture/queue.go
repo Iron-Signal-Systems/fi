@@ -77,6 +77,7 @@ type Store struct {
 	mu        sync.Mutex
 	dir       string
 	maxBytes  uint64
+	bytesUsed uint64 // counted at Open, maintained O(1) for high-rate capture
 	capture   Cursor
 	processed Cursor
 }
@@ -111,6 +112,11 @@ func Open(dir string, maxPendingBytes uint64) (*Store, error) {
 		return nil, fmt.Errorf("%w: capture and processing source identity", ErrConflict)
 	}
 	if err := s.recoverLocked(); err != nil {
+		return nil, err
+	}
+	// Scan the queue once on startup, not once per captured USN batch.
+	s.bytesUsed, err = s.pendingBytesLocked()
+	if err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -180,11 +186,7 @@ func (s *Store) Append(batch records.USNReadBatch) error {
 	if int64(len(encoded)) > maxEnvelopeBytes {
 		return errors.New("capture envelope exceeds maximum durable record size")
 	}
-	used, err := s.pendingBytesLocked()
-	if err != nil {
-		return err
-	}
-	if uint64(len(encoded)) > s.maxBytes || used > s.maxBytes-uint64(len(encoded)) {
+	if uint64(len(encoded)) > s.maxBytes || s.bytesUsed > s.maxBytes-uint64(len(encoded)) {
 		return ErrCapacity
 	}
 	path := filepath.Join(s.dir, segmentName(start))
@@ -203,6 +205,7 @@ func (s *Store) Append(batch records.USNReadBatch) error {
 		return err
 	}
 	s.capture = newCursor
+	s.bytesUsed += uint64(len(encoded))
 	return nil
 }
 
@@ -566,6 +569,10 @@ func (s *Store) ReclaimAcknowledged() (int, uint64, error) {
 		if err := os.Remove(filepath.Join(s.dir, name)); err != nil {
 			return count, reclaimed, err
 		}
+		if uint64(info.Size()) > s.bytesUsed {
+			return count, reclaimed, fmt.Errorf("%w: capture queue accounted bytes underflow", ErrCorrupt)
+		}
+		s.bytesUsed -= uint64(info.Size())
 		count++
 		reclaimed += uint64(info.Size())
 	}
