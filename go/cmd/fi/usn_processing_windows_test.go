@@ -7,7 +7,9 @@
 package main
 
 import (
+    "bufio"
     "context"
+    "encoding/json"
     "errors"
     "os"
     "path/filepath"
@@ -175,4 +177,95 @@ func TestUSNProcessingRefusesAmbiguousPublicationWithoutRewritingSpool(t *testin
     if entries,err:=os.ReadDir(spoolDir);err==nil&&len(entries)>0{
         t.Fatalf("ambiguous interval created new FI spool data: %d entries",len(entries))
     }else if err!=nil&&!os.IsNotExist(err){t.Fatal(err)}
+}
+
+func TestUSNProcessingPublishesAllGovernedRootsFromOneVolumeSegment(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    second:=records.NTFSObjectIdentity{
+        MethodVersion:"ntfs-file-id/1",FileReferenceNumber:"55",SequenceNumber:"1",
+    }
+    roots=append(roots,usncapture.GovernedProcessingPlan{
+        ScopeID:"root-second",RootIdentity:second,
+        Resolve:usncapture.DirectRootScopeResolver("root-second","999",second),
+    })
+    spoolDir:=filepath.Join(t.TempDir(),"spool")
+    collector:=spool.CollectorIdentity{
+        ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64),
+    }
+    published,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,spoolDir,collector)
+    if err!=nil||!published{t.Fatalf("multi-root publication: %t %v",published,err)}
+    if store.ProcessingCursor().NextUSN!="150"{
+        t.Fatal("multi-root source did not commit processed cursor after both roots")
+    }
+    entries,err:=os.ReadDir(spoolDir);if err!=nil{t.Fatal(err)}
+    found:=make(map[string]usncapture.ScopedProjection)
+    for _,entry:=range entries{
+        if !strings.HasSuffix(entry.Name(),".manifest.json"){continue}
+        verification,err:=spool.VerifyManifest(filepath.Join(spoolDir,entry.Name()))
+        if err!=nil||!verification.Verified{
+            t.Fatalf("multi-root FI spool manifest verification failed: %v",err)
+        }
+        file,err:=os.Open(verification.DataPath)
+        if err!=nil{t.Fatal(err)}
+        scanner:=bufio.NewScanner(file)
+        scanner.Buffer(make([]byte,4096),spool.DefaultMaxBatchBytes)
+        for scanner.Scan(){
+            var record spool.Record
+            if err:=json.Unmarshal(scanner.Bytes(),&record);err!=nil{
+                _=file.Close();t.Fatal(err)
+            }
+            if record.RecordKind!="USNScopedCapture"{
+                _=file.Close();t.Fatalf("unexpected publication kind %q",record.RecordKind)
+            }
+            var p usncapture.ScopedProjection
+            if err:=json.Unmarshal(record.Payload,&p);err!=nil{
+                _=file.Close();t.Fatal(err)
+            }
+            if _,duplicate:=found[record.ScopeID];duplicate{
+                _=file.Close();t.Fatalf("duplicate governed source scope %q",record.ScopeID)
+            }
+            found[record.ScopeID]=p
+        }
+        if err:=scanner.Err();err!=nil{_ =file.Close();t.Fatal(err)}
+        if err:=file.Close();err!=nil{t.Fatal(err)}
+    }
+    if len(found)!=2{t.Fatalf("expected two governed-root projections, got %d",len(found))}
+    a,okA:=found["root-test"]
+    b,okB:=found["root-second"]
+    if !okA||!okB||a.GovernedRecordCount!=1||b.UnresolvedRecordCount!=1 ||
+        a.CaptureScopeID!=b.CaptureScopeID ||
+        a.SourceBatchSHA256!=b.SourceBatchSHA256 ||
+        a.StartUSN!=b.StartUSN||a.NextUSN!=b.NextUSN{
+        t.Fatalf("same volume source not independently conserved per root: A=%+v B=%+v",a,b)
+    }
+}
+
+func TestUSNProcessingMissingRootScopeEvidenceLeavesQueueReplayable(t *testing.T) {
+    store,roots:=testVolumeCaptureForProcessing(t)
+    badRoot:=records.NTFSObjectIdentity{MethodVersion:"ntfs-file-id/1",
+        FileReferenceNumber:"88",SequenceNumber:"1"}
+    broken:=errors.New("historical scope index unavailable")
+    roots=append(roots,usncapture.GovernedProcessingPlan{
+        ScopeID:"root-second",RootIdentity:badRoot,
+        Resolve:func(records.USNChangeObservation)(usncapture.ScopeEvidence,error){
+            return usncapture.ScopeEvidence{},broken
+        },
+    })
+    dir:=filepath.Join(t.TempDir(),"spool")
+    result,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,dir,
+        spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)})
+    if result||!errors.Is(err,broken){t.Fatalf("accepted incomplete multi-root scope proof: %t %v",result,err)}
+    if store.ProcessingCursor().NextUSN!="100"{
+        t.Fatal("processed cursor advanced after one governed root failed")
+    }
+    if _,ready,err:=store.Next();err!=nil||!ready{
+        t.Fatalf("failed multi-root scope processing lost original source: %t %v",ready,err)
+    }
+    if entries,err:=os.ReadDir(dir);err==nil{
+        for _,entry:=range entries{
+            if strings.HasSuffix(entry.Name(),".manifest.json"){
+                t.Fatal("published partial governed-root source on resolver failure")
+            }
+        }
+    }else if !os.IsNotExist(err){t.Fatal(err)}
 }
