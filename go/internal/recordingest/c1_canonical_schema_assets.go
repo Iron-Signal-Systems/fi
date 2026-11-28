@@ -13,6 +13,7 @@ const (
 	sorPostgreSQLDatabaseMigration0003SHA256 = "906dccf64eaf13a0a008bc870801beefb2d372f71574d10fe40ae5f1ba5a174c"
 	sorPostgreSQLDatabaseMigration0004SHA256 = "9a2a54875828e82eed9dbbb36ddaa0b6886bdc43789f1a220f41bf40cd1460dc"
 	sorPostgreSQLDatabaseMigration0005SHA256 = "687f45c9229e7c3cfd9edca51b565e17b8c3f3b9ca3d674a44787b632d438fab"
+	sorPostgreSQLDatabaseMigration0006SHA256 = "0afc7fb2229062bbf91c8d749f1956cdc3f40f2257a314c8605d52f12f3d953e"
 )
 
 
@@ -48,6 +49,11 @@ func sorPostgreSQLDatabaseMigrationAssets() []sorPostgreSQLDatabaseMigrationAsse
 			Name:   "0005_usn_capture_binding.sql",
 			SHA256: sorPostgreSQLDatabaseMigration0005SHA256,
 			SQL:    sorPostgreSQLDatabaseMigration0005Asset,
+		},
+		{
+			Name:   "0006_usn_scoped_capture.sql",
+			SHA256: sorPostgreSQLDatabaseMigration0006SHA256,
+			SQL:    sorPostgreSQLDatabaseMigration0006Asset,
 		},
 	}
 }

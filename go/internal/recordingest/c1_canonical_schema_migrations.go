@@ -22,7 +22,7 @@ type C1CanonicalMigration struct {
 }
 func c1CanonicalSchemaMigrations()([]C1CanonicalMigration,error){
     original:=sorPostgreSQLDatabaseMigrationAssets()
-    if len(original)!=5{return nil,errors.New("FI C1: frozen canonical migration count changed")}
+    if len(original)!=6{return nil,errors.New("FI C1: frozen canonical migration count changed")}
     out:=make([]C1CanonicalMigration,0,len(original))
     for _,item:=range original{
         digest:=sha256.Sum256([]byte(item.SQL))
