@@ -1537,6 +1537,18 @@ func planServices(
 		},
 	}
 
+    // Do not auto-start an unbootstrapped volume-first FI collector or
+    // sender. A completely fresh source must establish and verify its
+    // original NTFS journal baseline before activating either service.
+    if report.Config.USNMode=="volume-source-v1"{
+        for index:=range expected{
+            if expected[index].name=="FICollector"||
+                expected[index].name=="FISender"{
+                expected[index].startType="Manual"
+                expected[index].runtimeState="Stopped"
+            }
+        }
+    }
 	if receiverPending {
 		for index := range expected {
 			if expected[index].name == "FISender" {

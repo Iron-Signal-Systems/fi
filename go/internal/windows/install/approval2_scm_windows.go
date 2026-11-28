@@ -68,6 +68,7 @@ func reconcileServer2016Services(
 	contracts := approval2Server2016ServiceContracts(
 		identities,
 		receiverPendingFromPlan(plan),
+        report.Config.USNMode=="volume-source-v1",
 	)
 
 	contractByName := make(
@@ -548,9 +549,14 @@ func approval2Server2016ServiceContracts(
 	}
 
 	senderStartType := uint32(mgr.StartAutomatic)
+    collectorStartType:=uint32(mgr.StartAutomatic)
 	if receiverPending {
 		senderStartType = uint32(mgr.StartManual)
 	}
+    if len(receiverPendingOption)>1 && receiverPendingOption[1] {
+        collectorStartType=uint32(mgr.StartManual)
+        senderStartType=uint32(mgr.StartManual)
+    }
 
 	return []approval2ServiceContract{
 		{
@@ -561,7 +567,7 @@ func approval2Server2016ServiceContracts(
 			Name:        "FICollector",
 			Path:        `"C:\Program Files\FI\fi-collector.exe" -service`,
 			SIDType:     windows.SERVICE_SID_TYPE_UNRESTRICTED,
-			StartType:   mgr.StartAutomatic,
+			StartType:   collectorStartType,
 		},
 		{
 			Account:     identities.USNReader.Account,
