@@ -42,7 +42,9 @@ func runServiceUSNVolumeSourceLoop(
     if ctx==nil || appendRecord==nil || snapshot.USNMode!="volume-source-v1" ||
         snapshot.USNCaptureDir=="" || snapshot.USNCaptureMaxBytes==0 ||
         snapshot.USNCaptureMinFreeBytes==0 ||
-        snapshot.USNProcessingEvery<=0 || snapshot.USNCaptureEvery<=0 {
+        snapshot.USNProcessingEvery<=0 || snapshot.USNCaptureEvery<=0 ||
+        snapshot.USNObservationEvery<=0 ||
+        snapshot.USNObservationMaxObjectsPerSegment<=0 {
         return errors.New("FI volume source service requires explicit and complete configuration")
     }
     groups,err:=resolveServiceUSNVolumeCaptures(ctx,snapshot.GovernedRoots,usn.QueryJournal)
@@ -111,7 +113,7 @@ func runServiceUSNVolumeSourceLoop(
 
     workers,stop:=context.WithCancel(ctx)
     defer stop()
-    count:=len(bundles)*2
+    count:=len(bundles)*3
     if count==0{return errors.New("volume source service requires governed volumes")}
     done:=make(chan error,count)
     for _,bundle:=range bundles{
@@ -125,6 +127,19 @@ func runServiceUSNVolumeSourceLoop(
             done<-runServiceUSNSourceProcessingLoop(workers,snapshot.USNProcessingEvery,
                 item.store,item.roots,spoolDir,collector,item.group.CaptureScopeID,
                 appendRecord,item.history)
+        }()
+        go func(){
+            paths:=make(map[string]string,len(item.group.GovernedRoots))
+            for _,root:=range item.group.GovernedRoots{
+                paths[configuredScopeID(root)]=root
+            }
+            done<-runServiceIndependentNTFSObservationLoop(
+                workers,snapshot.USNObservationEvery,item.store,
+                item.observations,item.roots,paths,spoolDir,collector,
+                usncapture.ObservationPolicy{
+                    Version:usncapture.ObservationPolicyVersion,
+                    MaxObjectsPerSegment:snapshot.USNObservationMaxObjectsPerSegment,
+                },item.group.CaptureScopeID,appendRecord)
         }()
     }
     var failures error

@@ -46,7 +46,9 @@ func preflightFreshUSNVolumeBootstrap(value config.Config) error {
         value.Storage.USNCaptureDir=="" ||
         value.Collector.USNCaptureMaxBytes==0 ||
         value.Collector.USNCaptureMinFreeBytes==0 ||
-        value.Collector.USNCaptureEvery<=0 {
+        value.Collector.USNCaptureEvery<=0 ||
+        value.Collector.USNObservationEvery<=0 ||
+        value.Collector.USNObservationMaxObjectsPerSegment<=0 {
         return errors.New("FI fresh volume bootstrap requires explicit volume-source-v1 authority")
     }
     root,err:=os.Lstat(value.Storage.USNCaptureDir)
