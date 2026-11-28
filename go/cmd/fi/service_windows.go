@@ -41,6 +41,13 @@ type serviceRuntimeRecord struct {
 	SecurityInterval           string `json:"security_interval,omitempty"`
 	SupportingRefreshInterval  string `json:"supporting_refresh_interval,omitempty"`
 	Outcome                    string `json:"outcome,omitempty"`
+	ScopeID                    string `json:"scope_id,omitempty"`
+	CapturedBatches            int    `json:"captured_batches,omitempty"`
+	CaptureNextUSN             string `json:"capture_next_usn,omitempty"`
+	ProcessedNextUSN           string `json:"processed_next_usn,omitempty"`
+	CaptureQueueBytes          uint64 `json:"capture_queue_bytes,omitempty"`
+	JournalFirstUSN            string `json:"journal_first_usn,omitempty"`
+	JournalNextUSN             string `json:"journal_next_usn,omitempty"`
 	SecurityCoverageStatus     string `json:"security_coverage_status,omitempty"`
 	ConfiguredRoots            int    `json:"configured_roots,omitempty"`
 	CompletedRoots             int    `json:"completed_roots,omitempty"`
