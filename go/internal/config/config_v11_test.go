@@ -241,3 +241,45 @@ troubleshoot.allow_storage_cli_override = false
 troubleshoot.allow_trust_cli_override = false
 `
 }
+
+func TestVersion11LegacyRemainsDefaultAndVolumeSourceRequiresOptIn(t *testing.T) {
+    legacy,err:=Parse(strings.NewReader(validVersion11OperationalConfiguration()))
+    if err!=nil||legacy.Collector.USNMode!="legacy"{
+        t.Fatalf("existing FI service compatibility changed: %q %v",legacy.Collector.USNMode,err)
+    }
+    source:=strings.Replace(validVersion11OperationalConfiguration(),
+        "collector.usn_every = 10m",
+        "collector.usn_every = 10m\ncollector.usn_mode = volume-source-v1\n"+
+        "collector.usn_capture_max_bytes = 17179869184\n"+
+        "collector.usn_processing_every = 100ms",1)
+    source=strings.Replace(source,"storage.state_dir = C:\\ProgramData\\FI\\state",
+        "storage.state_dir = C:\\ProgramData\\FI\\state\n"+
+        "storage.usn_capture_dir = D:\\FI\\volume-source",1)
+    v,err:=Parse(strings.NewReader(source))
+    if err!=nil{t.Fatalf("valid explicit FI source mode rejected: %v",err)}
+    if v.Collector.USNMode!="volume-source-v1" ||
+        v.Collector.USNCaptureMaxBytes!=17179869184 ||
+        v.Collector.USNProcessingEvery!=100*time.Millisecond ||
+        v.Storage.USNCaptureDir!=`D:\FI\volume-source`{
+        t.Fatalf("incorrect volume-capture authority: %+v %+v",v.Collector,v.Storage)
+    }
+    for name,bad:=range map[string]string{
+        "unknown-mode":strings.Replace(source,"volume-source-v1","unreviewed-activation",1),
+        "missing-capacity":strings.Replace(source,"collector.usn_capture_max_bytes = 17179869184\n","",1),
+        "missing-queue":strings.Replace(source,"storage.usn_capture_dir = D:\\FI\\volume-source\n","",1),
+        "overlap-spool":strings.Replace(source,"storage.usn_capture_dir = D:\\FI\\volume-source",
+            "storage.usn_capture_dir = D:\\FI\\spool\\queue",1),
+        "overlap-stage":strings.Replace(source,"storage.usn_capture_dir = D:\\FI\\volume-source",
+            "storage.usn_capture_dir = C:\\ProgramData\\FI\\stage\\capture",1),
+    }{
+        t.Run(name,func(t *testing.T){
+            if _,err:=Parse(strings.NewReader(bad));err==nil{
+                t.Fatal("unsafe FI volume-source configuration accepted")
+            }
+        })
+    }
+    withoutMode:=strings.Replace(source,"collector.usn_mode = volume-source-v1\n","",1)
+    if _,err:=Parse(strings.NewReader(withoutMode));err==nil{
+        t.Fatal("volume source settings enabled without explicit opt-in")
+    }
+}
