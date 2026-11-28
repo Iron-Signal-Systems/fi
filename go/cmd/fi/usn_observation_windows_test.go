@@ -64,12 +64,41 @@ func testIndependentObservationPlan(t *testing.T)(
     }}
     return store,ledger,plan,map[string]string{"governed-root":`G:\FI-Test`},obj,filepath.Join(t.TempDir(),"spool")
 }
+func publishExactScopedSourceBeforeObservation(t *testing.T,store *usncapture.Store,
+    roots []usncapture.GovernedProcessingPlan,spoolDir string,collector spool.CollectorIdentity){
+    t.Helper()
+    worked,err:=processCapturedUSNVolumeOnce(context.Background(),store,roots,spoolDir,collector)
+    if err!=nil||!worked{
+        t.Fatalf("source-only publication must precede independent NTFS outcome: %t %v",worked,err)
+    }
+}
+
+func TestIndependentObservationCannotOutrunOriginalScopedPublication(t *testing.T){
+    store,ledger,plan,paths,_,dir:=testIndependentObservationPlan(t)
+    policy:=usncapture.ObservationPolicy{Version:usncapture.ObservationPolicyVersion,MaxObjectsPerSegment:32}
+    collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)}
+    called:=false
+    worked,err:=processIndependentNTFSObservationsOnce(context.Background(),
+        store,ledger,plan,paths,dir,collector,policy,
+        func(context.Context,string,string,records.NTFSObjectIdentity)(spooledFileObservation,error){
+            called=true
+            return spooledFileObservation{},syscall.ERROR_FILE_NOT_FOUND
+        })
+    if worked||err!=nil||called{
+        t.Fatalf("observation worker read before signed source-only publication: %t %v called=%t",worked,err,called)
+    }
+    if ledger.Cursor().NextUSN!="100"||store.CaptureCursor().NextUSN!="150"{
+        t.Fatal("held independent observation moved an unverified cursor")
+    }
+}
+
 func TestIndependentNTFSMissingFilePublishesExplicitBoundSourceOutcome(t *testing.T){
     store,ledger,plan,paths,object,dir:=testIndependentObservationPlan(t)
     policy:=usncapture.ObservationPolicy{
         Version:usncapture.ObservationPolicyVersion,MaxObjectsPerSegment:32,
     }
     collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)}
+    publishExactScopedSourceBeforeObservation(t,store,plan,dir,collector)
     calls:=0
     missing:=&ntfs.Error{Stage:ntfs.StageOpen,Op:"OpenFileById",Err:syscall.ERROR_FILE_NOT_FOUND}
     worked,err:=processIndependentNTFSObservationsOnce(context.Background(),
@@ -83,7 +112,7 @@ func TestIndependentNTFSMissingFilePublishesExplicitBoundSourceOutcome(t *testin
         t.Fatalf("unavailable original File-ID lost from selective source: %t %v calls=%d",worked,err,calls)
     }
     if ledger.Cursor().NextUSN!="150"||store.CaptureCursor().NextUSN!="150"||
-        store.ProcessingCursor().NextUSN!="100"{
+        store.ProcessingCursor().NextUSN!="150"{
         t.Fatal("selective outcome changed source-only and observation cursor separation")
     }
     worked,err=processIndependentNTFSObservationsOnce(context.Background(),
@@ -99,6 +128,7 @@ func TestIndependentNTFSSourceIdentityMismatchCannotPublish(t *testing.T){
     store,ledger,plan,paths,_,dir:=testIndependentObservationPlan(t)
     policy:=usncapture.ObservationPolicy{Version:usncapture.ObservationPolicyVersion,MaxObjectsPerSegment:32}
     collector:=spool.CollectorIdentity{ExecutablePath:"FICollector-test",ExecutableSHA256:strings.Repeat("a",64)}
+    publishExactScopedSourceBeforeObservation(t,store,plan,dir,collector)
     worked,err:=processIndependentNTFSObservationsOnce(context.Background(),
         store,ledger,plan,paths,dir,collector,policy,
         func(_ context.Context,scope,root string,id records.NTFSObjectIdentity)(
@@ -116,7 +146,7 @@ func TestIndependentNTFSSourceIdentityMismatchCannotPublish(t *testing.T){
     if err==nil||worked{
         t.Fatal("independent NTFS source mismatch published as a valid outcome")
     }
-    if ledger.Cursor().NextUSN!="100"||store.ProcessingCursor().NextUSN!="100"{
+    if ledger.Cursor().NextUSN!="100"||store.ProcessingCursor().NextUSN!="150"{
         t.Fatal("unverified current NTFS identity advanced original source")
     }
 }

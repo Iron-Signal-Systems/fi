@@ -10,6 +10,7 @@ import (
     "context"
     "errors"
     "fmt"
+    "strconv"
 
     "github.com/Iron-Signal-Systems/fi/go/internal/records"
     "github.com/Iron-Signal-Systems/fi/go/internal/spool"
@@ -66,6 +67,14 @@ func processIndependentNTFSObservationsOnce(
     if err:=ctx.Err();err!=nil{return false,err}
     seg,ok,err:=observations.Next()
     if err!=nil||!ok{return false,err}
+    // A source-bound NTFS observation is never published ahead of the
+    // original signed scoped source parent. Raw capture alone is not proof
+    // of source-only spool publication; wait for the separate processed cursor.
+    sourceNext,err:=strconv.ParseUint(source.ProcessingCursor().NextUSN,10,64)
+    if err!=nil{return false,err}
+    intervalEnd,err:=strconv.ParseUint(seg.Batch.NextUSN,10,64)
+    if err!=nil{return false,err}
+    if sourceNext<intervalEnd{return false,nil}
     selection,err:=usncapture.SelectPolicyObservations(seg,roots,policy)
     if err!=nil{return false,err}
     if len(selection.Requests)==0{
